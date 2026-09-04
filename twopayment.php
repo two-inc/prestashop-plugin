@@ -13,6 +13,7 @@ if (!defined('_PS_VERSION_')) {
 
 require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
 require_once dirname(__FILE__) . '/classes/TwoSoleTrader.php';
+require_once dirname(__FILE__) . '/classes/TwoCompanySearchCountries.php';
 require_once dirname(__FILE__) . '/classes/TwoCheckoutAmountException.php';
 require_once dirname(__FILE__) . '/classes/TwoRateLimiter.php';
 

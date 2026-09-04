@@ -147,6 +147,11 @@ function loadCompanySearch() {
     // The result cache is class-static and therefore survives instances by
     // design. It must not survive TESTS.
     TwoCompanySearch._resultCache.clear();
+    // Same reasoning for the supported-search-countries answer (TWO-25288
+    // follow-up): shared across instances on a real page, but each test
+    // starts with it unknown.
+    TwoCompanySearch._supportedSearchCountries = null;
+    TwoCompanySearch._supportedSearchCountriesFetching = false;
     return { TwoCompanySearch: TwoCompanySearch, $: $, bus: bus };
 }
 
