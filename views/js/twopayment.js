@@ -163,7 +163,13 @@
                     // `company_search_country` falls back to the shipping address.
                     billingCountry: twopayment.sole_trader_country,
                     shopCountry: twopayment.shop_country,
-                    statusLabel: twopayment.i18n && twopayment.i18n.sole_trader_status_label
+                    statusLabel: twopayment.i18n && twopayment.i18n.sole_trader_status_label,
+                    // Merchant-level buyer-country gate (TWO-40), read once at
+                    // construction - see TwoSoleTrader.js's mint-gate
+                    // resolution for why this must stay a merchant setting,
+                    // not something re-derived per country change.
+                    merchantBuyerCountriesState: twopayment.merchant_buyer_countries_state,
+                    merchantBuyerCountries: twopayment.merchant_buyer_countries
                 });
             }
 

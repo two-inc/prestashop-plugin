@@ -139,11 +139,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * (TWO-24755). The merchant API key stays server-side; tokens are scoped
      * and short-lived by the Two API.
      *
-     * The one authorisation gate on minting is TwoSoleTrader::isAvailable() -
-     * re-evaluated SERVER-SIDE on every call, never taken from the browser, and
-     * a country that does not resolve at all is refused rather than defaulted.
-     * That is what stops this endpoint being a token oracle where the flow is
-     * off or the country ineligible.
+     * The one authorisation gate on minting is TwoSoleTrader::isMintAuthorized()
+     * - the registry answer intersected with the merchant's own buyer-country
+     * gate (TWO-40) - re-evaluated SERVER-SIDE on every call, never taken from
+     * the browser, and a country that does not resolve at all is refused
+     * rather than defaulted. That is what stops this endpoint being a token
+     * oracle where the flow is off, the country ineligible, or the merchant's
+     * own record excludes it.
      *
      * A posted country is preferred over the cart's (TWO-40) and grants no
      * privilege: mintTokens() takes no country, its delegation scopes are
@@ -170,7 +172,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Could not determine the billing country for this order')]));
             return;
         }
-        if (!TwoSoleTrader::isAvailable($this->module, $countryIso)) {
+        if (!TwoSoleTrader::isMintAuthorized($this->module, $countryIso)) {
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Sole trader checkout is not available')]));
             return;
         }
