@@ -961,7 +961,10 @@ test('a second abandonment landing during the deferred resume window does not fi
 test('a synchronous throw building the token-mint request does not permanently wedge fetchTokens()', () => {
     buildPaymentTile();
     stubFetch({});
-    const instance = build();
+    // No billing country at construction, so the unconditional eager mint
+    // never runs and does not occupy isFetchingTokens ahead of the click
+    // this test is actually exercising.
+    const instance = build({ billingCountry: '' });
     const { handler } = recordSettled();
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 

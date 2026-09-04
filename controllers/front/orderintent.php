@@ -139,19 +139,19 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * (TWO-24755). The merchant API key stays server-side; tokens are scoped
      * and short-lived by the Two API.
      *
-     * The one authorisation gate on minting is TwoSoleTrader::isMintAuthorized()
-     * - the registry answer intersected with the merchant's own buyer-country
-     * gate (TWO-40) - re-evaluated SERVER-SIDE on every call, never taken from
-     * the browser, and a country that does not resolve at all is refused
-     * rather than defaulted. That is what stops this endpoint being a token
-     * oracle where the flow is off, the country ineligible, or the merchant's
-     * own record excludes it.
+     * Minting is unconditional once a country resolves (TWO-40 follow-up,
+     * Doug: neither the registry's per-country answer nor a merchant
+     * buyer-country record has any bearing on whether minting is
+     * authorised - that decision belongs to the Two API these tokens are
+     * minted against). A country still has to resolve at all - not an
+     * eligibility check, just what mintTokensRequest()'s caller needs to
+     * report back to the browser - so this is not a token oracle for a
+     * cart with nothing to mint FOR.
      *
-     * A posted country is preferred over the cart's (TWO-40) and grants no
-     * privilege: mintTokens() takes no country, its delegation scopes are
-     * fixed, so a spoofed country only ever permits minting in a country the
-     * registry already supports sole traders in - which the browser can learn
-     * anyway from the `soleTraderAvailability` action.
+     * A posted country is preferred over the cart's (TWO-40): mintTokens()
+     * itself takes no country at all, its delegation scopes are fixed, so a
+     * posted country carries no privilege either way - it is reported back
+     * to the browser, nothing more.
      *
      * A posted country has to be usable at all because on the checkout
      * address-editor page the cart usually has NO invoice address yet, which is
@@ -170,10 +170,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $countryIso = $this->resolveSoleTraderCountryIso();
         if ($countryIso === '') {
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Could not determine the billing country for this order')]));
-            return;
-        }
-        if (!TwoSoleTrader::isMintAuthorized($this->module, $countryIso)) {
-            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Sole trader checkout is not available')]));
             return;
         }
         $tokens = TwoSoleTrader::mintTokens($this->module);
