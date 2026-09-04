@@ -59,6 +59,12 @@ class TwoCompanySearch {
     static _CACHE_TTL_MS = 5 * 60 * 1000;
     static _CACHE_MAX_ENTRIES = 50;
 
+    // GET /companies/v2/supported-countries answer, shared across every
+    // instance for the page's lifetime - see ensureSupportedSearchCountriesFetched().
+    // null = not yet known (fetch pending, or every attempt so far failed).
+    static _supportedSearchCountries = null;
+    static _supportedSearchCountriesFetching = false;
+
     /**
      * Expired entries drop on read.
      *
@@ -353,6 +359,7 @@ class TwoCompanySearch {
         this.clearStaleOrganizationSelection();
         this.setupCompanyInputSync();
         this.setupAddressIdentifierSync();
+        this.ensureSupportedSearchCountriesFetched();
         this.setupAutocomplete();
         this.setupCountryChangeListener();
         this.mirrorConfirmedCompanyToInvoiceAddress();
@@ -1420,19 +1427,87 @@ class TwoCompanySearch {
     }
 
     /**
-     * Visibility gating for the "Registered Company" mode chip (TWO-40).
-     * Always visible whenever the panel is open, same as "Enter Manually" -
-     * it is the default, not a conditional option.
+     * Visibility gating for the "Registered Company" mode chip. Visible
+     * whenever the panel is open, same as "Enter Manually", AND-ed with the
+     * country gate below - company search in a country bifrost's
+     * GET /companies/v2/supported-countries does not list returns no results,
+     * so offering the chip there just shows an empty panel.
      */
     syncRegisteredEntryVisibility() {
         if (!this._registeredButton || !this._registeredButton.length) {
             return;
         }
-        if (this._dropdownOpen) {
+        if (this._dropdownOpen && this.isCurrentCountrySupportedForSearch()) {
             this._registeredButton.show();
         } else {
             this._registeredButton.hide();
         }
+    }
+
+    /**
+     * Whether the currently-selected country supports company search, per
+     * the cached GET /companies/v2/supported-countries answer
+     * (ensureSupportedSearchCountriesFetched()). UNKNOWN - not fetched yet,
+     * unresolved country, or a transient fetch error - fails OPEN: the chip
+     * is never gated on an answer this instance does not actually have.
+     *
+     * @returns {boolean}
+     */
+    isCurrentCountrySupportedForSearch() {
+        if (TwoCompanySearch._supportedSearchCountries === null) {
+            return true;
+        }
+        const country = this.getCurrentCountry();
+        if (!country) {
+            return true;
+        }
+        return TwoCompanySearch._supportedSearchCountries.indexOf(country) !== -1;
+    }
+
+    /**
+     * Fetch GET /companies/v2/supported-countries once per page load, shared
+     * across every instance (a new one is constructed on each
+     * `updatedAddressForm` re-render - see setupAutocomplete()'s own
+     * comment) so a re-render never repeats the request. Relayed through the
+     * module's own controller via native `fetch()`, not `$.ajax` - the same
+     * choice TwoSoleTrader.js's own availability lookup makes, so this
+     * background fetch cannot be mistaken for a company-search request by
+     * anything asserting on `$.ajax` calls.
+     *
+     * A transient error leaves the list unknown (fail open, TWO-25288
+     * follow-up) rather than caching a failure - the NEXT instance
+     * constructed retries, which is the same retry shape TwoSoleTrader.js's
+     * per-country lookup uses.
+     */
+    ensureSupportedSearchCountriesFetched() {
+        if (TwoCompanySearch._supportedSearchCountries !== null || TwoCompanySearch._supportedSearchCountriesFetching) {
+            return;
+        }
+        if (typeof fetch !== 'function' || !this._page.orderIntentUrl || !this._page.ajaxToken) {
+            return;
+        }
+
+        const url = this._page.orderIntentUrl
+            + '?ajax=1&action=companySearchSupportedCountries&token=' + encodeURIComponent(this._page.ajaxToken);
+
+        TwoCompanySearch._supportedSearchCountriesFetching = true;
+        fetch(url, { method: 'GET' })
+            .then((response) => response.json())
+            .then((data) => {
+                if (!data || !Array.isArray(data.countries)) {
+                    // `countries: null` (server-side lookup unresolved) or a
+                    // malformed body - stays unknown, fails open.
+                    return;
+                }
+                TwoCompanySearch._supportedSearchCountries = data.countries.map((c) => String(c).toUpperCase());
+                this.syncModeChipVisibility();
+            })
+            .catch(() => {
+                // Transient failure - leave unknown, fail open.
+            })
+            .finally(() => {
+                TwoCompanySearch._supportedSearchCountriesFetching = false;
+            });
     }
 
     /**
