@@ -679,15 +679,18 @@ final class ApiKeyVerificationSpec
      */
     private static function testAnUnverifiableIdentityChangeStillDropsTheCachedRecord(): void
     {
-        // [submitted key, submitted environment, record must be dropped, why].
+        // [wire outcome, submitted key, submitted environment, record must be
+        // dropped, why]. A rejected key is reverted, so the record still
+        // describes the merchant the shop is running and must survive.
         $cases = array(
-            array('freshly-pasted-key', 'staging', true, 'a changed key'),
-            array('stored-key', 'production', true, 'a changed environment'),
-            array('stored-key', 'staging', false, 'an unchanged key and environment'),
+            array(self::transportOutcome(), 'freshly-pasted-key', 'staging', true, 'a changed key'),
+            array(self::transportOutcome(), 'stored-key', 'production', true, 'a changed environment'),
+            array(self::transportOutcome(), 'stored-key', 'staging', false, 'an unchanged key and environment'),
+            array(self::httpOutcome(401), 'freshly-pasted-key', 'staging', false, 'a rejected key the save reverted'),
         );
 
-        foreach ($cases as list($apiKey, $environment, $dropped, $case)) {
-            $module = self::module(self::transportOutcome());
+        foreach ($cases as list($outcome, $apiKey, $environment, $dropped, $case)) {
+            $module = self::module($outcome);
             Configuration::updateValue('PS_TWO_MERCHANT_ID', 'm-old');
             Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode(array(14, 30)));
             Configuration::updateValue(Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS, 30);

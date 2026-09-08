@@ -1374,19 +1374,16 @@ class Twopayment extends PaymentModule
         $rejected = is_array($this->verifiedApiKeyResult)
             && $this->verifiedApiKeyResult['status'] === self::API_KEY_STATUS_INVALID;
         $apiKeyToSave = $rejected ? (string) Configuration::get('PS_TWO_MERCHANT_API_KEY') : $submittedApiKey;
-        // The cached merchant record - terms, default term, platform minimum,
-        // buyer countries - describes whoever answered for the previous key, so
-        // a submitted key or environment change drops it whatever the verdict
-        // was. An unverifiable save would otherwise pair a new key with the
-        // previous merchant's terms and minimum as soon as the gate reopened
-        // (TWO-24813 / ABN-495).
-        $identityChanged = $submittedApiKey !== (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
+        // Keyed on what is actually being stored, not what was submitted: a
+        // rejected key is reverted, so the shop's identity has not moved and
+        // the previous merchant's terms, minimum and entitlements still
+        // describe it (TWO-24813 / ABN-495).
+        $identityChanged = $apiKeyToSave !== (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
             || (string) $submittedEnv !== (string) Configuration::get('PS_TWO_ENVIRONMENT');
 
-        // Server-derived, never a form input: a save that resolved no merchant
-        // keeps the stored one. Wiping it would withhold Two at checkout on
-        // hookPaymentOptions()' empty-short-name guard until the next
-        // successful verification (ABN-495).
+        // Server-derived, never a form input: wiping it on a save that
+        // resolved no merchant would withhold Two on hookPaymentOptions()'
+        // empty-short-name guard until the next successful verification.
         $shortNameToSave = $this->verifiedMerchantShortName
             ? $this->verifiedMerchantShortName
             : (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
