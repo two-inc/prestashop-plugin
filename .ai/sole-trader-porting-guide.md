@@ -89,9 +89,8 @@ claim below as DOM-verified, cited by the actual structure captured live:
   not from a mode variable the reopen path is free to clobber. Full rules in §11.
 - **Being inside the panel means every chip click is a `focusout`/`focusin` pair the
   panel's own close machinery reacts to**, so any behaviour the panel hangs off "focus
-  left me" is a behaviour the chips silently opt out of. That is not a detail of the
-  close handler; it is a consequence of this section's nesting, and it cost three chips
-  the popup-lifetime decision — see §14's gesture rules.
+  left me" is a behaviour the chips silently opt out of. That is why the popup-lifetime
+  decision reads where focus LANDS, never the panel's own close — see §14.
 - **Chip labels are sentence case on both platforms** — "Registered company", "Sole
   trader", "Enter manually" (`1c1b3d7` aligned PrestaShop onto WooCommerce's existing
   wording; WooCommerce `f8ca174` then fixed its own last title-cased straggler,
@@ -437,30 +436,57 @@ is not persisted here", never to a dropped payment record.
     on the success path, so every failure and abandon would spin forever.
     A cancel/abandon must be able to FORCE the dispatch past that gate, since the
     generation bump it performs has already disowned whatever is still in the air.
-  - **Focus returning to the checkout page must take the POPUP down with the
-    spinner and the panel** (Doug, live, PrestaShop
-    `doug/two40-soletrader-spinner-rehome`). All three are one abandon, and it is
-    easy to implement a subset of it: PrestaShop stopped the spinner and closed the
-    dropdown on that path but left the hosted popup on screen. The trigger already exists if the
-    panel has a deferred close-on-focus-leaving handler (§1) — hang the popup close
-    off THAT decision point, not off the generic "panel closed" path, which also
-    covers a completed selection and a platform re-render and would slam a live
-    popup shut. It must sit AFTER that handler's own guards: a focus-out caused by
-    clicking one of the panel's own chips puts focus back inside the panel and
-    that chip's handler owns the flow. Closing is the opener's privilege however
-    cross-origin the popup is, and is a no-op on a window that has already gone —
-    so a buyer who hand-closed it, and a hosted flow that closed itself the moment
-    it posted its completion message, both need no special case. Leave the
-    `.closed` poll to clear the handle and dispatch the settle, so that stays a
-    one-owner job. Do NOT fold this into the resumable cancel/abandon call (§14's
-    "still glancing around" case) — that one runs on every reopen of the search
-    control and must leave the popup alone.
-    - **A platform with no deferred close-on-focus-leaving handler has to build the
-      trigger itself, and the shape is different** — a window `focus` listener plus a
-      capture-phase `mousedown` to resolve which gesture caused it. That is the more
-      portable route and it is written up in §14's cross-platform block (WooCommerce
-      `9692939`, `cf12ac8`); read it before assuming the panel-handler route above is
-      available.
+  - **Three rules, on EVERY focus event** (Doug, TWO-25658), from one page-lifetime
+    document-level capture `focusin` the popup module owns: (1) focus arriving on the Sole
+    trader chip — any capture's — changes NOTHING: the popup is left exactly as it was,
+    open or closed. Only an activation of that chip moves it, and its own click handler
+    owns that: a raise when a popup is already up, a launch when none is; (2) focus on ANY
+    other control closes an open popup —
+    close only, the enrolment stays resumable with its tokens unspent — including the
+    Registered/Enter-manually chips and the "Select a different sole trader" button, whose
+    clicks then do their own job (the chips never cancel; the button opens a fresh popup);
+    (3) focus outside the launching panel closes that panel too. Nothing else: no timer,
+    no `visibilitychange` (a separate window never takes the tab out of `visible`), no
+    `document.hasFocus()` gate. A tab or window switch, or a click on the page background,
+    focuses no control and changes nothing; a browser re-firing focus at the previously
+    focused control on return is treated as the buyer focusing it. A chip activation for a
+    buyer already adopted routes to the replacement flow (a fresh popup and a re-mint)
+    rather than a fresh enrolment.
+    - **Liveness is the handle** — `isPopupOpen()` reads `.closed`, never a mirror: a
+      mirror goes stale between the buyer closing the window and the poll noticing it.
+    - **The popup module names no panel.** On a close it announces which control focus
+      landed on; the capture whose flight is live decides inside/outside for its own panel.
+      A flight is live from launch, from a raise, or from a re-render restore of the same
+      capture — matched by the per-launch id the popup module mints when the window opens,
+      held in the capture's rebuild-surviving memory; never by a selector or by whether the
+      old field node is still in the document. A sibling capture is untouched.
+    - **The chips take focus on mousedown** (Chrome, Firefox, Edge — not Safari/macOS,
+      which focuses no `<button>` on click), so a click on the Registered or Enter-manually
+      chip is a focus-close then the click handler; the handler closes a popup still up
+      itself for Safari's sake and never cancels the enrolment. The Sole trader chip's own
+      click reaches the handler with the popup untouched, which is what rule (1) buys on a
+      platform whose chips do not `preventDefault` their `mousedown`. Manual entry outranks a lookup still in flight: the popup
+      module asks the capture whether it refuses the identity BEFORE writing the session
+      and again when the write lands; the first refusal stops the write, the second cannot
+      — it clears the written session instead — and either stops the form fill, the intent
+      publish and the recheck. The second ask runs AHEAD of the superseded-flight return,
+      which returns without clearing, so a refusal is honoured whether or not the flight
+      is still current. A lookup landing after the Registered chip still adopts —
+      accepted.
+    - **A popup that opens after focus already moved on** (a slow mint) is judged at open
+      by the same three rules as a focus arriving then.
+    - **The launching control must not hold focus when the popup opens** — blur the
+      control captured at its click, never `activeElement` at open, which by then is
+      wherever the buyer went during the mint. The blur fires the panel's own focus-out
+      close, which must stand down while the launching capture's flight and the popup are
+      both live, or the panel and spinner die at open.
+    - **Focus the plugin moves itself goes through one quiet helper** (panel open, Escape,
+      a re-render restore, validation) so the watch does not read it as the buyer.
+    - **An in-panel close leaves the flight alone** — spinner and settle listener stay
+      until the write lands. The capture records that the buyer came back into the panel,
+      and the settle then drops the spinner without closing the panel or moving focus.
+    - **The panel's own deferred close-on-focus-leaving closes the panel and nothing
+      else**: a focus-out cannot tell a return to checkout from the popup taking focus.
 - **Tokens must already exist when the chip is clicked.** A chip click has exactly two
   allowed outcomes — populate a company, or open the signup popup — and a fallback
   note/link is neither (WooCommerce `df1aaa1`). On WooCommerce there is now exactly ONE
@@ -1069,11 +1095,13 @@ Rules that generalise:
 - If you are writing round N+1 of a predicate over a list of popup records, stop and
   change the design. That is what this section is.
 
-**Once there is exactly one popup, decide which GESTURE closes it — in each gesture's
-own handler, never in the shared focus machinery.** Doug's rule: focus returning to the
-checkout page closes the popup, and the ONE exception is clicking the Sole trader chip,
-which means "give me that popup back" and must raise it to the front instead. Whichever
-other chip took the focus closes the popup *and* still does its own job unchanged.
+**Once there is exactly one popup, decide from where focus LANDS, never from the panel's
+own focus-out.** Doug's rules (TWO-25658): focus landing on a checkout control closes the
+popup — close only — and the ONE exception is the Sole trader chip, focus on which is
+inert; its own ACTIVATION is what means "give me that popup" and opens or raises it.
+Whichever other chip takes focus closes the popup and
+its click still does its own job unchanged; the popup module's `focusin` watch owns the
+rest (the three-rule bullet above).
 
 The trap is §0's fact — the chips are DOM children of the search panel — meeting the
 panel's own deferred close-on-focus-leaving. That close is what owns the popup
@@ -1099,16 +1127,9 @@ Rules that generalise:
   *structurally* distinct and readable as such, not separated by which one happens to
   move focus where. A correct outcome you cannot point at a line for is a timing
   accident with a good week.
-- **Gate the popup close on the PAGE having focus (`document.hasFocus()`), not on where
-  `activeElement` landed.** The rule is "focus came back to the *page*", so a focus-out
-  to another window — the popup you just raised, or another application — must leave the
-  popup alone. The first round of this fix cancelled only the close already pending when
-  the chip was clicked, and the close that the *raise itself* provokes arrives after that
-  handler has returned; what actually saved it was Chrome leaving `activeElement` on a
-  clicked `<button>` across the window deactivation. Incidental browser behaviour holding
-  up a spec rule. **Scope the guard to the popup decision only** — widening it to the
-  panel's own close changes when the panel survives an app switch, which is a separate
-  question and broke a pinned test when tried.
+- **Never decide from a focus-out or a page-focus gate.** A focus-out cannot tell a
+  return to checkout from the popup taking focus, and `document.hasFocus()` on a deferred
+  close is a timing accident. The `focusin` TARGET is the answer.
 - **Mutation-test this class of fix; the tests lie otherwise.** Three of the first
   round's tests passed with the line they existed to pin deleted: two because letting
   the deferred close run lets "Enter manually" satisfy the assertion through the old
@@ -1138,11 +1159,12 @@ Rules that generalise:
 
   So expose `abandonEnrollment()` — close, then cancel — and let every "the buyer is
   leaving this flow" gesture call that. Keep the halves callable only for a caller that
-  genuinely wants one, and make it say why in a comment: on PrestaShop exactly two do
-  (see the remaining gap below, and the panel's focus-out close, which takes the popup
-  down without deciding anything about the enrolment because looking away is not a
-  decision). The win is not tidiness, it is that a THIRD caller cannot be added with the
-  ordering wrong or a half forgotten.
+  genuinely wants one, and make it say why in a comment: on PrestaShop the cancel half is
+  destroy()'s (the remaining gap below) and the pair is the country change's; the close
+  half belongs to the focus watch, to a buyer-initiated reopen of search, and to the
+  Registered/Enter-manually click handlers (Safari, see below) — looking away from the
+  popup is not a decision about the enrolment. The win is not tidiness, it is that a
+  THIRD caller cannot be added with the ordering wrong or a half forgotten.
 - **Prefer one atomic operation over a skip-this-half parameter.** The first draft of the
   re-render fix was a flag telling the reopen path not to cancel — which leaves the pair
   separable and the next caller free to get it wrong again. A parameter is still right for
@@ -1255,7 +1277,8 @@ other (WooCommerce PR #487 `7a11acb`).**
 
 **The same three-way gesture rule, built on a platform with NO panel focus-out close to
 hang it off** (WooCommerce `9692939`, then `cf12ac8`). The rule is identical — refocus
-closes an undecided popup, the Sole trader chip raises it instead, any other mode chip
+closes an undecided popup, focus arriving on the Sole trader chip leaves it exactly as it
+is and only that chip's own ACTIVATION raises it, any other mode chip
 closes it and still does its own job — so read
 the PrestaShop rules above for the rule and these for what a platform without that
 machinery has to build. This is the more portable of the two: it assumes only a window and

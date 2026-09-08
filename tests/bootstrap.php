@@ -825,6 +825,16 @@ namespace {
             ++self::$generateIndexCalls;
         }
 
+        /** Mirrors core: decode first unless told the input is already entities. */
+        public static function safeOutput($string, $html_entities = false)
+        {
+            $string = (string) $string;
+            if (!$html_entities) {
+                $string = html_entity_decode($string, ENT_QUOTES, 'UTF-8');
+            }
+            return htmlentities($string, ENT_QUOTES, 'UTF-8');
+        }
+
         public static function hasMediaServer(): bool
         {
             return self::$hasMediaServer;
@@ -2402,6 +2412,12 @@ namespace {
     #[\AllowDynamicProperties]
     class TwopaymentTestHarness extends Twopayment
     {
+        /** The once-per-render log guard is request state; tests share a process. */
+        public static function resetSurchargeTypeLog(): void
+        {
+            static::$twoSurchargeTypeFailureLogged = [];
+        }
+
         public function __construct()
         {
             $this->context = Context::getContext();

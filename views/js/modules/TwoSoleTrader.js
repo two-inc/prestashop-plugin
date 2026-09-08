@@ -60,6 +60,26 @@ class TwoSoleTrader {
     // constant this interval can be derived from.
     static _TOKEN_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 
+    /** True while focusQuietly() runs; the return watch ignores focus moved under it. */
+    static _quietFocus = false;
+
+    /** Allocator for `_popupId`, the per-launch identity a capture resumes a flight by (TWO-25658). */
+    static _popupSeq = 0;
+
+    /** @param {?Element} el focused without the return watch reading it as the buyer (TWO-25658) */
+    static focusQuietly(el) {
+        if (!el || typeof el.focus !== 'function') {
+            return;
+        }
+        const wasQuiet = TwoSoleTrader._quietFocus;
+        TwoSoleTrader._quietFocus = true;
+        try {
+            el.focus();
+        } finally {
+            TwoSoleTrader._quietFocus = wasQuiet;
+        }
+    }
+
     constructor(config) {
         this.config = {
             checkoutHost: '',
@@ -96,7 +116,13 @@ class TwoSoleTrader {
         // closes rather than just handing off to it. See openPopup()/
         // watchPopupUntilClosed().
         this._popup = null;
+        this._popupId = null;
+        // Opaque token the launching capture passed to startEnrollment()/startReplacement(); echoed with the popup's id.
+        this._launcher = null;
         this._popupPollInterval = null;
+        // The control whose click launched the flow; openPopup() blurs it (TWO-25658).
+        this._launchControl = null;
+        this._returnHandler = null;
         // Set by startReplacement() ("Select a different sole trader"),
         // consumed by afterTokensReady(): skip getCurrentBuyer()'s
         // silent-autofill check and go straight to the popup.
@@ -259,6 +285,7 @@ class TwoSoleTrader {
             }
         };
         document.addEventListener('change', this._countryChangeHandler);
+        this.watchFocus();
         // DEBOUNCED (TWO-25326 bug 9): this observer watches the whole body
         // subtree, and PrestaShop's own address-form/payment-fragment re-renders
         // mutate that subtree constantly, once per mutation record.
@@ -340,8 +367,10 @@ class TwoSoleTrader {
         this._destroyed = true;
         this.stopObserving();
         this.stopPopupWatch();
+        this.stopFocusWatch();
         this.stopTokenRefreshInterval();
         this._popup = null;
+        this._launchControl = null;
         if (this._countryChangeHandler) {
             document.removeEventListener('change', this._countryChangeHandler);
             this._countryChangeHandler = null;
@@ -1015,8 +1044,10 @@ class TwoSoleTrader {
      * see prefetchBuyer(). Called directly by TwoCompanySearch.js's "I'm a
      * sole trader" row.
      */
-    startEnrollment() {
+    startEnrollment(launcher) {
         this.enrolling = true;
+        this._launcher = launcher || null;
+        this._launchControl = document.activeElement;
         // Tokens are not country-specific - only their absence, not a
         // country change since they were minted, calls for a fresh mint.
         if (!this.tokens) {
@@ -1045,8 +1076,10 @@ class TwoSoleTrader {
      * `autoselect=false` on the popup URL is not interpreted server-side
      * yet (handled elsewhere); it is appended unconditionally regardless.
      */
-    startReplacement() {
+    startReplacement(launcher) {
         this.enrolling = true;
+        this._launcher = launcher || null;
+        this._launchControl = document.activeElement;
         this._skipAutofillCheck = true;
         // Tokens are not country-specific - see startEnrollment().
         if (!this.tokens) {
@@ -2060,6 +2093,12 @@ class TwoSoleTrader {
      */
     applyBuyer(buyer, generation) {
         const self = this;
+        // Asked BEFORE the session write (TWO-25658): a capture in manual entry refuses this identity everywhere.
+        if (this.captureRefusesAdoption()) {
+            this.hidePrompt();
+            this.notifyEnrollmentSettled();
+            return;
+        }
         // Held for this whole chain so the flight cannot settle - and the
         // buyer's spinner cannot stop - before the company name and number
         // are actually in the form. Released in `.finally()` below, which
@@ -2079,6 +2118,12 @@ class TwoSoleTrader {
         })
             .then(function (response) { return response.json(); })
             .then(function (json) {
+                // Manual entry chosen while this request was out: the save above landed over the capture's clear, so clear again.
+                // Ahead of the supersession check, which returns without clearing and would leave the sole trader in the session.
+                const refused = self.captureRefusesAdoption();
+                if (refused) {
+                    self.clearCaptureSession();
+                }
                 if (self._enrollGeneration !== generation) {
                     // Superseded while this request was out. The server HAS
                     // been told to persist it either way (see the comment
@@ -2086,6 +2131,11 @@ class TwoSoleTrader {
                     // this for the OPPOSITE ordering) - only the in-memory
                     // publish and the on-screen status are skipped, so this
                     // does not fight whatever the buyer has done since.
+                    return;
+                }
+                if (refused) {
+                    self.hidePrompt();
+                    self.notifyEnrollmentSettled();
                     return;
                 }
                 if (json && json.success) {
@@ -2197,6 +2247,47 @@ class TwoSoleTrader {
     }
 
     /**
+     * The capture's own `clearCompany`, for a save that landed after it refused (TWO-25658).
+     *
+     * LIMITATION: best effort. With no capture mounted when the save lands - a re-render
+     * between the refusal and the response - the written session keeps the sole trader
+     * until the next save or clear. Publish and recheck are stopped either way, so the
+     * order payload reads the in-memory selection rather than this record.
+     */
+    clearCaptureSession() {
+        try {
+            const manager = window.TwoCheckoutManager_Instance;
+            const search = manager && manager.companySearch;
+            if (search && typeof search.clearPersistedCompany === 'function') {
+                search.clearPersistedCompany();
+            }
+        } catch (e) {
+            // The refusal already stopped publish and recheck; the session is best effort.
+        }
+    }
+
+    /**
+     * LIMITATION, shared with adoptEnrolledIdentity() and clearCaptureSession(): the manager
+     * exposes ONE `companySearch`. On a two-address page the answer is the capture it
+     * currently exposes, which need not be the one that launched the popup - so a sibling's
+     * manual entry can refuse an identity the launching capture would have taken, and the
+     * write-back lands in the exposed capture's fields.
+     *
+     * @returns {boolean} whether the mounted capture refuses a sole-trader identity outright (manual entry chosen, TWO-25658)
+     */
+    captureRefusesAdoption() {
+        try {
+            const manager = window.TwoCheckoutManager_Instance;
+            const search = manager && manager.companySearch;
+            return !!(search && typeof search.refusesSoleTraderAdoption === 'function'
+                && search.refusesSoleTraderAdoption());
+        } catch (e) {
+            // A guard that cannot ask refuses.
+            return true;
+        }
+    }
+
+    /**
      * Publish a confirmed company/organisation-number pair to
      * TwoCheckoutManager, which is what the order-intent payload is built from
      * (TWO-25326 bug 8). Mirror of TwoCompanySearch.publishConfirmedSelection()
@@ -2288,6 +2379,7 @@ class TwoSoleTrader {
         // `closed` must never be opened over, whether or not it can be raised.
         if (this._popup && !this._popup.closed) {
             this.focusSignupPopup();
+            this._launchControl = null;
             return this._popup;
         }
         const ps = window.prestashop;
@@ -2350,11 +2442,23 @@ class TwoSoleTrader {
             // watchPopupUntilClosed() settles it once `popup.closed` is
             // actually true.
             this._popup = popup;
+            TwoSoleTrader._popupSeq += 1;
+            this._popupId = TwoSoleTrader._popupSeq;
             this._signupPopupOpened = true;
+            // Left holding focus it would be re-focused on window return, which reads as the buyer back (TWO-25658).
+            if (this._launchControl && typeof this._launchControl.blur === 'function') {
+                this._launchControl.blur();
+            }
+            this._launchControl = null;
             // The buyer is about to change the very thing the held answer
             // describes, so it stops being an answer the moment this opens.
             this.clearHeldBuyerResult();
             this.watchPopupUntilClosed();
+            document.dispatchEvent(new CustomEvent('two:sole-trader-popup-opened', {
+                detail: { id: this._popupId, launcher: this._launcher }
+            }));
+            // Wherever focus went during the mint is judged by the same rules as a focus arriving now.
+            this.settleFocusOn(document.activeElement);
         }
         return popup;
     }
@@ -2423,9 +2527,66 @@ class TwoSoleTrader {
      * @returns {void}
      */
     closeSignupPopup() {
-        if (this._popup && !this._popup.closed) {
+        if (this.isPopupOpen()) {
             this._popup.close();
         }
+    }
+
+    /** @returns {boolean} whether the hosted signup popup is on screen */
+    isPopupOpen() {
+        return !!(this._popup && !this._popup.closed);
+    }
+
+    /** @returns {?number} the open popup's per-launch id, null with none up */
+    popupLaunchId() {
+        return this.isPopupOpen() ? this._popupId : null;
+    }
+
+    /**
+     * Doug's rules (TWO-25658), on every focus: the Sole trader chip leaves the popup
+     * exactly as it is; any other control closes it. Only an activation of that chip
+     * moves the popup, and its own click handler owns that.
+     *
+     * LIMITATION: only focus THIS plugin moves is quiet (focusQuietly()). A focus moved by
+     * the theme, another module or the browser - a validation jump, a restored scroll
+     * position, a password-manager fill - reads as the buyer and takes the popup down.
+     * Close only, so the enrolment survives and the chip reopens it.
+     */
+    watchFocus() {
+        if (this._returnHandler) {
+            return;
+        }
+        this._returnHandler = (event) => {
+            if (!TwoSoleTrader._quietFocus) {
+                this.settleFocusOn(event.target);
+            }
+        };
+        // Capture phase, so a theme handler stopping propagation cannot hide the focus.
+        document.addEventListener('focusin', this._returnHandler, true);
+    }
+
+    /** @param {?Element} target the control focus landed on */
+    settleFocusOn(target) {
+        if (!target || target.nodeType !== 1 || target === document.body) {
+            return;
+        }
+        let popupClosed = false;
+        if (!target.closest('.two-company-sole-trader-entry') && this.isPopupOpen()) {
+            this.closeSignupPopup();
+            popupClosed = true;
+        }
+        // Rule 3 is the open panel's: it closes itself when `target` is outside it.
+        document.dispatchEvent(new CustomEvent('two:sole-trader-focus-settled', {
+            detail: { target: target, popupClosed: popupClosed }
+        }));
+    }
+
+    stopFocusWatch() {
+        if (!this._returnHandler) {
+            return;
+        }
+        document.removeEventListener('focusin', this._returnHandler, true);
+        this._returnHandler = null;
     }
 
     /**
@@ -2444,17 +2605,7 @@ class TwoSoleTrader {
      * away for the right reason, and watchPopupUntilClosed()'s poll still owns
      * clearing the handle and dispatching the settle.
      *
-     * Raising a popup RE-ADOPTS it, which is why the tokens are re-stamped as
-     * current here (adversarial review round 2). "I want that popup" is exactly
-     * the explicit resume that startEnrollment()/startReplacement() re-stamp
-     * for, and without it a raise is the one way back into a popup that leaves
-     * `_tokensGeneration` behind - so the buyer's completion arrives and
-     * bindPopupMessageListener() drops it on the generation check, silently.
-     * That became reachable when destroy() started keeping a live popup across
-     * an instance rebuild: the cancel bumps the generation, the raise is the
-     * only thing the buyer does next, and nothing else would ever re-stamp it.
-     * A no-op on every other path here, which reaches this with the two
-     * generations already in agreement.
+     * Raise only - openPopup()'s own second-window guard raises without re-adopting.
      *
      * @returns {boolean} whether a popup was actually there to raise, so a
      *   caller can tell "brought it to the front" from "no popup open" and
@@ -2469,8 +2620,21 @@ class TwoSoleTrader {
         } catch (e) {
             return false;
         }
-        this._tokensGeneration = this._enrollGeneration;
         return true;
+    }
+
+    /** The Sole trader chip clicked with the popup up: raise it AND re-adopt, or a flight destroy() disowned drops its own completion. */
+    reclaimSignupPopup() {
+        if (!this.focusSignupPopup()) {
+            return false;
+        }
+        this.readoptEnrollment();
+        return true;
+    }
+
+    /** A capture taking on the flight behind a popup already up (TWO-25658) re-stamps its tokens as current. */
+    readoptEnrollment() {
+        this._tokensGeneration = this._enrollGeneration;
     }
 
     /**
@@ -2520,11 +2684,14 @@ class TwoSoleTrader {
             // stale the tokens actually are - silently overwriting the real
             // selection the buyer made in between - and a stale failure would
             // put an error in front of a buyer who has already moved on.
-            // `_tokensGeneration` is only ever stamped as current for a click:
-            // fetchTokens()'s success handler when one is waiting on that mint,
-            // startEnrollment()/startReplacement() calling back into an
-            // existing token set, or focusSignupPopup() raising a popup the
-            // buyer asked for by name - never by this listener itself, and
+            // `_tokensGeneration` is only ever stamped as current for the
+            // buyer's own flow: fetchTokens()'s success handler when one is
+            // waiting on that mint, startEnrollment()/startReplacement()
+            // calling back into an existing token set, or readoptEnrollment()
+            // for a capture taking the popup on by name - the chip clicked, or
+            // a re-render restore of the SAME capture matched by launch id,
+            // which continues the flight rather than adopting one - never by
+            // this listener itself, and
             // never for startEagerTokenMint()'s mint. So neither a stale popup
             // finishing on its own nor a message arriving against tokens no
             // click has asked for can pass this check.
@@ -2599,6 +2766,7 @@ class TwoSoleTrader {
                 if (self.isWriteRoundTripOutstanding()) {
                     return;
                 }
+                self._launchControl = document.activeElement;
                 const held = self.heldBuyerResult();
                 if (held && self.buyerMatchesCheckout(held.buyer)) {
                     // The prefetch was still out when the chip was clicked, so

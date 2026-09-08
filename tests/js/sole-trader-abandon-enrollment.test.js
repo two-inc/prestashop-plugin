@@ -220,7 +220,7 @@ test('cancelEnrollment(true) disowns the write but keeps the popup tracked', asy
  * completes signup after a shipping recalculation gets nothing written and
  * no error, with a spinner saying otherwise.
  */
-test('a popup kept across a teardown still completes once the buyer raises it', async () => {
+test('a popup kept across a teardown still completes once the buyer clicks the chip again', async () => {
     const publishes = stubManager();
     global.window.TwoCompanyNumber = { forDisplay: (v) => v };
     document.body.insertAdjacentHTML('beforeend', "<input name='email' value='buyer@example.test' />");
@@ -229,7 +229,7 @@ test('a popup kept across a teardown still completes once the buyer raises it', 
     // Address form re-renders under the buyer (shipping recalc, not a gesture).
     instance.cancelEnrollment(true);
 
-    expect(instance.focusSignupPopup()).toBe(true);
+    expect(instance.reclaimSignupPopup()).toBe(true);
     expect(instance._tokensGeneration).toBe(instance._enrollGeneration);
 
     stubFetch({

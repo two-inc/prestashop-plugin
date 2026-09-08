@@ -127,7 +127,7 @@ describe('clicking "Registered Company"', () => {
         expect(shown(panelParts().panel)).toBe(true);
     });
 
-    test('cancels a pending sole-trader enrolment if one was started', () => {
+    test('never cancels a pending sole-trader enrolment (Doug, TWO-25658): neither the reopen nor the chip', () => {
         const soleTraderInstance = {
             isAvailableForCurrentCountry: () => true,
             startEnrollment: jest.fn(),
@@ -141,27 +141,16 @@ describe('clicking "Registered Company"', () => {
         expect(soleTraderInstance.startEnrollment).toHaveBeenCalledTimes(1);
         const callsBefore = soleTraderInstance.abandonEnrollment.mock.calls.length;
 
-        // Reopening ALSO abandons once via openDropdown(), so the chip's own
-        // call is only visible as an exact delta, not as "more than before".
         $("input[name='company']").trigger('mousedown');
-        const callsAfterReopen = soleTraderInstance.abandonEnrollment.mock.calls.length;
-        expect(callsAfterReopen).toBe(callsBefore + 1);
-
         panelParts().registered.trigger('click');
 
-        expect(soleTraderInstance.abandonEnrollment.mock.calls.length).toBe(callsAfterReopen + 1);
+        expect(soleTraderInstance.abandonEnrollment.mock.calls.length).toBe(callsBefore);
     });
 });
 
 describe('clicking "Enter Manually" while a sole-trader enrolment is active', () => {
-    /**
-     * TWO-40 follow-up. openDropdown()'s cancel is not enough: it runs BEFORE
-     * the buyer clicks this chip, so it cannot disown a lookup started
-     * afterwards by clicking Sole trader from the reopened panel. That flight
-     * resolves into adoptSoleTraderBuyer(), which has no manual-entry guard,
-     * over a hand-typed name.
-     */
-    test('abandons the flow on the click itself, not only via the earlier reopen', () => {
+    /** The chip never cancels (Doug, TWO-25658); adoptSoleTraderBuyer()'s manual-entry guard keeps a lookup still out off the hand-typed name. */
+    test('does not cancel on the click, nor did the reopen before it', () => {
         const soleTraderInstance = {
             isAvailableForCurrentCountry: () => true,
             startEnrollment: jest.fn(),
@@ -170,24 +159,16 @@ describe('clicking "Enter Manually" while a sole-trader enrolment is active', ()
         global.window.TwoSoleTrader_Instance = soleTraderInstance;
 
         makeInstance();
-        // The FIRST open already abandons once, even with nothing to cancel.
         openPanel();
-        const callsAfterFirstOpen = soleTraderInstance.abandonEnrollment.mock.calls.length;
         panelParts().soleTrader.trigger('click');
-        expect(soleTraderInstance.abandonEnrollment.mock.calls.length).toBe(callsAfterFirstOpen);
-
-        // A SECOND enrolment from the reopened panel - the flight the reopen's
-        // own abandon cannot have covered.
         $("input[name='company']").trigger('mousedown');
         panelParts().soleTrader.trigger('click');
         expect(soleTraderInstance.startEnrollment).toHaveBeenCalledTimes(2);
-        const callsBeforeChip = soleTraderInstance.abandonEnrollment.mock.calls.length;
 
         $("input[name='company']").trigger('mousedown');
         panelParts().notListed.trigger('click');
 
-        // Two: the reopen's, and the chip's own.
-        expect(soleTraderInstance.abandonEnrollment.mock.calls.length).toBe(callsBeforeChip + 2);
+        expect(soleTraderInstance.abandonEnrollment).not.toHaveBeenCalled();
     });
 });
 

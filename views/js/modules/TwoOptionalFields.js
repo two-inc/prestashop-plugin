@@ -95,7 +95,10 @@ class TwoOptionalFields {
         if (typeof invalid.scrollIntoView === 'function') {
             invalid.scrollIntoView({ block: 'center' });
         }
-        if (typeof invalid.focus === 'function') {
+        // Hidden from the sole-trader popup's return watch: this focus is not the buyer's.
+        if (window.TwoSoleTrader && typeof window.TwoSoleTrader.focusQuietly === 'function') {
+            window.TwoSoleTrader.focusQuietly(invalid);
+        } else if (typeof invalid.focus === 'function') {
             invalid.focus();
         }
     }
