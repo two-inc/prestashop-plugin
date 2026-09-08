@@ -1031,6 +1031,9 @@ class Twopayment extends PaymentModule
             $this->validTwoGeneralFormValues();
             if (!count($this->errors)) {
                 $this->saveTwoGeneralFormValues();
+                if ($this->apiKeyVerificationWarning !== null) {
+                    $this->output .= $this->displayWarning($this->apiKeyVerificationWarning);
+                }
             } else {
                 foreach ($this->errors as $err) {
                     $this->output .= $this->displayError($err);
@@ -1329,25 +1332,27 @@ class Twopayment extends PaymentModule
             $this->verifiedApiKeyResult = $verify;
             // Unless the key AND environment being validated are the stored ones,
             // in which case the verdict describes the live shop whatever happens
-            // to the rest of the form - and is the only way a FAILING verdict ever
-            // gets published from this page, since a failing key adds an error and
-            // the save never runs (review round 2).
+            // to the rest of the form.
             //
-            // The environment half is not decoration (review round 3). The check
-            // above ran against the SUBMITTED environment while the slot is keyed
-            // to the STORED one, which the skipped save leaves unchanged - so a
-            // merchant merely switching the dropdown to an environment their key
-            // is not valid for would otherwise publish an 'invalid_key' verdict
-            // against their still-perfectly-good stored configuration, and take
-            // Two off a healthy checkout over a save that never happened.
+            // The environment half matters: the check above ran against the
+            // SUBMITTED environment while the slot is keyed to the STORED one,
+            // which a skipped save leaves unchanged - so a merchant merely
+            // switching the dropdown to an environment their key is not valid for
+            // would otherwise take Two off a healthy checkout with an
+            // 'invalid_key' verdict against their stored configuration.
             if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
                 && (string) $env === (string) Configuration::get('PS_TWO_ENVIRONMENT')) {
                 $this->cacheTwoApiKeyVerificationStatus($apiKey, $verify);
             }
-            if ($verify['status'] !== self::API_KEY_STATUS_OK) {
+            if ($verify['status'] === self::API_KEY_STATUS_INVALID) {
                 // Category-specific, so the merchant is not left choosing
                 // between "my key is wrong" and "Two is down" (TWO-25326).
                 $this->errors[] = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
+            } elseif ($verify['status'] !== self::API_KEY_STATUS_OK) {
+                // Only an upstream rejection may block the save: an outage
+                // judged no key, and blocking would strand the merchant unable
+                // to store the very key that fixes it (ABN-495).
+                $this->apiKeyVerificationWarning = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
             } else {
                 $body = isset($verify['body']) && is_array($verify['body']) ? $verify['body'] : array();
                 if (!isset($body['id']) || !isset($body['short_name'])) {
@@ -11758,6 +11763,14 @@ class Twopayment extends PaymentModule
      * @var null|array{status:string,code:int|null,body:array|null}
      */
     protected $verifiedApiKeyResult = null;
+
+    /**
+     * Non-blocking wording for a general-form verification that never judged the
+     * key - an outage, not a rejection (ABN-495). Null when there is none.
+     *
+     * @var string|null
+     */
+    protected $apiKeyVerificationWarning = null;
 
     /**
      * Whether this instance has already logged that it is withholding Two over

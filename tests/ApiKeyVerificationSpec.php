@@ -24,6 +24,8 @@ final class ApiKeyVerificationSpec
         self::testNoticeIsSilentWhenVerifiedOrUnconfigured();
         self::testNoticeSaysNothingWhileAVerificationIsStillRunning();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
+        self::testOnlyARejectedKeyBlocksTheGeneralSave();
+        self::testTheWarningIsRenderedAlongsideTheSaveConfirmation();
         self::testVerifiedPanelFollowsTheLiveVerdict();
 
         // Checkout gate.
@@ -139,6 +141,7 @@ final class ApiKeyVerificationSpec
             public function validateGeneralFormForTest(): array
             {
                 $this->errors = array();
+                $this->apiKeyVerificationWarning = null;
                 $this->validTwoGeneralFormValues();
                 return $this->errors;
             }
@@ -146,6 +149,11 @@ final class ApiKeyVerificationSpec
             public function saveGeneralFormForTest(): void
             {
                 $this->saveTwoGeneralFormValues();
+            }
+
+            public function generalFormWarningForTest(): ?string
+            {
+                return $this->apiKeyVerificationWarning;
             }
 
             public function verifiedPanelFlagForTest(): int
@@ -490,17 +498,15 @@ final class ApiKeyVerificationSpec
 
         $errors = $module->validateGeneralFormForTest();
 
-        TinyAssert::same(1, count($errors), 'an unreachable API must be reported once');
+        TinyAssert::same(0, count($errors), 'an unreachable API must not block the save');
         TinyAssert::same(
             $module->getTwoApiKeyFailureMessage(Twopayment::API_KEY_STATUS_UNREACHABLE),
-            $errors[0],
+            $module->generalFormWarningForTest(),
             'the save must report the category, not a generic "check your API key"'
         );
 
         // The submitted key here IS the stored one, so the verdict is published
-        // immediately - the only way a FAILING verdict is ever published from
-        // this page, since a failing key adds an error and PrestaShop then skips
-        // the save entirely.
+        // by the validation itself rather than waiting for the save.
         // Asserted on the STORED slot and the call count: reading the status back
         // would answer 'unreachable' either way, since a cache miss just re-runs
         // the same stubbed wire call.
@@ -542,6 +548,85 @@ final class ApiKeyVerificationSpec
         $fixed->saveGeneralFormForTest();
         TinyAssert::same(Twopayment::API_KEY_STATUS_OK, $fixed->getTwoApiKeyVerificationStatus()['status']);
         TinyAssert::same(1, $fixed->verifyCalls, 'the save must reuse its own check, not verify twice');
+    }
+
+    /**
+     * Only an upstream rejection may block the general save (ABN-495). An
+     * outage judged no key, and the form re-renders from POST, so a blocked
+     * save looks like a stored one while leaving the merchant unable to store
+     * the key - or even the vendor name - that would fix it.
+     */
+    private static function testOnlyARejectedKeyBlocksTheGeneralSave(): void
+    {
+        $timeoutOutcome = array('response' => false, 'code' => 0, 'error' => 'Operation timed out');
+        $cases = array(
+            array(self::transportOutcome(), true, 'new-merchant', 'a connection failure'),
+            array($timeoutOutcome, true, 'new-merchant', 'a timeout'),
+            array(self::httpOutcome(500), true, 'new-merchant', 'a 500 from the API'),
+            array(self::httpOutcome(401), false, null, 'a 401 rejection'),
+            array(self::httpOutcome(403), false, null, 'a 403 rejection'),
+            // The verified short name replaces the submitted one, by design.
+            array(self::okOutcome(), true, 'acme', 'a verified key'),
+        );
+
+        foreach ($cases as list($outcome, $persists, $expectedShortName, $case)) {
+            $module = self::module($outcome);
+            Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', 'old-merchant');
+            Configuration::updateValue('PS_TWO_VENDOR_NAME', 'Old Vendor');
+            Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'new-merchant');
+            Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'freshly-pasted-key');
+            Tools::setTestValue('PS_TWO_VENDOR_NAME', 'New Vendor');
+            Tools::setTestValue('PS_TWO_ENVIRONMENT', 'production');
+
+            // getContent()'s general branch: validate, then save only if clean.
+            if (!count($module->validateGeneralFormForTest())) {
+                $module->saveGeneralFormForTest();
+            }
+
+            $expected = $persists
+                ? array($expectedShortName, 'freshly-pasted-key', 'New Vendor', 'production')
+                : array('old-merchant', 'stored-key', 'Old Vendor', 'staging');
+            $keys = array(
+                'PS_TWO_MERCHANT_SHORT_NAME',
+                'PS_TWO_MERCHANT_API_KEY',
+                'PS_TWO_VENDOR_NAME',
+                'PS_TWO_ENVIRONMENT',
+            );
+            $verb = $persists ? 'must store the submitted' : 'must leave the stored';
+            foreach ($keys as $index => $key) {
+                TinyAssert::same(
+                    $expected[$index],
+                    (string) Configuration::get($key),
+                    $case . ' ' . $verb . ' ' . $key
+                );
+            }
+            if ($persists) {
+                TinyAssert::same(
+                    $outcome === self::okOutcome() ? '1' : '0',
+                    (string) Configuration::get('PS_TWO_API_KEY_VERIFIED'),
+                    $case . ' must record whether the key it stored is verified'
+                );
+            }
+        }
+    }
+
+    /**
+     * Asserted against the source: getContent() cannot be reached without a
+     * HelperForm, and this is the one-line wiring that turns the held warning
+     * into something the merchant sees (ABN-495).
+     */
+    private static function testTheWarningIsRenderedAlongsideTheSaveConfirmation(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        $expected = "                \$this->saveTwoGeneralFormValues();\n"
+            . "                if (\$this->apiKeyVerificationWarning !== null) {\n"
+            . "                    \$this->output .= \$this->displayWarning(\$this->apiKeyVerificationWarning);\n"
+            . "                }";
+
+        TinyAssert::true(
+            strpos($source, $expected) !== false,
+            'getContent() must render the verification warning after the general save'
+        );
     }
 
     /**
