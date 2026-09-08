@@ -2543,8 +2543,9 @@ class TwoSoleTrader {
     }
 
     /**
-     * Doug's rules (TWO-25658), on every focus: the Sole trader chip has the popup open and
-     * in front; any other control closes it.
+     * Doug's rules (TWO-25658), on every focus: the Sole trader chip leaves the popup
+     * exactly as it is; any other control closes it. Only an activation of that chip
+     * moves the popup, and its own click handler owns that.
      *
      * LIMITATION: only focus THIS plugin moves is quiet (focusQuietly()). A focus moved by
      * the theme, another module or the browser - a validation jump, a restored scroll
@@ -2570,17 +2571,8 @@ class TwoSoleTrader {
             return;
         }
         let popupClosed = false;
-        if (target.closest('.two-company-sole-trader-entry')) {
-            if (!this.focusSignupPopup()) {
-                // The chip's own click handler is the one launch path.
-                //
-                // LIMITATION: a keyboard arrival launches from a Tab keydown, and whether
-                // browsers count that as the user activation `window.open` demands is
-                // unverified. A blocked open shows the error and settles the flight, so the
-                // buyer's way through is to press the chip.
-                target.click();
-            }
-        } else if (this.isPopupOpen()) {
+        // Only an activation moves the popup: a Tab arrival on the Sole trader chip is the buyer passing through, and leaves the popup as they left it (TWO-25658).
+        if (!target.closest('.two-company-sole-trader-entry') && this.isPopupOpen()) {
             this.closeSignupPopup();
             popupClosed = true;
         }
@@ -2614,7 +2606,7 @@ class TwoSoleTrader {
      * away for the right reason, and watchPopupUntilClosed()'s poll still owns
      * clearing the handle and dispatching the settle.
      *
-     * Raise only - a Tab arrival must not re-adopt (see reclaimSignupPopup()).
+     * Raise only - openPopup()'s own second-window guard raises without re-adopting.
      *
      * @returns {boolean} whether a popup was actually there to raise, so a
      *   caller can tell "brought it to the front" from "no popup open" and

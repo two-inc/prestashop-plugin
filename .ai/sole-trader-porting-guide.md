@@ -437,9 +437,11 @@ is not persisted here", never to a dropped payment record.
     A cancel/abandon must be able to FORCE the dispatch past that gate, since the
     generation bump it performs has already disowned whatever is still in the air.
   - **Three rules, on EVERY focus event** (Doug, TWO-25658), from one page-lifetime
-    document-level capture `focusin` the popup module owns: (1) focus on the Sole trader
-    chip — any capture's — or a click on it, has the popup open and in front (opened if
-    none is up, raised if one is); (2) focus on ANY other control closes an open popup —
+    document-level capture `focusin` the popup module owns: (1) focus arriving on the Sole
+    trader chip — any capture's — changes NOTHING: the popup is left exactly as it was,
+    open or closed. Only an activation of that chip moves it, and its own click handler
+    owns that: a raise when a popup is already up, a launch when none is; (2) focus on ANY
+    other control closes an open popup —
     close only, the enrolment stays resumable with its tokens unspent — including the
     Registered/Enter-manually chips and the "Select a different sole trader" button, whose
     clicks then do their own job (the chips never cancel; the button opens a fresh popup);
@@ -447,11 +449,9 @@ is not persisted here", never to a dropped payment record.
     no `visibilitychange` (a separate window never takes the tab out of `visible`), no
     `document.hasFocus()` gate. A tab or window switch, or a click on the page background,
     focuses no control and changes nothing; a browser re-firing focus at the previously
-    focused control on return is treated as the buyer focusing it. Rule (1) on a Tab
-    arrival opens the popup from a keydown; whether browsers count a Tab as a user
-    activation is UNVERIFIED — a blocked open takes the showError + settle path. Parked:
-    for a buyer already adopted, that same Tab arrival routes to the replacement flow
-    (a fresh popup and a re-mint).
+    focused control on return is treated as the buyer focusing it. A chip activation for a
+    buyer already adopted routes to the replacement flow (a fresh popup and a re-mint)
+    rather than a fresh enrolment.
     - **Liveness is the handle** — `isPopupOpen()` reads `.closed`, never a mirror: a
       mirror goes stale between the buyer closing the window and the poll noticing it.
     - **The popup module names no panel.** On a close it announces which control focus
@@ -461,9 +461,11 @@ is not persisted here", never to a dropped payment record.
       held in the capture's rebuild-surviving memory; never by a selector or by whether the
       old field node is still in the document. A sibling capture is untouched.
     - **The chips take focus on mousedown** (Chrome, Firefox, Edge — not Safari/macOS,
-      which focuses no `<button>` on click), so a click is a focus-close then the click
-      handler; the handler closes a popup still up itself for Safari's sake and never
-      cancels the enrolment. Manual entry outranks a lookup still in flight: the popup
+      which focuses no `<button>` on click), so a click on the Registered or Enter-manually
+      chip is a focus-close then the click handler; the handler closes a popup still up
+      itself for Safari's sake and never cancels the enrolment. The Sole trader chip's own
+      click reaches the handler with the popup untouched, which is what rule (1) buys on a
+      platform whose chips do not `preventDefault` their `mousedown`. Manual entry outranks a lookup still in flight: the popup
       module asks the capture whether it refuses the identity BEFORE writing the session
       and again when the write lands; the first refusal stops the write, the second cannot
       — it clears the written session instead — and either stops the form fill, the intent
@@ -1095,8 +1097,9 @@ Rules that generalise:
 
 **Once there is exactly one popup, decide from where focus LANDS, never from the panel's
 own focus-out.** Doug's rules (TWO-25658): focus landing on a checkout control closes the
-popup — close only — and the ONE exception is the Sole trader chip, which means "give me
-that popup" and opens or raises it. Whichever other chip takes focus closes the popup and
+popup — close only — and the ONE exception is the Sole trader chip, focus on which is
+inert; its own ACTIVATION is what means "give me that popup" and opens or raises it.
+Whichever other chip takes focus closes the popup and
 its click still does its own job unchanged; the popup module's `focusin` watch owns the
 rest (the three-rule bullet above).
 

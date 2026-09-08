@@ -1,6 +1,7 @@
 /**
  * TWO-25658: focus landing on a checkout CONTROL settles the open signup popup - the Sole
- * trader chip raises it, anything else closes it (close only). Real modules, no stubs.
+ * trader chip leaves it as it is, anything else closes it (close only). Only an
+ * activation of that chip moves the popup. Real modules, no stubs.
  */
 
 'use strict';
@@ -256,13 +257,13 @@ describe('Doug\'s three rules on focus (TWO-25658)', () => {
     }
 
     test.each([
-        ['popup open', 'the Sole trader chip', 1, false, true, true, 'rule 1: raised, nothing else changes'],
+        ['popup open', 'the Sole trader chip', 1, false, false, true, 'rule 1: a Tab arrival leaves an open popup open'],
         ['popup open', 'the Registered chip', 1, true, false, true, 'rule 2: closed on focus arrival, the click is still to come'],
         ['popup open', 'the Enter manually chip', 1, true, false, true, 'rule 2: closed on focus arrival'],
         ['popup open', 'a non-chip control inside the panel', 1, true, false, true, 'rule 2: closed, panel kept'],
         ['popup open', 'a control outside the panel', 1, true, false, false, 'rules 2+3: popup and panel close'],
         ['popup open', 'a "Select a different sole trader" button', 1, true, false, false, 'rule 2: a control like any other, its click relaunches'],
-        ['popup closed', 'the Sole trader chip', 2, false, false, true, 'rule 1: opened afresh'],
+        ['popup closed', 'the Sole trader chip', 1, false, false, true, 'rule 1: a Tab arrival with no popup opens none'],
         ['popup closed', 'the Registered chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'the Enter manually chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'a non-chip control inside the panel', 1, false, false, true, 'nothing to close'],
@@ -297,7 +298,7 @@ describe('Doug\'s three rules on focus (TWO-25658)', () => {
         expect(popup.focus).not.toHaveBeenCalled();
     });
 
-    test('a popup closed by focus is reopened by the next chip focus without a re-mint', async () => {
+    test('a popup closed by focus is reopened by the next chip click, not its focus, and without a re-mint', async () => {
         await launchWithPopupOpen();
         const mintsBefore = tokenMints;
 
@@ -306,6 +307,10 @@ describe('Doug\'s three rules on focus (TWO-25658)', () => {
         popup = fakePopup();
         openPanel();
         panelParts().soleTrader.get(0).focus();
+        await settle();
+        expect(global.window.open).toHaveBeenCalledTimes(1);
+
+        panelParts().soleTrader.trigger('click');
         await settle();
 
         expect(global.window.open).toHaveBeenCalledTimes(2);
@@ -684,6 +689,7 @@ describe('the popup opening', () => {
         makeInstance();
         openPanel();
         panelParts().soleTrader.get(0).focus();
+        panelParts().soleTrader.trigger('click');
         await settle();
         expect(document.activeElement).toBe(panelParts().soleTrader.get(0));
 
@@ -734,7 +740,7 @@ describe('the popup opening', () => {
         ['the Sole trader chip', async () => {
             makeInstance();
             openPanel();
-            // Focus itself launches (rule 1) and blurs the chip inside the focus dispatch.
+            // The focus arrival is inert (rule 1); the click that follows is the launch.
             panelParts().soleTrader.get(0).focus();
             panelParts().soleTrader.trigger('click');
         }],
@@ -775,18 +781,23 @@ describe('two captures on one page', () => {
         expect(siblingClose).not.toHaveBeenCalled();
     });
 
-    test('the sibling\'s Sole trader chip raises the popup the other capture launched, and rule 3 closes that capture\'s panel', async () => {
+    test('focus on the sibling\'s Sole trader chip leaves the popup the other capture launched alone, and rule 3 closes that capture\'s panel; the click raises it', async () => {
         await launchWithPopupOpen(first);
 
         second.openDropdown(false);
         second._soleTraderButton.get(0).focus();
 
-        expect(popup.focus).toHaveBeenCalledTimes(1);
+        expect(popup.focus).not.toHaveBeenCalled();
         expect(popup.closed).toBe(false);
         expect(first._dropdownOpen).toBe(false);
+
+        second._soleTraderButton.trigger('click');
+
+        expect(popup.focus).toHaveBeenCalledTimes(1);
+        expect(popup.closed).toBe(false);
     });
 
-    test('a Tab onto the Sole trader chip raises without re-adopting a disowned enrolment; a click re-adopts', async () => {
+    test('a Tab onto the Sole trader chip neither raises nor re-adopts a disowned enrolment; a click does both', async () => {
         await launchWithPopupOpen(first);
         soleTrader.cancelEnrollment(true);
         const disowned = soleTrader._tokensGeneration;
@@ -794,9 +805,11 @@ describe('two captures on one page', () => {
         second.openDropdown(false);
         second._soleTraderButton.get(0).focus();
         expect(soleTrader._tokensGeneration).toBe(disowned);
+        expect(popup.focus).not.toHaveBeenCalled();
 
         second._soleTraderButton.trigger('click');
         expect(soleTrader._tokensGeneration).toBe(soleTrader._enrollGeneration);
+        expect(popup.focus).toHaveBeenCalledTimes(1);
     });
 
     test('a sibling\'s popup is never recorded as this capture\'s own launch', async () => {
@@ -866,7 +879,7 @@ describe('two captures on one page', () => {
         expect(secondAgain._soleTraderLoading).toBe(true);
     });
 
-    test('after a re-render the restored capture re-adopts the flight, so a Tab-raise then a completion is adopted', async () => {
+    test('after a re-render the restored capture re-adopts the flight, so a chip-click raise then a completion is adopted', async () => {
         await launchWithPopupOpen(first);
         first.armReopen(Date.now() + 1000);
         first.destroy();
@@ -874,7 +887,7 @@ describe('two captures on one page', () => {
         const replacement = makeInstance({ companyFieldSelector: '#company-a' });
         const publishes = stubManager(replacement);
         replacement.restorePanelAfterRerender();
-        replacement._soleTraderButton.get(0).focus();
+        replacement._soleTraderButton.trigger('click');
         expect(popup.focus).toHaveBeenCalled();
 
         lookupBuyer = NAMED_BUYER;
