@@ -465,9 +465,12 @@ is not persisted here", never to a dropped payment record.
       handler; the handler closes a popup still up itself for Safari's sake and never
       cancels the enrolment. Manual entry outranks a lookup still in flight: the popup
       module asks the capture whether it refuses the identity BEFORE writing the session
-      and again before publishing, and a refusal stops the write, the form fill, the
-      intent publish and the recheck alike; a lookup landing after the Registered chip
-      still adopts — accepted.
+      and again when the write lands; the first refusal stops the write, the second cannot
+      — it clears the written session instead — and either stops the form fill, the intent
+      publish and the recheck. The second ask runs AHEAD of the superseded-flight return,
+      which returns without clearing, so a refusal is honoured whether or not the flight
+      is still current. A lookup landing after the Registered chip still adopts —
+      accepted.
     - **A popup that opens after focus already moved on** (a slow mint) is judged at open
       by the same three rules as a focus arriving then.
     - **The launching control must not hold focus when the popup opens** — blur the

@@ -2118,6 +2118,12 @@ class TwoSoleTrader {
         })
             .then(function (response) { return response.json(); })
             .then(function (json) {
+                // Manual entry chosen while this request was out: the save above landed over the capture's clear, so clear again.
+                // Ahead of the supersession check, which returns without clearing and would leave the sole trader in the session.
+                const refused = self.captureRefusesAdoption();
+                if (refused) {
+                    self.clearCaptureSession();
+                }
                 if (self._enrollGeneration !== generation) {
                     // Superseded while this request was out. The server HAS
                     // been told to persist it either way (see the comment
@@ -2125,6 +2131,11 @@ class TwoSoleTrader {
                     // this for the OPPOSITE ordering) - only the in-memory
                     // publish and the on-screen status are skipped, so this
                     // does not fight whatever the buyer has done since.
+                    return;
+                }
+                if (refused) {
+                    self.hidePrompt();
+                    self.notifyEnrollmentSettled();
                     return;
                 }
                 if (json && json.success) {
@@ -2150,13 +2161,6 @@ class TwoSoleTrader {
                     // TwoCompanySearch. Three earlier attempts at this write-back
                     // were withdrawn for hand-rolling it here instead
                     // (`.ai/decisions.md`, 2026-08-10); see adoptSoleTraderBuyer().
-                    // Manual entry chosen while this request was out: the save above landed over its clear, so clear again.
-                    if (self.captureRefusesAdoption()) {
-                        self.clearCaptureSession();
-                        self.hidePrompt();
-                        self.notifyEnrollmentSettled();
-                        return;
-                    }
                     self.adoptEnrolledIdentity(buyer);
                     // TWO-25326 bug 8, review round 1: publish the enrolled
                     // sole trader as the confirmed selection, exactly as a
@@ -2242,7 +2246,14 @@ class TwoSoleTrader {
         }
     }
 
-    /** The capture's own `clearCompany`, for a save that landed after it refused (TWO-25658). */
+    /**
+     * The capture's own `clearCompany`, for a save that landed after it refused (TWO-25658).
+     *
+     * LIMITATION: best effort. With no capture mounted when the save lands - a re-render
+     * between the refusal and the response - the written session keeps the sole trader
+     * until the next save or clear. Publish and recheck are stopped either way, so the
+     * order payload reads the in-memory selection rather than this record.
+     */
     clearCaptureSession() {
         try {
             const manager = window.TwoCheckoutManager_Instance;
@@ -2255,7 +2266,15 @@ class TwoSoleTrader {
         }
     }
 
-    /** @returns {boolean} whether the mounted capture refuses a sole-trader identity outright (manual entry chosen, TWO-25658) */
+    /**
+     * LIMITATION, shared with adoptEnrolledIdentity() and clearCaptureSession(): the manager
+     * exposes ONE `companySearch`. On a two-address page the answer is the capture it
+     * currently exposes, which need not be the one that launched the popup - so a sibling's
+     * manual entry can refuse an identity the launching capture would have taken, and the
+     * write-back lands in the exposed capture's fields.
+     *
+     * @returns {boolean} whether the mounted capture refuses a sole-trader identity outright (manual entry chosen, TWO-25658)
+     */
     captureRefusesAdoption() {
         try {
             const manager = window.TwoCheckoutManager_Instance;
@@ -2523,7 +2542,15 @@ class TwoSoleTrader {
         return this.isPopupOpen() ? this._popupId : null;
     }
 
-    /** Doug's rules (TWO-25658), on every focus: the Sole trader chip has the popup open and in front; any other control closes it. */
+    /**
+     * Doug's rules (TWO-25658), on every focus: the Sole trader chip has the popup open and
+     * in front; any other control closes it.
+     *
+     * LIMITATION: only focus THIS plugin moves is quiet (focusQuietly()). A focus moved by
+     * the theme, another module or the browser - a validation jump, a restored scroll
+     * position, a password-manager fill - reads as the buyer and takes the popup down.
+     * Close only, so the enrolment survives and the chip reopens it.
+     */
     watchFocus() {
         if (this._returnHandler) {
             return;
@@ -2546,6 +2573,11 @@ class TwoSoleTrader {
         if (target.closest('.two-company-sole-trader-entry')) {
             if (!this.focusSignupPopup()) {
                 // The chip's own click handler is the one launch path.
+                //
+                // LIMITATION: a keyboard arrival launches from a Tab keydown, and whether
+                // browsers count that as the user activation `window.open` demands is
+                // unverified. A blocked open shows the error and settles the flight, so the
+                // buyer's way through is to press the chip.
                 target.click();
             }
         } else if (this.isPopupOpen()) {

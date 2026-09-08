@@ -1182,6 +1182,7 @@ class TwoCompanySearch {
     /** This panel takes on the flight behind a popup already up: a raise, or a re-render restore (TWO-25658). */
     resumeSoleTraderFlight() {
         this.beginSoleTraderLoading();
+        // Cleared by the call above; a resumed flight has its popup in front of the buyer already.
         this._popupSeenThisFlight = true;
         const soleTrader = this.soleTrader();
         if (soleTrader && typeof soleTrader.readoptEnrollment === 'function') {
@@ -1707,6 +1708,10 @@ class TwoCompanySearch {
                     return;
                 }
                 // A hand-closed window the poll has not noticed yet counts too; before this flight's popup ever opened, nothing does.
+                //
+                // LIMITATION: it takes a focus landing on a control in the panel. A buyer who
+                // closes the popup and touches nothing gets the settle's ordinary close -
+                // panel gone, focus on the company field.
                 if (this._popupSeenThisFlight && (detail.popupClosed || !this.isSoleTraderPopupOpen())) {
                     this._panelKeptPastPopup = true;
                 }

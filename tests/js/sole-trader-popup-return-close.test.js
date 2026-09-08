@@ -547,7 +547,10 @@ describe('the popup opening', () => {
         expect(soleTrader.enrolling).toBe(true);
     });
 
-    test('manual entry chosen while the save is out: the capture\'s clear follows the save, nothing is published', async () => {
+    test.each([
+        [false, 'the flight still current'],
+        [true, 'the flight superseded in between, which must not skip the clear']
+    ])('manual entry chosen while the save is out: the capture\'s clear follows the save, nothing is published - %s', async (supersede) => {
         const instance = await launchWithPopupOpen();
         const publishes = stubManager(instance);
         const clears = jest.spyOn(instance, 'clearPersistedCompany');
@@ -556,6 +559,9 @@ describe('the popup opening', () => {
         await settle();
         expect(heldSaves.length).toBe(1);
         panelParts().notListed.trigger('click');
+        if (supersede) {
+            soleTrader._enrollGeneration += 1;
+        }
         const clearsAtManual = clears.mock.calls.length;
         const before = publishes.length;
 
@@ -688,6 +694,26 @@ describe('the popup opening', () => {
         expect(document.activeElement).toBe(document.body);
         expect(shown(panelParts().panel)).toBe(true);
     });
+
+    test('a resumed flight counts the popup as seen, so a return into the restored panel keeps it', async () => {
+        document.querySelector("input[name='company']").id = 'company-field';
+        const instance = await launchWithPopupOpen();
+        instance.armReopen(Date.now() + 1000);
+        instance.destroy();
+        rerenderField('company-field');
+        const replacement = makeInstance();
+        replacement.restorePanelAfterRerender();
+        expect(replacement._soleTraderLoading).toBe(true);
+
+        // The restore leaves focus in the panel quietly; the Registered chip is the buyer's own return.
+        panelParts().registered.get(0).focus();
+        expect(popup.closed).toBe(true);
+        jest.advanceTimersByTime(600);
+
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(panelParts().nameField.hasClass('two-company-name-loading')).toBe(false);
+    });
+
 
     test('a sibling restoring its panel does not take over another capture\'s popup', async () => {
         addSecondAddressBlock();
