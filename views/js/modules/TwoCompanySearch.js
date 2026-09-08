@@ -149,8 +149,8 @@ class TwoCompanySearch {
             orderIntentUrl: page.order_intent_url || '',
             ajaxToken: page.ajax_token || ''
         };
-        this._reopenMemory = this.config.reopenMemory;
-        this._manualEntryMemory = this.config.manualEntryMemory;
+        this._reopenMemory = this.config.reopenMemory || {};
+        this._manualEntryMemory = this.config.manualEntryMemory || {};
 
         this.companyField = null;
         this.organizationField = null;
@@ -223,6 +223,9 @@ class TwoCompanySearch {
         // re-entrancy guard that keeps them to one hosted popup between them
         // (TWO-40 follow-up).
         this._soleTraderLoading = false;
+        // Set while a flight is live once the buyer came back into the panel from its popup (TWO-25658).
+        this._panelKeptPastPopup = false;
+        this._popupSeenThisFlight = false;
         // Per-instance suffix: the `mouseup` guard binds on `document`, where
         // the shared `.twoDropdown` namespace unbinds every instance's.
         TwoCompanySearch._instanceSeq += 1;
@@ -833,12 +836,8 @@ class TwoCompanySearch {
                 // and the settle listener would stay bound past the flow the
                 // buyer just walked away from.
                 this.endSoleTraderLoading();
-                // Popup AND enrolment go (Doug, TWO-40 follow-up): a lookup or
-                // mint still in flight would resolve into
-                // adoptSoleTraderBuyer(), which has no manual-entry guard,
-                // overwriting the name the buyer typed by hand and running the
-                // credit check against the identity they walked away from.
-                this.abandonSoleTraderFlow();
+                // Safari focuses no button on mousedown, so the focus watch may not have closed it.
+                this.closeSoleTraderSignupPopup();
                 this.enterManualEntryMode();
             });
         }
@@ -868,15 +867,8 @@ class TwoCompanySearch {
                 // settle listener leaves the restored panel with nothing to
                 // close it when the popup finally goes.
                 if (this.focusSoleTraderSignupPopup()) {
-                    this.beginSoleTraderLoading();
-                    this._chipMode = 'sole_trader';
-                    this.renderChipSelection();
-                    // Cancels the close ALREADY PENDING from this click's own
-                    // focus-out, and only that one. It cannot cover the close
-                    // that the raise itself provokes when the popup takes
-                    // focus: that focus-out arrives after this handler has
-                    // returned, and scheduleDropdownClose()'s
-                    // document.hasFocus() guard is what covers it.
+                    this.resumeSoleTraderFlight();
+                    // Cancels the panel close already pending from this click's own focus-out.
                     clearTimeout(this._closeTimerId);
                     this._closeTimerId = null;
                     return;
@@ -889,7 +881,11 @@ class TwoCompanySearch {
                 // second concurrent getCurrentBuyer() - on the no-match path
                 // that opened TWO signup popups from one buyer gesture.
                 if (this._soleTraderLoading) {
-                    return;
+                    if (!this._panelKeptPastPopup) {
+                        return;
+                    }
+                    // The popup this flight launched is gone and the buyer asks again: a fresh launch (TWO-25658).
+                    this.endSoleTraderLoading();
                 }
                 this._chipMode = 'sole_trader';
                 // This chip's own click handler is the only place
@@ -917,7 +913,7 @@ class TwoCompanySearch {
                         // startEnrollment() is foreign-module code: a
                         // synchronous throw would leave the spinner open with
                         // nothing left to ever settle it (TWO-40 round 5).
-                        soleTrader.startEnrollment();
+                        soleTrader.startEnrollment(this._instanceNs);
                     } catch (e) {
                         this.endSoleTraderLoading();
                         this.closeDropdown(true);
@@ -948,21 +944,12 @@ class TwoCompanySearch {
                 if (this._manualEntry) {
                     this.exitManualEntryMode();
                 }
-                // BEFORE abandonSoleTraderFlow(), not after (TWO-40 round 5):
-                // the cancel inside it fires the SAME settle event that
-                // beginSoleTraderLoading()'s own listener reacts to by calling
-                // closeDropdown(true). This handler wants to STAY OPEN, so its
-                // listener must already be unbound before that cancel can
-                // dispatch.
                 this.endSoleTraderLoading();
-                // Focus is coming back to the panel's query field, so the popup
-                // goes (Doug, TWO-40 follow-up - only the Sole trader chip keeps
-                // it), and the enrolment with it.
-                this.abandonSoleTraderFlow();
+                // Safari focuses no button on mousedown, so the focus watch may not have closed it.
+                this.closeSoleTraderSignupPopup();
+                // A lookup still out may yet adopt over this registered state unless manual entry latched - accepted (Doug, TWO-25658).
                 this.renderChipSelection();
-                if (this._queryField && this._queryField.length) {
-                    this._queryField.trigger('focus');
-                }
+                this.focusQuietly(this._queryField);
             });
         }
 
@@ -1061,9 +1048,7 @@ class TwoCompanySearch {
                 if (panelEl && active && panelEl.contains(active)) {
                     return;
                 }
-                if (this._queryField && this._queryField.length) {
-                    this._queryField.trigger('focus');
-                }
+                this.focusQuietly(this._queryField);
             });
 
         // A drag begun on the panel and released OUTSIDE the window fires no
@@ -1147,8 +1132,8 @@ class TwoCompanySearch {
     }
 
     /**
-     * Close once focus has genuinely settled somewhere outside the panel -
-     * and with it any hosted sole-trader signup popup still on screen.
+     * Close once focus has genuinely settled somewhere outside the panel; the
+     * popup's fate is TwoSoleTrader.watchFocus()'s (TWO-25658).
      *
      * Deliberately does NOT move focus. This fires on the way OUT - a Tab off
      * the "not on the list" button, or a click elsewhere on the form - and the
@@ -1170,40 +1155,15 @@ class TwoCompanySearch {
             if (active && this._dropdown.get(0).contains(active)) {
                 return;
             }
-            // Focus is back on the checkout page and has settled OUTSIDE the
-            // panel, so the buyer is looking at checkout rather than at the
-            // hosted signup popup - take the popup down too.
-            //
-            // Gated on the CHECKOUT PAGE having focus, which the panel's own
-            // close deliberately is not: a focus-out to another window,
-            // including the popup the Sole trader chip just raised, must leave
-            // it alone.
-            //
-            // The CLOSE HALF ONLY, not abandonSoleTraderFlow(): looking away
-            // from the popup is not a decision about the enrolment. It stays
-            // live and resumable, its tokens unspent, and a completion already
-            // on its way still publishes - which is why
-            // bindPopupMessageListener() is not gated on `enrolling`.
-            if (typeof document.hasFocus !== 'function' || document.hasFocus()) {
-                this.closeSoleTraderSignupPopup();
+            // The popup blurred the launching chip; the return watch owns this panel until it goes.
+            if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
+                return;
             }
             this.closeDropdown(false);
         }, 0);
     }
 
-    /**
-     * Take down the hosted sole-trader signup popup, if one is up.
-     *
-     * The rule the whole panel obeys (Doug, TWO-40 follow-up): focus coming
-     * back to the checkout page means the buyer is looking at checkout rather
-     * than at the popup, so the popup goes. THE ONE EXCEPTION is the Sole
-     * trader chip, which is a statement that the popup is what the buyer wants;
-     * that handler calls focusSoleTraderSignupPopup() instead.
-     *
-     * Each of the three chip handlers calls one or the other EXPLICITLY rather
-     * than leaving it to scheduleDropdownClose()'s deferred path, which cancels
-     * itself on any `focusin` back into the panel.
-     */
+    /** The close half only: the enrolment stays resumable, its tokens unspent. */
     closeSoleTraderSignupPopup() {
         const soleTrader = this.soleTrader();
         if (soleTrader && typeof soleTrader.closeSignupPopup === 'function') {
@@ -1211,14 +1171,66 @@ class TwoCompanySearch {
         }
     }
 
+    /** @returns {boolean} whether the hosted signup popup is on screen */
+    isSoleTraderPopupOpen() {
+        const soleTrader = this.soleTrader();
+        return !!(soleTrader
+            && typeof soleTrader.isPopupOpen === 'function'
+            && soleTrader.isPopupOpen());
+    }
+
+    /** This panel takes on the flight behind a popup already up: a raise, or a re-render restore (TWO-25658). */
+    resumeSoleTraderFlight() {
+        this.beginSoleTraderLoading();
+        this._popupSeenThisFlight = true;
+        const soleTrader = this.soleTrader();
+        if (soleTrader && typeof soleTrader.readoptEnrollment === 'function') {
+            soleTrader.readoptEnrollment();
+        }
+        this._reopenMemory.soleTraderPopup = this.soleTraderPopupLaunchId();
+        this._chipMode = 'sole_trader';
+        this.renderChipSelection();
+    }
+
+    /** @returns {boolean} manual entry the buyer CHOSE outranks a sole-trader lookup still in flight, and latches for the flight (TWO-25658); a scope-forced manual mount still takes the identity */
+    refusesSoleTraderAdoption() {
+        return !!(this._manualEntryMemory.active || this._manualEntryMemory.refusedSoleTrader);
+    }
+
+    /** @returns {?number} the open popup's per-launch id, null with none up */
+    soleTraderPopupLaunchId() {
+        const soleTrader = this.soleTrader();
+        if (soleTrader && typeof soleTrader.popupLaunchId === 'function') {
+            return soleTrader.popupLaunchId();
+        }
+        return null;
+    }
+
+    /** @returns {boolean} whether `node` is inside the open panel */
+    panelContains(node) {
+        return !!(node && this._dropdown && this._dropdown.length && this._dropdown.get(0).contains(node));
+    }
+
+    /** @param {?Object} $el jQuery object, focused without the popup's return watch reading it as the buyer */
+    focusQuietly($el) {
+        if (!$el || !$el.length) {
+            return;
+        }
+        const el = $el.get(0);
+        if (window.TwoSoleTrader && typeof window.TwoSoleTrader.focusQuietly === 'function') {
+            window.TwoSoleTrader.focusQuietly(el);
+        } else {
+            el.focus();
+        }
+    }
+
     /**
      * The buyer is leaving the sole-trader flow: popup down AND enrolment
      * cancelled, as one call.
      *
-     * Every gesture that means "I am done with sole trader" routes here rather
-     * than making the two calls itself (Doug, TWO-40 follow-up - closure and
-     * cancellation are "a single atomic operation"). The ordering that makes
-     * the pair work lives in TwoSoleTrader.abandonEnrollment(), once.
+     * The country-change listener's call, and the only one (Doug, TWO-25658):
+     * closure and cancellation are "a single atomic operation" (TWO-40
+     * follow-up), and its ordering lives in TwoSoleTrader.abandonEnrollment().
      *
      * Callers must still unbind their own settle listener FIRST where they mean
      * to keep the panel open - see endSoleTraderLoading()'s callers - because
@@ -1243,8 +1255,8 @@ class TwoCompanySearch {
         const soleTrader = this.soleTrader();
 
         return !!(soleTrader
-            && typeof soleTrader.focusSignupPopup === 'function'
-            && soleTrader.focusSignupPopup());
+            && typeof soleTrader.reclaimSignupPopup === 'function'
+            && soleTrader.reclaimSignupPopup());
     }
 
     /**
@@ -1268,25 +1280,10 @@ class TwoCompanySearch {
             || !this._queryField || !this._queryField.length) {
             return;
         }
-        // BEFORE abandonSoleTraderFlow() (TWO-40 round 5): the cancel inside it
-        // fires the settle event, and this method's own listener reacting to it
-        // would call closeDropdown(true) from INSIDE openDropdown(), re-closing
-        // the very panel this call is opening.
         this.endSoleTraderLoading();
-        // Reopening the search control is the buyer choosing ordinary company
-        // search over an "I'm a sole trader" row they may have clicked moments
-        // earlier (TWO-40), so the popup goes and the enrolment with it.
-        // TwoSoleTrader.js keeps its minted tokens either way, so a buyer who
-        // comes back to this row resumes rather than re-mints.
-        //
-        // ONLY for an open a buyer actually asked for. An address-form re-render
-        // restores a panel the buyer already had (restorePanelAfterRerender())
-        // without their intent having changed, and would otherwise cancel the
-        // enrolment out from under a buyer looking AT their signup popup - the
-        // cancel nulls TwoSoleTrader's popup handle without closing the window,
-        // from where the Sole trader chip would open a SECOND one (guide §14).
+        // Close only: the enrolment stays resumable everywhere but destroy() and a country change (Doug, TWO-25658).
         if (buyerInitiated) {
-            this.abandonSoleTraderFlow();
+            this.closeSoleTraderSignupPopup();
         }
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
@@ -1301,9 +1298,7 @@ class TwoCompanySearch {
         this.setDropdownExpandedState();
         // Every FRESH open starts at the default chip (TWO-40: "Default
         // selected chip: Registered Company") - UNLESS a sole trader is
-        // currently adopted, which the cancel above does not un-adopt: a sole
-        // trader IS what is selected in that state, so the reopened panel must
-        // show that chip selected.
+        // currently adopted: a sole trader IS what is selected in that state.
         this._chipMode = this.isSoleTraderAdopted() ? 'sole_trader' : 'registered';
         this.renderChipSelection();
         this.syncModeChipVisibility();
@@ -1331,14 +1326,12 @@ class TwoCompanySearch {
             for (let i = 0; i < chips.length; i++) {
                 const chip = chips[i];
                 if (chip && chip.length && chip.css('display') !== 'none') {
-                    chip.trigger('focus');
+                    this.focusQuietly(chip);
                     return;
                 }
             }
         }
-        if (this._queryField && this._queryField.length) {
-            this._queryField.trigger('focus');
-        }
+        this.focusQuietly(this._queryField);
     }
 
     /**
@@ -1384,7 +1377,7 @@ class TwoCompanySearch {
         }
         if (returnFocus && this.companyField && this.companyField.length
             && document.contains(this.companyField.get(0))) {
-            this.companyField.trigger('focus');
+            this.focusQuietly(this.companyField);
         }
     }
 
@@ -1657,7 +1650,8 @@ class TwoCompanySearch {
      * the Sole trader chip's first-time enrolment, and
      * triggerSelectDifferentSoleTrader()'s replacement flow. The only difference
      * between them is whether a dropdown happens to be open, which the settle
-     * handler resolves by closing the panel only if it is.
+     * handler resolves by closing the panel only if it is - and the buyer did
+     * not come back into it from the popup (TWO-25658).
      *
      * ON THE COMPANY-NAME FIELD, not the query field: selecting the Sole trader
      * chip hides that whole row immediately (syncQueryFieldSuppression()), and
@@ -1685,23 +1679,45 @@ class TwoCompanySearch {
             return false;
         }
         this._soleTraderLoading = true;
+        this._panelKeptPastPopup = false;
+        this._popupSeenThisFlight = false;
+        this._manualEntryMemory.refusedSoleTrader = false;
         if (this.companyField && this.companyField.length) {
             this.companyField.addClass('two-company-name-loading');
         }
-        $(document).off('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs)
+        $(document).off('.twoSoleTraderFlight' + this._instanceNs)
             .on('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs, () => {
-                if (this._dropdownOpen) {
+                if (this._dropdownOpen && !this._panelKeptPastPopup) {
                     // closeDropdown() itself calls endSoleTraderLoading() as its
                     // own first line.
                     this.closeDropdown(true);
                     return;
                 }
-                // No panel to close - the replacement flow launched from the
-                // standalone button. Drop the spinner directly: closeDropdown()
-                // also blanks the query term, resets the reopen deadline and
-                // pulls focus back to the company field, none of which this flow
-                // asked for.
+                // No panel to close, or the buyer came back to it; closeDropdown() would also blank the query and move focus.
                 this.endSoleTraderLoading();
+            })
+            // Rule 3 (TWO-25658): focus outside the panel closes it; back inside from a popup that just closed, it stays for good.
+            .on('two:sole-trader-focus-settled.twoSoleTraderFlight' + this._instanceNs, (event) => {
+                const detail = (event.originalEvent || event).detail || {};
+                if (!this._dropdownOpen) {
+                    return;
+                }
+                if (!this.panelContains(detail.target)) {
+                    this.closeDropdown(false);
+                    return;
+                }
+                // A hand-closed window the poll has not noticed yet counts too; before this flight's popup ever opened, nothing does.
+                if (this._popupSeenThisFlight && (detail.popupClosed || !this.isSoleTraderPopupOpen())) {
+                    this._panelKeptPastPopup = true;
+                }
+            })
+            // This capture's own launch, held in memory so its re-render restore resumes the flight (TWO-25658).
+            .on('two:sole-trader-popup-opened.twoSoleTraderFlight' + this._instanceNs, (event) => {
+                const detail = (event.originalEvent || event).detail;
+                if (detail && detail.launcher === this._instanceNs) {
+                    this._popupSeenThisFlight = true;
+                    this._reopenMemory.soleTraderPopup = detail.id;
+                }
             });
         return true;
     }
@@ -1715,7 +1731,7 @@ class TwoCompanySearch {
             return;
         }
         this._soleTraderLoading = false;
-        $(document).off('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs);
+        $(document).off('.twoSoleTraderFlight' + this._instanceNs);
         if (this.companyField && this.companyField.length) {
             this.companyField.removeClass('two-company-name-loading');
         }
@@ -3884,6 +3900,11 @@ class TwoCompanySearch {
         // it says a re-render is plausible, never that this open is one.
         this.openDropdown(false);
         this.armReopen(deadline);
+        // The popup outlives the instance that launched it (§14); this capture's replacement resumes the flight.
+        const popupId = this.soleTraderPopupLaunchId();
+        if (popupId !== null && this._reopenMemory.soleTraderPopup === popupId) {
+            this.resumeSoleTraderFlight();
+        }
     }
 
     /**
@@ -4069,6 +4090,8 @@ class TwoCompanySearch {
             return;
         }
         this._manualEntry = true;
+        // Latched for the flight: switching back to Registered must not let a late lookup adopt over the hand-typed name.
+        this._manualEntryMemory.refusedSoleTrader = true;
 
         // Drop the previously selected company BEFORE anything else.
         //
@@ -4105,9 +4128,7 @@ class TwoCompanySearch {
 
         // §2: activating "My company is not on the list" places focus in the
         // manual company name field. This is the one place that happens.
-        if (this.companyField && this.companyField.length) {
-            this.companyField.trigger('focus');
-        }
+        this.focusQuietly(this.companyField);
     }
 
     /**
@@ -4256,7 +4277,7 @@ class TwoCompanySearch {
         try {
             const soleTrader = this.soleTrader();
             if (soleTrader && typeof soleTrader.startReplacement === 'function') {
-                soleTrader.startReplacement();
+                soleTrader.startReplacement(this._instanceNs);
             } else {
                 // Nothing is going to fire the settle event for this click,
                 // so release the guard here rather than leaving it stuck and
@@ -5599,17 +5620,12 @@ class TwoCompanySearch {
 
                 // Abandon any sole-trader enrolment in flight for the
                 // PREVIOUS country (adversarial review round 2, TWO-40
-                // follow-up - Han finding). Same call `openDropdown()`/the
-                // "Registered Company" chip handler already make before
-                // doing anything else - this listener was the one path that
-                // could reach `startReplacement()` (via the "Select a
-                // different sole trader" link, which is NOT gated behind an
-                // open dropdown the way the "Sole Trader" chip is) without
-                // it. Without this, a mint/lookup started for the old
-                // country resolves with `_enrollGeneration` never bumped,
-                // reads as still-current, and can pop a signup popup - or
-                // worse, silently publish a completed enrolment - for a
-                // country the buyer has already moved off.
+                // follow-up - Han finding). Without this, a mint/lookup
+                // started for the old country resolves with
+                // `_enrollGeneration` never bumped, reads as still-current,
+                // and can pop a signup popup - or worse, silently publish a
+                // completed enrolment - for a country the buyer has already
+                // moved off.
                 //
                 // The popup goes too, for the same reason: its tokens were
                 // minted against the country the buyer just left, so nothing
@@ -5997,7 +6013,7 @@ class TwoCompanySearch {
      * @returns {boolean} whether anything was written
      */
     adoptSoleTraderBuyer(buyer) {
-        if (this._destroyed || !buyer || typeof buyer !== 'object') {
+        if (this._destroyed || this.refusesSoleTraderAdoption() || !buyer || typeof buyer !== 'object') {
             return false;
         }
         const number = String(buyer.organization_number == null ? '' : buyer.organization_number).trim();
