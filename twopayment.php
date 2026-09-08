@@ -1369,7 +1369,10 @@ class Twopayment extends PaymentModule
         // leaves the shop on the identity the cached record describes
         // (TWO-24813 / ABN-495).
         $identityChanged = $apiKeyToSave !== (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
-            || (string) $submittedEnv !== (string) Configuration::get('PS_TWO_ENVIRONMENT');
+            || (string) $submittedEnv !== (string) Configuration::get('PS_TWO_ENVIRONMENT')
+            // An unchanged key can still resolve a different merchant.
+            || ($this->verifiedMerchantId
+                && (string) Configuration::get('PS_TWO_MERCHANT_ID') !== (string) $this->verifiedMerchantId);
 
         // Server-derived, never a form input: wiping it would withhold Two on
         // hookPaymentOptions()' empty-short-name guard until the next

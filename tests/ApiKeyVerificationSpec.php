@@ -687,6 +687,7 @@ final class ApiKeyVerificationSpec
             array(self::transportOutcome(), 'stored-key', 'production', true, 'a changed environment'),
             array(self::transportOutcome(), 'stored-key', 'staging', false, 'an unchanged key and environment'),
             array(self::httpOutcome(401), 'freshly-pasted-key', 'staging', false, 'a rejected key the save reverted'),
+            array(self::okOutcome(), 'stored-key', 'staging', true, 'an unchanged key that resolved a different merchant'),
         );
 
         foreach ($cases as list($outcome, $apiKey, $environment, $dropped, $case)) {
