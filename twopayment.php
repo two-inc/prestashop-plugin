@@ -1354,15 +1354,11 @@ class Twopayment extends PaymentModule
                 // to store the very key that fixes it (ABN-495).
                 $this->apiKeyVerificationWarning = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
             } else {
-                $body = isset($verify['body']) && is_array($verify['body']) ? $verify['body'] : array();
-                if (!isset($body['id']) || !isset($body['short_name'])) {
-                    // A 2xx carrying no merchant record confirmed nothing, so it
-                    // does not block the save either (ABN-495).
-                    $this->apiKeyVerificationWarning = sprintf($this->l('Invalid verification response from %s.'), $this->getTwoBrandConfig('product_name'));
-                } else {
-                    $this->verifiedMerchantId = $body['id'];
-                    $this->verifiedMerchantShortName = $body['short_name'];
-                }
+                // An 'ok' verdict guarantees the record: verifyTwoApiKey() classes
+                // a record-less 200 as 'error' (ABN-495).
+                $body = $verify['body'];
+                $this->verifiedMerchantId = $body['id'];
+                $this->verifiedMerchantShortName = $body['short_name'];
             }
         }
     }
@@ -10031,12 +10027,9 @@ class Twopayment extends PaymentModule
         }
 
         $decoded = json_decode((string) $response, true);
-        if (!is_array($decoded)) {
-            // A 200 whose body is not the merchant record is not a verified
-            // key: something is answering on the endpoint's behalf (a captive
-            // portal, a proxy error page). 'error' rather than 'invalid_key' -
-            // the key was never judged.
-            PrestaShopLogger::addLog('TwoPayment: API key verification returned an unreadable body on HTTP 200', 2);
+        if (!is_array($decoded) || !isset($decoded['id']) || !isset($decoded['short_name'])) {
+            // A 200 that is not the merchant record - a captive portal, a proxy error page, a truncated body - judged no key, so 'error' rather than 'invalid_key'.
+            PrestaShopLogger::addLog('TwoPayment: API key verification returned no merchant record on HTTP 200', 2);
             return array('status' => self::API_KEY_STATUS_ERROR, 'code' => $httpCode, 'body' => null);
         }
 

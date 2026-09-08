@@ -321,7 +321,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a7ae6fbd75c4968e5b9c92b908fe824e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_ab63d3168928b8331551047a81e5dd32'] = 'Velg land ovenfor for å søke opp firmaet ditt.';
 $_MODULE['<{twopayment}prestashop>twopayment_6ebe8c3878e997b8c76f41aa5db69404'] = 'Grunnlag for tilleggsberegning';
 $_MODULE['<{twopayment}prestashop>twopayment_ad390087f94a9a17adaf0b81ad83b2e7'] = 'fra slutten av måneden';
-$_MODULE['<{twopayment}prestashop>twopayment_15d430d1904e4424f0b8a0e37750060e'] = 'Ugyldig verifiseringssvar fra %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b1021ae56c3544e96ea36a7d80e48145'] = 'Kundene må oppgi firmanavnet sitt i fakturaadressen';
 $_MODULE['<{twopayment}prestashop>twopayment_6c00ecbc1163f6b8f6f8f9892b1380b5'] = 'Det oppsto et problem med å behandle %s-betalingsforespørselen din. Prøv igjen eller velg en annen betalingsmåte.';
 $_MODULE['<{twopayment}prestashop>twopayment_b2676a7777337b3c9d44551409210ae7'] = 'Gebyr for betalingsvilkår';

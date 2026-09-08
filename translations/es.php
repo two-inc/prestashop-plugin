@@ -46,7 +46,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Introduce una clave API.';
 $_MODULE['<{twopayment}prestashop>twopayment_c0df38350f764595ec9eb062507f895e'] = 'Selecciona un entorno válido (Producción o Staging).';
 $_MODULE['<{twopayment}prestashop>twopayment_1924a6cb5a7ce6a33e93620792fea964'] = 'Debes seleccionar al menos un plazo de pago.';
-$_MODULE['<{twopayment}prestashop>twopayment_15d430d1904e4424f0b8a0e37750060e'] = 'Respuesta de verificación no válida desde %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_85925e31c13734f285ce48920c8120b9'] = 'La configuración general se ha actualizado.';
 $_MODULE['<{twopayment}prestashop>twopayment_a8ad8ed0d7a57bafaf4fa86fda0dd87f'] = 'Otras configuraciones';
 $_MODULE['<{twopayment}prestashop>twopayment_b84314af1b3c855ab4aa6f76cbd8c852'] = 'Usar selección de tipo de cuenta';

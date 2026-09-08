@@ -15,6 +15,7 @@ final class ApiKeyVerificationSpec
         self::testTransportFailureIsUnreachableNotAnInvalidKey();
         self::testOtherNonOkCodesAreGenericErrors();
         self::testUnreadableBodyOnHttp200IsNotAVerifiedKey();
+        self::testARecordlessHttp200IsNotAVerifiedKey();
         self::testVerifiedKeyReturnsTheMerchantRecord();
         self::testMissingKeyIsNotConfigured();
 
@@ -31,6 +32,7 @@ final class ApiKeyVerificationSpec
         // Checkout gate.
         self::testEveryFailureCategoryWithholdsThePaymentOption();
         self::testVerifiedKeyKeepsThePaymentOption();
+        self::testARecordlessHttp200WithholdsThePaymentOption();
         self::testWithholdingThePaymentOptionIsLogged();
         self::testWithholdReasonIsLoggedOncePerRequestNotPerCall();
         self::testPaymentSubmissionIsRefusedWhenTheKeyDoesNotVerify();
@@ -195,6 +197,12 @@ final class ApiKeyVerificationSpec
     private static function httpOutcome(int $code, string $body = 'the raw upstream body'): array
     {
         return array('response' => $body, 'code' => $code, 'error' => '');
+    }
+
+    /** A 200 the endpoint answered, carrying no merchant record. */
+    private static function recordlessOutcome(): array
+    {
+        return array('response' => json_encode(array('detail' => 'ok')), 'code' => 200, 'error' => '');
     }
 
     private static function transportOutcome(): array
@@ -374,6 +382,20 @@ final class ApiKeyVerificationSpec
         $result = $module->verifyForTest('stored-key');
 
         TinyAssert::same(Twopayment::API_KEY_STATUS_ERROR, $result['status']);
+        TinyAssert::notSame(Twopayment::API_KEY_STATUS_OK, $result['status']);
+    }
+
+    /**
+     * A 200 carrying no id or short_name confirmed nothing, so it is not a
+     * verified key - the buyer gate must withhold Two on it (ABN-495).
+     */
+    private static function testARecordlessHttp200IsNotAVerifiedKey(): void
+    {
+        $module = self::module(self::recordlessOutcome());
+        $result = $module->verifyForTest('stored-key');
+
+        TinyAssert::same(Twopayment::API_KEY_STATUS_ERROR, $result['status']);
+        TinyAssert::same(200, $result['code']);
         TinyAssert::notSame(Twopayment::API_KEY_STATUS_OK, $result['status']);
     }
 
@@ -559,7 +581,6 @@ final class ApiKeyVerificationSpec
     private static function testOnlyARejectedKeyBlocksTheGeneralSave(): void
     {
         $timeoutOutcome = array('response' => false, 'code' => 0, 'error' => 'Operation timed out');
-        $recordlessOutcome = array('response' => json_encode(array('detail' => 'ok')), 'code' => 200, 'error' => '');
         $cases = array(
             array(self::transportOutcome(), true, 'new-merchant', 'a connection failure'),
             array($timeoutOutcome, true, 'new-merchant', 'a timeout'),
@@ -569,7 +590,7 @@ final class ApiKeyVerificationSpec
             // The verified short name replaces the submitted one, by design.
             array(self::okOutcome(), true, 'acme', 'a verified key'),
             // Nothing to replace it with, so the submitted short name stands.
-            array($recordlessOutcome, true, 'new-merchant', 'a 200 carrying no merchant record'),
+            array(self::recordlessOutcome(), true, 'new-merchant', 'a 200 carrying no merchant record'),
         );
 
         foreach ($cases as list($outcome, $persists, $expectedShortName, $case)) {
@@ -604,10 +625,17 @@ final class ApiKeyVerificationSpec
                 );
             }
             if ($persists) {
+                $verified = $outcome === self::okOutcome();
                 TinyAssert::same(
-                    $outcome === self::okOutcome() ? '1' : '0',
+                    $verified ? '1' : '0',
                     (string) Configuration::get('PS_TWO_API_KEY_VERIFIED'),
                     $case . ' must record whether the key it stored is verified'
+                );
+                $published = json_decode((string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS), true);
+                TinyAssert::same(
+                    $verified,
+                    is_array($published) && $published['status'] === Twopayment::API_KEY_STATUS_OK,
+                    $case . ' must publish a verdict the checkout gate can trust'
                 );
             }
         }
@@ -705,6 +733,34 @@ final class ApiKeyVerificationSpec
         self::offerableCart($module);
 
         TinyAssert::same(1, count($module->hookPaymentOptions([])), 'a verified key must still be offered Two');
+    }
+
+    /**
+     * The fail-closed half of ABN-495, asserted through the gate's own live
+     * check rather than a primed verdict: a 200 with no merchant record used to
+     * categorise as 'ok', so Two was offered with no merchant identity stored.
+     */
+    private static function testARecordlessHttp200WithholdsThePaymentOption(): void
+    {
+        $module = self::module(self::recordlessOutcome());
+        self::offerableCart($module);
+
+        TinyAssert::same(
+            0,
+            count($module->hookPaymentOptions([])),
+            'a 200 carrying no merchant record must withhold the payment option'
+        );
+
+        // The same cart with a real record, so the assertion above is the
+        // verdict talking and not some other guard on this path.
+        $verified = self::module(self::okOutcome());
+        self::offerableCart($verified);
+
+        TinyAssert::same(
+            1,
+            count($verified->hookPaymentOptions([])),
+            'and a 200 that does carry one must still be offered Two'
+        );
     }
 
     private static function testWithholdingThePaymentOptionIsLogged(): void
