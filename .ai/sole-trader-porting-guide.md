@@ -437,21 +437,24 @@ is not persisted here", never to a dropped payment record.
     A cancel/abandon must be able to FORCE the dispatch past that gate, since the
     generation bump it performs has already disowned whatever is still in the air.
   - **Three rules, on EVERY focus event** (Doug, TWO-25658), from one page-lifetime
-    document-level capture `focusin` the popup module owns: (1) focus arriving on the ONE Sole
-    trader chip whose activation opened the popup on screen changes NOTHING: the popup is
-    left exactly as it was, open or closed. Only an activation of that chip moves it, and
-    its own click handler owns that: a raise when a popup is already up, a launch when none
-    is; (2) focus on ANY other control closes an open popup —
+    document-level capture `focusin` the popup module owns: (1) focus arriving on the Sole
+    trader chip of the capture that OWNS the open popup changes NOTHING: the popup is left
+    exactly as it was, open or closed. Ownership is per capture, not per control — the chip
+    and that capture's "Select a different sole trader" button are two controls of one
+    capture, so a popup either of them opened is that chip's to keep. Only an activation of
+    that chip moves it, and its own click handler owns that: a raise when a popup is already
+    up, a launch when none is; (2) focus on ANY other control closes an open popup —
     close only, the enrolment stays resumable with its tokens unspent — including the
     Registered/Enter-manually chips and the "Select a different sole trader" button, whose
     clicks then do their own job (the chips never cancel; the button opens a fresh popup).
     A DIFFERENT capture's Sole trader chip is one of those other controls, and gets a popup
-    of its own: the close is followed by an activation of the chip focus landed on. A chip
-    whose own capture launched the popup through some other control — the replacement
-    button, the blocked-popup prompt — is not a different capture and takes the plain close;
+    of its own: the close is followed by an activation of the chip focus landed on;
     (3) focus outside the launching panel closes that panel too. The capture's own
     company-name field counts as INSIDE: it is the popover's trigger, and its focus opener
-    would otherwise race rule (3) on event order. Nothing else: no timer,
+    would otherwise race rule (3) on event order.
+    - **The launching capture names its own chip on every launch it starts**, chip click and
+      replacement button alike, and the popup module records it only for a window that
+      actually opened — so a blocked launch's retry inherits the same owner. Nothing else: no timer,
     no `visibilitychange` (a separate window never takes the tab out of `visible`), no
     `document.hasFocus()` gate. A tab or window switch, or a click on the page background,
     focuses no control and changes nothing; a browser re-firing focus at the previously

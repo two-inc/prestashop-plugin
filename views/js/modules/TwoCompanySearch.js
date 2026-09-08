@@ -4361,7 +4361,10 @@ class TwoCompanySearch {
         try {
             const soleTrader = this.soleTrader();
             if (soleTrader && typeof soleTrader.startReplacement === 'function') {
-                soleTrader.startReplacement(this._instanceNs);
+                soleTrader.startReplacement(
+                    this._instanceNs,
+                    this._soleTraderButton && this._soleTraderButton.get(0)
+                );
             } else {
                 // Nothing is going to fire the settle event for this click,
                 // so release the guard here rather than leaving it stuck and

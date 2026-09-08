@@ -127,9 +127,11 @@ class TwoSoleTrader {
         this._launchControl = null;
         // The Sole trader chip whose activation opened the popup on screen -
         // the one control focus may arrive on without taking that popup down.
-        // Another popover's chip is a different control (TWO-25658).
+        // Another CAPTURE's chip is a different control; this capture's own chip
+        // is exempt whichever of its controls started the flow (TWO-25658).
         this._launchChip = null;
-        // Named by the activation, consumed by openPopup().
+        // Named by the launching capture, consumed by openPopup() - and only on
+        // a window that actually opened, so a blocked launch's retry inherits it.
         this._pendingLaunchChip = null;
         // Guards settleFocusOn() against the relaunch it starts re-entering it.
         this._settlingFocus = false;
@@ -1057,9 +1059,8 @@ class TwoSoleTrader {
      * sole trader" row.
      *
      * @param {?string} launcher opaque id of the capture asking
-     * @param {?Element} [chip] the Sole trader chip whose activation this is,
-     *   which openPopup() records as the popup's owner (TWO-25658). Absent for
-     *   any other route into enrolment.
+     * @param {?Element} [chip] the asking capture's own Sole trader chip, which
+     *   openPopup() records as the popup's owner (TWO-25658).
      */
     startEnrollment(launcher, chip) {
         this.enrolling = true;
@@ -1093,12 +1094,16 @@ class TwoSoleTrader {
      *
      * `autoselect=false` on the popup URL is not interpreted server-side
      * yet (handled elsewhere); it is appended unconditionally regardless.
+     *
+     * @param {?string} launcher opaque id of the capture asking
+     * @param {?Element} [chip] that capture's own Sole trader chip, which owns
+     *   the popup this opens: the exemption is per CAPTURE, and this control
+     *   belongs to the same one (TWO-25658).
      */
-    startReplacement(launcher) {
+    startReplacement(launcher, chip) {
         this.enrolling = true;
         this._launcher = launcher || null;
-        // No chip launched this, so no chip owns the popup it opens.
-        this._pendingLaunchChip = null;
+        this._pendingLaunchChip = this.chipOf(chip || null);
         this._launchControl = document.activeElement;
         this._skipAutofillCheck = true;
         // Tokens are not country-specific - see startEnrollment().
@@ -2627,11 +2632,9 @@ class TwoSoleTrader {
         document.dispatchEvent(new CustomEvent('two:sole-trader-focus-settled', {
             detail: { target: target, popupClosed: popupClosed }
         }));
-        // A DIFFERENT popover's chip gets a popup of its own; activating it is
+        // A DIFFERENT capture's chip gets a popup of its own; activating it is
         // what that means, and its click handler is the one place a launch is
-        // spelled out. A chip whose own popover launched the popup through some
-        // other control (the replacement link, the blocked-popup prompt) is not
-        // a different popover, and takes the plain close above.
+        // spelled out.
         if (chip && this._launchChip && !ownsPopup && popupClosed
             && typeof chip.click === 'function') {
             this._settlingFocus = true;

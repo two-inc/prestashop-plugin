@@ -294,6 +294,28 @@ describe('Doug\'s three rules on focus (TWO-25658)', () => {
         expect(soleTrader._enrollGeneration).toBe(generation);
     });
 
+    test('a replacement launch belongs to the same capture, so that capture\'s chip is still exempt', async () => {
+        // The exemption is per CAPTURE, not per control: "Select a different
+        // sole trader" and the Sole trader chip are two controls of one
+        // capture, so a popup either of them opened is that chip's to keep.
+        const search = await launchWithPopupOpen();
+        popup.close();
+        jest.advanceTimersByTime(600);
+        popup = fakePopup();
+
+        search.triggerSelectDifferentSoleTrader();
+        await settle();
+        expect(global.window.open).toHaveBeenCalledTimes(2);
+        expect(popup.closed).toBe(false);
+
+        panelParts().soleTrader.get(0).focus();
+        await settle();
+        jest.advanceTimersByTime(10);
+
+        expect(popup.closed).toBe(false);
+        expect(global.window.open).toHaveBeenCalledTimes(2);
+    });
+
     test('a focusin on body changes nothing', async () => {
         await launchWithPopupOpen();
 
