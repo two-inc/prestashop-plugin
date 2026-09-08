@@ -201,6 +201,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_4e48eb7b84e6418738c6548b3c826d94'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'Kunne ikke bygge datainnholdet for ordreintensjonen';
 $_MODULE['<{twopayment}prestashop>twopayment_e8eab90af94027d0c5ae97667a307a3e'] = 'Vilkår med slutten av måneden (EOM):';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = 'Denne API-nøkkelen ble avvist av %1$s. Den kan være ugyldig eller utløpt - kontroller nøkkelen i %1$s-portalen din.';
+$_MODULE['<{twopayment}prestashop>twopayment_935a9723572dd90aed81e13b2d4fdd2e'] = 'Den tidligere lagrede nøkkelen ble beholdt.';
 $_MODULE['<{twopayment}prestashop>twopayment_539de410a9a131c0e925dc8e248a29d2'] = 'Betalingsfristen er slutten av inneværende måned pluss X dager fra datoen ordren blir oppfylt. Eksempel: Hvis du oppfyller en ordre 15. januar med vilkåret EOM+30, er betalingsfristen 28. februar (slutten av januar + 30 dager). Dette er vanlig ved B2B-fakturering.';
 $_MODULE['<{twopayment}prestashop>twopayment_fb3ff8dd49a6e7ecf023f6941320801c'] = 'Kunne ikke behandle ordren din med %s-betaling. Velg en annen betalingsmåte eller kontakt butikken.';
 $_MODULE['<{twopayment}prestashop>twopayment_57bd2a90727f3223958f7fd9bc6442f0'] = 'Viktige krav';

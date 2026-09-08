@@ -1344,58 +1344,73 @@ class Twopayment extends PaymentModule
                 && (string) $env === (string) Configuration::get('PS_TWO_ENVIRONMENT')) {
                 $this->cacheTwoApiKeyVerificationStatus($apiKey, $verify);
             }
-            if ($verify['status'] === self::API_KEY_STATUS_INVALID) {
+            if ($verify['status'] !== self::API_KEY_STATUS_OK) {
                 // Category-specific, so the merchant is not left choosing
                 // between "my key is wrong" and "Two is down" (TWO-25326).
-                $this->errors[] = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
-            } elseif ($verify['status'] !== self::API_KEY_STATUS_OK) {
-                // Only an upstream rejection may block the save: an outage
-                // judged no key, and blocking would strand the merchant unable
-                // to store the very key that fixes it (ABN-495).
+                // Never blocking, a rejection included: the save is how a key
+                // gets replaced, and refusing it discards the vendor name and
+                // environment submitted beside it too (ABN-495).
                 $this->apiKeyVerificationWarning = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
+                if ($verify['status'] === self::API_KEY_STATUS_INVALID) {
+                    $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key was kept.');
+                }
             } else {
-                // An 'ok' verdict guarantees the record: verifyTwoApiKey() classes
-                // a record-less 200 as 'error' (ABN-495).
+                // An 'ok' verdict guarantees an id: verifyTwoApiKey() classes a
+                // record-less 200 as 'error'. A short name is optional, and an
+                // empty one withholds Two at checkout on its own (ABN-495).
                 $body = $verify['body'];
                 $this->verifiedMerchantId = $body['id'];
-                $this->verifiedMerchantShortName = $body['short_name'];
+                $this->verifiedMerchantShortName = isset($body['short_name']) ? (string) $body['short_name'] : '';
             }
         }
     }
 
     protected function saveTwoGeneralFormValues()
     {
+        $submittedApiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
+        $submittedEnv = Tools::getValue('PS_TWO_ENVIRONMENT');
+        // A key Two rejected is the one submitted value a save may not commit:
+        // it would take Two off a checkout the stored key still serves.
+        $rejected = is_array($this->verifiedApiKeyResult)
+            && $this->verifiedApiKeyResult['status'] === self::API_KEY_STATUS_INVALID;
+        $apiKeyToSave = $rejected ? (string) Configuration::get('PS_TWO_MERCHANT_API_KEY') : $submittedApiKey;
+        // The cached merchant record - terms, default term, platform minimum,
+        // buyer countries - describes whoever answered for the previous key, so
+        // a submitted key or environment change drops it whatever the verdict
+        // was. An unverifiable save would otherwise pair a new key with the
+        // previous merchant's terms and minimum as soon as the gate reopened
+        // (TWO-24813 / ABN-495).
+        $identityChanged = $submittedApiKey !== (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
+            || (string) $submittedEnv !== (string) Configuration::get('PS_TWO_ENVIRONMENT');
+
         // If verification succeeded, use verified short name; else fallback to form (kept for safety)
         $shortNameToSave = $this->verifiedMerchantShortName ? $this->verifiedMerchantShortName : trim(Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME'));
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
-        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKeyToSave);
         Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', $submittedEnv);
+
+        if ($identityChanged) {
+            $this->invalidateMerchantAvailableTerms();
+            // The rates themselves are merchant-independent, so the
+            // last-known-good TABLE stays - it is the gate's only fallback -
+            // but a clock still inside its 6h TTL would suppress the warm-up
+            // fetch below for up to six hours (TWO-25184).
+            Configuration::updateValue(self::CONFIG_FX_RATES_TS, 0);
+        }
+
         // The verdict from the live check the validation above just made, now
         // that the key it describes is the stored one (TWO-25326). This is the
         // freshest that key will ever have had, so it becomes what the checkout
         // gates read: a merchant who has just fixed a broken key sees Two
-        // return to checkout at once instead of waiting out the TTL.
-        if (is_array($this->verifiedApiKeyResult)) {
-            $this->cacheTwoApiKeyVerificationStatus(
-                trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')),
-                $this->verifiedApiKeyResult
-            );
+        // return to checkout at once instead of waiting out the TTL. Skipped
+        // when a rejected key was reverted, since the verdict then describes a
+        // key this shop does not have.
+        if (is_array($this->verifiedApiKeyResult) && $apiKeyToSave === $submittedApiKey) {
+            $this->cacheTwoApiKeyVerificationStatus($apiKeyToSave, $this->verifiedApiKeyResult);
         }
 
         if ($this->verifiedMerchantId) {
-            if ((string) Configuration::get('PS_TWO_MERCHANT_ID') !== (string) $this->verifiedMerchantId) {
-                // Merchant identity changed: drop the cached term list so
-                // serve-stale never bridges the old merchant's terms (TWO-24813).
-                $this->invalidateMerchantAvailableTerms();
-                // Same for the FX refresh clock (TWO-25184): the rates
-                // themselves are merchant-independent, so the last-known-good
-                // TABLE stays (it is the gate's only fallback), but the new
-                // identity may be a different environment - and a clock still
-                // inside its 6h TTL would suppress the warm-up fetch that
-                // follows this save for up to six hours.
-                Configuration::updateValue(self::CONFIG_FX_RATES_TS, 0);
-            }
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
         } else {
@@ -10027,7 +10042,7 @@ class Twopayment extends PaymentModule
         }
 
         $decoded = json_decode((string) $response, true);
-        if (!is_array($decoded) || !isset($decoded['id']) || !isset($decoded['short_name'])) {
+        if (!is_array($decoded) || !isset($decoded['id'])) {
             // A 200 that is not the merchant record - a captive portal, a proxy error page, a truncated body - judged no key, so 'error' rather than 'invalid_key'.
             PrestaShopLogger::addLog('TwoPayment: API key verification returned no merchant record on HTTP 200', 2);
             return array('status' => self::API_KEY_STATUS_ERROR, 'code' => $httpCode, 'body' => null);

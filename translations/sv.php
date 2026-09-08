@@ -201,6 +201,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_4e48eb7b84e6418738c6548b3c826d94'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'Kunde inte bygga nyttolasten för order intent';
 $_MODULE['<{twopayment}prestashop>twopayment_e8eab90af94027d0c5ae97667a307a3e'] = 'Villkor för månadsskifte (EOM):';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = 'Den här API-nyckeln avvisades av %1$s. Den kan vara ogiltig eller ha upphört att gälla - kontrollera nyckeln i din %1$s-portal.';
+$_MODULE['<{twopayment}prestashop>twopayment_935a9723572dd90aed81e13b2d4fdd2e'] = 'Den tidigare sparade nyckeln behölls.';
 $_MODULE['<{twopayment}prestashop>twopayment_539de410a9a131c0e925dc8e248a29d2'] = 'Betalning förfaller vid månadsskiftet plus X dagar från leveransdatumet. Exempel: om du levererar en order den 15 januari med villkoret EOM+30 förfaller betalningen den 28 februari (slutet av januari + 30 dagar). Detta är vanligt vid B2B-fakturering.';
 $_MODULE['<{twopayment}prestashop>twopayment_fb3ff8dd49a6e7ecf023f6941320801c'] = 'Kunde inte behandla din order med %s-betalning. Välj en annan betalningsmetod eller kontakta butiken.';
 $_MODULE['<{twopayment}prestashop>twopayment_57bd2a90727f3223958f7fd9bc6442f0'] = 'Viktiga krav';

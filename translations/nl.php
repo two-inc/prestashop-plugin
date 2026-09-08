@@ -201,6 +201,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_4e48eb7b84e6418738c6548b3c826d94'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'De payload voor de order intent kon niet worden opgebouwd';
 $_MODULE['<{twopayment}prestashop>twopayment_e8eab90af94027d0c5ae97667a307a3e'] = 'Einde-van-de-maand (EOM) termijnen:';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = 'Deze API-sleutel is geweigerd door %1$s. Mogelijk is de sleutel ongeldig of verlopen - controleer de sleutel in je %1$s-portaal.';
+$_MODULE['<{twopayment}prestashop>twopayment_935a9723572dd90aed81e13b2d4fdd2e'] = 'De eerder opgeslagen sleutel is behouden.';
 $_MODULE['<{twopayment}prestashop>twopayment_539de410a9a131c0e925dc8e248a29d2'] = 'Betaling vervalt aan het einde van de maand plus X dagen, gerekend vanaf de uitleverdatum. Voorbeeld: lever je een bestelling uit op 15 januari met EOM+30, dan vervalt de betaling op 28 februari (einde januari + 30 dagen). Dit is gebruikelijk bij B2B-facturatie.';
 $_MODULE['<{twopayment}prestashop>twopayment_fb3ff8dd49a6e7ecf023f6941320801c'] = 'Je bestelling kan niet worden verwerkt met %s-betaling. Kies een andere betaalmethode of neem contact op met de winkel.';
 $_MODULE['<{twopayment}prestashop>twopayment_57bd2a90727f3223958f7fd9bc6442f0'] = 'Belangrijke vereisten';
