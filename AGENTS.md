@@ -93,6 +93,97 @@ The standard for EVERY module setting, not only the surcharge method.
 Degrading a junk value to a working default is the failure this replaces: it
 prices an order under a configuration nobody chose, and nobody is told.
 
+## Company Search: This Module's Own Implementation
+
+`views/js/modules/TwoCompanySearch.js` is this module's own panel. The Magento and
+WooCommerce plugins share one framework-free panel module between them; nothing of
+that is vendored here, so a fix to shared panel behaviour on those two platforms is
+not a fix here, and vice versa. Never describe a change as cross-platform without
+having made it in each module that carries the behaviour.
+
+**The unsupported-country gate disables the Registered Company chip, never manual
+entry.** Manual entry hands the field over as a plain typeable input that never
+reaches the registry, so disabling it there blocks a mode that was never going to
+search and leaves a buyer in an uncovered country with no way to name their company
+at all.
+
+**Focus alone does not open the panel here.** Only a real click on the company-name
+field, or a keypress on it other than Tab, opens it — the requirement this module
+implements, stated in `setupCompanyFieldOpeners()`. The Magento panel opens on
+focus. That is a live divergence between the platforms, not an oversight: do not
+claim parity, and do not harmonise either one to the other without a product ruling.
+
+The field is `readonly` in search mode, never `disabled`: a readonly input still
+submits its value, still takes focus and is still a tab stop, and it IS
+PrestaShop's own address field.
+
+## What Focus Landing on the Checkout Does to an Open Signup Popup
+
+Every focus while the hosted sole-trader signup window is up is classified once
+(TWO-25658):
+
+- **The Sole trader chip leaves the popup exactly as it is.** Only an activation of
+  that chip moves it, and that chip's own click handler owns it.
+- **Any other control closes an open popup**, and the popover closes itself when
+  focus lands outside it.
+
+Only focus this module moves is quiet. Focus moved by the theme, another module or
+the browser — a validation jump, a restored scroll position, a password-manager
+fill — reads as the buyer and takes the popup down. Close only, so the enrolment
+survives and the chip reopens it.
+
+## A Popup Window Is In No Tab Listing
+
+`window.open` returns a window outside a browser extension's tab group, so a tab
+list can never answer "did the popup open" — nor can a hang. The authoritative check
+is the page's own retained handle and its `.closed`, which means wrapping
+`window.open` before the action that should raise one. Judging from a tab list
+yields a confident false "no window opened".
+
+## Keyboard Behaviour Is Not Verifiable In jsdom
+
+jsdom implements no sequential focus navigation: a dispatched `Tab` keydown moves
+focus nowhere, so no `make test-js` suite can observe a focus trap, a wrong tab
+order or a reverse-Tab dead end, however many cases it carries and however green it
+is. Assert the observable proxies — the parts are one contiguous run in document
+order, nothing inside the panel carries a non-negative `tabindex` it should not,
+the handler leaves the `Tab` event undefaulted — and verify the keyboard behaviour
+itself in a real browser. A passing jsdom Tab test is never evidence that a trap is
+absent.
+
+## The Custom Request-Header Table
+
+Every rule the save enforces — reserved names matched case-insensitively,
+printable-ASCII values, no empty name — is re-applied where a header is READ, since
+a stored value can arrive from a hand-edited row or an import that no form
+validated. A refusal names the rule, never who sets the header: the reason must be
+true of every reserved name, not of the one example that prompted the question.
+**A value pattern is anchored `\z`, never `$`** — `$` also matches immediately
+before a trailing newline, which is precisely the byte a printable-ASCII rule exists
+to refuse, and a header value ending in one is a response-splitting sink.
+**There is deliberately no data patch** for the single token field it replaced —
+that field never reached a production release on any platform, so no merchant ever
+had one configured; do not add one on the assumption that stored values exist.
+
+## A Guard Is Invoked Through `bash`
+
+A script committed mode `100644` and run as `./script.sh` exits 126. On a CI
+dashboard that is indistinguishable from a check that ran and failed, so the guard's
+own absence reads as its verdict. Invoke anything whose failure mode is "did not
+execute" as `bash script.sh`, and have it print what it checked.
+
+## This Is A Public Repository
+
+- No partner or merchant name reaches file contents, a commit body, a branch name or
+  a PR title or body. Gate before pushing: a force-push afterwards does not remove a
+  commit from GitHub's history.
+- In comments, commit messages and PR bodies alike, cite a Linear ticket id and
+  nothing else: a section, question or ruling number belonging to an internal review
+  document means nothing to a reader outside the company, and neither does a person
+  named as the authority for a rule.
+- Describe another plugin's behaviour in your own words; never reproduce its source
+  text, schema fragments or test identifiers here.
+
 ## Change Quality Rules
 
 - Keep diffs targeted; avoid unrelated refactors in payment-critical paths.
