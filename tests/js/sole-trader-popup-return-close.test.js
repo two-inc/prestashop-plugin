@@ -240,7 +240,8 @@ describe('Doug\'s three rules on focus (TWO-25658)', () => {
         'the Registered chip': () => panelParts().registered.get(0),
         'the Enter manually chip': () => panelParts().notListed.get(0),
         'a non-chip control inside the panel': () => panelParts().query.get(0),
-        'a control outside the panel': () => panelParts().nameField.get(0),
+        'the company-name field': () => panelParts().nameField.get(0),
+        'a control outside the popover': () => document.querySelector("input[name='dni']"),
         'a "Select a different sole trader" button': () => {
             const button = document.createElement('button');
             button.className = 'two-company-select-different-sole-trader';
@@ -263,13 +264,15 @@ describe('Doug\'s three rules on focus (TWO-25658)', () => {
         ['popup open', 'the Registered chip', 1, true, false, true, 'rule 2: closed on focus arrival, the click is still to come'],
         ['popup open', 'the Enter manually chip', 1, true, false, true, 'rule 2: closed on focus arrival'],
         ['popup open', 'a non-chip control inside the panel', 1, true, false, true, 'rule 2: closed, panel kept'],
-        ['popup open', 'a control outside the panel', 1, true, false, false, 'rules 2+3: popup and panel close'],
+        ['popup open', 'the company-name field', 1, true, false, true, 'rule 2 closes the popup; the field is the popover\'s own trigger and its focus opener holds the popover open'],
+        ['popup open', 'a control outside the popover', 1, true, false, false, 'rules 2+3: popup and panel close'],
         ['popup open', 'a "Select a different sole trader" button', 1, true, false, false, 'rule 2: a control like any other, its click relaunches'],
         ['popup closed', 'the Sole trader chip', 1, false, false, true, 'rule 1: a Tab arrival with no popup opens none'],
         ['popup closed', 'the Registered chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'the Enter manually chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'a non-chip control inside the panel', 1, false, false, true, 'nothing to close'],
-        ['popup closed', 'a control outside the panel', 1, false, false, false, 'rule 3: the panel closes'],
+        ['popup closed', 'the company-name field', 1, false, false, true, 'the field reopens the popover it triggers'],
+        ['popup closed', 'a control outside the popover', 1, false, false, false, 'rule 3: the panel closes'],
         ['popup closed', 'a "Select a different sole trader" button', 1, false, false, false, 'rule 3: the panel closes']
     ])('%s, focus lands on %s: opens=%s closed=%s raised=%s panelOpen=%s - %s', async (state, target, opens, closed, raised, panelOpen) => {
         await launchWithPopupOpen();
@@ -783,35 +786,41 @@ describe('two captures on one page', () => {
         expect(siblingClose).not.toHaveBeenCalled();
     });
 
-    test('focus on the sibling\'s Sole trader chip leaves the popup the other capture launched alone, and rule 3 closes that capture\'s panel; the click raises it', async () => {
+    test('focus on the sibling\'s Sole trader chip closes the popup it did not launch and gets one of its own', async () => {
+        // TWO-25658: only the chip whose activation opened a popup leaves that
+        // popup alone. A different popover's chip is a different control, and
+        // the rule gives it a popup of its own. The launching capture's panel
+        // closes on the same focus, so this is the only shape in which the two
+        // chips are ever both live.
         await launchWithPopupOpen(first);
-
         second.openDropdown(false);
+        const launched = popup;
+        popup = fakePopup();
+
         second._soleTraderButton.get(0).focus();
+        await settle();
+        jest.advanceTimersByTime(10);
 
-        expect(popup.focus).not.toHaveBeenCalled();
-        expect(popup.closed).toBe(false);
+        expect(launched.closed).toBe(true);
+        expect(launched.focus).not.toHaveBeenCalled();
         expect(first._dropdownOpen).toBe(false);
-
-        second._soleTraderButton.trigger('click');
-
-        expect(popup.focus).toHaveBeenCalledTimes(1);
-        expect(popup.closed).toBe(false);
+        expect(global.window.open).toHaveBeenCalledTimes(2);
     });
 
-    test('a Tab onto the Sole trader chip neither raises nor re-adopts a disowned enrolment; a click does both', async () => {
+    test('the sibling\'s own launch re-adopts the enrolment a cancel disowned', async () => {
         await launchWithPopupOpen(first);
         soleTrader.cancelEnrollment(true);
-        const disowned = soleTrader._tokensGeneration;
 
         second.openDropdown(false);
+        const launched = popup;
+        popup = fakePopup();
         second._soleTraderButton.get(0).focus();
-        expect(soleTrader._tokensGeneration).toBe(disowned);
-        expect(popup.focus).not.toHaveBeenCalled();
+        await settle();
+        jest.advanceTimersByTime(10);
 
-        second._soleTraderButton.trigger('click');
+        expect(launched.closed).toBe(true);
         expect(soleTrader._tokensGeneration).toBe(soleTrader._enrollGeneration);
-        expect(popup.focus).toHaveBeenCalledTimes(1);
+        expect(global.window.open).toHaveBeenCalledTimes(2);
     });
 
     test('a sibling\'s popup is never recorded as this capture\'s own launch', async () => {

@@ -134,7 +134,7 @@ describe('the real jQuery UI widget is what gets bound', () => {
     });
 });
 
-describe('#30.x.14 bug 2.1: a real click opens a control, plain keyboard focus does not', () => {
+describe('a click and a focus arrival both open the control', () => {
     function menu() {
         return $('ul.ui-autocomplete');
     }
@@ -164,17 +164,16 @@ describe('#30.x.14 bug 2.1: a real click opens a control, plain keyboard focus d
         expect(menu().find('li')).toHaveLength(0);
     });
 
-    test('plain keyboard focus (Tab, no mousedown) opens nothing', () => {
-        // Round-1 adversarial review (Vader): opening for keyboard focus with
-        // no signal of intent would announce a result with nothing keyboard-
-        // selectable. Gating on a real `mousedown` (which Tab never fires)
-        // keeps Tab silent while still opening for an actual click.
+    test('keyboard focus with no mousedown opens it too', () => {
+        // TWO-25503: a Tab arrival opens the panel exactly as a click does. Safe
+        // only alongside the tab stop the open panel takes off the field -
+        // without it the two adjacent controls oscillate under shift+Tab.
         makeInstance();
         const field = liveField();
 
         field.trigger('focus');
 
-        expect(shown(panel())).toBe(false);
+        expect(shown(panel())).toBe(true);
     });
 
     test('clicking the field while in manual entry opens nothing', () => {
@@ -187,23 +186,19 @@ describe('#30.x.14 bug 2.1: a real click opens a control, plain keyboard focus d
         expect(shown(panel())).toBe(false);
     });
 
-    test('the pointer signal is one-shot: a second focus with no mousedown in between does not reopen it', () => {
+    test('a close that returns focus to the field does not reopen the panel', () => {
+        // Escape's route: closeDropdown(true) puts focus back on the field, and
+        // the field's own focus opener must not undo the close that moved it.
         const instance = makeInstance();
         const field = liveField();
 
         click(field);
         expect(shown(panel())).toBe(true);
 
-        // Closed through the control's own close path rather than by hiding
-        // jQuery UI's menu element by hand: the panel - not the menu - is what
-        // opens and shuts now, so this test is about whether the SECOND focus
-        // below reopens THAT.
-        instance.closeDropdown(false);
-        expect(shown(panel())).toBe(false);
-
-        field.trigger('focus');
+        instance.closeDropdown(true);
 
         expect(shown(panel())).toBe(false);
+        expect(field.attr('tabindex')).toBeUndefined();
     });
 
     test('a destroyed instance does not reopen the menu on click', () => {

@@ -206,6 +206,14 @@ class TwoCompanySearch {
         this._chipMode = 'registered';
         this._resultsList = null;
         this._dropdownOpen = false;
+        // Suppresses the company field's own open-on-focus while this instance
+        // moves focus back onto it. See closeDropdown().
+        this._closingSelf = false;
+        // The company field's `tabindex` before the open panel took its tab
+        // stop; null = the attribute was absent. See holdCompanyFieldTabStop().
+        this._companyFieldTabIndex = null;
+        // The field whose tab stop this instance currently holds, or null.
+        this._tabStopHeldOn = null;
         // Deferred close, so focus moving BETWEEN two controls inside the
         // panel (query field -> "not on the list") does not read as leaving
         // it. See scheduleDropdownClose().
@@ -657,6 +665,12 @@ class TwoCompanySearch {
         }
 
         panel = $('<div class="two-company-dropdown" hidden></div>');
+        // A freshly built panel is hidden, so the state it establishes is
+        // closed. A host that re-renders the wrapper while the panel was open
+        // would otherwise leave the field at `tabindex="-1"` with nothing on
+        // screen to put it back.
+        this._dropdownOpen = false;
+        this.releaseCompanyFieldTabStop();
 
         const searchRow = $('<div class="two-company-dropdown__search"></div>');
         // `aria-label` deliberately does NOT mirror the placeholder:
@@ -746,6 +760,7 @@ class TwoCompanySearch {
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
         this._dropdownOpen = false;
+        this.releaseCompanyFieldTabStop();
         this._pointerInPanel = false;
         // Before the container reference below is dropped, or the pending
         // release fires against a panel that no longer exists.
@@ -913,7 +928,10 @@ class TwoCompanySearch {
                         // startEnrollment() is foreign-module code: a
                         // synchronous throw would leave the spinner open with
                         // nothing left to ever settle it (TWO-40 round 5).
-                        soleTrader.startEnrollment(this._instanceNs);
+                        soleTrader.startEnrollment(
+                            this._instanceNs,
+                            this._soleTraderButton && this._soleTraderButton.get(0)
+                        );
                     } catch (e) {
                         this.endSoleTraderLoading();
                         this.closeDropdown(true);
@@ -1207,6 +1225,11 @@ class TwoCompanySearch {
         return null;
     }
 
+    /** @returns {?Element} the company-name field this instance is mounted on */
+    companyFieldNode() {
+        return (this.companyField && this.companyField.length) ? this.companyField.get(0) : null;
+    }
+
     /** @returns {boolean} whether `node` is inside the open panel */
     panelContains(node) {
         return !!(node && this._dropdown && this._dropdown.length && this._dropdown.get(0).contains(node));
@@ -1261,6 +1284,39 @@ class TwoCompanySearch {
     }
 
     /**
+     * Take the company-name field out of the tab order for as long as the panel
+     * is open (TWO-25503).
+     *
+     * `-1` rather than removing it from the order outright: closeDropdown()'s
+     * own focus() and the field's click opener both still need it focusable.
+     */
+    holdCompanyFieldTabStop() {
+        if (!this.companyField || !this.companyField.length || this._tabStopHeldOn) {
+            return;
+        }
+        const held = this.companyField.attr('tabindex');
+        this._companyFieldTabIndex = typeof held === 'undefined' ? null : held;
+        this._tabStopHeldOn = this.companyField.get(0);
+        this.companyField.attr('tabindex', '-1');
+    }
+
+    /** Give the field back exactly the tab stop it had before the panel opened. */
+    releaseCompanyFieldTabStop() {
+        const field = this._tabStopHeldOn;
+        if (!field) {
+            return;
+        }
+        this._tabStopHeldOn = null;
+        const previous = this._companyFieldTabIndex;
+        this._companyFieldTabIndex = null;
+        if (previous === null) {
+            field.removeAttribute('tabindex');
+        } else {
+            field.setAttribute('tabindex', previous);
+        }
+    }
+
+    /**
      * Open the panel and put focus in the query field (§1).
      *
      * The company-name field is NOT touched: §1 requires it to be left
@@ -1295,6 +1351,7 @@ class TwoCompanySearch {
         this._pointerInPanel = false;
 
         this._dropdownOpen = true;
+        this.holdCompanyFieldTabStop();
         this._dropdown.removeAttr('hidden').show();
         this.setDropdownExpandedState();
         // Every FRESH open starts at the default chip (TWO-40: "Default
@@ -1348,6 +1405,10 @@ class TwoCompanySearch {
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
         this._dropdownOpen = false;
+        // Immediately after the flag, and ahead of everything below: a throw
+        // out of the jQuery UI release or a host handler would otherwise strand
+        // the field at `-1`, out of the tab order for the page's life.
+        this.releaseCompanyFieldTabStop();
         // A closed panel must stay closed. The re-render path re-arms this
         // immediately after calling here, which is the one case where a
         // rebuild is allowed to reopen; every other close - Escape, a
@@ -1378,7 +1439,14 @@ class TwoCompanySearch {
         }
         if (returnFocus && this.companyField && this.companyField.length
             && document.contains(this.companyField.get(0))) {
-            this.focusQuietly(this.companyField);
+            // Holds off the field's own focus opener, which would otherwise
+            // reopen the panel this call is closing.
+            this._closingSelf = true;
+            try {
+                this.focusQuietly(this.companyField);
+            } finally {
+                this._closingSelf = false;
+            }
         }
     }
 
@@ -1698,12 +1766,14 @@ class TwoCompanySearch {
                 this.endSoleTraderLoading();
             })
             // Rule 3 (TWO-25658): focus outside the panel closes it; back inside from a popup that just closed, it stays for good.
+            // The company field counts as inside: it is the popover's own trigger, and its focus opener would otherwise race this on event order.
             .on('two:sole-trader-focus-settled.twoSoleTraderFlight' + this._instanceNs, (event) => {
                 const detail = (event.originalEvent || event).detail || {};
                 if (!this._dropdownOpen) {
                     return;
                 }
-                if (!this.panelContains(detail.target)) {
+                if (!this.panelContains(detail.target)
+                    && detail.target !== this.companyFieldNode()) {
                     this.closeDropdown(false);
                     return;
                 }
@@ -1801,21 +1871,30 @@ class TwoCompanySearch {
     }
 
     /**
-     * What opens the panel (§1): a real click on the company-name field, or a
-     * keypress on it other than Tab.
+     * What opens the panel: focus arriving on the company-name field, a click
+     * on it, or a keypress on it other than Tab and Escape.
      *
-     * Focus ALONE does not open it - the requirement verbatim ("note that
-     * merely moving focus into it does not open the dropdown - only clicking or
-     * typing").
+     * Focus arriving by Tab opens it exactly as a click does - registered-company
+     * mode, caret in the query field (TWO-25503). Which is only safe alongside
+     * holdCompanyFieldTabStop(): the open panel puts the caret in the query
+     * field, so leaving a tab stop here would catch shift+Tab coming back out
+     * and push it forward again, WCAG 2.1.2.
      *
-     * Modifier-only keydowns are ignored for the same reason: Shift on its own
-     * is how a buyer starts Shift+Tab, and Shift+Tab is a Tab.
+     * Modifier-only keydowns are left to the focus opener rather than opening
+     * on their own: Shift on its own is how a buyer starts Shift+Tab.
      */
     setupCompanyFieldOpeners() {
         if (!this.companyField || !this.companyField.length) {
             return;
         }
         this.companyField.off('.twoCompanyOpen');
+
+        this.companyField.on('focus.twoCompanyOpen', () => {
+            if (this._destroyed || this._manualEntry || this._closingSelf) {
+                return;
+            }
+            this.openDropdown();
+        });
 
         this.companyField.on('mousedown.twoCompanyOpen', (event) => {
             // NOT guarded on `this._dropdownOpen` (TWO-40 round 5): clicking
