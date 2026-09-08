@@ -1335,11 +1335,11 @@ class Twopayment extends PaymentModule
             // to the rest of the form.
             //
             // The environment half matters: the check above ran against the
-            // SUBMITTED environment while the slot is keyed to the STORED one,
-            // which a skipped save leaves unchanged - so a merchant merely
-            // switching the dropdown to an environment their key is not valid for
-            // would otherwise take Two off a healthy checkout with an
-            // 'invalid_key' verdict against their stored configuration.
+            // SUBMITTED environment while the slot is keyed to the STORED one -
+            // so a merchant merely switching the dropdown to an environment
+            // their key is not valid for would otherwise take Two off a healthy
+            // checkout with an 'invalid_key' verdict against the configuration
+            // the shop is still running.
             if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
                 && (string) $env === (string) Configuration::get('PS_TWO_ENVIRONMENT')) {
                 $this->cacheTwoApiKeyVerificationStatus($apiKey, $verify);
@@ -1383,8 +1383,13 @@ class Twopayment extends PaymentModule
         $identityChanged = $submittedApiKey !== (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
             || (string) $submittedEnv !== (string) Configuration::get('PS_TWO_ENVIRONMENT');
 
-        // If verification succeeded, use verified short name; else fallback to form (kept for safety)
-        $shortNameToSave = $this->verifiedMerchantShortName ? $this->verifiedMerchantShortName : trim(Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME'));
+        // Server-derived, never a form input: a save that resolved no merchant
+        // keeps the stored one. Wiping it would withhold Two at checkout on
+        // hookPaymentOptions()' empty-short-name guard until the next
+        // successful verification (ABN-495).
+        $shortNameToSave = $this->verifiedMerchantShortName
+            ? $this->verifiedMerchantShortName
+            : (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKeyToSave);
         Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
@@ -11775,8 +11780,8 @@ class Twopayment extends PaymentModule
     protected $verifiedApiKeyResult = null;
 
     /**
-     * Non-blocking wording for a general-form verification that never judged the
-     * key - an outage, not a rejection (ABN-495). Null when there is none.
+     * Non-blocking wording for a general-form verification that did not come
+     * back OK (ABN-495). Null when there is none.
      *
      * @var string|null
      */

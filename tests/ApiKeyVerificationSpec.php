@@ -606,17 +606,17 @@ final class ApiKeyVerificationSpec
         $idOnlyOutcome = array('response' => json_encode(array('id' => 'm-123')), 'code' => 200, 'error' => '');
         // [wire outcome, key that must end up stored, short name that must end
         // up stored, wording the warning must carry (null = no warning), why].
+        // The short name is server-derived, not a form input, so a save that
+        // resolved no merchant must leave the stored one alone.
         $cases = array(
-            array(self::transportOutcome(), 'freshly-pasted-key', 'new-merchant', 'could not reach', 'a connection failure'),
-            array($timeoutOutcome, 'freshly-pasted-key', 'new-merchant', 'could not reach', 'a timeout'),
-            array(self::httpOutcome(500), 'freshly-pasted-key', 'new-merchant', 'could not verify the API key right now', 'a 500 from the API'),
-            array(self::httpOutcome(401), 'stored-key', 'new-merchant', 'previously saved key was kept', 'a 401 rejection'),
-            array(self::httpOutcome(403), 'stored-key', 'new-merchant', 'previously saved key was kept', 'a 403 rejection'),
-            // The verified short name replaces the submitted one, by design.
+            array(self::transportOutcome(), 'freshly-pasted-key', 'old-merchant', 'could not reach', 'a connection failure'),
+            array($timeoutOutcome, 'freshly-pasted-key', 'old-merchant', 'could not reach', 'a timeout'),
+            array(self::httpOutcome(500), 'freshly-pasted-key', 'old-merchant', 'could not verify the API key right now', 'a 500 from the API'),
+            array(self::httpOutcome(401), 'stored-key', 'old-merchant', 'previously saved key was kept', 'a 401 rejection'),
+            array(self::httpOutcome(403), 'stored-key', 'old-merchant', 'previously saved key was kept', 'a 403 rejection'),
             array(self::okOutcome(), 'freshly-pasted-key', 'acme', null, 'a verified key'),
-            // Nothing to replace it with, so the submitted short name stands.
-            array($idOnlyOutcome, 'freshly-pasted-key', 'new-merchant', null, 'a record with no short name'),
-            array(self::recordlessOutcome(), 'freshly-pasted-key', 'new-merchant', 'unexpected response', 'a 200 carrying no merchant record'),
+            array($idOnlyOutcome, 'freshly-pasted-key', 'old-merchant', null, 'a record with no short name'),
+            array(self::recordlessOutcome(), 'freshly-pasted-key', 'old-merchant', 'unexpected response', 'a 200 carrying no merchant record'),
         );
 
         foreach ($cases as list($outcome, $expectedKey, $expectedShortName, $warning, $case)) {
@@ -624,7 +624,7 @@ final class ApiKeyVerificationSpec
             $module = self::module($outcome);
             Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', 'old-merchant');
             Configuration::updateValue('PS_TWO_VENDOR_NAME', 'Old Vendor');
-            Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'new-merchant');
+            // Only the three inputs the General form actually posts.
             Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'freshly-pasted-key');
             Tools::setTestValue('PS_TWO_VENDOR_NAME', 'New Vendor');
             Tools::setTestValue('PS_TWO_ENVIRONMENT', 'production');
