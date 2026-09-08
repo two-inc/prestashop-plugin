@@ -23,8 +23,11 @@ class TwoSurchargeCalculator
         'standard' => 'STANDARD',
     );
 
-    /** Anything else is treated as "none". */
+    /** The surcharge-bearing methods; 'none' and the unset '' are known but price nothing. */
     const VALID_TYPES = array('percentage', 'fixed', 'fixed_and_percentage');
+
+    /** Gated on by both the save validator and the runtime read, so they cannot drift. */
+    const KNOWN_TYPES = array('none', 'percentage', 'fixed', 'fixed_and_percentage');
 
     /**
      * The pricing API refuses a value finer than two places rather than
@@ -33,6 +36,8 @@ class TwoSurchargeCalculator
     const MONEY_DECIMALS = 2;
 
     /**
+     * ADMIN form only: a stored junk value must still render a correctable page.
+     *
      * @param mixed $type
      * @return string
      */
@@ -41,6 +46,47 @@ class TwoSurchargeCalculator
         $type = (string) $type;
 
         return in_array($type, self::VALID_TYPES, true) ? $type : 'none';
+    }
+
+    /**
+     * '' is the unset key, which the read path maps to 'none'.
+     *
+     * @param mixed $type
+     * @return bool
+     */
+    public static function isKnownType($type)
+    {
+        if ($type === false || $type === null || $type === '') {
+            return true;
+        }
+
+        return is_scalar($type) && in_array((string) $type, self::KNOWN_TYPES, true);
+    }
+
+    /**
+     * The unset key ('', false, absent) reads as 'none'.
+     *
+     * @param mixed $type
+     * @return string
+     */
+    public static function mapKnownType($type)
+    {
+        return ($type === false || $type === null || $type === '') ? 'none' : (string) $type;
+    }
+
+    /**
+     * @param mixed $type
+     * @return string
+     * @throws Exception
+     */
+    public static function assertKnownType($type)
+    {
+        if (!self::isKnownType($type)) {
+            // Internal backstop: the module refuses and reports before this.
+            throw new Exception('Unrecognised surcharge method');
+        }
+
+        return self::mapKnownType($type);
     }
 
     /**
@@ -56,7 +102,7 @@ class TwoSurchargeCalculator
      */
     public static function buildBuyerFeeShare(array $settings, $days, $defaultTerm, $isEndOfMonth)
     {
-        $type = self::normalizeType(isset($settings['type']) ? $settings['type'] : 'none');
+        $type = self::assertKnownType(isset($settings['type']) ? $settings['type'] : 'none');
         if ($type === 'none') {
             return null;
         }

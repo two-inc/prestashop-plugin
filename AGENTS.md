@@ -69,6 +69,30 @@ Edit these files by hand. Norwegian is `no.php` (PrestaShop's `iso_code`), never
 - `views/templates/hook/*.tpl`: admin and checkout rendering
 - `tests/run.php`: tax/amount/order payload invariants (self-contained runner, no composer deps)
 
+## Admin Settings Fail Loud: An Unrecognised Stored Value Is Never Priced
+
+The standard for EVERY module setting, not only the surcharge method.
+
+- Save refuses it. The form validator rejects a posted value outside the
+  field's known set before anything is written, so a crafted POST cannot store
+  a value nothing understands. Only the field's unset key persists as the
+  default.
+- Read paths raise. The settings getter is the single choke point: it maps the
+  unset key to the default and throws for anything else. Callers that price a
+  fee or build an order let that throw.
+- Gates catch it. The payment-option hook withholds Two and nothing else; the
+  hooks that render on every request take the contained read and degrade to
+  "no fee" rather than 500ing the page. The getter logs the offending value
+  once per request, so the catchers stay quiet.
+- Buyer copy stays generic. The buyer sees the existing "not available for this
+  order" wording. A setting name, a stored value or an enum key never reaches
+  the storefront — those belong in `ps_log` and in the admin form's own error.
+- The admin form keeps the lenient read, so a shop with a corrupt stored value
+  still renders a correctable settings page.
+
+Degrading a junk value to a working default is the failure this replaces: it
+prices an order under a configuration nobody chose, and nobody is told.
+
 ## Change Quality Rules
 
 - Keep diffs targeted; avoid unrelated refactors in payment-critical paths.

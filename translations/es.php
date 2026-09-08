@@ -435,3 +435,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_1e0bf2fd8c2dc505dc11f1cbf7b2172e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4009e05973e240e0ae89bfb77b847115'] = 'Cabeceras que su administrador de TI le pide añadir. Cada una se envía en todas las llamadas que esta tienda hace a la API de %s desde su servidor.';
 $_MODULE['<{twopayment}prestashop>twopayment_b42b57d56d7d5c1b63351f4d87e396c0'] = 'Marque "Enviar también desde el navegador" solo cuando su administrador de TI requiera la cabecera también para las llamadas desde el navegador del comprador: el valor de esa cabecera se publicará en el navegador del comprador y cualquiera podrá leerlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_1063e38cb53d94d386f21227fcd84717'] = 'Eliminar';
+$_MODULE['<{twopayment}prestashop>twopayment_404c493aff65500a37b1f0d09ffa29ae'] = 'Método de recargo no reconocido: %1$s. Elija uno de: %2$s.';
