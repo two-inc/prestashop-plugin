@@ -75,8 +75,6 @@ class TwoSurchargeCalculator
     }
 
     /**
-     * The strict read used everywhere except the admin form.
-     *
      * @param mixed $type
      * @return string
      * @throws Exception
