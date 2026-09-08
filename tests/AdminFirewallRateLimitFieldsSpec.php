@@ -44,6 +44,7 @@ final class AdminFirewallRateLimitFieldsSpec
         self::testValidationRejectsLineBreakInValue();
         self::testValidationRejectsReservedHeaderNames();
         self::testValidationRejectsNonPrintableValues();
+        self::testHeaderValidatorsAnchorAtEndOfString();
         self::testValidationAcceptsWellFormedRows();
         self::testReservedNameListIsComplete();
         self::testReservedRowsAreNeverSent();
@@ -469,6 +470,31 @@ final class AdminFirewallRateLimitFieldsSpec
             Tools::setTestValue('two_custom_header_value', array($value));
 
             TinyAssert::true(count(self::validate()) > 0, 'the value must be refused: ' . $description);
+        }
+    }
+
+    /**
+     * The validators are asserted directly: the save path trims the posted row, so a
+     * trailing newline never reaches them through the form.
+     */
+    private static function testHeaderValidatorsAnchorAtEndOfString(): void
+    {
+        $cases = array(
+            array('isValidTwoHeaderValue', "waf-token-1\n", false, 'a value ending in LF carries the byte that splits the request'),
+            array('isValidTwoHeaderValue', "waf-token-1\r", false, 'a value ending in CR carries half a request-splitting sequence'),
+            array('isValidTwoHeaderValue', "waf-token-1\r\n", false, 'a value ending in CRLF terminates the header line'),
+            array('isValidTwoHeaderValue', "waf-token-1\nX-Evil: 1", false, 'an embedded LF appends a header of the merchant\'s choosing'),
+            array('isValidTwoHeaderValue', 'waf-token-1', true, 'printable ASCII is still accepted'),
+            array('isValidTwoHeaderName', "X-WAF-TOKEN\n", false, 'a name ending in LF splits the request before the value is read'),
+            array('isValidTwoHeaderName', 'X-WAF-TOKEN', true, 'an RFC 7230 token is still accepted'),
+        );
+
+        foreach ($cases as list($validator, $input, $expected, $description)) {
+            TinyAssert::same(
+                $expected,
+                Twopayment::$validator($input),
+                'Twopayment::' . $validator . '() must return ' . var_export($expected, true) . ': ' . $description
+            );
         }
     }
 

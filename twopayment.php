@@ -15198,13 +15198,14 @@ class Twopayment extends PaymentModule
      */
     public static function isValidTwoHeaderName($name)
     {
-        return (bool) preg_match('/^[A-Za-z0-9!#$%&\'*+.^_`|~-]+$/', (string) $name);
+        return (bool) preg_match('/^[A-Za-z0-9!#$%&\'*+.^_`|~-]+\z/', (string) $name);
     }
 
     /**
      * Printable ASCII only: excludes CR/LF (request splitting), NUL and other
      * control characters (log injection), and non-ASCII bytes (encoding
-     * ambiguity between the store, curl and the firewall).
+     * ambiguity between the store, curl and the firewall). Anchored with \z
+     * because $ also matches before a trailing newline.
      *
      * @param string $value
      *
@@ -15212,7 +15213,7 @@ class Twopayment extends PaymentModule
      */
     public static function isValidTwoHeaderValue($value)
     {
-        return (bool) preg_match('/^[\x20-\x7E]+$/', (string) $value);
+        return (bool) preg_match('/^[\x20-\x7E]+\z/', (string) $value);
     }
 
     /**
