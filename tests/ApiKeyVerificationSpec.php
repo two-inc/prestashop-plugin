@@ -559,6 +559,7 @@ final class ApiKeyVerificationSpec
     private static function testOnlyARejectedKeyBlocksTheGeneralSave(): void
     {
         $timeoutOutcome = array('response' => false, 'code' => 0, 'error' => 'Operation timed out');
+        $recordlessOutcome = array('response' => json_encode(array('detail' => 'ok')), 'code' => 200, 'error' => '');
         $cases = array(
             array(self::transportOutcome(), true, 'new-merchant', 'a connection failure'),
             array($timeoutOutcome, true, 'new-merchant', 'a timeout'),
@@ -567,6 +568,8 @@ final class ApiKeyVerificationSpec
             array(self::httpOutcome(403), false, null, 'a 403 rejection'),
             // The verified short name replaces the submitted one, by design.
             array(self::okOutcome(), true, 'acme', 'a verified key'),
+            // Nothing to replace it with, so the submitted short name stands.
+            array($recordlessOutcome, true, 'new-merchant', 'a 200 carrying no merchant record'),
         );
 
         foreach ($cases as list($outcome, $persists, $expectedShortName, $case)) {

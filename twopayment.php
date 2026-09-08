@@ -1356,7 +1356,9 @@ class Twopayment extends PaymentModule
             } else {
                 $body = isset($verify['body']) && is_array($verify['body']) ? $verify['body'] : array();
                 if (!isset($body['id']) || !isset($body['short_name'])) {
-                    $this->errors[] = sprintf($this->l('Invalid verification response from %s.'), $this->getTwoBrandConfig('product_name'));
+                    // A 2xx carrying no merchant record confirmed nothing, so it
+                    // does not block the save either (ABN-495).
+                    $this->apiKeyVerificationWarning = sprintf($this->l('Invalid verification response from %s.'), $this->getTwoBrandConfig('product_name'));
                 } else {
                     $this->verifiedMerchantId = $body['id'];
                     $this->verifiedMerchantShortName = $body['short_name'];
