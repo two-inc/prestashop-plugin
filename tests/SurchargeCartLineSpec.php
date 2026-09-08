@@ -23,6 +23,7 @@ final class SurchargeCartLineSpec
         self::testFreshRequestReplayLeavesNoDuplicateOrStaleLine();
         self::testTermChangeUpdatesAmountWithoutDuplicating();
         self::testQuoteFailureKeepsLineAndFailsLoudly();
+        self::testUnrecognisedMethodKeepsLineAndFailsLoudly();
         self::testCartLineNetMatchesTwoPayloadFeeLine();
         self::testOrderCreateParityGateFailsClosedOnDivergence();
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
@@ -296,6 +297,38 @@ final class SurchargeCartLineSpec
             }
         }
         TinyAssert::true($logged, 'refusing to remove must be logged at error level');
+    }
+
+    /**
+     * Q54: an unrecognised stored method makes the contained read return null.
+     * The sync must never report success on it, and must leave no orphan fee
+     * line behind, since Two is withheld from the payment options on the same
+     * condition. Both entry points.
+     */
+    private static function testUnrecognisedMethodKeepsLineAndFailsLoudly(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::count(1, self::feeLines());
+
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'wat');
+        PrestaShopLogger::reset();
+        $result = $module->syncTwoSurchargeCartLine($cart, true);
+
+        TinyAssert::false($result['success'], 'an unrecognised method is a failure, not a success');
+        TinyAssert::count(0, self::feeLines(), 'no orphan fee line while Two is withheld');
+
+        // The other entry point: no fee product yet (creation lock held), so
+        // the early "nothing to remove" branch decides. A refused read there
+        // reported success without ever looking at the cart.
+        StubStore::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'wat');
+        $cart = self::makeCart();
+        StubStore::$dbLocks['two_surcharge_product_create'] = true;
+        $early = $module->syncTwoSurchargeCartLine($cart, true);
+        unset(StubStore::$dbLocks['two_surcharge_product_create']);
+        TinyAssert::false($early['success'], 'a refused read is never a vacuous success');
     }
 
     /* ---- requirement 2 + 5: single computation path, parity gate ---- */

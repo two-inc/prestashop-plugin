@@ -26,6 +26,9 @@ final class SurchargeSpec
         self::testBuildRoundingOmittedForNoneUnmappedOrNonPositiveStep();
         self::testBuildTermsBlockEndOfMonth();
         self::testNormalizeTypeFallsBackToNone();
+        self::testUnrecognisedSurchargeMethodIsRefusedAtRuntime();
+        self::testUnrecognisedSurchargeMethodIsRefusedOnSave();
+        self::testUnrecognisedSurchargeMethodWithholdsTwoOnly();
         self::testGetSurchargeSettingsReadsConfigGrid();
         self::testBuildTwoBuyerFeeShareWiresConfigAndDefaultTerm();
         self::testRoundingStepOptionsAreBrandDrivenSortedAndFormatted();
@@ -69,7 +72,15 @@ final class SurchargeSpec
     private static function testBuildBuyerFeeShareReturnsNullWhenDisabled(): void
     {
         TinyAssert::same(null, TwoSurchargeCalculator::buildBuyerFeeShare(['type' => 'none'], 30, 30, false));
-        TinyAssert::same(null, TwoSurchargeCalculator::buildBuyerFeeShare(['type' => 'garbage'], 30, 30, false));
+        $threw = false;
+        try {
+            TwoSurchargeCalculator::buildBuyerFeeShare(['type' => 'garbage'], 30, 30, false);
+        } catch (Exception $e) {
+            // Internal backstop message: never rendered, and free of the value.
+            $threw = $e->getMessage() === 'Unrecognised surcharge method'
+                && strpos($e->getMessage(), 'garbage') === false;
+        }
+        TinyAssert::true($threw, 'an unrecognised method raises generically rather than pricing nothing');
     }
 
     private static function testBuildBuyerFeeSharePercentageOnly(): void
@@ -204,6 +215,148 @@ final class SurchargeSpec
         TinyAssert::same('percentage', TwoSurchargeCalculator::normalizeType('percentage'));
         TinyAssert::same('none', TwoSurchargeCalculator::normalizeType(''));
         TinyAssert::same('none', TwoSurchargeCalculator::normalizeType('wat'));
+    }
+
+    /**
+     * Ruling 19.3: the runtime read raises instead of quoting the order at 0%
+     * under a method nothing understands. Unset still means none.
+     */
+    private static function testUnrecognisedSurchargeMethodIsRefusedAtRuntime(): void
+    {
+        $cases = array(
+            array('wat', true, 'junk from a direct DB edit or an import'),
+            array('PERCENTAGE', true, 'the right method in the wrong case'),
+            array('0', true, 'a falsy string a truthiness check would have read as unset'),
+            array('', false, 'the never-saved key reads as none'),
+            array(false, false, 'an absent Configuration key reads as none'),
+            array('none', false, 'explicitly disabled'),
+            array('fixed_and_percentage', false, 'a known method'),
+        );
+        foreach ($cases as $case) {
+            list($stored, $refused, $description) = $case;
+            self::reset();
+            PrestaShopLogger::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $stored);
+            $error = null;
+            try {
+                (new TwopaymentTestHarness())->getTwoSurchargeSettings();
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            if (!$refused) {
+                // Accepted rows must not throw AT ALL, not merely avoid this
+                // one message.
+                TinyAssert::same(null, $error, 'must not throw: ' . $description);
+                continue;
+            }
+            // Reuses the module's existing method-unavailable line; no new string.
+            TinyAssert::same(
+                'Two payment is not available for this order.',
+                $error,
+                'refused with the existing generic line: ' . $description
+            );
+            TinyAssert::true(
+                strpos((string) $error, (string) $stored) === false,
+                'no stored value in the buyer message: ' . $description
+            );
+            foreach (TwoSurchargeCalculator::KNOWN_TYPES as $known) {
+                TinyAssert::true(
+                    strpos((string) $error, $known) === false,
+                    'no enum keys in the buyer message: ' . $description
+                );
+            }
+        }
+    }
+
+    /**
+     * Q54: the setMedia hook and the payment-option gate run on every
+     * front-office render, so a corrupt stored method withholds Two only —
+     * never 500s the page — and is reported once per render.
+     */
+    private static function testUnrecognisedSurchargeMethodWithholdsTwoOnly(): void
+    {
+        $cases = array(
+            array('wat', 'junk from a direct DB edit or an import'),
+            array('PERCENTAGE', 'the right method in the wrong case'),
+            array('0', 'a falsy string a truthiness check would have read as unset'),
+        );
+        foreach ($cases as $case) {
+            list($stored, $description) = $case;
+            self::reset();
+            PrestaShopLogger::reset();
+            TwopaymentTestHarness::resetSurchargeTypeLog();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $stored);
+            $module = new TwopaymentTestHarness();
+
+            // What the setMedia hook and the render-time preview both read.
+            TinyAssert::same(
+                null,
+                $module->getTwoSurchargeSettingsOrNull(),
+                'no settings rather than a raise: ' . $description
+            );
+            // What hookPaymentOptions gates on: withhold Two, fail closed.
+            TinyAssert::same(
+                false,
+                $module->isTwoSurchargeQuotableForCart(null),
+                'Two withheld from the payment options: ' . $description
+            );
+
+            $refusals = array_filter(PrestaShopLogger::$logs, function ($entry) use ($stored) {
+                return strpos($entry['message'], 'unrecognised stored surcharge method') !== false
+                    && strpos($entry['message'], $stored) !== false;
+            });
+            TinyAssert::same(1, count($refusals), 'reported once per render: ' . $description);
+
+            // Quiet path, keyed on the exception TYPE: the refusal reports
+            // itself, so the wrapper must not add a second line for it.
+            $extra = array_filter(PrestaShopLogger::$logs, function ($entry) {
+                return strpos($entry['message'], 'surcharge settings unavailable') !== false;
+            });
+            TinyAssert::same(0, count($extra), 'no second line for the refusal: ' . $description);
+        }
+    }
+
+    /**
+     * Ruling 19.3: the save path refuses an unrecognised method outright, so a
+     * crafted POST cannot store one. Checked before the disabled early return.
+     */
+    private static function testUnrecognisedSurchargeMethodIsRefusedOnSave(): void
+    {
+        $cases = array(
+            array('wat', true, 'a crafted POST of a method that does not exist'),
+            array('PERCENTAGE', true, 'the right method in the wrong case'),
+            array('0', true, 'a falsy string a truthiness check would have read as unset'),
+            array('<script>x</script>', true, 'a crafted value is escaped before it reaches the page'),
+            array('none', false, 'disabling always saves'),
+            array('', false, 'an absent field reads as none'),
+        );
+        foreach ($cases as $case) {
+            list($posted, $refused, $description) = $case;
+            self::reset();
+            Tools::resetTestValues();
+            Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', $posted);
+            $module = self::makeConfigHarness();
+            $error = null;
+            $errors = array();
+            try {
+                $errors = $module->validateSurchargeFormForTest();
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            TinyAssert::same(null, $error, 'validation reports, never raises: ' . $description);
+            $refusals = array_filter($errors, function ($err) {
+                return strpos((string) $err, 'Unrecognised surcharge method') !== false;
+            });
+            TinyAssert::same($refused, count($refusals) > 0, $description);
+            // Passed RAW: displayError renders through Smarty with escape_html
+            // on, so pre-escaping here would double-encode for the admin.
+            if ($posted === '<script>x</script>') {
+                TinyAssert::true(
+                    strpos(implode(' ', $errors), '<script>x</script>') !== false,
+                    'the value is reported verbatim, the renderer escapes: ' . $description
+                );
+            }
+        }
     }
 
     /* ---- Module wiring ---- */

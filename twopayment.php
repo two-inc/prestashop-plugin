@@ -15,6 +15,7 @@ require_once dirname(__FILE__) . '/classes/TwoSurchargeCalculator.php';
 require_once dirname(__FILE__) . '/classes/TwoSoleTrader.php';
 require_once dirname(__FILE__) . '/classes/TwoCompanySearchCountries.php';
 require_once dirname(__FILE__) . '/classes/TwoCheckoutAmountException.php';
+require_once dirname(__FILE__) . '/classes/TwoSurchargeMethodException.php';
 require_once dirname(__FILE__) . '/classes/TwoRateLimiter.php';
 
 class Twopayment extends PaymentModule
@@ -110,6 +111,9 @@ class Twopayment extends PaymentModule
     // never inherits the old key's verdict.
     const CONFIG_API_KEY_STATUS = 'PS_TWO_API_KEY_STATUS';
     const CONFIG_API_KEY_STATUS_TS = 'PS_TWO_API_KEY_STATUS_TS';
+
+    /** @var array<string,bool> Keyed by value, so one render reports one bad method once. */
+    protected static $twoSurchargeTypeFailureLogged = array();
     // A verified key is re-checked every 5 minutes; a FAILING one every
     // minute, so recovery (or a rotated key) reaches checkout quickly while a
     // healthy shop is not re-verified for nothing. Both are far shorter than
@@ -4684,7 +4688,7 @@ class Twopayment extends PaymentModule
                 'default_payment_term' => $this->getDefaultPaymentTerm(),
                 // Enables the checkout JS to mirror the buyer surcharge as a
                 // real PrestaShop cart line on payment-option selection.
-                'surcharge_cart_line' => !empty($this->getTwoSurchargeSettings()['enabled']),
+                'surcharge_cart_line' => !empty($this->getTwoSurchargeSettingsOrNull()['enabled']),
                 // Buyer-facing surcharge label for the CURRENTLY selected
                 // term, for the initial page render (before any AJAX sync
                 // has run) - see fixSurchargeLineDisplay in
@@ -11936,7 +11940,20 @@ class Twopayment extends PaymentModule
      */
     public function getTwoSurchargeSettings()
     {
-        $type = TwoSurchargeCalculator::normalizeType(Configuration::get('PS_TWO_SURCHARGE_TYPE'));
+        // Refused, not priced as 'none' — the admin form keeps the lenient read.
+        $storedType = Configuration::get('PS_TWO_SURCHARGE_TYPE');
+        if (!TwoSurchargeCalculator::isKnownType($storedType)) {
+            $named = is_scalar($storedType) ? (string) $storedType : gettype($storedType);
+            if (!isset(self::$twoSurchargeTypeFailureLogged[$named])) {
+                self::$twoSurchargeTypeFailureLogged[$named] = true;
+                PrestaShopLogger::addLog('TwoPayment: unrecognised stored surcharge method: ' . $named, 3);
+            }
+            throw new TwoSurchargeMethodException(sprintf(
+                $this->l('%s payment is not available for this order.'),
+                $this->getTwoBrandConfig('product_name')
+            ));
+        }
+        $type = TwoSurchargeCalculator::mapKnownType($storedType);
 
         $grid = array();
         foreach ($this->getAvailablePaymentTerms() as $days) {
@@ -11975,6 +11992,26 @@ class Twopayment extends PaymentModule
             'rounding_basis' => (string) Configuration::get('PS_TWO_SURCHARGE_ROUNDING_BASIS'),
             'rounding_step' => $step > 0 ? $step : null,
         );
+    }
+
+    /**
+     * Q54: null when the stored method is unrecognised. The setMedia hook and
+     * the payment-option gate render on every request, so a raise there is a
+     * 500; buildBuyerFeeShare() and the order builder keep the raise.
+     *
+     * @return array|null
+     */
+    public function getTwoSurchargeSettingsOrNull()
+    {
+        try {
+            return $this->getTwoSurchargeSettings();
+        } catch (TwoSurchargeMethodException $e) {
+            return null;
+        } catch (Exception $e) {
+            // Not the self-reporting refusal, so it would otherwise vanish.
+            PrestaShopLogger::addLog('TwoPayment: surcharge settings unavailable - ' . $e->getMessage(), 3);
+            return null;
+        }
     }
 
     /**
@@ -12131,7 +12168,11 @@ class Twopayment extends PaymentModule
      */
     public function isTwoSurchargeQuotableForCart($cart)
     {
-        $settings = $this->getTwoSurchargeSettings();
+        $settings = $this->getTwoSurchargeSettingsOrNull();
+        if ($settings === null) {
+            // Unquotable, so hookPaymentOptions withholds Two — fail closed, as FX does.
+            return false;
+        }
         if (empty($settings['enabled'])) {
             return true;
         }
@@ -12722,8 +12763,9 @@ class Twopayment extends PaymentModule
     public function getTwoOfferedTermSurchargeAmounts()
     {
         try {
-            $settings = $this->getTwoSurchargeSettings();
-            if (empty($settings['enabled'])) {
+            // Q54: the wrapper, so this method's catch (\Throwable) cannot swallow it unlogged.
+            $settings = $this->getTwoSurchargeSettingsOrNull();
+            if ($settings === null || empty($settings['enabled'])) {
                 return array('success' => false);
             }
 
@@ -13572,8 +13614,12 @@ class Twopayment extends PaymentModule
             // Only materialise the product when actually adding a line.
             $productId = $this->getTwoSurchargeCartProductId((bool) $selected);
             if ($productId <= 0) {
-                // Nothing ever created and nothing to remove -> vacuous success.
-                $result['success'] = !$selected || empty($this->getTwoSurchargeSettings()['enabled']);
+                // Nothing to remove is a vacuous success; a refused read is not.
+                $settings = $selected ? $this->getTwoSurchargeSettingsOrNull() : array();
+                if ($settings === null) {
+                    return $result;
+                }
+                $result['success'] = !$selected || empty($settings['enabled']);
                 return $result;
             }
 
@@ -13582,7 +13628,17 @@ class Twopayment extends PaymentModule
             $expectedNet = null;
             $expectedGross = null;
             if ($selected) {
-                $settings = $this->getTwoSurchargeSettings();
+                // Q54: contained read, so the catch below cannot log a second line.
+                $settings = $this->getTwoSurchargeSettingsOrNull();
+                if ($settings === null) {
+                    // Two is withheld on the same condition: no orphan fee line.
+                    if ($existing !== null) {
+                        $this->removeTwoSurchargeCartLineInternal($cart, $productId);
+                        $result['changed'] = true;
+                    }
+                    $this->clearTwoSurchargeCartCookie();
+                    return $result;
+                }
                 if (!empty($settings['enabled'])) {
                     // Same basis derivation as buildTwoOrderPricingData:
                     // product+shipping line items, surcharge product excluded.
@@ -14420,7 +14476,18 @@ class Twopayment extends PaymentModule
      */
     protected function validTwoSurchargeFormValues()
     {
-        $type = TwoSurchargeCalculator::normalizeType(Tools::getValue('PS_TWO_SURCHARGE_TYPE'));
+        // Before the disabled early return, which a lenient read would skip.
+        $postedType = Tools::getValue('PS_TWO_SURCHARGE_TYPE');
+        if (!TwoSurchargeCalculator::isKnownType($postedType)) {
+            $this->errors[] = sprintf(
+                $this->l('Unrecognised surcharge method: %1$s. Choose one of: %2$s.'),
+                is_scalar($postedType) ? (string) $postedType : gettype($postedType),
+                implode(', ', TwoSurchargeCalculator::KNOWN_TYPES)
+            );
+
+            return;
+        }
+        $type = TwoSurchargeCalculator::mapKnownType($postedType);
         if ($type === 'none') {
             return;
         }
@@ -14524,7 +14591,9 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoSurchargeFormValues()
     {
-        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', TwoSurchargeCalculator::normalizeType(Tools::getValue('PS_TWO_SURCHARGE_TYPE')));
+        // validTwoSurchargeFormValues() already refused anything unknown, so
+        // only the unset-to-'none' map is left to do.
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', TwoSurchargeCalculator::mapKnownType(Tools::getValue('PS_TWO_SURCHARGE_TYPE')));
         Configuration::updateValue('PS_TWO_SURCHARGE_DIFFERENTIAL', (int) Tools::getValue('PS_TWO_SURCHARGE_DIFFERENTIAL', 0));
         Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', (string) Tools::getValue('PS_TWO_SURCHARGE_LINE_DESC', ''));
 
@@ -14600,6 +14669,7 @@ class Twopayment extends PaymentModule
 
     public function getAvailablePaymentTerms()
     {
+        // EOM: offered days are not filtered to the API-eligible set. TWO-25656.
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
 
         // Source set the admin narrows FROM (backend list, else hardcoded).

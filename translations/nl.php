@@ -512,3 +512,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_1e0bf2fd8c2dc505dc11f1cbf7b2172e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4009e05973e240e0ae89bfb77b847115'] = 'Headers die uw IT-beheerder u vraagt toe te voegen. Elke header wordt verzonden bij alle aanroepen die deze winkel vanaf uw server naar de %s API doet.';
 $_MODULE['<{twopayment}prestashop>twopayment_b42b57d56d7d5c1b63351f4d87e396c0'] = 'Vink "Ook vanuit de browser verzenden" alleen aan waar uw IT-beheerder de header ook vereist voor aanroepen vanuit de browser van de koper: de waarde van die header wordt gepubliceerd naar de browser van de koper en kan door iedereen worden gelezen.';
 $_MODULE['<{twopayment}prestashop>twopayment_1063e38cb53d94d386f21227fcd84717'] = 'Verwijderen';
+$_MODULE['<{twopayment}prestashop>twopayment_404c493aff65500a37b1f0d09ffa29ae'] = 'Onbekende toeslagmethode: %1$s. Kies een van: %2$s.';
