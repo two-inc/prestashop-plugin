@@ -218,7 +218,7 @@ final class SurchargeSpec
     }
 
     /**
-     * Ruling 19.3: the runtime read raises instead of quoting the order at 0%
+     * The runtime read raises instead of quoting the order at 0%
      * under a method nothing understands. Unset still means none.
      */
     private static function testUnrecognisedSurchargeMethodIsRefusedAtRuntime(): void
@@ -269,7 +269,7 @@ final class SurchargeSpec
     }
 
     /**
-     * Q54: the setMedia hook and the payment-option gate run on every
+     * The setMedia hook and the payment-option gate run on every
      * front-office render, so a corrupt stored method withholds Two only —
      * never 500s the page — and is reported once per render.
      */
@@ -317,7 +317,7 @@ final class SurchargeSpec
     }
 
     /**
-     * Ruling 19.3: the save path refuses an unrecognised method outright, so a
+     * The save path refuses an unrecognised method outright, so a
      * crafted POST cannot store one. Checked before the disabled early return.
      */
     private static function testUnrecognisedSurchargeMethodIsRefusedOnSave(): void

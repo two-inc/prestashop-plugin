@@ -300,7 +300,7 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * Q54: an unrecognised stored method makes the contained read return null.
+     * An unrecognised stored method makes the contained read return null.
      * The sync must never report success on it, and must leave no orphan fee
      * line behind, since Two is withheld from the payment options on the same
      * condition. Both entry points.

@@ -64,8 +64,7 @@ class TwoSurchargeCalculator
     }
 
     /**
-     * The unset key ('', false, absent) reads as 'none'. For callers that have
-     * already run isKnownType(), so an assert after them would be dead.
+     * The unset key ('', false, absent) reads as 'none'.
      *
      * @param mixed $type
      * @return string

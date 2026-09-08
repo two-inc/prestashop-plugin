@@ -11995,9 +11995,9 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Q54: null when the stored method is unrecognised. The setMedia hook and
-     * the payment-option gate render on every request, so a raise there is a
-     * 500; buildBuyerFeeShare() and the order builder keep the raise.
+     * Null when the stored method is unrecognised: the setMedia hook and the
+     * payment-option gate render on every request, where a raise would be a
+     * 500. The pricing and order-build paths keep the raise.
      *
      * @return array|null
      */
@@ -12763,7 +12763,7 @@ class Twopayment extends PaymentModule
     public function getTwoOfferedTermSurchargeAmounts()
     {
         try {
-            // Q54: the wrapper, so this method's catch (\Throwable) cannot swallow it unlogged.
+            // The wrapper, so this method's catch (\Throwable) cannot swallow it unlogged.
             $settings = $this->getTwoSurchargeSettingsOrNull();
             if ($settings === null || empty($settings['enabled'])) {
                 return array('success' => false);
@@ -13628,7 +13628,7 @@ class Twopayment extends PaymentModule
             $expectedNet = null;
             $expectedGross = null;
             if ($selected) {
-                // Q54: contained read, so the catch below cannot log a second line.
+                // Contained read, so the catch below cannot log a second line.
                 $settings = $this->getTwoSurchargeSettingsOrNull();
                 if ($settings === null) {
                     // Two is withheld on the same condition: no orphan fee line.
