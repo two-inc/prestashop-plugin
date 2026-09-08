@@ -2571,7 +2571,6 @@ class TwoSoleTrader {
             return;
         }
         let popupClosed = false;
-        // Only an activation moves the popup: a Tab arrival on the Sole trader chip is the buyer passing through, and leaves the popup as they left it (TWO-25658).
         if (!target.closest('.two-company-sole-trader-entry') && this.isPopupOpen()) {
             this.closeSignupPopup();
             popupClosed = true;

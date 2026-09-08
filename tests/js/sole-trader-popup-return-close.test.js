@@ -253,6 +253,8 @@ describe('Doug\'s three rules on focus (TWO-25658)', () => {
     function closeFromInside() {
         panelParts().query.get(0).focus();
         expect(popup.closed).toBe(true);
+        // Park focus off the query field, or a row whose own target is it fires no focusin.
+        panelParts().query.get(0).blur();
         popup = fakePopup();
     }
 

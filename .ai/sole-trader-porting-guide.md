@@ -1277,7 +1277,8 @@ other (WooCommerce PR #487 `7a11acb`).**
 
 **The same three-way gesture rule, built on a platform with NO panel focus-out close to
 hang it off** (WooCommerce `9692939`, then `cf12ac8`). The rule is identical — refocus
-closes an undecided popup, the Sole trader chip raises it instead, any other mode chip
+closes an undecided popup, focus arriving on the Sole trader chip leaves it exactly as it
+is and only that chip's own ACTIVATION raises it, any other mode chip
 closes it and still does its own job — so read
 the PrestaShop rules above for the rule and these for what a platform without that
 machinery has to build. This is the more portable of the two: it assumes only a window and
