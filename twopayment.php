@@ -12174,7 +12174,9 @@ class Twopayment extends PaymentModule
         // Nothing priced, and amounts with no currency to read them in, both
         // draw as "this term carries no fee", and storing either would
         // displace figures that were once real (ABN-540).
-        $currency = isset($response['currency']) ? trim((string) $response['currency']) : '';
+        $currency = isset($response['currency']) && is_string($response['currency'])
+            ? trim((string) $response['currency'])
+            : '';
         if (empty($fees) || $currency === '') {
             return array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM);
         }
@@ -12226,7 +12228,8 @@ class Twopayment extends PaymentModule
         }
         // A set stored by a version that accepted a currency-less answer holds
         // amounts nobody can read (ABN-540).
-        if (!isset($decoded['currency']) || trim((string) $decoded['currency']) === '') {
+        if (!isset($decoded['currency']) || !is_string($decoded['currency'])
+            || trim((string) $decoded['currency']) === '') {
             return null;
         }
         $fees = array();

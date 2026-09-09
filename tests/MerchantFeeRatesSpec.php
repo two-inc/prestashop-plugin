@@ -234,6 +234,7 @@ final class MerchantFeeRatesSpec
             [['http_status' => 200, 'rates' => [$pricedRow]], 'an answer with no currency key at all'],
             [['http_status' => 200, 'currency' => '', 'rates' => [$pricedRow]], 'an answer whose currency is empty'],
             [['http_status' => 200, 'currency' => '  ', 'rates' => [$pricedRow]], 'an answer whose currency is blank space'],
+            [['http_status' => 200, 'currency' => ['NOK'], 'rates' => [$pricedRow]], 'an answer whose currency is not a string'],
             [['http_status' => 200, 'currency' => 'NOK', 'rates' => []], 'an answer carrying no rate rows'],
             [
                 ['http_status' => 200, 'currency' => 'NOK', 'rates' => [['net_terms' => 'soon'], ['net_terms' => -30], 'junk']],
