@@ -200,9 +200,9 @@ class Twopayment extends PaymentModule
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
-    const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for render-path fetches (invoice-download state check, merchant-record and FX-rate refreshes, fee quotes)
+    const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for render-path fetches (invoice-download state check, merchant-record and FX-rate refreshes, admin fee-rate preview)
     const API_TIMEOUT_PDF_FETCH = 10; // Tight timeout for synchronous invoice PDF fetches (buyer + admin download clicks)
-    const API_TIMEOUT_FEE_QUOTE_GATE = 30; // Payment-options gate's own ceiling for the buyer fee quote (ABN-546)
+    const API_TIMEOUT_SURCHARGE_PRICING = 30; // Ceiling for every buyer surcharge quote, gate and charge alike (ABN-546)
     const API_CONNECT_TIMEOUT = 5; // Connection-establishment timeout for all Two API calls
     
     // Constants for validation tolerances
@@ -13462,8 +13462,7 @@ class Twopayment extends PaymentModule
             $gross_basis,
             $this->resolveTwoBuyerCountryIso($cart),
             $currency_iso,
-            true,
-            self::API_TIMEOUT_FEE_QUOTE_GATE
+            true
         );
         if ($quote !== null) {
             return true;
@@ -13508,11 +13507,9 @@ class Twopayment extends PaymentModule
      * @param bool $cacheAcrossRequests whether this quote may use the session
      *   cookie cache - the charge paths only, never the chip previews, whose
      *   per-term loop would fill the shared cookie (ABN-546).
-     * @param int|null $timeout seconds; the payment-options gate passes its own
-     *   ceiling, everything else takes the render-path default.
      * @return array|null {buyer_fee_share, total_fee_tax_rate, currency}
      */
-    public function fetchTwoTermFee($days, $gross_amount, $buyer_country, $currency_iso, $cacheAcrossRequests = false, $timeout = null)
+    public function fetchTwoTermFee($days, $gross_amount, $buyer_country, $currency_iso, $cacheAcrossRequests = false)
     {
         $days = (int) $days;
         $gross_amount = (float) $gross_amount;
@@ -13557,14 +13554,15 @@ class Twopayment extends PaymentModule
             'buyer_fee_share' => $share,
         );
 
-        // Tight timeout: this sits on the checkout/order-build path and must
-        // never stall checkout on a slow pricing call.
+        // One ceiling for every surcharge quote: a gate that gave up sooner
+        // than the charge path withheld a method the charge path could price
+        // (ABN-546).
         $response = $this->setTwoPaymentRequest(
             '/v1/pricing/order/fee',
             $payload,
             'POST',
             array(),
-            $timeout !== null ? (int) $timeout : self::API_TIMEOUT_STATE_CHECK
+            self::API_TIMEOUT_SURCHARGE_PRICING
         );
         if (!is_array($response)) {
             return $this->twoFeeCache[$cacheKey] = null;
