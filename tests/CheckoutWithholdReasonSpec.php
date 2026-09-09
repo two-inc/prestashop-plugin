@@ -80,7 +80,7 @@ final class CheckoutWithholdReasonSpec
                 static function ($module): void {
                     $module->active = false;
                 },
-                'Not shown at checkout - the module is not enabled for this shop.',
+                'Not shown at checkout - the module is not enabled for this shop. Enable it in Module Manager.',
                 'a module switched off for the shop names the switch',
             ],
             [
@@ -113,9 +113,16 @@ final class CheckoutWithholdReasonSpec
             ],
             [
                 static function ($module): void {
+                    Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', '');
+                },
+                'your merchant account has not been identified yet.',
+                'a shop whose key never verified is withheld, and the short name is no form field',
+            ],
+            [
+                static function ($module): void {
                     Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '[]');
                 },
-                'your account allows no buyer countries.',
+                'no buyer countries are currently enabled for your account. Contact Two',
                 'an empty allowlist hides the method for every buyer, which no local field explains',
             ],
             [
@@ -131,8 +138,28 @@ final class CheckoutWithholdReasonSpec
                         '{"amount":250,"currency":"EUR","basis":"net"}'
                     );
                 },
-                'Shown at checkout - hidden for baskets below 250.00 EUR (net)',
+                'Shown at checkout - hidden for baskets below 250.00 EUR (excluding tax)',
                 'the cart-dependent gate is named as a constraint, not as the current state',
+            ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER, 1000);
+                    Configuration::updateValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS', 'gross');
+                },
+                'hidden for baskets below 1000.00 GBP (including tax)',
+                'the merchant own floor binds even with no platform floor',
+            ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue(
+                        Twopayment::CONFIG_PLATFORM_MIN_ORDER,
+                        '{"amount":250,"currency":"EUR","basis":"net"}'
+                    );
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER, 1000);
+                    Configuration::updateValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS', 'gross');
+                },
+                '250.00 EUR (excluding tax) or 1000.00 GBP (including tax)',
+                'two floors in different currencies cannot be reduced to one, so both are named',
             ],
         ];
 
@@ -165,6 +192,7 @@ final class CheckoutWithholdReasonSpec
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'sandbox');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', '');
+        Configuration::updateValue('PS_CURRENCY_DEFAULT', 826);
         StubStore::$countries = [826 => 'GB'];
 
         $module = new TwopaymentTestHarness();

@@ -3489,11 +3489,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Render a compact operational health summary for plugin configuration.
-     *
-     * @return string HTML
-     */
-    /**
      * Why the payment option is absent from checkout (ABN-518). Only reasons
      * decidable without a cart are judged; a cart-dependent one is named as a
      * constraint instead.
@@ -3507,9 +3502,12 @@ class Twopayment extends PaymentModule
         $reason = null;
 
         if (!$this->active) {
-            $reason = $this->l('the module is not enabled for this shop. Enable it in Modules.');
+            $reason = $this->l('the module is not enabled for this shop. Enable it in Module Manager.');
         } elseif (Tools::isEmpty(Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
             $reason = $this->l('no API key is saved. Check API key.');
+        } elseif (Tools::isEmpty(Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'))) {
+            // Server-derived from a successful verification, never a form field.
+            $reason = $this->l('your merchant account has not been identified yet. Save the General settings to verify the API key.');
         }
         if ($reason === null) {
             $status = $this->getTwoApiKeyVerificationStatus();
@@ -3529,7 +3527,10 @@ class Twopayment extends PaymentModule
             $reason = $this->l('the saved surcharge method is not recognised. Check Surcharge method.');
         }
         if ($reason === null && $this->getMerchantBuyerCountries() === array()) {
-            $reason = $this->l('your account allows no buyer countries. Contact us to have them enabled.');
+            $reason = sprintf(
+                $this->l('no buyer countries are currently enabled for your account. Contact %s to have them enabled.'),
+                $this->getTwoBrandConfig('product_name')
+            );
         }
         if ($reason !== null) {
             return array(
@@ -3540,23 +3541,45 @@ class Twopayment extends PaymentModule
         }
 
         $shown = $this->l('Shown at checkout');
-        $minimum = $this->getPlatformMinimumOrder();
-        if ($minimum !== null) {
-            return array(
-                'label' => $label,
-                'value' => $shown . ' - ' . sprintf(
-                    $this->l('hidden for baskets below %1$s %2$s (%3$s)'),
-                    number_format($minimum['amount'], 2, '.', ''),
-                    htmlspecialchars($minimum['currency'], ENT_QUOTES, 'UTF-8'),
-                    htmlspecialchars($minimum['basis'], ENT_QUOTES, 'UTF-8')
-                ),
-                'ok' => true,
-            );
+        $floors = array_values(array_filter(array(
+            $this->getPlatformMinimumOrder(),
+            $this->getMerchantMinimumOrder(),
+        )));
+        if (!$floors) {
+            return array('label' => $label, 'value' => $shown, 'ok' => true);
         }
+        // Both floors bind and can be denominated differently, so neither
+        // reduces to the other without an FX rate.
+        $value = count($floors) === 1
+            ? sprintf($this->l('hidden for baskets below %s'), $this->describeTwoMinimumFloor($floors[0]))
+            : sprintf(
+                $this->l('hidden for baskets below %1$s or %2$s'),
+                $this->describeTwoMinimumFloor($floors[0]),
+                $this->describeTwoMinimumFloor($floors[1])
+            );
 
-        return array('label' => $label, 'value' => $shown, 'ok' => true);
+        return array('label' => $label, 'value' => $shown . ' - ' . $value, 'ok' => true);
     }
 
+    /**
+     * @param array{amount:float, currency:string, basis:string} $floor
+     * @return string
+     */
+    protected function describeTwoMinimumFloor($floor)
+    {
+        return sprintf(
+            '%s %s (%s)',
+            number_format((float) $floor['amount'], 2, '.', ''),
+            htmlspecialchars((string) $floor['currency'], ENT_QUOTES, 'UTF-8'),
+            $floor['basis'] === 'net' ? $this->l('excluding tax') : $this->l('including tax')
+        );
+    }
+
+    /**
+     * Render a compact operational health summary for plugin configuration.
+     *
+     * @return string HTML
+     */
     protected function renderTwoPluginHealthChecklist()
     {
         // Lowered as every runtime read of this key lowers it, so the row, the host
@@ -5354,12 +5377,12 @@ class Twopayment extends PaymentModule
         // alternative outcome is an order created with NO surcharge at all,
         // a silent undercharge. See isTwoSurchargeQuotableForCart.
         if (!$this->isTwoSurchargeQuotableForCart($cart)) {
-            // The FX arm logs its own detail; an unrecognised stored method
-            // reaches here with only its own one-off line, which an earlier
-            // request in this process may already have consumed.
-            $this->logTwoPaymentOptionHidden(
-                'the buyer surcharge cannot be priced for cart ' . (int) $cart->id
-            );
+            // Only the unrecognised-method arm is silent; the FX arm logs its own detail.
+            if ($this->getTwoSurchargeSettingsOrNull() === null) {
+                $this->logTwoPaymentOptionHidden(
+                    'the buyer surcharge cannot be priced for cart ' . (int) $cart->id
+                );
+            }
             return [];
         }
 
@@ -12618,10 +12641,7 @@ class Twopayment extends PaymentModule
     protected $twoApiKeyWithholdLogged = false;
 
     /**
-     * Whether this instance has already logged that it is withholding Two
-     * because the module is inactive, unconfigured, or carries an
-     * unrecognised surcharge method (ABN-518). Same once-per-request reason
-     * as the flag above.
+     * Reasons already logged this request, keyed by reason (ABN-518).
      *
      * @var array<string, bool>
      */
