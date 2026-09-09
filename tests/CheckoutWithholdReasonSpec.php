@@ -168,8 +168,8 @@ final class CheckoutWithholdReasonSpec
                 static function ($module): void {
                     $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503);
                 },
-                'Cannot be checked - the API key could not be verified just now.',
-                'a transient verdict claims neither a withholding nor a showing',
+                'Not shown at checkout - the API key could not be verified just now.',
+                'a transient verdict withholds today, so the row says so',
             ],
             [
                 static function ($module): void {
@@ -271,9 +271,18 @@ final class CheckoutWithholdReasonSpec
             [
                 static function ($module): void {
                     Configuration::deleteByName(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED);
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER, 1000);
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER_BASIS, 'gross');
                 },
-                'minimum order value not known until your profile refreshes',
-                'and so does a profile that has never been fetched at all',
+                'minimum order value not known until your profile refreshes; hidden for baskets below 1000.00 GBP',
+                'a local admin floor is known even when the platform floor is not',
+            ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+                },
+                'hidden for baskets in a currency the buyer surcharge cannot be priced in',
+                'whether the fee can be priced depends on the basket currency, so it is a constraint',
             ],
         ];
 

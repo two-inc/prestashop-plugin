@@ -3507,21 +3507,19 @@ class Twopayment extends PaymentModule
             $reason = $this->l('no API key is saved. Check API key.');
         } elseif (Tools::isEmpty(Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'))) {
             // Server-derived from a successful verification, never a form field.
-            $reason = $this->l('your merchant account has not been identified yet. Save General to verify the API key.');
+            $reason = sprintf(
+                $this->l('your merchant account has not been identified yet. Save %s to verify the API key.'),
+                $this->l('General')
+            );
         }
         if ($reason === null) {
             $status = $this->getTwoApiKeyVerificationStatus();
             if ($status['status'] === self::API_KEY_STATUS_INVALID) {
                 $reason = $this->l('the API key was rejected. Check API key and Environment.');
             } elseif ($status['status'] !== self::API_KEY_STATUS_OK) {
-                // Neither "shown" nor a reason, because hookPaymentOptions()
-                // still withholds on a transient verdict. Delete this arm with
-                // ABN-533's fall-through, which owns that gate.
-                return array(
-                    'label' => $label,
-                    'value' => $this->l('Cannot be checked - the API key could not be verified just now.'),
-                    'ok' => false,
-                );
+                // hookPaymentOptions() withholds on any non-OK verdict today.
+                // ABN-533's fall-through owns this arm's removal.
+                $reason = $this->l('the API key could not be verified just now.');
             }
         }
         if ($reason === null && $this->getTwoSurchargeSettingsOrNull() === null) {
@@ -3558,29 +3556,32 @@ class Twopayment extends PaymentModule
         $shown = $this->l('Shown at checkout');
         // The platform floor is cache-only: an unresolved record means the
         // constraint is unknown, not that there is none.
+        $clauses = array();
         if (!$this->hasFetchedMerchantRecord()) {
-            return array(
-                'label' => $label,
-                'value' => $shown . ' - ' . $this->l('minimum order value not known until your profile refreshes'),
-                'ok' => true,
-            );
+            $clauses[] = $this->l('minimum order value not known until your profile refreshes');
         }
         $floors = $this->bindingTwoMinimumFloors(array(
             $this->getPlatformMinimumOrder(),
             $this->getMerchantMinimumOrder(),
         ));
-        if (!$floors) {
-            return array('label' => $label, 'value' => $shown, 'ok' => true);
-        }
-        $value = count($floors) === 1
-            ? sprintf($this->l('hidden for baskets below %s'), $this->describeTwoMinimumFloor($floors[0]))
-            : sprintf(
+        if (count($floors) === 1) {
+            $clauses[] = sprintf($this->l('hidden for baskets below %s'), $this->describeTwoMinimumFloor($floors[0]));
+        } elseif (count($floors) > 1) {
+            $clauses[] = sprintf(
                 $this->l('hidden for baskets below %1$s or %2$s'),
                 $this->describeTwoMinimumFloor($floors[0]),
                 $this->describeTwoMinimumFloor($floors[1])
             );
+        }
+        $surcharge = $this->getTwoSurchargeSettingsOrNull();
+        if ($surcharge !== null && !empty($surcharge['enabled'])) {
+            $clauses[] = $this->l('hidden for baskets in a currency the buyer surcharge cannot be priced in');
+        }
+        if (!$clauses) {
+            return array('label' => $label, 'value' => $shown, 'ok' => true);
+        }
 
-        return array('label' => $label, 'value' => $shown . ' - ' . $value, 'ok' => true);
+        return array('label' => $label, 'value' => $shown . ' - ' . implode('; ', $clauses), 'ok' => true);
     }
 
     /**

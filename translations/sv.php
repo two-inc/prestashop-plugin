@@ -552,7 +552,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_401daa7d8aed160fae2721966e185e17'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d4fe0eb19234f23b3535a03a5801fcae'] = 'inga köparländer är för närvarande aktiverade för ditt konto. Kontakta %s för att aktivera dem.';
 $_MODULE['<{twopayment}prestashop>twopayment_9ab50399962b7caddac63a16a9ed9fe8'] = 'köparländerna på ditt konto kunde inte läsas. Kontakta %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] = 'lägsta ordervärde är inte känt förrän din profil uppdateras';
-$_MODULE['<{twopayment}prestashop>twopayment_7cbb9ce1159879e80679e80e29e1b006'] = 'ditt merchant-konto har ännu inte identifierats. Spara General för att verifiera API-nyckeln.';
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'inget land är aktiverat för den här modulen under Betalning > Inställningar.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'ingen valuta är aktiverad för den här modulen under Betalning > Inställningar.';
-$_MODULE['<{twopayment}prestashop>twopayment_a74f8585cb2ed969c9c43bc108723ca6'] = 'Kan inte kontrolleras - API-nyckeln kunde inte verifieras just nu.';
+$_MODULE['<{twopayment}prestashop>twopayment_65a3ef692e6a51f50564d0b7bf51c9b9'] = 'ditt merchant-konto har ännu inte identifierats. Spara %s för att verifiera API-nyckeln.';
+$_MODULE['<{twopayment}prestashop>twopayment_6fbe5140ef909d7a59af5c3112015e77'] = 'API-nyckeln kunde inte verifieras just nu.';
+$_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] = 'döljs för varukorgar i en valuta som köpartillägget inte kan prissättas i';

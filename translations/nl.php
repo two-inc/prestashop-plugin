@@ -552,7 +552,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_401daa7d8aed160fae2721966e185e17'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d4fe0eb19234f23b3535a03a5801fcae'] = 'er zijn momenteel geen landen van de koper geactiveerd voor uw account. Neem contact op met %s om ze te laten activeren.';
 $_MODULE['<{twopayment}prestashop>twopayment_9ab50399962b7caddac63a16a9ed9fe8'] = 'de landen van de koper op uw account konden niet worden gelezen. Neem contact op met %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] = 'minimumbestelwaarde nog niet bekend totdat uw profiel is vernieuwd';
-$_MODULE['<{twopayment}prestashop>twopayment_7cbb9ce1159879e80679e80e29e1b006'] = 'uw merchant-account is nog niet geïdentificeerd. Sla General op om de API-sleutel te verifiëren.';
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'er is geen land geactiveerd voor deze module onder Betaling > Voorkeuren.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'er is geen valuta geactiveerd voor deze module onder Betaling > Voorkeuren.';
-$_MODULE['<{twopayment}prestashop>twopayment_a74f8585cb2ed969c9c43bc108723ca6'] = 'Kan nu niet worden gecontroleerd - de API-sleutel kon niet worden geverifieerd.';
+$_MODULE['<{twopayment}prestashop>twopayment_65a3ef692e6a51f50564d0b7bf51c9b9'] = 'uw merchant-account is nog niet geïdentificeerd. Sla %s op om de API-sleutel te verifiëren.';
+$_MODULE['<{twopayment}prestashop>twopayment_6fbe5140ef909d7a59af5c3112015e77'] = 'de API-sleutel kon op dit moment niet worden geverifieerd.';
+$_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] = 'verborgen voor winkelwagens in een valuta waarin de toeslag voor de koper niet kan worden berekend';
