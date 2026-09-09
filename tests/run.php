@@ -4899,7 +4899,7 @@ final class OrderBuilderSpec
                 parent::__construct();
                 $this->backend = $backend;
             }
-            public function getMerchantAvailableTerms($refresh = false, $resolve_if_unresolved = false)
+            public function getMerchantAvailableTerms()
             {
                 return $this->backend;
             }
@@ -5198,7 +5198,7 @@ final class OrderBuilderSpec
 
         // Backend has since narrowed the offerable set to [30]; 60 is hidden.
         $module = new class extends TwopaymentTestHarness {
-            public function getMerchantAvailableTerms($refresh = false, $resolve_if_unresolved = false)
+            public function getMerchantAvailableTerms()
             {
                 return [30];
             }

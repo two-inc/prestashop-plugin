@@ -2174,7 +2174,8 @@ class Twopayment extends PaymentModule
     /**
      * The offered term a stored custom value names, or null where it names none.
      * An unresolved offered set matches nothing, so an API outage cannot delete a
-     * migration value (ABN-522).
+     * migration value (ABN-522) - and the read resolving the record here cannot
+     * either, since every way that resolution fails leaves the set unresolved.
      *
      * @return int|null
      */
