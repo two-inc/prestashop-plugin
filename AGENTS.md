@@ -93,6 +93,27 @@ The standard for EVERY module setting, not only the surcharge method.
 Degrading a junk value to a working default is the failure this replaces: it
 prices an order under a configuration nobody chose, and nobody is told.
 
+## An Admin Save Stays Possible; The Buyer Path Fails Closed
+
+**No verdict from the save-time API-key check blocks the General save** (ABN-495).
+A connection failure, a timeout and a 5xx judge nothing about the key, and the form
+re-renders from POST, so a blocked save looks stored while nothing was written and
+leaves the merchant unable to store even the vendor name that would fix the outage.
+The verdict is reported as a warning beside the save confirmation instead.
+
+- **A key Two rejected (401/403) is the one submitted value a save discards** — the
+  stored key is kept and the warning says so.
+- The merchant short name is derived from the verification response, never
+  submitted, so a save that resolved no merchant keeps the stored one.
+- Storing a different key or environment drops the cached merchant record whatever
+  the verdict, so a key saved during an outage cannot pair with the previous
+  merchant's terms, default term or minimum order value once the gate reopens.
+- **A 200 carrying no merchant `id` is not a verified key** — a proxy, a captive
+  portal or a maintenance page answers 200 too, and there is no identity to offer
+  the method under. The buyer gate withholds Two on it, as on every non-OK verdict.
+  A record with an `id` but no short name IS verified; the empty short name
+  withholds Two through its own gate.
+
 ## Company Search: This Module's Own Implementation
 
 `views/js/modules/TwoCompanySearch.js` is this module's own panel. The Magento and
@@ -107,11 +128,16 @@ reaches the registry, so disabling it there blocks a mode that was never going t
 search and leaves a buyer in an uncovered country with no way to name their company
 at all.
 
-**Focus alone does not open the panel here.** Only a real click on the company-name
-field, or a keypress on it other than Tab, opens it — the requirement this module
-implements, stated in `setupCompanyFieldOpeners()`. The Magento panel opens on
-focus. That is a live divergence between the platforms, not an oversight: do not
-claim parity, and do not harmonise either one to the other without a product ruling.
+**Focus arriving on the company-name field opens the panel**, with the caret in the
+query field — the same state a click leaves it in, and the same on every platform
+that carries this control. `setupCompanyFieldOpeners()` binds focus, mousedown and
+keydown to one `openDropdown()`.
+
+**The open panel takes the field's tab stop** — `tabindex="-1"` while it is up, and
+on close the field's PRIOR value restored exactly, which is removal when there was
+none (TWO-25503). Without it the focus opener is a keyboard trap: the opener puts
+the caret in the query field, Shift+Tab returns to the field, and the opener pushes
+focus forward again, so the buyer cannot get back past the control (WCAG 2.1.2).
 
 The field is `readonly` in search mode, never `disabled`: a readonly input still
 submits its value, still takes focus and is still a tab stop, and it IS
@@ -122,10 +148,14 @@ PrestaShop's own address field.
 Every focus while the hosted sole-trader signup window is up is classified once
 (TWO-25658):
 
-- **The Sole trader chip leaves the popup exactly as it is.** Only an activation of
-  that chip moves it, and that chip's own click handler owns it.
+- **The chip that opened the popup on screen leaves it exactly as it is.** Only an
+  activation of that chip moves it, and that chip's own click handler owns it. The
+  exemption is per capture, held as the launching chip itself; a re-render's
+  rebuilt chip inherits it by capture, a sibling capture's chip never does.
 - **Any other control closes an open popup**, and the popover closes itself when
   focus lands outside it.
+- **A different capture's Sole trader chip gets a popup of its own**, raised
+  through that chip's own click handler so a launch is spelled out in one place.
 
 Only focus this module moves is quiet. Focus moved by the theme, another module or
 the browser — a validation jump, a restored scroll position, a password-manager
@@ -150,6 +180,18 @@ order, nothing inside the panel carries a non-negative `tabindex` it should not,
 the handler leaves the `Tab` event undefaulted — and verify the keyboard behaviour
 itself in a real browser. A passing jsdom Tab test is never evidence that a trap is
 absent.
+
+Two more traps in the same suite:
+
+- **A real chip click fires no `focusin`.** The chip's `mousedown` handler calls
+  `preventDefault()`, which suppresses the native focus, so a rule written only
+  against `focusin` never sees a pointer buyer at all.
+- **jsdom's `getElementById` answers with the first-REGISTERED node, not the
+  tree-first one**, so a fixture carrying a duplicate id silently resolves to the
+  wrong element.
+- **A mutation proves NEW coverage only when re-run against the base ref.** One the
+  existing suite already catches proves the suite is sensitive, not that the case
+  added covers anything.
 
 ## The Custom Request-Header Table
 
