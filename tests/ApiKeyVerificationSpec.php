@@ -23,6 +23,7 @@ final class ApiKeyVerificationSpec
         // Merchant-facing surface.
         self::testEachCategoryGetsItsOwnWording();
         self::testNoticeNeverLeaksTheResponseBody();
+        self::testTheNoticeClaimsAWithholdOnlyForARejectedKey();
         self::testNoticeIsSilentWhenVerifiedOrUnconfigured();
         self::testNoticeSaysNothingWhileAVerificationIsStillRunning();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
@@ -499,6 +500,37 @@ final class ApiKeyVerificationSpec
         TinyAssert::true(strpos($notice, $body) === false, 'the response body must not reach the back office');
         $stored = json_decode((string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS), true);
         TinyAssert::true(strpos(json_encode($stored), $body) === false, 'the cached verdict must not store the body');
+    }
+
+    /**
+     * ABN-533. The notice names the withhold only where there is one. Telling a
+     * merchant the tile is hidden while it is still selling sends them looking
+     * for the wrong fix.
+     */
+    private static function testTheNoticeClaimsAWithholdOnlyForARejectedKey(): void
+    {
+        // [primed status, HTTP code, says "hidden from checkout", why].
+        $cases = array(
+            array(Twopayment::API_KEY_STATUS_INVALID, 401, true, 'a rejected key does hide the tile'),
+            array(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503, false, 'a 5xx leaves the tile selling'),
+            array(Twopayment::API_KEY_STATUS_UNREACHABLE, null, false, 'so does an unreachable Two'),
+            array(Twopayment::API_KEY_STATUS_ERROR, 418, false, 'and any other non-2xx'),
+        );
+
+        foreach ($cases as $case) {
+            list($status, $code, $claimsWithhold, $description) = $case;
+            $module = self::module(self::okOutcome());
+            $module->primeTwoApiKeyStatus($status, $code);
+
+            $notice = $module->noticeForTest();
+
+            TinyAssert::true($notice !== '', 'a failure is still reported: ' . $description);
+            TinyAssert::same(
+                $claimsWithhold,
+                strpos($notice, 'hidden from checkout') !== false,
+                $description
+            );
+        }
     }
 
     private static function testNoticeIsSilentWhenVerifiedOrUnconfigured(): void

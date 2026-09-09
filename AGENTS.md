@@ -136,8 +136,9 @@ read standing in for a schedule that has stopped.
   `getConfigurableTermSet()` is the admin-side question and is the only thing the
   hardcoded `PAYMENT_TERMS_OPTIONS` preset feeds. Do not compose a term for a buyer
   from that preset or from `DEFAULT_PAYMENT_TERM_DAYS` — a merchant may not hold it.
-  With no offered term the tile renders with no term block at all, and placement is
-  refused upstream rather than booked against a term nobody granted.
+  With no offered term the tile renders with no term block at all, no fee line
+  label is composed, and `controllers/front/payment.php` refuses the submission
+  rather than book an order against a term nobody granted.
 - **A record past `MERCHANT_RECORD_STALE_AFTER` (26h) says the schedule is not
   running.** A read then refreshes it itself, at most once an hour and on a 2-second
   cap, and serves the record it holds either way. Staleness withholds nothing.

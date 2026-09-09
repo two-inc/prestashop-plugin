@@ -25,6 +25,7 @@ final class AjaxCheckoutFailureSpec
         self::testProviderRejectionStillRedirectsBrowserNavigation();
         self::testNonPluginExceptionIsNotRelayedToTheBuyer();
         self::testPluginAmountDiagnosticStillReachesTheBuyer();
+        self::testASubmissionWithNoOfferedTermIsRefusedBeforeOrderCreation();
     }
 
     /**
@@ -94,6 +95,47 @@ final class AjaxCheckoutFailureSpec
             $controller->emitted[0]['message'],
             'a plugin-raised amount diagnostic must keep reaching the buyer'
         );
+    }
+
+    /**
+     * ABN-533. An unresolvable merchant record leaves the tile on offer with an
+     * empty term set, so a buyer can submit with nothing to book against. That
+     * submission is refused here rather than booked under the historical 30-day
+     * default, which is what aligns this with Magento.
+     *
+     * Runs the real controller: the provider double answers the order call with
+     * a 401, so reaching it at all is distinguishable from being refused first.
+     */
+    private static function testASubmissionWithNoOfferedTermIsRefusedBeforeOrderCreation(): void
+    {
+        // [cached offered set, refused for want of a term, description].
+        $cases = array(
+            array(json_encode(array((int) Twopayment::DEFAULT_PAYMENT_TERM_DAYS)), false,
+                'a resolved and ticked term reaches order creation'),
+            array('', true,
+                'an unresolved record offers no term, so nothing can be booked'),
+            array(json_encode(array(60)), true,
+                'a record that withdrew the ticked term offers none either'),
+        );
+
+        foreach ($cases as $case) {
+            list($cached, $refused, $description) = $case;
+            $controller = self::makeController();
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, $cached);
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 10);
+
+            try {
+                self::runPostProcess($controller);
+            } catch (Exception $e) {
+                // Every guard on this path ends in a redirect the stub core raises.
+            }
+
+            TinyAssert::same(
+                $refused,
+                self::loggedContains('no offered payment term'),
+                'submission refused: ' . $description
+            );
+        }
     }
 
     private static function loggedContains(string $needle): bool
@@ -237,6 +279,9 @@ final class AjaxCheckoutFailureSpec
         PrestaShopLogger::reset();
         Tools::resetTestValues();
         Tools::setTestValue('token', Tools::getToken(false));
+        // An offered term, or the controller refuses before reaching the
+        // payload build these specs are about (ABN-533).
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . Twopayment::DEFAULT_PAYMENT_TERM_DAYS, 1);
 
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
         StubStore::$countries[33] = 'FR';

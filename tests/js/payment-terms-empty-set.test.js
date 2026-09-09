@@ -61,13 +61,12 @@ describe('the config the checkout manager is built with', () => {
         [undefined, [], 'an absent list stays absent'],
         [[], [], 'an empty list stays empty'],
         [[45], [45], 'a real list is carried through'],
-    ])('%p', (terms, expected, description) => {
+    ])('%s: %p', (terms, expected) => {
         loadScript('views/js/twopayment.js');
 
         const config = window.twoBuildCheckoutManagerConfig({ available_payment_terms: terms });
 
         expect(config.available_payment_terms).toEqual(expected);
-        expect(description).toBeTruthy();
     });
 });
 
@@ -79,12 +78,11 @@ describe('the payment-term block against the offered set', () => {
         [[30, 60], true, 2, 'a real offered set draws a chip per term'],
     ];
 
-    test.each(cases)('%p', (terms, revealed, chips, description) => {
+    test.each(cases)('%s: %p', (terms, revealed, chips) => {
         manager(terms).showPaymentTerms();
 
         const block = document.getElementById('two-payment-terms');
         expect(block.style.display === 'block').toBe(revealed);
         expect(document.querySelectorAll('.two-term-chip').length).toBe(chips);
-        expect(description).toBeTruthy();
     });
 });

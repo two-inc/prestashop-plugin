@@ -33,6 +33,7 @@ final class SurchargeSpec
         self::testBuildTwoBuyerFeeShareWiresConfigAndDefaultTerm();
         self::testRoundingStepOptionsAreBrandDrivenSortedAndFormatted();
         self::testSurchargeLineLabelTemplateBrandAndDefault();
+        self::testSurchargeLineLabelIsEmptyWithNoOfferedTerm();
         self::testPaymentTermCheckboxLabelsNeverCarrySurchargePreview();
         self::testSurchargeGridRendersEveryOfferableTermRowWithVisibilityState();
         self::testFetchTermFeeFailsSoftOnHttpError();
@@ -418,6 +419,40 @@ final class SurchargeSpec
         TinyAssert::same('Payment terms fee - 60 days', $module->getTwoSurchargeLineLabel(60));
         Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', 'Financing fee (%s days)');
         TinyAssert::same('Financing fee (30 days)', $module->getTwoSurchargeLineLabel(30));
+    }
+
+    /**
+     * ABN-533. The label names a day count, and with no offered term there is
+     * no day count the merchant holds - so the buyer is shown none, whichever
+     * of the three wordings would otherwise apply.
+     */
+    private static function testSurchargeLineLabelIsEmptyWithNoOfferedTerm(): void
+    {
+        // [surcharge line template, description].
+        $wordings = array(
+            array('', 'the platform default wording'),
+            array('Financing fee (%s days)', 'a merchant template'),
+        );
+
+        foreach ($wordings as $case) {
+            list($template, $description) = $case;
+            self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', $template);
+            $module = new TwopaymentTestHarness();
+            TinyAssert::true(
+                $module->getTwoSurchargeLineLabel(30) !== '',
+                'an offered term is labelled: ' . $description
+            );
+
+            // The record reports nothing, so nothing is offered.
+            $module->primeTwoAvailableTerms(array());
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 10);
+            TinyAssert::same(
+                '',
+                $module->getTwoSurchargeLineLabel(30),
+                'no offered term, no label: ' . $description
+            );
+        }
     }
 
     /**

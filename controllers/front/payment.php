@@ -150,6 +150,21 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
+        // No offered term, no order (ABN-533). The tile is offered with an empty
+        // term set rather than withheld, so a submission can arrive with nothing
+        // to book against; composing the historical 30-day default here would
+        // price the order under a term the merchant may not hold and drop the
+        // per-term buyer surcharge with it. Last of the gates, so every more
+        // specific refusal above still names itself.
+        if (empty($this->module->getAvailablePaymentTerms())) {
+            $this->failCheckout(
+                $this->module->l('This payment method is not available.'),
+                'TwoPayment: Payment attempt with no offered payment term - cart ' . (int) $cart->id,
+                2
+            );
+            return;
+        }
+
         // Keep attempt table bounded without adding cron requirements.
         $this->module->maybeCleanupStaleTwoCheckoutAttempts();
 

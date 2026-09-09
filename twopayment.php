@@ -10709,9 +10709,8 @@ class Twopayment extends PaymentModule
 
     /**
      * Config-page notice for a stored key that does not currently verify
-     * (TWO-25326), or '' when there is nothing to say. Not merely
-     * informational: while this shows, Two is withheld from checkout, so the
-     * notice states that too.
+     * (TWO-25326), or '' when there is nothing to say. It names the withhold
+     * only where there is one, which is a definitive rejection (ABN-533).
      *
      * @return string
      */
@@ -10731,8 +10730,13 @@ class Twopayment extends PaymentModule
             return '';
         }
 
-        return $this->getTwoApiKeyFailureMessage($status['status'], $status['code'])
-            . ' ' . sprintf($this->l('%s is hidden from checkout until the key verifies.'), $this->getTwoBrandConfig('product_name'));
+        $message = $this->getTwoApiKeyFailureMessage($status['status'], $status['code']);
+        if (!self::isDefinitiveFailureStatus($status['status'])) {
+            return $message;
+        }
+
+        return $message . ' '
+            . sprintf($this->l('%s is hidden from checkout until the key verifies.'), $this->getTwoBrandConfig('product_name'));
     }
 
     /**
@@ -14780,6 +14784,11 @@ class Twopayment extends PaymentModule
      */
     public function getTwoSurchargeLineLabel($days)
     {
+        // ABN-533: the label names a day count, so with no offered term there
+        // is no honest label - and no fee line for it to sit on either.
+        if (empty($this->getAvailablePaymentTerms())) {
+            return '';
+        }
         $template = trim((string) Configuration::get('PS_TWO_SURCHARGE_LINE_DESC'));
         if ($template !== '') {
             return str_replace('%s', (string) (int) $days, $template);
@@ -15364,11 +15373,6 @@ class Twopayment extends PaymentModule
      */
     public function getAvailablePaymentTerms()
     {
-        // ABN-533: the BUYER is offered what the merchant record actually
-        // reports, or nothing. The preset behind getOfferableTermSource()
-        // exists to keep the admin screens usable while the record is
-        // unresolved; relaying it to a buyer offers terms the merchant may not
-        // hold, and an empty set is the honest answer.
         $backend = $this->getMerchantAvailableTerms();
         if (empty($backend)) {
             return array();
