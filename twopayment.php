@@ -16075,7 +16075,8 @@ class Twopayment extends PaymentModule
      *   1. the merchant's OWN explicit admin choice (PS_TWO_DEFAULT_PAYMENT_TERM,
      *      TWO-25386 #10) when it is offered;
      *   2. the merchant's API default term (due_in_days) when it is offered;
-     *   3. the historical DEFAULT_PAYMENT_TERM_DAYS (30) when it is offered;
+     *   3. DEFAULT_PAYMENT_TERM_DAYS (30) when it is offered - the preference
+     *      every platform shares (ABN-548);
      *   4. the lowest offered term.
      * A single offered term always wins outright. With nothing offered there is
      * no default at all: a substituted day count would offer the buyer a term
@@ -16101,7 +16102,7 @@ class Twopayment extends PaymentModule
         // over every derived default below, as long as it is still an
         // offered term - an admin who has EXPLICITLY set a default should
         // never be silently overridden by the API's due_in_days or the
-        // historical 30-day fallback.
+        // 30-day preference.
         $admin_default = trim((string) Configuration::get('PS_TWO_DEFAULT_PAYMENT_TERM'));
         if ($admin_default !== '' && ctype_digit($admin_default)) {
             $admin_default = (int) $admin_default;
