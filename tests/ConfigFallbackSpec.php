@@ -6,8 +6,10 @@ declare(strict_types=1);
  * The reads whose intended fallback used to be passed as Configuration::get()'s
  * second argument, which is core's $id_lang and not a fallback (ABN-532):
  * `get($key, $idLang = null, $idShopGroup = null, $idShop = null, $default = false)`.
- * Every one of these keys is seeded by install(), so a correctly installed shop
- * never noticed - these cases are the partially installed one.
+ * Core clamps $idLang to 0 for a key carrying no per-language row, so the reads
+ * themselves always hit the right row and only the fallbacks were dead. Every
+ * one of these keys is seeded by install(), so the cases below are the shop
+ * where one is missing.
  */
 final class ConfigFallbackSpec
 {
@@ -58,7 +60,7 @@ final class ConfigFallbackSpec
         $cases = [
             ['production', 'PRODUCTION', true, 'a production shop reports production'],
             ['staging', 'STAGING', true, 'a staging shop reports staging'],
-            [null, 'Not configured', false, 'no row at all is reported as unconfigured, not as staging'],
+            [null, 'Not configured', false, 'no row at all is named and warned about, not rendered blank and called healthy'],
             ['', 'Not configured', false, 'an emptied row is reported as unconfigured'],
             ['development', 'DEVELOPMENT', false, 'the withdrawn value is shown but not called healthy'],
             ['Production', 'PRODUCTION', true, 'a shop stored in another case is judged as the host lookup judges it'],

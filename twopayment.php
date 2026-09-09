@@ -9063,7 +9063,7 @@ class Twopayment extends PaymentModule
      * An absent row is never-configured, not off, and has to agree with the
      * install() seed (ABN-532).
      *
-     * @return int The stored flag, 1 when no row is stored
+     * @return int The stored flag, 1 when nothing is stored
      */
     private static function getTwoTaxSubtotalsSetting()
     {
