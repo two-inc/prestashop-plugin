@@ -129,10 +129,10 @@ describe('visibility', () => {
 describe('activation', () => {
     /**
      * Regression test (TWO-40, live-verified against a real browser - see
-     * .ai/decisions.md): PR #159 called renderChipSelection() in the SAME tick
-     * as closeDropdown(), so a real browser never painted the `--selected`
-     * class before `display:none` hid it - jsdom's paint-less assertion passed
-     * anyway. The selection must be visible WHILE the panel is still open, not
+     * .ai/decisions.md): prestashop-plugin PR #159 called renderChipSelection()
+     * in the SAME tick as closeDropdown(), so a real browser never painted the
+     * `--selected` class before `display:none` hid it - jsdom's paint-less
+     * assertion passed anyway. The selection must be visible WHILE the panel is still open, not
      * merely true in an unwatched document.
      */
     test('the selected chip is visibly applied while the panel is still open, not only after it closes', () => {
@@ -340,10 +340,9 @@ describe('a chip clicked while the signup popup is open (TWO-40)', () => {
     });
 
     /**
-     * #5.1. The gap was not "closed the popup when it should not have" - it was
-     * that the click resolved to NOTHING: `_soleTraderLoading` stays true for
-     * the popup's whole lifetime, so the re-entrancy guard swallowed the click
-     * before anything could raise the window the buyer was asking for.
+     * `_soleTraderLoading` stays true for the popup's whole lifetime, so the
+     * re-entrancy guard must not swallow this click - it has to raise the
+     * window the buyer is asking for.
      */
     test('Sole trader: raises the popup, keeps the panel open, and stays the selected chip', () => {
         const soleTrader = stubSoleTrader(true);
@@ -377,7 +376,7 @@ describe('a chip clicked while the signup popup is open (TWO-40)', () => {
     });
 
     /**
-     * #5.2. Closing the popup must not cost the chip its own job - "stay here,
+     * Closing the popup must not cost the chip its own job - "stay here,
      * search normally" still means the query row is back and focused.
      */
     test('Registered company: never cancels, and still shows and focuses the query field', () => {

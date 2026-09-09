@@ -24,12 +24,10 @@ class TwoCompanySearch {
     static AUTOFILL_MARKER_ATTR = 'data-two-autofilled-value';
 
     // THERE IS NO "hide the identification field" MARKER HERE, AND MUST NOT BE
-    // ONE (TWO-40, Doug's ruling, Option A). An internal (`TWO:`-prefixed)
-    // identifier is never written into the visible `dni` field, so there is
-    // nothing to hide - and a hiding rule could never be complete, because core
-    // renders `dni` into address blocks, invoice PDFs and order emails through
-    // AddressFormat::generateAddress(), which no CSS rule of ours reaches. See
-    // writeOrganizationToAddressIdentifiers().
+    // ONE (TWO-40): an internal (`TWO:`-prefixed) identifier is never written
+    // into the visible `dni` field, which core also renders into address blocks,
+    // invoice PDFs and order emails beyond the reach of any CSS rule of ours.
+    // See writeOrganizationToAddressIdentifiers().
 
     /**
      * Company-search result cache, on the CLASS rather than inside
@@ -132,7 +130,7 @@ class TwoCompanySearch {
             // Merchant toggle for the address lookup (TWO-25203). Default-on,
             // mirroring the server-side resolver.
             addressLookupEnabled: true,
-            // Where this control is mounted (TWO-25326 §7.1). Default-on,
+            // Where this control is mounted (TWO-25326). Default-on,
             // mirroring the server-side resolver. Read by
             // syncNotListedVisibility().
             companySearchInAddressArea: true,
@@ -179,13 +177,11 @@ class TwoCompanySearch {
         // field without a suggestion list arguing with them.
         //
         // Backed by the injected `_manualEntryMemory` rather than a plain
-        // instance field (TWO-40 follow-up, decisions.md 2026-08-11 #11): the
-        // manager destroys and rebuilds this instance on every
-        // `updatedAddressForm`, so a plain field forgot manual-entry mode on
-        // every rebuild and the fresh instance came back in search mode - the
-        // same class of bug the reopen deadline had before `_reopenMemory`.
-        // The accessor keeps every existing `this._manualEntry` read/write
-        // below unchanged.
+        // instance field (TWO-40 follow-up): the manager destroys and rebuilds
+        // this instance on every `updatedAddressForm`, so a plain field would
+        // forget manual-entry mode on every rebuild and the fresh instance would
+        // come back in search mode - the same class of bug `_reopenMemory` exists
+        // to prevent for the reopen deadline.
         //
         // `_manualEntryForced` is deliberately NOT part of that persisted
         // memory: searchUnavailable() sets it when this mount's address scope
@@ -203,7 +199,7 @@ class TwoCompanySearch {
         // "Select a different sole trader" reverse link (TWO-40 follow-up).
         this._selectDifferentSoleTraderLink = null;
 
-        // The anchored dropdown panel (TWO-25326 §1): a real popup control
+        // The anchored dropdown panel (TWO-25326): a real popup control
         // anchored to the field, carrying its OWN query input, with the
         // company-name field left untouched until a result is picked.
         this._dropdown = null;
@@ -550,9 +546,9 @@ class TwoCompanySearch {
         if (hintField.length === 0) {
             hintField = $('<span class="two-company-id-hint"></span>');
             this.companyField.after(hintField);
-            // The hint sits in NORMAL FLOW inside `.two-company-field-wrap`,
-            // immediately after the input (see two.css) - absolute positioning
-            // let it paint over the VAT-number field below, TWO-25326 §5.
+            // Normal flow inside `.two-company-field-wrap`, immediately after
+            // the input (see two.css): absolute positioning paints it over the
+            // VAT-number field below (TWO-25326).
         }
 
         this.companyIdHintField = hintField;
@@ -566,24 +562,21 @@ class TwoCompanySearch {
      */
     setCompanyIdHint(value) {
         if (this.companyIdHintField && this.companyIdHintField.length) {
-            // TWO-25326 §12: a `TWO:`-prefixed number is an internal
-            // identifier and is never shown - forDisplay() answers '' for it,
-            // which the empty-string handling below already treats as "no label
-            // at all", so the suppressed case needs no branch of its own.
+            // A `TWO:`-prefixed number is internal and never shown (TWO-25326):
+            // forDisplay() answers '' for it, which the empty-string handling
+            // below already treats as "no label at all".
             const text = this.companyNumber().forDisplay(value);
             this.companyIdHintField.text(text);
-            // TWO-25326 §5/§7: the label is in normal flow, so an EMPTY one
-            // still occupies a line box and adds height to an address form that
-            // should look identical to every other row until a company is
-            // selected. Toggling the class, not just the text, is what keeps
-            // "additional space only when the company number is visible" true.
+            // The label is in normal flow, so an EMPTY one still occupies a line
+            // box; toggling the class, not just the text, is what keeps the form
+            // free of extra height until a company number is visible (TWO-25326).
             this.companyIdHintField.toggleClass('two-company-id-hint--visible', text !== '');
         }
     }
 
     /**
      * @returns {string} accessible name for the company-name field while it
-     *   acts as the trigger that opens the search panel (TWO-25326 §1).
+     *   acts as the trigger that opens the search panel (TWO-25326).
      */
     getEditCompanyText() {
         return this.text('company_search_edit', 'Search for a different company');
@@ -623,7 +616,7 @@ class TwoCompanySearch {
     }
 
     /**
-     * Build the anchored dropdown panel, idempotently (TWO-25326 §1/§2).
+     * Build the anchored dropdown panel, idempotently (TWO-25326).
      *
      * DOM ORDER IS THE DESIGN HERE, not an implementation detail. Every part
      * lives inside the same `.two-company-field-wrap` as the company-name
@@ -631,13 +624,13 @@ class TwoCompanySearch {
      *
      *   input[name='company'] -> query field -> results host -> "not on the list"
      *
-     * so the browser's OWN tab order already satisfies §1, §2 and §4 with no key
-     * handling whatsoever. The panel is `display: none` while closed, so none of
-     * it is a tab stop until the buyer opens it, which makes §4's "no keyboard
-     * trap" true by construction.
+     * so the browser's own tab order already runs company name, query field,
+     * results, then manual entry with no key handling whatsoever, and a closed
+     * panel (`display: none`) is no tab stop at all, so there is no keyboard
+     * trap to escape from.
      *
      * The manual-entry control is a REAL `<button>` and a SIBLING of the results
-     * host, never a row inside it (§2): outside the scroll container, so it is
+     * host, never a row inside it: outside the scroll container, so it is
      * reachable without scrolling past up to 50 results, and outside the list,
      * so the cursor keys cannot reach it.
      */
@@ -696,8 +689,8 @@ class TwoCompanySearch {
             .attr('aria-expanded', 'true');
         // Spinner slot, painted by CSS from the loading class the widget puts on
         // the query field. A real element rather than a background on the input
-        // itself so it sits at the right-hand END of the field (§1) regardless
-        // of the theme's input padding.
+        // itself so it sits at the right-hand END of the field regardless of
+        // the theme's input padding.
         searchRow.append(query).append($('<span class="two-company-dropdown__spinner" aria-hidden="true"></span>'));
 
         // jQuery UI appends its own `<ul class="ui-autocomplete">` into this
@@ -733,9 +726,8 @@ class TwoCompanySearch {
             .append(soleTraderEntry)
             .append(notListed);
 
-        // Chips AFTER the results host, not before the query field: keeps the
-        // "query field is the next tab stop after the company-name field"
-        // contract (§1) intact.
+        // Chips AFTER the results host, not before the query field: the query
+        // field must stay the next tab stop after the company-name field.
         panel.append(searchRow).append(results).append(modeChips);
         // Appended to the wrapper rather than `.after()` the input: the
         // org-number hint is also a child of this wrapper and the panel must
@@ -829,10 +821,9 @@ class TwoCompanySearch {
      * namespace first so it is idempotent - see the adoption branch in
      * buildDropdown().
      *
-     * Escape is bound to the panel rather than to the document: a document
-     * handler would swallow Escape for every other control on the checkout,
-     * which is precisely the "key events must only ever be tied to individual
-     * controls" rule in §4.
+     * Escape is bound to the panel rather than to the document: key events must
+     * be tied to individual controls, and a document handler would swallow
+     * Escape for every other control on the checkout.
      *
      * The close-on-leave is a deferred `focusout`, not a `blur`. Focus moving
      * from the query field to the "not on the list" button is a `focusout` then
@@ -875,7 +866,7 @@ class TwoCompanySearch {
                 event.preventDefault();
                 event.stopPropagation();
                 // THE ONE CHIP that does not take an open signup popup down
-                // (Doug, TWO-40 follow-up): clicking it while a popup from an
+                // (TWO-40 follow-up): clicking it while a popup from an
                 // earlier launch is still up means "give me that popup back",
                 // so raise it to the front instead.
                 //
@@ -886,8 +877,8 @@ class TwoCompanySearch {
                 //
                 // beginSoleTraderLoading() is needed because the popup outlives
                 // the instance that launched it (destroy() keeps it tracked
-                // across the rebuild, §14), so a replacement instance can meet
-                // one it never started - and a raise with no spinner and no
+                // across the rebuild), so a replacement instance can meet one
+                // it never started - and a raise with no spinner and no
                 // settle listener leaves the restored panel with nothing to
                 // close it when the popup finally goes.
                 if (this.focusSoleTraderSignupPopup()) {
@@ -917,10 +908,9 @@ class TwoCompanySearch {
                 // selection state rather than relying on a caller to.
                 this.renderChipSelection();
                 // Re-clicking this chip while a sole trader is already adopted
-                // (TWO-40 follow-up, Doug's ruling) routes through the exact
-                // same call the link uses rather than starting a fresh
-                // enrolment, which would re-mint tokens for an identity that's
-                // already adopted.
+                // (TWO-40 follow-up) routes through the exact same call the
+                // link uses; a fresh enrolment would re-mint tokens for an
+                // identity already adopted.
                 if (this.isSoleTraderAdopted()) {
                     this.triggerSelectDifferentSoleTrader();
                     return;
@@ -929,7 +919,7 @@ class TwoCompanySearch {
                 if (soleTrader && typeof soleTrader.startEnrollment === 'function') {
                     // Keep the panel OPEN and show the company-name field's
                     // spinner for the actual duration of this click's autofill
-                    // round trip (Doug, TWO-40). See
+                    // round trip (TWO-40). See
                     // beginSoleTraderLoading()/endSoleTraderLoading() for the
                     // event contract with TwoSoleTrader.js.
                     this.beginSoleTraderLoading();
@@ -974,7 +964,7 @@ class TwoCompanySearch {
                 this.endSoleTraderLoading();
                 // Safari focuses no button on mousedown, so the focus watch may not have closed it.
                 this.closeSoleTraderSignupPopup();
-                // A lookup still out may yet adopt over this registered state unless manual entry latched - accepted (Doug, TWO-25658).
+                // A lookup still out may yet adopt over this registered state unless manual entry latched - accepted (TWO-25658).
                 this.renderChipSelection();
                 this.focusQuietly(this._queryField);
             });
@@ -991,7 +981,7 @@ class TwoCompanySearch {
             // activation click IS the default action of the Enter keydown that
             // triggered it, so cancelling Enter in a bubbling ancestor
             // suppresses the click outright - which silently broke Enter on
-            // "My company is not on the list" (§2).
+            // "My company is not on the list".
             if (event.key === 'Enter'
                 && this._queryField && this._queryField.length
                 && event.target === this._queryField.get(0)) {
@@ -1000,15 +990,14 @@ class TwoCompanySearch {
             if (event.key === 'Escape' || event.key === 'Esc') {
                 event.preventDefault();
                 event.stopPropagation();
-                // §1: Escape reverts focus to the company-name field.
+                // Escape reverts focus to the company-name field.
                 this.closeDropdown(true);
             }
         });
 
-        // Tab out of the query field must NOT pick the highlighted row (§4.1).
-        // jQuery UI's autocomplete treats Tab as "accept the active menu item",
-        // which runs our `select` option and ends in closeDropdown(true) -
-        // precisely what §1.9 and §4.1 forbid Tab from doing.
+        // Tab out of the query field must NOT pick the highlighted row: jQuery
+        // UI's autocomplete treats Tab as "accept the active menu item", which
+        // runs our `select` option and ends in closeDropdown(true).
         //
         // Native listener in the CAPTURE phase, deliberately: the widget binds
         // its handler on the query input itself, so a jQuery handler added
@@ -1188,8 +1177,8 @@ class TwoCompanySearch {
      *
      * Deliberately does NOT move focus. This fires on the way OUT - a Tab off
      * the "not on the list" button, or a click elsewhere on the form - and the
-     * browser has already chosen the destination. Pulling focus back to the
-     * company-name field here is exactly the keyboard trap §4 forbids.
+     * browser has already chosen the destination; pulling focus back to the
+     * company-name field here would be a keyboard trap.
      */
     scheduleDropdownClose() {
         clearTimeout(this._closeTimerId);
@@ -1285,9 +1274,9 @@ class TwoCompanySearch {
      * The buyer is leaving the sole-trader flow: popup down AND enrolment
      * cancelled, as one call.
      *
-     * The country-change listener's call, and the only one (Doug, TWO-25658):
-     * closure and cancellation are "a single atomic operation" (TWO-40
-     * follow-up), and its ordering lives in TwoSoleTrader.abandonEnrollment().
+     * The country-change listener's call, and the only one (TWO-25658): closure
+     * and cancellation are a single atomic operation (TWO-40 follow-up), ordered
+     * inside TwoSoleTrader.abandonEnrollment().
      *
      * Callers must still unbind their own settle listener FIRST where they mean
      * to keep the panel open - see endSoleTraderLoading()'s callers - because
@@ -1363,10 +1352,10 @@ class TwoCompanySearch {
     }
 
     /**
-     * Open the panel and put focus in the query field (§1).
+     * Open the panel and put focus in the query field.
      *
-     * The company-name field is NOT touched: §1 requires it to be left
-     * unchanged until the buyer picks a result.
+     * The company-name field is NOT touched: it must be left unchanged until
+     * the buyer picks a result.
      *
      * The query field starts EMPTY rather than seeded from the company-name
      * field - seeding it would re-run a search for a company the buyer has
@@ -1384,7 +1373,7 @@ class TwoCompanySearch {
             return;
         }
         this.endSoleTraderLoading();
-        // Close only: the enrolment stays resumable everywhere but destroy() and a country change (Doug, TWO-25658).
+        // Close only: the enrolment stays resumable everywhere but destroy() and a country change (TWO-25658).
         if (buyerInitiated) {
             this.closeSoleTraderSignupPopup();
         }
@@ -1411,7 +1400,7 @@ class TwoCompanySearch {
         this.syncModeChipVisibility();
         this.focusPanelEntry();
         // Render the current state immediately - for an empty query that is the
-        // "type N more characters" hint (§1), not an empty or absent panel.
+        // "type N more characters" hint, not an empty or absent panel.
         this.openSearchForCurrentTerm();
     }
 
@@ -1442,7 +1431,7 @@ class TwoCompanySearch {
 
     /**
      * @param {boolean} returnFocus Put focus back on the company-name field.
-     *   True for Escape and for a completed selection (§1); false when the
+     *   True for Escape and for a completed selection; false when the
      *   browser has already moved focus somewhere else of its own accord.
      */
     closeDropdown(returnFocus) {
@@ -1512,8 +1501,8 @@ class TwoCompanySearch {
     }
 
     /**
-     * Visibility gating for the "Enter Manually" mode chip (TWO-40 design
-     * revision of §2's "My company is not on the list").
+     * Visibility gating for the "Enter Manually" mode chip - the TWO-40 design
+     * revision of "My company is not on the list".
      *
      * Open panel AND company search living in the address area (TWO-25503):
      * manual entry captures no company number, Two's payment method requires
@@ -1752,9 +1741,9 @@ class TwoCompanySearch {
      * so hiding the input alone collapses the row to zero height and strands
      * that spinner at its top edge.
      *
-     * A PURE FUNCTION OF `_chipMode`, with no second condition of any kind
-     * (Doug, TWO-40 follow-up: the hide must be immediate on the click that
-     * selects the chip, whatever else that click starts). Do not reintroduce a
+     * A PURE FUNCTION OF `_chipMode`, with no second condition of any kind: the
+     * hide must be immediate on the click that selects the chip, whatever else
+     * that click starts (TWO-40 follow-up). Do not reintroduce a
      * condition here; anything that must survive in sole-trader mode belongs
      * outside this row.
      *
@@ -1802,7 +1791,7 @@ class TwoCompanySearch {
      * it - and the dropdown, if one is open - to be cleared when that round trip
      * is COMPLETE.
      *
-     * THE ONE ENTRY POINT for both sole-trader flows (Doug, TWO-40 follow-up):
+     * THE ONE ENTRY POINT for both sole-trader flows (TWO-40 follow-up):
      * the Sole trader chip's first-time enrolment, and
      * triggerSelectDifferentSoleTrader()'s replacement flow. The only difference
      * between them is whether a dropdown happens to be open, which the settle
@@ -1828,7 +1817,7 @@ class TwoCompanySearch {
      * @returns {boolean} false if a sole-trader flight was ALREADY in
      *   progress, which makes this the shared re-entrancy guard for both
      *   entry points - one hosted popup at a time, whichever control asked
-     *   for it (guide §14).
+     *   for it.
      */
     beginSoleTraderLoading() {
         if (this._soleTraderLoading) {
@@ -1901,7 +1890,7 @@ class TwoCompanySearch {
 
     /**
      * Make the company-name field a search TRIGGER rather than a text box
-     * while search mode is active (§1).
+     * while search mode is active.
      *
      * `readonly`, deliberately, and not `disabled`: a readonly input still
      * submits its value, still takes focus, and is still a tab stop - all three
@@ -2065,7 +2054,7 @@ class TwoCompanySearch {
         this.companyField.on('input.twoCompanySync change.twoCompanySync', () => {
             this.clearStaleOrganizationSelection();
             // A cleared tag changes the answer to hasConfirmedSelection(),
-            // which is what §2 gates the "not on the list" button on.
+            // which the "not on the list" button's visibility is gated on.
             this.syncModeChipVisibility();
         });
     }
@@ -2173,7 +2162,7 @@ class TwoCompanySearch {
             return false;
         }
         // AN INTERNAL (`TWO:`-PREFIXED) IDENTIFIER IS NEVER WRITTEN INTO THE VISIBLE
-        // `dni` FIELD (TWO-40, Doug's ruling, Option A). This is the ONE place `TWO:`
+        // `dni` FIELD (TWO-40). This is the ONE place `TWO:`
         // is treated specially in the write path; everything else about such a number
         // - the hidden `companyid`, its `data-two-company-name` pairing tag, the
         // session record, the mirror and the routing - stays byte-identical to any
@@ -2224,7 +2213,7 @@ class TwoCompanySearch {
     }
 
     // THERE IS NO VISIBILITY RULE FOR THE IDENTIFICATION FIELD HERE, AND ADDING
-    // ONE BACK WOULD BE A MISTAKE (TWO-40, Option A). Two reasons:
+    // ONE WOULD BE A MISTAKE (TWO-40). Two reasons:
     //
     //  1. Nothing puts an internal (`TWO:`) value there - see
     //     writeOrganizationToAddressIdentifiers() - so there is nothing to hide.
@@ -2511,9 +2500,9 @@ class TwoCompanySearch {
     }
 
     /**
-     * Trim, and fold case. Both are Doug's ruling on how a content match is
-     * decided: the buyer retyping "acme trading ltd" over "Acme Trading Ltd", or
-     * leaving a trailing space behind, has not authored a different answer.
+     * Trim, and fold case: the buyer retyping "acme trading ltd" over "Acme
+     * Trading Ltd", or leaving a trailing space behind, has not authored a
+     * different answer.
      *
      * @param {*} value
      * @returns {string}
@@ -2629,9 +2618,9 @@ class TwoCompanySearch {
         });
 
         // `address2` is here because the sole-trader autofill routes building and
-        // apartment into it (TWO-40, Doug's ruling): a buyer typing a second
-        // address line is stating an independent answer, so it pins the address
-        // like any other field.
+        // apartment into it (TWO-40): a buyer typing a second address line is
+        // stating an independent answer, so it pins the address like any other
+        // field.
         ['address1', 'address2', 'postcode', 'city'].forEach(name => {
             const field = $(root).find(`input[name='${name}']`).first();
             record(name, field, liveValue(field), '');
@@ -2725,10 +2714,10 @@ class TwoCompanySearch {
      * Whether the secondary address is PINNED - the buyer has made it their own,
      * and nothing may be written into any of its fields (TWO-40).
      *
-     * ADDRESS-WIDE, not per-field (Doug's ruling): any address field the buyer
-     * has entered pins the address, and the test for "entered" is a content
-     * match. So ONE field that no longer holds what the plugin put there pins the
-     * WHOLE secondary address and no field is synced - the mirror only ever
+     * ADDRESS-WIDE, not per-field: any address field the buyer has entered pins
+     * the address, and the test for "entered" is a content match. So ONE field
+     * that no longer holds what the plugin put there pins the WHOLE secondary
+     * address and no field is synced - the mirror only ever
      * writes into a PRISTINE secondary address, and once the buyer touches
      * anything in it, it stays frozen for the rest of the cart unless the
      * contents come back to matching.
@@ -3165,7 +3154,7 @@ class TwoCompanySearch {
         //    but a mirrored COUNTRY write can rebuild this form into one that does
         //    have the field, and then it is owed to a form that can take it.
         //  - the field EXISTS but the write skipped it, because the value is an
-        //    internal (`TWO:`) identifier that never enters `dni` (TWO-40, Option A).
+        //    internal (`TWO:`) identifier that never enters `dni` (TWO-40).
         //
         // The second shape is why this is keyed on `!wroteNumber` and not on
         // `identifierFields.length === 0`. `organizationPending` is the other half of
@@ -3283,7 +3272,7 @@ class TwoCompanySearch {
         memory.organization = placed ? pending : '';
         // A refusal LEAVES THE DEBT OWING rather than settling it, and that is
         // deliberate. The dominant refusal is an internal (`TWO:`) identifier, which
-        // never enters `dni` (TWO-40, Option A) - so `organizationPending` is the
+        // never enters `dni` (TWO-40) - so `organizationPending` is the
         // only surviving record of the number, and republishMirroredSelection() reads
         // it to restore the hidden `companyid` pair after the NEXT rebuild too.
         // Clearing it here would work exactly once and then lose the pair. Retrying
@@ -3361,9 +3350,9 @@ class TwoCompanySearch {
      * serverRenderedSelectValue() for why an empty country select does not exist
      * on a real PrestaShop form.
      *
-     * Comparisons trim and fold case, on Doug's ruling: a buyer who retyped the same
-     * answer in a different case, or left a trailing space, has not authored a
-     * different answer, and the value is still the plugin's to replace.
+     * Comparisons trim and fold case: a buyer who retyped the same answer in a
+     * different case, or left a trailing space, has not authored a different
+     * answer, and the value is still the plugin's to replace.
      *
      * @param {Object} field jQuery object, possibly empty
      * @param {string|Array<string>} [unansweredValues] value or values that also
@@ -3660,7 +3649,7 @@ class TwoCompanySearch {
         // instance's life with nothing left to clear it.
         this._manualEntryForced = false;
 
-        // The anchored panel and its query field (TWO-25326 §1). Same re-run
+        // The anchored panel and its query field (TWO-25326). Same re-run
         // reasoning as the hint above: this method is the one that runs
         // against whatever field PrestaShop just put on the page, so the panel
         // has to be rebuilt on the same schedule or it goes missing the moment
@@ -3705,16 +3694,17 @@ class TwoCompanySearch {
         // incompatible signature, and feeding it this options object would leave
         // the field with no working search at all while skipping the fallback.
         //
-        // TWO-25326 §1: the widget is bound to the PANEL'S QUERY FIELD, not to
-        // `input[name='company']` as it was through PR #131. That single change
-        // is what turns an in-field autocomplete into a real dropdown control:
+        // TWO-25326: the widget is bound to the PANEL'S QUERY FIELD, not to
+        // `input[name='company']` as it was through prestashop-plugin PR #131.
+        // That single change is what turns an in-field autocomplete into a
+        // real dropdown control:
         // the company-name field stops being the search box, so it can be left
         // untouched until a result is picked, and every keystroke, the 300ms
         // debounce, the loading class the spinner is painted from, and the
         // cursor-key navigation all belong to a control that lives inside the
         // panel. `appendTo` keeps the widget's own `<ul>` inside the panel too,
         // which is what stops it being appended to `<body>` and breaking Tab
-        // (the WC §1 defect recorded on this ticket).
+        // (a defect recorded on this ticket).
         if ($.ui && $.ui.autocomplete && typeof $.fn.autocomplete === 'function') {
             this._queryField.autocomplete({
                 appendTo: this._resultsList,
@@ -3774,14 +3764,12 @@ class TwoCompanySearch {
                     }
                     // Too short to search on - INCLUDING the empty query the
                     // panel opens with. No search is made and no row is
-                    // rendered for this any more (TWO-40 follow-up): the
-                    // length requirement lives in the query field's own
-                    // placeholder (getQueryPlaceholderText()), which - per
-                    // TWO-25326 §1's original requirement that the hint be on
-                    // screen as soon as the control opens - is already
-                    // visible the moment the panel opens, since the field is
-                    // still empty then. Trimmed: whitespace is not something
-                    // the search can match on.
+                    // rendered for it (TWO-40 follow-up): the length
+                    // requirement lives in the query field's own placeholder
+                    // (getQueryPlaceholderText()), which TWO-25326 requires on
+                    // screen as soon as the control opens - it is, since the
+                    // field is still empty then. Trimmed: whitespace is not
+                    // something the search can match on.
                     if (term.trim().length < MIN_SEARCH_LENGTH) {
                         // jQuery UI's own __response() never calls _suggest()
                         // for empty content - only _close(), which HIDES the
@@ -3860,10 +3848,10 @@ class TwoCompanySearch {
                 // below its own combobox.
                 position: { my: 'left top+8', at: 'left bottom', collision: 'none' },
                 select: (event, ui) => {
-                    // "My company is not on the list" is no longer an item in
-                    // this list at all (TWO-25326 §2) - it is a real <button>
-                    // outside the scroll container, with its own click
-                    // handler. Nothing here has to special-case it.
+                    // "My company is not on the list" is not an item in this
+                    // list (TWO-25326) - it is a real <button> outside the
+                    // scroll container, with its own click handler, so nothing
+                    // here has to special-case it.
                     // The "search unavailable" row is a message, not a company:
                     // returning false stops jQuery UI writing it into the field.
                     if (ui && ui.item && ui.item.two_unavailable) {
@@ -3872,8 +3860,8 @@ class TwoCompanySearch {
                     this.onCompanySelected(event, ui);
                     // A completed selection ends the search. Focus goes back
                     // to the company-name field, which now holds the picked
-                    // name (§1: "on selection, the selected name replaces what
-                    // was previously in the company-name field").
+                    // name - the selected name replaces whatever the
+                    // company-name field held.
                     this.closeDropdown(true);
                     // ALWAYS false, never the handler's own result. A truthy
                     // return lets jQuery UI run its own `_value(item.value)`
@@ -3898,7 +3886,7 @@ class TwoCompanySearch {
                     // to search on if they then keep typing. Returning false
                     // does NOT stop the row being highlighted - the menu has
                     // already done that by the time this fires - so cursor-key
-                    // navigation and Enter (§1) are untouched.
+                    // navigation and Enter are untouched.
                     return false;
                 }
             });
@@ -3919,16 +3907,12 @@ class TwoCompanySearch {
             try {
                 const menu = this._queryField.autocomplete('widget');
                 menu.addClass(TwoCompanySearch.AUTOCOMPLETE_MENU_CLASS);
-                // TWO-25326 §2/§4: jQuery UI's menu widget puts `tabindex="0"`
-                // on its own `<ul>`, which makes the RESULTS LIST a tab stop
-                // in its own right - so Tab from the query field lands on the
-                // list container instead of on "My company is not on the
-                // list". That is the identical defect logged against Hyva on
-                // this ticket ("the scrollable div that contains the search
-                // results is itself a tabstop, which is unwanted"), and it is
-                // the widget's default rather than anything this file asked
-                // for. The list is navigated with the cursor keys from the
-                // query field; it never needs focus of its own.
+                // jQuery UI's menu widget puts `tabindex="0"` on its own
+                // `<ul>`, which makes the RESULTS LIST a tab stop in its own
+                // right - so Tab from the query field lands on the list
+                // container instead of on "My company is not on the list"
+                // (TWO-25326). The list is navigated with the cursor keys from
+                // the query field; it never needs focus of its own.
                 menu.attr('tabindex', '-1');
             } catch (e) {
                 // Degrade to an unstyled (but still functional) dropdown.
@@ -4058,7 +4042,7 @@ class TwoCompanySearch {
         // it says a re-render is plausible, never that this open is one.
         this.openDropdown(false);
         this.armReopen(deadline);
-        // The popup outlives the instance that launched it (§14); this capture's replacement resumes the flight.
+        // The popup outlives the instance that launched it; this capture's replacement resumes the flight.
         const popupId = this.soleTraderPopupLaunchId();
         if (popupId !== null && this._reopenMemory.soleTraderPopup === popupId) {
             this.resumeSoleTraderFlight();
@@ -4067,12 +4051,10 @@ class TwoCompanySearch {
 
     /**
      * Render a completed search that matched nothing as an explicit
-     * "No matches found" row (TWO-25326 §1).
+     * "No matches found" row (TWO-25326).
      *
-     * PrestaShop previously showed NOTHING at all here - jQuery UI simply
-     * declines to open a menu for an empty item list - which is
-     * indistinguishable from a search that never ran, and is the §1 failure
-     * recorded on the ticket.
+     * jQuery UI declines to open a menu for an empty item list, and showing
+     * nothing at all is indistinguishable from a search that never ran.
      *
      * Only ever substituted for an EMPTY list; a real result set is passed
      * straight through. The row is not appended alongside results, because
@@ -4087,7 +4069,7 @@ class TwoCompanySearch {
     }
 
     /**
-     * @returns {string} EXACT zero-result wording required by TWO-25326 §1.
+     * @returns {string} EXACT zero-result wording required by TWO-25326.
      *   "No results found" is a different string and does not satisfy it.
      */
     getNoMatchesText() {
@@ -4172,11 +4154,9 @@ class TwoCompanySearch {
             this.organizationField.val('');
             this.organizationField.removeAttr('data-two-company-name');
         }
-        // The visible label goes with the value behind it (TWO-25326 §5:
-        // "manual-entry mode shows NO company-number field/label at all").
-        // clearStaleOrganizationSelection() already pairs these two on every
-        // branch; this method dropped the number and left the label showing
-        // it, which is the same defect one method over.
+        // The visible label goes with the value behind it - manual-entry mode
+        // shows no company-number field or label at all (TWO-25326), and
+        // clearStaleOrganizationSelection() pairs the two on every branch.
         this.setCompanyIdHint('');
         this.clearLookupWrittenAddressIdentifiers();
         this.clearPersistedCompany();
@@ -4270,21 +4250,21 @@ class TwoCompanySearch {
         this.clearSelectedCompany();
 
         // The panel closes WITHOUT returning focus itself - this method places
-        // focus deliberately, a few lines down, and §2 requires it to land in
-        // the manual company-name field. Letting closeDropdown() also focus
+        // focus deliberately, a few lines down, and it must land in the manual
+        // company-name field. Letting closeDropdown() also focus
         // that field would work by accident today and break the moment the
         // close path changes.
         this.closeDropdown(false);
         this.syncModeChipVisibility();
 
         // The company-name field stops being a search trigger and becomes the
-        // plain text input the buyer types their company into (§2/§5:
-        // manual entry captures a name and no number).
+        // plain text input the buyer types their company into; manual entry
+        // captures a name and no number.
         this.setCompanyFieldSearchMode(false);
 
         this.renderBackToSearchLink();
 
-        // §2: activating "My company is not on the list" places focus in the
+        // Activating "My company is not on the list" places focus in the
         // manual company name field. This is the one place that happens.
         this.focusQuietly(this.companyField);
     }
@@ -4307,7 +4287,7 @@ class TwoCompanySearch {
         // Back to being the search trigger, not a text box.
         this.setCompanyFieldSearchMode(true);
 
-        // §3: activating "Search for company" returns to search mode and sets
+        // Activating "Search for company" returns to search mode and sets
         // focus to the QUERY field - which is exactly what openDropdown()
         // does, so there is one code path for "the search is now open and
         // focused" rather than two that can drift.
@@ -4355,9 +4335,9 @@ class TwoCompanySearch {
 
         // Appended to the field wrapper rather than inserted after the input,
         // so it lands BELOW the org-number hint and the (hidden, in manual
-        // mode) dropdown panel that share that wrapper - §3 requires it in
-        // normal block flow below the company-name field, never overlapping
-        // it. Right-alignment is CSS (`.two-company-search-back`), not
+        // mode) dropdown panel that share that wrapper: it belongs in normal
+        // block flow below the company-name field, never overlapping it.
+        // Right-alignment is CSS (`.two-company-search-back`), not
         // markup.
         const wrapper = this.companyField.parent();
         if (wrapper.length && wrapper.hasClass('two-company-field-wrap')) {
@@ -4407,9 +4387,8 @@ class TwoCompanySearch {
      * Relaunch the sole-trader signup/re-selection flow (TWO-40 follow-up).
      * The single shared call for BOTH entry points that mean "pick a
      * different sole trader" - the standalone link/button below the company
-     * field, and re-clicking the "Sole Trader" mode chip while a sole
-     * trader is already adopted (Doug's ruling: the two must behave
-     * identically, not one being a no-op).
+     * field, and re-clicking the "Sole Trader" mode chip while a sole trader
+     * is already adopted - the two must behave identically, neither a no-op.
      *
      * Re-entrancy guard (TWO-40): `TwoSoleTrader.startReplacement()` opens the
      * popup SYNCHRONOUSLY with no guard of its own (unlike getCurrentBuyer()'s
@@ -4419,12 +4398,9 @@ class TwoCompanySearch {
      * That guard, the spinner and the settle listener are now
      * beginSoleTraderLoading()'s, shared with the chip's own first-time
      * enrolment path rather than duplicated here under a second namespace
-     * (Doug, TWO-40 follow-up). It buys three things beyond the tidying: this
-     * flow shows the same in-flight spinner in the same place as the chip's,
-     * which it previously showed nowhere at all; the guard is now shared, so
-     * a chip click cannot open a second popup over a replacement already in
-     * flight (guide §14) or vice versa; and there is one settle contract to
-     * reason about instead of two.
+     * (TWO-40 follow-up). Two things follow: a chip click cannot open a second
+     * popup over a replacement already in flight or vice versa, and there is
+     * one settle contract to reason about instead of two.
      */
     triggerSelectDifferentSoleTrader() {
         if (!this.beginSoleTraderLoading()) {
@@ -4515,8 +4491,8 @@ class TwoCompanySearch {
         // Deliberately does NOT release the in-flight guard/spinner. This
         // method runs mid-flight on the success path - adoptSoleTraderBuyer()
         // renders the link, and renderSelectDifferentSoleTraderLink() removes
-        // the old one first - and the spinner has to outlive that (Doug: the
-        // flow is not complete until the name and number are written). The
+        // the old one first - and the spinner has to outlive that: the flow is
+        // not complete until the name and number are written. The
         // guard's own release points are endSoleTraderLoading()'s callers,
         // led by the settle event itself.
     }
@@ -4612,7 +4588,7 @@ class TwoCompanySearch {
     /**
      * Make the panel show the state of whatever the query field currently
      * holds - results, the "type N more characters" hint, or "No matches
-     * found" (TWO-25326 §1).
+     * found" (TWO-25326).
      *
      * Called from openDropdown() so the panel is never blank on open, and
      * from exitManualEntryMode() when the buyer comes back to search.
@@ -4716,9 +4692,9 @@ class TwoCompanySearch {
      * and the "not on the list" button are built by buildDropdown() and are
      * identical on both paths - this method just supplies the debounce, the
      * request and the row rendering that jQuery UI's widget would otherwise
-     * supply. That is the whole point of the rework: the previous code had two
-     * complete and divergent dropdown implementations, and every §1/§2 defect
-     * on this ticket had to be fixed (or was missed) twice.
+     * supply. One engine per path, one panel for both: two complete and
+     * divergent dropdown implementations meant every defect on this ticket had
+     * to be fixed - or was missed - twice.
      */
     setupCustomAutocomplete() {
         if (!this._queryField || !this._queryField.length || !this._resultsList || !this._resultsList.length) {
@@ -4801,7 +4777,7 @@ class TwoCompanySearch {
         });
 
         /**
-         * Cursor-key navigation over the fallback's own rows (TWO-25326 §1).
+         * Cursor-key navigation over the fallback's own rows (TWO-25326).
          *
          * The jQuery UI path gets this from the menu widget. This path had
          * `mousedown` handlers and nothing else, so a keyboard buyer could
@@ -4809,9 +4785,9 @@ class TwoCompanySearch {
          * choose one. Message rows are skipped, matching `ui-state-disabled`
          * on the other path.
          *
-         * Bound to the QUERY FIELD, not to the document: §4 requires key
-         * handling to be tied to individual controls so ordinary navigation
-         * around the page is untouched.
+         * Bound to the QUERY FIELD, not to the document: key handling is tied
+         * to individual controls so ordinary navigation around the page is
+         * untouched.
          */
         const nav = { index: -1 };
         const rows = () => Array.prototype.slice.call(
@@ -4829,8 +4805,7 @@ class TwoCompanySearch {
             });
             const active = all[nav.index];
             // The jQuery UI path gets this from the menu widget; without it
-            // the two paths diverge on exactly the accessibility contract §4
-            // is about.
+            // the two paths diverge on the accessibility contract.
             if (active) {
                 if (!active.id) {
                     active.id = 'two-company-row-' + this._instanceNs + '-' + nav.index;
@@ -5142,7 +5117,7 @@ class TwoCompanySearch {
                     if (!orgNumber) {
                         orgNumber = company.registration_number || company.company_number || '';
                     }
-                    // TWO-25326 §12: `TWO:`-prefixed internal identifiers are
+                    // TWO-25326: `TWO:`-prefixed internal identifiers are
                     // never rendered, and the brackets go with them - the
                     // shared helper owns both halves of that rule so this site
                     // cannot render `Company Name ()`. `organization_number`
@@ -5473,8 +5448,8 @@ class TwoCompanySearch {
             triggerOrderIntentRecheck();
         }
 
-        // §2 gating: a company is now captured, so "My company is not on the
-        // list" must be hidden. LAST, deliberately - the org number and its
+        // A company is now captured, so "My company is not on the list" must
+        // be hidden. LAST, deliberately - the org number and its
         // tag are what hasConfirmedSelection() reads, and both are committed
         // by this point on every branch above (immediate org number, or none
         // at all, in which case the deferred GB path re-syncs from
@@ -5563,10 +5538,10 @@ class TwoCompanySearch {
                         company: this.companyField ? this.companyField.val() : '',
                         companyid: natIdVal
                     });
-                    // §2 gating reads hasConfirmedSelection(), which only
-                    // becomes true once the tag written two lines up exists -
-                    // so on the GB path this, not onCompanySelected(), is
-                    // where the "not on the list" button finally hides.
+                    // The chip gating reads hasConfirmedSelection(), true only
+                    // once the tag written two lines up exists - so on the GB
+                    // path this, not onCompanySelected(), is where the "not on
+                    // the list" button hides.
                     this.syncModeChipVisibility();
                 }
             }
@@ -5633,8 +5608,8 @@ class TwoCompanySearch {
         // Single gate for the address-field writes (TWO-25203). Both call
         // paths into the fill land here.
         //
-        // `bypassAddressLookupGate` (TWO-40 follow-up, live bug reported by
-        // Doug 2026-08-12): autoFillSoleTraderAddress() passes `true`. This
+        // `bypassAddressLookupGate` (TWO-40 follow-up):
+        // autoFillSoleTraderAddress() passes `true`. This
         // gate's OWN semantics are "did a company-SEARCH selection write into
         // the address step" (PS_TWO_ADDRESS_LOOKUP) - and
         // `Twopayment::getAddressLookupEnabled()` forces it to '0' outright
@@ -5787,9 +5762,9 @@ class TwoCompanySearch {
                 // without closing left it up and tracked by nothing.
                 this.abandonSoleTraderFlow();
 
-                // Doug's ruling (TWO-40 follow-up): "the ONLY time that a
-                // country change should not wipe company details is if the
-                // control is in manual entry mode." A hand-typed name has no
+                // The ONLY time a country change does not wipe company details
+                // is manual entry mode (TWO-40 follow-up). A hand-typed name
+                // has no
                 // search result behind it to invalidate, so there is nothing
                 // here for the new country to disagree with - the autocomplete
                 // config still needs to catch up, since a later "back to
@@ -5976,7 +5951,7 @@ class TwoCompanySearch {
         // buyer may be actively filling in because their shipping total
         // recalculated behind it.
         //
-        // `keepPopupTracked` for exactly that reason (guide §14): a cancel that
+        // `keepPopupTracked` for exactly that reason: a cancel that
         // also nulled the handle would leave that same live popup owned by
         // nobody - nothing polling it for closure, closeSignupPopup() unable to
         // find it, and the next Sole trader click opening a SECOND window over
@@ -6037,7 +6012,7 @@ class TwoCompanySearch {
      * fallbacks quietly repair, so the first cycle looks correct), and company
      * A on the second - the exact "select A, search again, select B, intent
      * fires for A" defect. Nor can it come from the DOM: in tile mode
-     * collectFormData() must not trust the address-area fields at all (§7.1),
+     * collectFormData() must not trust the address-area fields at all,
      * and by the payment step PrestaShop has removed that form anyway.
      *
      * Passing an empty name or number CLEARS the published selection rather
@@ -6131,8 +6106,8 @@ class TwoCompanySearch {
      *
      * A `TWO:`-prefixed organisation number goes into the hidden `companyid` and
      * its `data-two-company-name` pairing tag like ANY OTHER, and is NOT written
-     * into the visible identification (`dni`) field (Doug's ruling, TWO-40,
-     * Option A). That one field is the only asymmetry - storage, pairing, the
+     * into the visible identification (`dni`) field (TWO-40). That one field is
+     * the only asymmetry - storage, pairing, the
      * mirror, the session record and the routing are all uniform. It is not a
      * sole-trader concept either: registered companies in some countries carry a
      * `TWO:` identifier too, so the rule is keyed on the value and never on how
@@ -6143,14 +6118,13 @@ class TwoCompanySearch {
      * name/number pair in the invoice form and breaks the "name and number travel
      * together" invariant; this is deliberately not that.
      *
-     * One value in the response IS deliberately not written, and it is a ruling
-     * rather than an omission:
+     * One value in the response is deliberately not written:
      *
      *  - the COUNTRY is not written at all, though the response carries one.
      *    `country_code` is the country the sole trader is REGISTERED in, while the
      *    enrolment's token - and the session company the completion has just
      *    stored through `saveCompany` - were minted against the country resolved
-     *    from the LIVE FORM (decision #12). The server discards the whole session
+     *    from the LIVE FORM. The server discards the whole session
      *    company the moment the saved country disagrees with the cart's
      *    invoice-address country, so writing the registered country over the
      *    form's would destroy the very enrolment this is completing. The two
@@ -6294,8 +6268,8 @@ class TwoCompanySearch {
             }
 
             // Visible identification field. Bypasses the address-lookup switch
-            // (TWO-40 follow-up, live bug reported by Doug 2026-08-12) for the
-            // same reason autoFillSoleTraderAddress() below does: that switch is
+            // (TWO-40 follow-up) for the same reason
+            // autoFillSoleTraderAddress() below does: that switch is
             // forced off outright once company search lives in the payment tile
             // - the ONLY place TWO-40 puts the sole-trader entry point - so
             // leaving this gated left it permanently dead on every shop running
@@ -6362,7 +6336,7 @@ class TwoCompanySearch {
      * no billing address - it is null in the completions captured so far, and a
      * null must never be allowed to blank anything.
      *
-     * EVERY field of the response lands somewhere (Doug's ruling). `street`,
+     * EVERY field of the response lands somewhere. `street`,
      * `building`, `apartment`, `postal_code`, `city` and the response's own
      * `phone_number` are handled here; `region` is applied by autoFillRegion() after
      * this returns, because on a form with no state field it appends to the CITY this
@@ -6395,16 +6369,16 @@ class TwoCompanySearch {
         const building = String(source.building == null ? '' : source.building).trim();
         const apartment = String(source.apartment == null ? '' : source.apartment).trim();
 
-        // Doug's routing rule. Where a building or apartment is given it is the more
-        // specific locator and takes the FIRST line, with the street moving to the
+        // Where a building or apartment is given it is the more specific
+        // locator and takes the FIRST line, with the street moving to the
         // second; where neither is given the street takes the first line and the
         // second is left alone.
         //
         // With both present they are joined most-specific-first, which is how an
         // address is read aloud ("Apartment 4, Mill House").
         //
-        // NO de-duplication against the street, on Doug's explicit ruling: it is
-        // valid for an address to carry the same text on both lines, so suppressing a
+        // NO de-duplication against the street: it is valid for an address to
+        // carry the same text on both lines, so suppressing a
         // second line that matches the first would be discarding real data.
         const locator = [apartment, building].filter(Boolean).join(', ');
         const resolved = Object.assign({}, source);
@@ -6415,10 +6389,9 @@ class TwoCompanySearch {
             resolved.address_line_2 = street;
         }
 
-        // `true`: bypass the address-lookup switch (TWO-40 follow-up, live bug
-        // reported by Doug 2026-08-12). See autoFillAddress()'s own doc on the
-        // parameter for why this call site, specifically, must never be gated
-        // on it.
+        // `true`: bypass the address-lookup switch (TWO-40 follow-up). See
+        // autoFillAddress()'s own doc on the parameter for why this call site,
+        // specifically, must never be gated on it.
         return secondaryRoot
             ? this.autoFillAddress([resolved], secondaryRoot, true)
             : this.autoFillAddress([resolved], undefined, true);
@@ -6488,8 +6461,8 @@ class TwoCompanySearch {
     }
 
     /**
-     * Put the response's `region` somewhere, on Doug's ruling that it must land
-     * rather than be dropped (TWO-40).
+     * Put the response's `region` somewhere: it must land rather than be
+     * dropped (TWO-40).
      *
      * Two destinations, in order:
      *
@@ -6508,9 +6481,8 @@ class TwoCompanySearch {
      * @param {Object} source the response address
      * @param {?Element} root
      * @param {boolean} [bypassAddressLookupGate] see autoFillAddress()'s own
-     *        doc on the identical parameter (TWO-40 follow-up, live bug
-     *        reported by Doug 2026-08-12) - adoptSoleTraderBuyer() passes
-     *        `true` here for the same reason it does there.
+     *        doc on the identical parameter (TWO-40 follow-up) -
+     *        adoptSoleTraderBuyer() passes `true` here for the same reason.
      * @returns {Object} partial record of what this wrote
      */
     autoFillRegion(source, root, bypassAddressLookupGate) {

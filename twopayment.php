@@ -416,7 +416,7 @@ class Twopayment extends PaymentModule
         // (PS_TWO_ENABLE_PO_NUMBER, PS_TWO_ENABLE_INVOICE_EMAIL) deliberately
         // get no property mirror here: isOptionalCheckoutFieldEnabled() is
         // their single reader, and the two mirrors above are read by nothing.
-        // Order intent PREVIEW is admin-configurable as of TWO-25386 #8
+        // Order intent PREVIEW is admin-configurable as of TWO-25386
         // (PS_TWO_ENABLE_ORDER_INTENT) - default ON, matching the previously
         // hardcoded-mandatory behaviour. This gates ONLY the pre-approval
         // preview call (controllers/front/orderintent.php,
@@ -433,7 +433,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Effective value of the order-intent pre-approval preview toggle
-     * (TWO-25386 #8, PS_TWO_ENABLE_ORDER_INTENT). Default ON - an
+     * (TWO-25386, PS_TWO_ENABLE_ORDER_INTENT). Default ON - an
      * absent/empty row (every install predating this toggle) preserves the
      * previously hardcoded-mandatory behaviour.
      *
@@ -457,7 +457,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Effective value of the "skip confirm-order token check" debug toggle
-     * (TWO-25386 #4, PS_TWO_SKIP_CONFIRM_TOKEN_CHECK). Default OFF - see
+     * (TWO-25386, PS_TWO_SKIP_CONFIRM_TOKEN_CHECK). Default OFF - see
      * isTwoOrderIntentPreviewEnabled() for why this is a method rather than a
      * direct property read.
      *
@@ -579,7 +579,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Invisible admin tab for the "View error log" action (TWO-25386 #7).
+     * Invisible admin tab for the "View error log" action (TWO-25386).
      * Same shape as installTwoInvoiceAdminTab() above.
      *
      * @return bool
@@ -900,7 +900,7 @@ class Twopayment extends PaymentModule
     public function uninstall()
     {
         // Read BEFORE uninstallTwoSettings() below, which deletes this same
-        // row (TWO-25386 #5): the toggle must govern its own removal, not be
+        // row (TWO-25386): the toggle must govern its own removal, not be
         // gone by the time it is consulted.
         $clearSettings = $this->shouldClearTwoSettingsOnUninstall();
 
@@ -1217,7 +1217,7 @@ class Twopayment extends PaymentModule
                     . '&ajax=1&action=FetchMerchantFeeRates',
                 // Module admin AJAX endpoint for the General tab's inline
                 // API-key check, fired on blur and on a debounced keystroke
-                // (TWO-25386 #4). Dispatched by AdminController::postProcess()
+                // (TWO-25386). Dispatched by AdminController::postProcess()
                 // to ajaxProcessVerifyApiKeyLive() on this module.
                 'two_verify_api_key_url' => $this->context->link->getAdminLink('AdminModules', false)
                     . '&configure=' . $this->name
@@ -1535,7 +1535,7 @@ class Twopayment extends PaymentModule
                 'required' => true,
                 'lang' => true,
             ),
-            // Checkout sort order (TWO-25386 #6, ported from
+            // Checkout sort order (TWO-25386, ported from
             // magento-plugin's Advanced > sort_order). Best-effort:
             // PrestaShop core has no per-module sort_order config path
             // for payment methods the way Magento does - the native
@@ -1584,7 +1584,7 @@ class Twopayment extends PaymentModule
             ),
         );
 
-        // Order intent / pre-approve toggle (TWO-25386 #8, NEW control - not a
+        // Order intent / pre-approve toggle (TWO-25386, NEW control - not a
         // port). PS already runs the order-intent pre-approval check
         // (controllers/front/orderintent.php ajaxProcessCheckOrderIntent)
         // unconditionally on every payment-step render; this is the first
@@ -1836,7 +1836,7 @@ class Twopayment extends PaymentModule
         }
 
         $inputs = array_merge($inputs, array(
-            // Default pre-selected term (TWO-25386 #10): an explicit admin
+            // Default pre-selected term (TWO-25386): an explicit admin
             // choice that takes priority over getDefaultPaymentTerm()'s
             // derived default (API due_in_days, else 30 days, else lowest
             // offered term, else none at all) whenever the chosen term is
@@ -1975,7 +1975,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_TITLE', $values['PS_TWO_TITLE']);
         Configuration::updateValue('PS_TWO_SUB_TITLE', $values['PS_TWO_SUB_TITLE']);
 
-        // Checkout sort order (TWO-25386 #6). Passed validTwoCheckoutSortOrderValue
+        // Checkout sort order (TWO-25386). Passed validTwoCheckoutSortOrderValue
         // above (empty, or a plain integer).
         $raw_sort_order = trim((string) Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER'));
         Configuration::updateValue(
@@ -2012,7 +2012,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Validate the checkout sort order field (TWO-25386 #6): empty (no
+     * Validate the checkout sort order field (TWO-25386): empty (no
      * preference) or a plain integer, positive or negative.
      */
     protected function validTwoCheckoutSortOrderValue()
@@ -2027,7 +2027,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Best-effort application of the checkout sort order (TWO-25386 #6).
+     * Best-effort application of the checkout sort order (TWO-25386).
      *
      * PrestaShop core has no per-module sort_order config path for payment
      * methods (unlike Magento's payment/two_payment/sort_order); the native
@@ -2314,7 +2314,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Dropdown options for the default-term select (TWO-25386 #10): the
+     * Dropdown options for the default-term select (TWO-25386): the
      * currently offered terms (checkboxes + custom days, term-type
      * constrained), so the admin can only ever choose a term that is actually
      * offered.
@@ -2420,7 +2420,7 @@ class Twopayment extends PaymentModule
         // After the checkbox writes, so the fold-in tick survives them.
         $this->foldInTwoLegacyCustomTerm();
 
-        // Default pre-selected term (TWO-25386 #10). Read AFTER the term-type,
+        // Default pre-selected term (TWO-25386). Read AFTER the term-type,
         // checkbox and custom-days writes above so getConfigurableTermSet()
         // reflects THIS submission's offered set, not the stale stored one -
         // a merchant unticking the old default and setting a new one in the
@@ -2742,7 +2742,7 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    // Skip confirm-order token check (TWO-25386 #4,
+                    // Skip confirm-order token check (TWO-25386,
                     // ported from woocommerce-plugin's `skip_confirm_auth`).
                     // DEBUG ONLY - gates the CSRF-style token check
                     // (validateAjaxToken()) on the order-intent front
@@ -2810,7 +2810,7 @@ class Twopayment extends PaymentModule
                             array('id' => 'PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION_OFF', 'value' => 0, 'label' => $this->l('No')),
                         ),
                     ),
-                    // View error log action (TWO-25386 #7, ported from
+                    // View error log action (TWO-25386, ported from
                     // magento-plugin's Block/Adminhtml/System/Config/Button/ErrorCheck.php).
                     // PS has no admin-config "button" field type, so this is
                     // rendered as an 'html' field - a link to the module's own
@@ -5291,9 +5291,10 @@ class Twopayment extends PaymentModule
         // "?v=<mtime>" suffix is never a real file, so that check silently fails and
         // JavascriptManager::register() / StylesheetManager::register() drop the asset
         // entirely with no error, exception, or log line - it just never enters the
-        // render list. That is what PR #127 (TWO-53PS) shipped and broke checkout: config
-        // (Media::addJsDef) rendered fine because it doesn't go through this path, but
-        // every registerJavascript()/registerStylesheet() call silently no-opped.
+        // render list. That is what prestashop-plugin PR #127 (TWO-53PS) shipped
+        // and broke checkout: config (Media::addJsDef) rendered fine because it
+        // doesn't go through this path, but every
+        // registerJavascript()/registerStylesheet() call silently no-opped.
         $this->context->controller->registerStylesheet('two-css', $this->getTwoModuleAssetPath('views/css/two.css'), array('priority' => 200, 'media' => 'all', 'version' => $this->getTwoAssetVersion('views/css/two.css')));
 
         // CRITICAL FIX: Remove async loading and ensure proper load order for reliable initialization
@@ -5666,8 +5667,8 @@ class Twopayment extends PaymentModule
             'sole_trader_country' => $sole_trader_country,
             'subtitle' => $subtitle,
             'enable_order_intent' => $this->enable_order_intent,
-            // "What is Two" explainer link (TWO-25386 #2) and per-field input
-            // tooltips (TWO-25386 #3): both default ON/OFF respectively via
+            // "What is Two" explainer link (TWO-25386) and per-field input
+            // tooltips (TWO-25386): both default ON/OFF respectively via
             // isTwoBooleanConfigEnabledByDefault() / plain Configuration::get,
             // matching the tile's pre-existing always-on tooltip and the
             // optional fields' pre-existing no-tooltip rendering.
@@ -5761,7 +5762,7 @@ class Twopayment extends PaymentModule
             'purchase_order_number' => '',
             'invoice_email' => '',
         );
-        // Display input tooltips (TWO-25386 #3, ported from
+        // Display input tooltips (TWO-25386, ported from
         // woocommerce-plugin's `display_tooltips`): short help text shown on
         // each optional field's label when the admin toggle is on. Consumed
         // as the label's `title` attribute in paymentinfo.tpl, gated by
@@ -12631,7 +12632,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Live API-key verification for the General tab's inline check
-     * (TWO-25386 #4). Never touches Configuration - a merchant trying a key
+     * (TWO-25386). Never touches Configuration - a merchant trying a key
      * before saving must not have it published as the stored verdict just by
      * typing. Mirrors validTwoGeneralFormValues()'s own live check, minus the
      * publish-on-match step, which only makes sense at actual Save time.
@@ -13814,8 +13815,9 @@ class Twopayment extends PaymentModule
      * TaxManagerFactory over the cart's PS_TAX_ADDRESS_TYPE address, with
      * the same shop-wide gates (PS_TAX off, vatnumber-module B2B exemption).
      * Using one resolution for both the PS cart line and the Two payload is
-     * what makes the PR #64 parity gate unable to trip on destination-based
-     * rates. Empirically verified on PS 8.2.6 core: no matching rule for the
+     * what makes the prestashop-plugin PR #64 parity gate unable to trip on
+     * destination-based rates. Empirically verified on PS 8.2.6 core: no
+     * matching rule for the
      * destination -> 0 (zero-rating for free), combined multi-rate rules sum
      * (6%+2% -> 8), group id 0 -> 0 everywhere.
      *
@@ -14760,8 +14762,8 @@ class Twopayment extends PaymentModule
         }
         $presentedCart->offsetSet('products', $filteredProducts);
 
-        // Same value the removed products-row entry was showing - PR #211's
-        // resolution, not a recomputation.
+        // Same value the removed products-row entry was showing -
+        // prestashop-plugin PR #211's resolution, not a recomputation.
         $includeTaxes = $this->isTwoTaxInclusiveDisplayForCart($cart);
         $amount = $includeTaxes ? $surchargeLine['gross'] : $surchargeLine['net'];
         $label = $this->getTwoSurchargeLineLabel($this->getSelectedPaymentTerm());
@@ -16016,7 +16018,7 @@ class Twopayment extends PaymentModule
             }
         }
 
-        // Custom payment term (TWO-25386 #9, ported from magento-plugin's
+        // Custom payment term (TWO-25386, ported from magento-plugin's
         // payment_terms_duration_days / woocommerce-plugin's
         // payment_terms_custom_days). UNIONED past the EOM/STANDARD split
         // above (neither WC nor Magento have that distinction, and the
@@ -16067,7 +16069,7 @@ class Twopayment extends PaymentModule
     /**
      * Preference order when more than one term is offered:
      *   1. the merchant's OWN explicit admin choice (PS_TWO_DEFAULT_PAYMENT_TERM,
-     *      TWO-25386 #10) when it is offered;
+     *      TWO-25386) when it is offered;
      *   2. the merchant's API default term (due_in_days) when it is offered;
      *   3. the historical DEFAULT_PAYMENT_TERM_DAYS (30) when it is offered;
      *   4. the lowest offered term.
@@ -16091,7 +16093,7 @@ class Twopayment extends PaymentModule
             return $available_terms[0];
         }
 
-        // The merchant's own explicit choice (TWO-25386 #10) wins outright
+        // The merchant's own explicit choice (TWO-25386) wins outright
         // over every derived default below, as long as it is still an
         // offered term - an admin who has EXPLICITLY set a default should
         // never be silently overridden by the API's due_in_days or the

@@ -1,5 +1,5 @@
 /**
- * TWO-40 #13, the ENABLED-mode write side: carrying a company selection made on
+ * TWO-40, the ENABLED-mode write side: carrying a company selection made on
  * the shipping pass over to the invoice address form.
  *
  * The design this replaces assumed the mirror could run at selection time,

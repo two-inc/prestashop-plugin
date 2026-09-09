@@ -2378,7 +2378,7 @@ class TwoCheckoutManager {
 
     initializeOrderIntent() {
         if (!this.orderIntent && window.TwoOrderIntent) {
-            // TWO-25386 #8: `enabled` now follows the admin's order-intent
+            // TWO-25386: `enabled` now follows the admin's order-intent
             // toggle (this.config.orderIntentEnabled) rather than being
             // hardcoded - shouldRunOrderIntent() reads it to skip the
             // pre-approval preview call entirely when the merchant has

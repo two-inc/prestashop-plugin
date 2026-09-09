@@ -1,7 +1,8 @@
 # Sole-trader / company-search: porting guide (PrestaShop → Magento / WooCommerce)
 
-Source of truth: `two-inc/prestashop-plugin` `staging` + open PR #176, PRs #145–#176,
-and `two-inc/woocommerce-plugin` `staging` + open PR #487, PRs #456–#487 (TWO-40).
+Source of truth: `two-inc/prestashop-plugin` `staging` + open prestashop-plugin PR #176,
+prestashop-plugin PRs #145–#176, and `two-inc/woocommerce-plugin` `staging` + open
+woocommerce-plugin PR #487, woocommerce-plugin PRs #456–#487 (TWO-40).
 Claims below were re-verified against PrestaShop `4737131` and WooCommerce `8e2355f`
 (the two branch tips, both PRs still open). This guide is the
 distilled design + gotcha list for reimplementing the same behavior on another
@@ -9,14 +10,15 @@ platform. Read it before writing code — most of the entries exist because a na
 first attempt got it wrong and had to be corrected, often more than once, sometimes
 reversing an earlier decision entirely.
 
-PrestaShop is the reference for the dropdown/chip design and the address model
-(§0–§2, §11). WooCommerce is the reference for several rules PrestaShop does not
-implement at all (§11.1, §12, §13, §16) and is ahead on the popup and widget-teardown
-work (§14, §17). Every entry names which platform it was proven on; do not assume
-either one is the reference for everything. One rule currently has NO settled
-reference: §11 rule 1's "how may a company get filled in", where WooCommerce is
-stricter than PrestaShop and the gap is open — read that rule before building either
-side of it.
+PrestaShop is the reference for the dropdown/chip design, the two-address model and
+the adoption-is-a-mode rules. WooCommerce is the reference for several rules PrestaShop
+does not implement at all — the page-load restore of an earlier adoption, pushed chip
+visibility, adoption as a selection in the search control, and keeping buyer-driven UI
+state out of merchant settings — and is ahead on the popup-lifetime and widget-teardown
+work. Every entry names which platform it was proven on; do not assume either one is the
+reference for everything. One rule currently has NO settled reference: how a company may
+get filled in, where WooCommerce is stricter than PrestaShop and the gap is open — read
+that rule before building either side of it.
 
 ## 0. The mode chips are DOM children of the search dropdown, not a separate widget
 
@@ -26,12 +28,13 @@ called existing tile-only placement "already correct," once in an unrelated from
 reimplementation that reasoned "the guide specifies how each placement must read, not
 that a placement must be added" and left the chips as a separate persistent tile
 element). Both were wrong for the same reason: the guide talked about *placement*
-(§1 below) without ever stating the one fact that actually constrains chip markup.
+— which form or tile the search control lives in — without ever stating the one fact that actually constrains chip markup.
 
-**What getting this wrong cost, concretely:** WooCommerce PRs #456–#464 were built
-from the placement prose without this section, and the whole batch was then reverted
-wholesale to the pre-#456 tree (#466, `6673917`) and reimplemented from scratch
-(#467) rather than patched, because the chips-as-a-fixed-tile-element decision was
+**What getting this wrong cost, concretely:** woocommerce-plugin PRs #456–#464 were
+built from the placement prose without this section, and the whole batch was then
+reverted wholesale to the tree that preceded them (woocommerce-plugin PR #466,
+`6673917`) and reimplemented from scratch (woocommerce-plugin PR #467) rather than
+patched, because the chips-as-a-fixed-tile-element decision was
 load-bearing for everything layered on top of it. Nine merged PRs discarded.
 
 Confirmed directly from PrestaShop's live DOM (the staging dev shop, GB
@@ -58,8 +61,8 @@ claim below as DOM-verified, cited by the actual structure captured live:
   class change, not a visibility mechanism. No `aria-selected`, no `aria-pressed`, no
   `data-*` carries it.)
 - Consequence for porting: **do not build the chips as an always-visible element
-  fixed in the payment tile or address form.** Whatever placement §1 resolves to
-  (a.1/a.2/a.3), the chips render *inside that placement's own search-dropdown panel*,
+  fixed in the payment tile or address form.** Whatever placement the search control
+  resolves to — delivery form, billing form, or payment tile — the chips render *inside that placement's own search-dropdown panel*,
   as children of one intermediate wrapper, appear only while it's open, and disappear
   when it closes — exactly like the search results they sit next to. A platform whose
   company-search control has no dropdown panel concept at all needs one added; that is
@@ -86,16 +89,18 @@ claim below as DOM-verified, cited by the actual structure captured live:
   could be `sole_trader`. That is true of an in-flight ENROLMENT and false of an
   already-ADOPTED identity — cancelling a signup in progress does not un-adopt a
   completed one. Derive the reopened selection from whether an identity is adopted,
-  not from a mode variable the reopen path is free to clobber. Full rules in §11.
+  not from a mode variable the reopen path is free to clobber. Full rules under
+  "Adoption is a MODE, not a populated field".
 - **Being inside the panel means every chip click is a `focusout`/`focusin` pair the
   panel's own close machinery reacts to**, so any behaviour the panel hangs off "focus
   left me" is a behaviour the chips silently opt out of. That is why the popup-lifetime
-  decision reads where focus LANDS, never the panel's own close — see §14.
+  decision reads where focus LANDS, never the panel's own close — see "One hosted
+  popup at a time".
 - **Chip labels are sentence case on both platforms** — "Registered company", "Sole
   trader", "Enter manually" (`1c1b3d7` aligned PrestaShop onto WooCommerce's existing
   wording; WooCommerce `f8ca174` then fixed its own last title-cased straggler,
   "Enter Manually"). Not Title Case, on any platform. Renaming a label can break
-  translation lookup outright — see §10.
+  translation lookup outright — re-key the catalogue entry rather than re-translating.
 - **The "select a different sole trader" element is OUTSIDE the dropdown, not inside
   it — this corrects an earlier wrong edit to this guide.** It is a `<button>`
   (`.two-company-select-different-sole-trader`), appended as the LAST child of the
@@ -113,8 +118,8 @@ claim below as DOM-verified, cited by the actual structure captured live:
   presence of that button as the answer (`isSoleTraderAdopted()`, `TwoCompanySearch.js`),
   deliberately rather than keeping a second flag that can drift. WooCommerce already
   has an explicit mode and derives the button's visibility from mode + tokens
-  (`9d7a952`, which also *removed* a DOM probe of the org-number field from that gate,
-  per Doug's ruling). Both are fine. Two independently-maintained answers are not.
+  (`9d7a952`, which also *removed* a DOM probe of the org-number field from that
+  gate). Both are fine. Two independently-maintained answers are not.
 - **The element's ancestors can hide it out from under you.** On WooCommerce the link
   lived inside the native company field's wrapper, which the display logic hides
   whenever the search widget rather than the native field is what's shown — the button
@@ -124,8 +129,8 @@ claim below as DOM-verified, cited by the actual structure captured live:
 ## 0.1. One hint per rule — the min-length threshold is the query field's own watermark
 
 **A general company-search rule, not a sole-trader one.** It was found during
-sole-trader live testing (Doug 2026-08-20) and is recorded here, next to the rest of
-the dropdown's structure, rather than inside §11 — it applies to every company search
+sole-trader live testing and is recorded here, next to the rest of the dropdown's
+structure, rather than with the sole-trader rules — it applies to every company search
 on every platform, whether the sole-trader chip exists there at all.
 
 The query field already carries a placeholder. WooCommerce ALSO stated the
@@ -177,7 +182,7 @@ bugs — resolve country/company ONE way, reuse it everywhere.
 - **(b) Order intent / order data** — whatever actually gets submitted with the
   order. Out of scope for this porting pass; whatever already resolves it keeps
   doing so unchanged. The only place (a) and (b) must agree: the org-number/company
-  name persisted for admin/webhook-time use (§6) must come from (b)'s resolution.
+  name persisted for admin/webhook-time use must come from (b)'s resolution.
 
 Case (a) splits into three placement scenarios — phrase these by ROLE
 (billing/invoice vs shipping/delivery), never by "primary/secondary": PrestaShop,
@@ -193,14 +198,14 @@ wrong block on WooCommerce every time.
 3. **(a.3) payment tile** (no address fields of its own). Read explicitly from
    whichever address plays the billing/invoice ROLE — never "whichever address is
    primary" as a shortcut. If billing/invoice is the platform's non-default
-   ("secondary") form, that value comes from the sync mechanism (§2), not an
+   ("secondary") form, that value comes from the two-address sync mechanism, not an
    independent read.
 
 **A platform may not have all three.** WooCommerce has no shipping-side company
 handling whatsoever — zero occurrences of `shipping_` in its checkout JS at
 `8e2355f` — so a.1 does not exist there and there is nothing to keep in step with
-it. Check this before building the sync in §2; the answer changes how much of it is
-real work.
+it. Check this before building the two-address sync; the answer changes how much of it
+is real work.
 
 **Security note, already investigated and disproven on PrestaShop, don't re-litigate
 it per-platform without cause:** the token-mint call takes no country parameter at
@@ -212,8 +217,8 @@ correctness win, not a security tradeoff.
 ## 2. Two-address model: editable + synced, never locked
 
 **Applies only where the platform actually has two company-carrying addresses.** On
-WooCommerce, rules 1–5 below are N/A for the reason in §1 (no shipping-side company
-at all — no two-address model, no mirror, nothing to pin). Only rule 6
+WooCommerce, rules 1–5 below are N/A because it has no shipping-side company handling
+at all — no two-address model, no mirror, nothing to pin. Only rule 6
 (field-routing) and rule 7 (requirement scope) were real gaps there.
 
 **Rejected design, don't reintroduce it:** making the non-default ("secondary")
@@ -257,7 +262,7 @@ pairing on the second address.
      (best-effort text→id match, inherently lossy but attempted); otherwise append
      to `city` with a comma (`"Ashford, Kent"`).
 7. **Company/org-number requirement scope:** required ONLY on whichever address
-   plays the billing/invoice ROLE (§1's a.3 resolution) — never on a shipping-only
+   plays the billing/invoice ROLE (the same resolution the payment tile uses) — never on a shipping-only
    address. Reuse the same role-resolution logic; don't build a second one.
 
 ## 3. `TWO:`-prefixed identifiers: exactly one special case, and it's cosmetic
@@ -286,7 +291,9 @@ safe (WooCommerce/Magento's own persistence fields had no such trap when checked
 that's not proof the next platform won't).
 
 **A `TWO:` prefix on a restored value is also a signal, not just data** — it is how a
-returning buyer's already-adopted sole trader is recognised on a page load. See §11.1.
+returning buyer's already-adopted sole trader is recognised on a page load: the restore
+path has no other signal, and it must set sole-trader mode rather than only the display
+value.
 
 ## 4. Cross-platform persistence check (why this matters)
 
@@ -297,13 +304,13 @@ attribute on the customer-address entity (varchar(255), no validation) + the ord
 payment's `additional_information` JSON blob. Neither platform's admin order screen
 actually surfaces it, though (matches the corrected PrestaShop state).
 
-On WooCommerce, the empty-org-number-on-PUT bug class §6 describes is structurally
-impossible and was pinned by a regression test rather than fixed: the order-edit
+On WooCommerce, the empty-org-number-on-PUT bug class — an admin or webhook-time write
+sending an empty org number where a resolved one belongs — is structurally impossible and was pinned by a regression test rather than fixed: the order-edit
 compose path carries no company at all, and the meta save returns early with an order
 note (`713e5a0`, re-pinned in the rebuilt port). Verify the equivalent on any new
 platform rather than assuming either answer.
 
-**PrestaShop's own equivalent (§6):** two new columns on the module's own order-keyed
+**PrestaShop's own equivalent:** two new columns on the module's own order-keyed
 table, following the exact precedent already in that table for a different
 "checkout-time value needed later at admin/webhook time with no session available"
 problem (`two_day_on_invoice`/`$storedTerm` in `getTwoUpdateOrderData()`). If the
@@ -336,9 +343,9 @@ sole-trader implementation needs the equivalent of:
     (`69e3c67`) — it is bookkeeping, not buyer data.
 - **A provenance marker**, separate from the pairing tag, recording that a given
   field's current value was written by the plugin (vs typed by the buyer) — needed
-  by the pin/mirror logic in §2 to distinguish "still what we wrote" from "buyer
+  by the pin/mirror logic to distinguish "still what we wrote" from "buyer
   edited this."
-  - **Treat this as required even where §2's mirror does not exist.** An earlier
+  - **Treat this as required even where no two-address mirror exists.** An earlier
     WooCommerce audit reasoned it was N/A there (its only named consumer was the
     mirror, which WooCommerce does not have) — the rebuilt port ships it anyway, with
     its own consumer, and both attributes are on the capture fields at `8e2355f`.
@@ -373,21 +380,21 @@ sole-trader implementation needs the equivalent of:
     (WooCommerce `3620d5b`). Whatever surface the design claims holds the company
     name, every reader must actually read that one.
 
-## 6. Order-scoped persistence pattern (Option A + C)
+## 6. Order-scoped persistence pattern
 
-If the target platform's native org-number-carrying field has the validation trap in
-§3: skip writing to that field for `TWO:` values (Option A) AND persist org number +
-company name on the platform's own order-scoped storage (Option C — reuse an
-existing durable per-order store, per §4; on Magento/WooCommerce this likely means no
-new storage at all, just make sure the sole-trader write-back path populates the
-SAME field the ordinary flow already uses for this, and audit whether any admin/
-webhook-time PUT-style code path can send an empty value where a resolved one should
-be — this exact bug existed on PrestaShop's admin-edit and tracking-number-update
-paths before Option C).
+If the target platform's native org-number-carrying field has its own format validation
+a `TWO:` value can fail: skip writing to that field for `TWO:` values AND persist org
+number + company name on the platform's own order-scoped storage — reuse an existing
+durable per-order store rather than building a parallel mechanism. On Magento/WooCommerce
+this likely means no new storage at all, just make sure the sole-trader write-back path
+populates the SAME field the ordinary flow already uses for this, and audit whether any
+admin/webhook-time PUT-style code path can send an empty value where a resolved one
+should be — this exact bug existed on PrestaShop's admin-edit and tracking-number-update
+paths before that storage existed.
 
 The value persisted must be **the resolved billing/invoice address's org number
-specifically** — the same value driving order-intent/order-data (§1's out-of-scope
-case (b)) — not whichever address the sole-trader UI happened to run in.
+specifically** — the same value driving order-intent/order-data, which this porting pass
+leaves alone — not whichever address the sole-trader UI happened to run in.
 
 **A refused schema change must omit the column, not lose the row it was carrying**
 (`a1b35c9`). An `ALTER` that fails on some merchant's DB must degrade to "this value
@@ -405,12 +412,12 @@ is not persisted here", never to a dropped payment record.
   (stuck-forever spinners on two different abandon/retry paths, a missing
   re-entrancy guard causing double signup popups, a guard released too early) —
   budget for several iterations, don't expect to get this right in one pass.
-  - **The NAME field, not the query field.** §1 does settle the query input as
-    where an in-field spinner on ordinary company search belongs, but it cannot
-    be where the sole-trader one belongs, for two independent reasons: selecting
-    the Sole trader chip hides that whole row immediately (§11 rule 2), so the
-    spinner has nowhere to paint and un-hiding the row for the flight
-    reintroduces the very bug rule 2 exists to fix; and the "select a different
+  - **The NAME field, not the query field.** The query input is where an in-field
+    spinner on ordinary company search belongs, but it cannot be where the
+    sole-trader one belongs, for two independent reasons: selecting the Sole trader
+    chip hides that whole row immediately, so the spinner has nowhere to paint and
+    un-hiding the row for the flight reintroduces the very bug that hide exists to
+    fix; and the "select a different
     sole trader" flow opens no dropdown at all, so it has no query field to use
     and would show no spinner whatsoever. The name field is on screen in both
     flows and is where the value being fetched is going to land. PrestaShop
@@ -420,8 +427,8 @@ is not persisted here", never to a dropped payment record.
     window was handed to the browser, leaving the buyer's whole signup happening
     behind an idle-looking checkout. Poll the popup handle's `.closed`, and make every
     exit path (popup close, cancel, teardown) stop that poll so no interval leaks.
-  - **…and popup-closed is still not the END of it — the WRITE is** (Doug, live,
-    PrestaShop `doug/two40-soletrader-spinner-rehome`). "Complete" is: the popup is
+  - **…and popup-closed is still not the END of it — the WRITE is** (PrestaShop
+    `doug/two40-soletrader-spinner-rehome`). "Complete" is: the popup is
     gone, AND the post-popup buyer lookup has fired and resolved, AND the company
     name/number have been written to every field and variable that holds them.
     Those are separate moments, and the popup one usually comes FIRST: the hosted
@@ -435,7 +442,7 @@ is not persisted here", never to a dropped payment record.
     on the success path, so every failure and abandon would spin forever.
     A cancel/abandon must be able to FORCE the dispatch past that gate, since the
     generation bump it performs has already disowned whatever is still in the air.
-  - **Three rules, on EVERY focus event** (Doug, TWO-25658), from one page-lifetime
+  - **Three rules, on EVERY focus event** (TWO-25658), from one page-lifetime
     document-level capture `focusin` the popup module owns: (1) focus arriving on the Sole
     trader chip of the capture that OWNS the open popup changes NOTHING: the popup is left
     exactly as it was, open or closed. Ownership is per capture, not per control — the chip
@@ -500,13 +507,15 @@ is not persisted here", never to a dropped payment record.
 - **Tokens must already exist when the chip is clicked.** A chip click has exactly two
   allowed outcomes — populate a company, or open the signup popup — and a fallback
   note/link is neither (WooCommerce `df1aaa1`). On WooCommerce there is now exactly ONE
-  (open the popup, §11 rule 1); the rule the two-outcome framing exists for is that a
+  (open the popup, its silent lookup path having been deleted); the rule the
+  two-outcome framing exists for is that a
   click never resolves to a note, a link, or nothing at all. Minting inside the click handler puts
   `window.open()` behind an async callback (popup-blocker bait) and opens four races
   review had already closed on the other path: mint failure, country change mid-mint,
   an email typed mid-mint, and a double click starting two mints. Mint when the option
   becomes available instead, which removes the async branch from the gesture entirely
-  (`15de0f8`). See §15 for keeping those tokens alive afterwards.
+  (`15de0f8`). See "Delegated-auth tokens expire while checkout sits open" for keeping
+  those tokens alive afterwards.
   - **On a platform that still HAS a silent-autofill pre-check, its ANSWER must
     already exist when the chip is clicked too, not just the tokens.** Otherwise the
     mint moves out of the gesture and the lookup takes its place, and `window.open()`
@@ -580,11 +589,11 @@ is not persisted here", never to a dropped payment record.
       can decline eager work needs the same treatment: the buyer-lookup single-flight
       guard is the other one.
   - **One mint per page, at render, is enough — tokens are country-scoped, not
-    email-scoped** (WooCommerce `8e2355f`). Once §11 rule 1's email-driven path is gone
-    there is no per-email trigger left to mint from, and none is needed: one set serves
-    every launch on the page and the §15 refresh keeps it alive. The mint's callback
+    email-scoped** (WooCommerce `8e2355f`). Once the email-driven lookup is gone there is
+    no per-email trigger left to mint from, and none is needed: one set serves every
+    launch on the page and the 30-minute token refresh keeps it alive. The mint's callback
     still has to re-decide the "select a different sole trader" affordance, because a
-    restored adoption (§11 rule 1's restore half) is already adopted before any mint has
+    page-load restore of an earlier adoption is already adopted before any mint has
     happened and that affordance only shows once real tokens exist.
 - **The manual-entry chip must not be able to become a dead end.** WooCommerce's
   removed the chip synchronously and deferred the actual mode switch a tick, but that
@@ -592,9 +601,10 @@ is not persisted here", never to a dropped payment record.
   refusals landed after the chip was already gone, leaving the buyer with no chip and
   no manual mode (`27a0532`). A settled sole-trader mode must switch to business
   first; a still-deciding one must drop the click and KEEP the chip.
-- **"Select a different sole trader" link** — placement per §0's corrected findings,
-  behaviour once adopted per §11 (it is one of exactly two entry points into the same
-  relaunch call, not the only one). Concretely:
+- **"Select a different sole trader" link** — placement per the DOM-verified nesting
+  findings at the top of this guide, behaviour once adopted per the adoption-is-a-mode
+  rules (it is one of exactly two entry points into the same relaunch call, not the only
+  one). Concretely:
   this is a standalone button appended as the LAST child of the company field's
   outer wrapper, landing as a SIBLING AFTER the dropdown panel — not inside it, not
   inside the chip group. Only renders once a sole-trader identity has been adopted;
@@ -602,8 +612,9 @@ is not persisted here", never to a dropped payment record.
   reuses clicking the field itself to reopen search). Clicking it must skip the
   normal cookie/silent-autofill pre-check and launch the popup directly with an extra
   flag appended — a distinction that only exists on a platform that still HAS such a
-  pre-check, i.e. PrestaShop; on WooCommerce post-`8e2355f` (§11 rule 1) both entry
-  points are the same unconditional launch and there is nothing to skip. (PrestaShop
+  pre-check, i.e. PrestaShop; on WooCommerce post-`8e2355f`, with its silent lookup
+  deleted, both entry points are the same unconditional launch and there is nothing to
+  skip. (PrestaShop
   used `autoselect=false`, currently unread by the backend —
   just wire the parameter through unconditionally, no client-side branching on its
   value). The single popup/link covers BOTH "pick a different existing registration"
@@ -651,8 +662,8 @@ authenticated with should drive lookup, full stop, with NO requirement to match
 whatever's sitting in the order's contact-email field.
 
 **Where a platform has no passive path at all, this reduces to one rule rather than
-going away.** WooCommerce now has only the post-authentication path (§11 rule 1,
-`8e2355f`), so there is no passive check left to reuse by mistake — but the lookup it
+going away.** WooCommerce now has only the post-authentication path (`8e2355f`), so
+there is no passive check left to reuse by mistake — but the lookup it
 runs on that path must still take the authenticated email as the answer, with no match
 against the order's contact field. The bug this section describes is caused by the
 *reuse*, and a platform down to one path has simply removed the opportunity.
@@ -669,8 +680,9 @@ to — checkout/merchant API, merchant portal, and the hosted checkout-page app
 platform-appropriate default, and ALL gated so a production instance can never
 accidentally honor one even if the env var somehow leaks into its process
 environment. Magento already had this (`TWO_API_BASE_URL`/`TWO_CHECKOUT_BASE_URL`,
-gated on developer mode, documented in its README); PrestaShop added it in #163
-(`e8fb11a`) and WooCommerce in #458, rebuilt as `242fbff` — so this is now a
+gated on developer mode, documented in its README); PrestaShop added it in
+prestashop-plugin PR #163 (`e8fb11a`) and WooCommerce in woocommerce-plugin PR #458,
+rebuilt as `242fbff` — so this is now a
 three-platform pattern, not a thing to invent.
 
 Two pieces of the harness are worth porting with it, because they are what makes a
@@ -701,12 +713,14 @@ the wrong build (`2b99c2b`).
 
 - **Never trust a fix's own test as proof it worked live**, especially for anything
   visual/timing-sensitive. A "fixed" chip-selection PR shipped with its own
-  regression test passing while the fix did nothing in a real browser (§5's paint-
-  timing entry) — caught only by live re-testing after merge.
+  regression test passing while the fix did nothing in a real browser — a synchronous
+  DOM-class assertion cannot see that no frame ever painted — caught only by live
+  re-testing after merge.
 - **A review pass whose only findings are artifacts of the previous pass's own fix
   is oscillating, not clean** — don't merge on it, review again against the latest
   fix specifically. If you are re-tuning the same predicate repeatedly, the design
-  is wrong, not the predicate (§14 is the worked example, and the popup-stacking
+  is wrong, not the predicate (the one-popup-at-a-time rules below are the worked
+  example, and the popup-stacking
   guard that had to be reverted outright — `989a765` — is what happens if you keep
   going).
 - **Defects no single change can show.** Two changes can each be correct and clean
@@ -753,7 +767,7 @@ the wrong build (`2b99c2b`).
 
 ## 11. Adoption is a MODE, not a populated field
 
-All three rules below are Doug's, from live testing on 2026-08-19/21. They are one
+All three rules below came out of live testing. They are one
 design, not three fixes: **once a sole trader is adopted, that is the state of the
 control**, and every surface has to agree with it. Rules 2 and 3 each carry a
 correction below, because each is easy to read incompletely rather than to
@@ -768,11 +782,11 @@ implement wrongly — read both corrections before implementing either.
    prefetch adoption on first load is a FULL adoption"*, and instructed that when the
    cookie-driven prefetch running off the checkout email resolves to a sole trader and
    populates the company name, it must also set the mode and render the affordance.
-   The prefetch itself is now wrong. Doug's architectural ruling, 2026-08-21, verbatim:
-   *"the ONLY way that the company should be filled in is through the buyer directly
-   interacting with the company name field. Remove the auto-adoption logic."*
+   The prefetch itself is now wrong. The architectural ruling: the ONLY way a company
+   may be filled in is the buyer interacting directly with the company-name field, and
+   the auto-adoption logic is removed.
 
-   WooCommerce `8e2355f` (PR #487) removes the whole mechanism — the prefetch that ran
+   WooCommerce `8e2355f` (woocommerce-plugin PR #487) removes the whole mechanism — the prefetch that ran
    off every checkout email change (`onEmailChanged`), the match branch that adopted a
    company and ran the credit check off a Two session cookie with no buyer interaction
    at all (`applyPrefetch`), and the Sole trader chip's own fast path that consulted
@@ -785,7 +799,7 @@ implement wrongly — read both corrections before implementing either.
 
    Two knock-ons that a port has to do rather than inherit: with no email-scoped
    lookup, tokens are minted **once per page up front** rather than per email change
-   (they were always country-scoped, never email-scoped — §7, §15); and the chip's own
+   (they were always country-scoped, never email-scoped); and the chip's own
    spinner/dimming reasoning changes, because there is no longer a background request
    the buyer never asked for to keep the chips usable during.
 
@@ -831,14 +845,13 @@ implement wrongly — read both corrections before implementing either.
    carries an adopted sole trader's name plus its `TWO:` number. Re-verified at
    `4737131`: `renderSelectDifferentSoleTraderLink()` has exactly one caller,
    `adoptSoleTraderBuyer()`, so nothing on the restore path renders the element that IS
-   the adopted state there (§0) — on such a load the field looks right while the
+   the adopted state there — on such a load the field looks right while the
    control is still in registered-company mode: reopening shows the wrong chip selected
    and a visible, typable query. Still not fixed; the fix is the same shape as
    WooCommerce's above.
 
-   **OPEN, unresolved as of 2026-08-21 — the two platforms satisfy this rule to
-   different depths, and Doug has not ruled on whether to close the gap. Do not invent
-   a resolution for it.** Both now have no passive, email-driven fill, so both satisfy
+   **OPEN — the two platforms satisfy this rule to different depths, and whether to
+   close the gap is unresolved. Do not invent a resolution for it.** Both now have no passive, email-driven fill, so both satisfy
    the rule as stated. They are NOT identical beyond that:
 
    - **WooCommerce is stricter.** The chip has exactly one outcome: open the popup.
@@ -860,14 +873,13 @@ implement wrongly — read both corrections before implementing either.
    strictness as an accident to be relaxed or PrestaShop's probe as a bug to be copied
    — get the ruling first.
 2. **Reopening the dropdown once adopted offers no free-text query.** The Sole trader
-   chip shows as selected (§0), and the query input is **not rendered at all**.
+   chip shows as selected, and the query input is **not rendered at all**.
 
    **`readonly` is NOT an acceptable reading of this rule — it is an incomplete
    implementation of it, on BOTH platforms.** PrestaShop (`1c1b3d7`) and
    WooCommerce (`48edd08`) each made the field readonly and left it
-   on screen; Doug's correction on re-test was verbatim: "the field should not be
-   *visible*. I did not tell you it was editable, I told you it was visible." A search
-   box that is painted but inert reads as a search box that has broken, which is worse
+   on screen; the rule is about VISIBILITY and not editability — the field must not be
+   on screen at all. A search box that is painted but inert reads as a search box that has broken, which is worse
    than one that is absent. Hide it — `display:none` or the `hidden` attribute, **not**
    `visibility:hidden`/`opacity:0`, which leave it in the tab order for a keyboard
    buyer to land on something they cannot see. Keeping `readonly` on as well costs
@@ -883,7 +895,7 @@ implement wrongly — read both corrections before implementing either.
      spinner is an absolutely-positioned sibling *inside* that row, so hiding the
      input alone collapses the row to zero height and strands that spinner at its
      top edge.
-   - **Gate the hide on the selected chip and NOTHING ELSE** (Doug, live). It has to
+   - **Gate the hide on the selected chip and NOTHING ELSE.** It has to
      take effect on the click that selects the chip, synchronously, with no reopen
      required — so drive it from wherever chip selection is rendered, not from the
      panel's open handler, or it will look correct in every test that closes and
@@ -892,7 +904,7 @@ implement wrongly — read both corrections before implementing either.
      progress, tempting as it is when the in-flight spinner lives in this very
      field: that condition IS the bug — the chip click hid the row and un-hid it in the
      same gesture, so a row the buyer had been told would go stayed up for the whole
-     round trip. The spinner belongs on the company-name field instead (§7); with it
+     round trip. The spinner belongs on the company-name field instead; with it
      gone, no second condition is needed and none should be added back.
    - **Something else in the panel has to take focus on open.** The open path focuses
      the query field; `.focus()` on a `display:none` element silently does nothing,
@@ -920,21 +932,22 @@ implement wrongly — read both corrections before implementing either.
    different" affordance. That is deliberately two entry points into one call — the
    standalone link, and re-clicking the Sole trader chip — and re-clicking the chip
    must route through the IDENTICAL relaunch call the link uses. Not a no-op (both
-   platforms made it one and Doug reversed that explicitly), and
+   platforms made it one and that was reversed explicitly), and
    not a fresh enrolment either, which would re-mint tokens for an identity already
    adopted, and — on any platform whose enrolment path still consults a silent lookup,
    i.e. PrestaShop — can re-adopt the very same match with no popup at all, the
    opposite of what "select a different" means. Shared entry points need a shared
    re-entrancy guard: the relaunch opens the popup SYNCHRONOUSLY with no guard of its
-   own, so without one a double-click reliably opens two signup popups (§14).
+   own, so without one a double-click reliably opens two signup popups.
 
    **"The same call" means the same in-flight state too, not just the same
-   function** (Doug, live). Both entry points show the same spinner, in the same
-   place, for the same §7 duration. The first implementation shared the relaunch
+   function.** Both entry points show the same spinner, in the same place, held until
+   the write lands rather than until the popup closes. The first implementation shared the relaunch
    function but gave each entry point its own loading flag and its own settle
    listener under its own namespace — with the result that the standalone button
    showed no spinner at all, and a chip click could open a second hosted popup over
-   a replacement flow already in flight, which is exactly what §14 forbids. One
+   a replacement flow already in flight, which is exactly what the one-popup-at-a-time
+   rule forbids. One
    flag, one listener, one spinner, for both. The single genuine difference is the
    dropdown's open/closed state — the chip click leaves it open throughout, the
    button never had one — and the resolution is to close the dropdown at
@@ -985,13 +998,13 @@ implement wrongly — read both corrections before implementing either.
 ## 12. Chip visibility is PUSHED from the availability answer, never only pulled
 
 The chip's gate is the registry's per-country answer, resolved asynchronously
-(§1a). The control that draws the chip reads that answer at the moments IT
+from the live billing country. The control that draws the chip reads that answer at the moments IT
 re-evaluates — panel open, address-form re-render, adoption — so an answer landing
 after the panel is already open reaches nothing. Push it: the module that owns the
 availability answer must tell the search control to re-sync its chip every time it
 applies one. WooCommerce already did this; PrestaShop did not, which is why the chip
-could be missing entirely for a supported country (GB, live-reported by Doug
-2026-08-19, fixed `40ec6d4`) — the address step has no server-rendered answer to
+could be missing entirely for a supported country (GB, found in live testing, fixed
+`40ec6d4`) — the address step has no server-rendered answer to
 adopt, so on a first visit every panel opened inside the round trip painted with no
 chip and nothing added one afterwards.
 
@@ -1029,7 +1042,7 @@ parallel "captured fields" rendering. PrestaShop got this right by accident of
 construction — `adoptSoleTraderBuyer()` never touches its own search field — and
 WooCommerce diverged, which produced a whole class of bugs rather than one.
 
-Doug's framing is the spec: **clicking into the company field reopens the SAME
+The spec: **clicking into the company field reopens the SAME
 dropdown whatever mode you are in.** Only manual entry differs, via its own
 affordance.
 
@@ -1039,9 +1052,10 @@ affordance.
   mode never destroyed anything (a click there just re-triggers the widget library's
   own open handler), and a `reopenSearch()` mode-switch-and-rebuild dance existed only
   to paper over the difference.
-- Shipped as two PRs because the area had a history of oscillating fixes behind it
-  (§13, §14): #485 (`0b93055`) stops the destroy — the widget just closes and stays
-  alive; then #486 (`004814f`) seeds the widget's own underlying `<select>` with a
+- Shipped as two PRs because the area had a history of oscillating fixes behind it:
+  woocommerce-plugin PR #485 (`0b93055`) stops the destroy — the widget just closes and
+  stays alive; then woocommerce-plugin PR #486 (`004814f`) seeds the widget's own
+  underlying `<select>` with a
   synthetic `<option>` for the adopted identity and selects it, reusing the exact
   mechanism the page-load restore already used, so the widget renders the adoption as
   its own selection.
@@ -1053,10 +1067,11 @@ affordance.
   destroy-and-rebuild blanks the very pick that was just made.
 - **The one legitimate exception:** a merchant with company search disabled entirely
   has no widget to render through, so that configuration keeps the native-field swap.
-  Read the merchant's *saved* setting for that decision, not the live flag (§16).
+  Read the merchant's *saved* setting for that decision, not the live flag, which the
+  flow forces off for the session's duration.
 - Watch for stale comments after this change. Still true at `8e2355f`: a chip-guard
   comment claims "an adopted sole trader destroys the widget it lives in", which
-  #485/#486 made untrue.
+  woocommerce-plugin PRs #485 and #486 made untrue.
 
 ## 14. One hosted popup at a time — and attribute its messages BY WINDOW
 
@@ -1107,19 +1122,19 @@ Rules that generalise:
   change the design. That is what this section is.
 
 **Once there is exactly one popup, decide from where focus LANDS, never from the panel's
-own focus-out.** Doug's rules (TWO-25658): focus landing on a checkout control closes the
+own focus-out.** The rules (TWO-25658): focus landing on a checkout control closes the
 popup — close only — and the ONE exception is the Sole trader chip, focus on which is
 inert; its own ACTIVATION is what means "give me that popup" and opens or raises it.
 Whichever other chip takes focus closes the popup and
 its click still does its own job unchanged; the popup module's `focusin` watch owns the
 rest (the three-rule bullet above).
 
-The trap is §0's fact — the chips are DOM children of the search panel — meeting the
+The trap is that the chips are DOM children of the search panel, meeting the
 panel's own deferred close-on-focus-leaving. That close is what owns the popup
 (PrestaShop `928a84a`), and it cancels itself on any `focusin` back into the panel,
 which is exactly what a chip click produces. So all three chips escaped the popup
 decision, and which of them nevertheless closed it was decided by where its own action
-happened to leave focus afterwards (PrestaShop #176 `8c7447f`):
+happened to leave focus afterwards (prestashop-plugin PR #176 `8c7447f`):
 
 - **"Enter manually" got the right outcome by accident** — it ends by focusing the
   company-name field *outside* the panel, which re-scheduled a close nobody asked for.
@@ -1150,7 +1165,7 @@ Rules that generalise:
 - **Report the raise as a boolean** ("was there a popup to raise?"), so the same handler
   can fall through to an ordinary first-time launch when there was not. A void raise
   forces the caller to keep its own second opinion about whether a popup is open, which
-  is the drift §0 warns about in a different register.
+  is the drift the single-source-of-truth rule warns about in a different register.
 - **Close BEFORE the cancel — and make that ordering unreachable.** The cancel path
   deliberately nulls the popup handle, so a close attempted after it has no handle left
   and the window sits there orphaned. Do not leave the sequence to callers; see the
@@ -1160,10 +1175,10 @@ Rules that generalise:
   interleaving, not a theoretical one. Nothing to raise then and nothing to report; the
   close poll still solely owns clearing the handle and dispatching the settle.
 - **Closure and cancellation are ONE operation, not two functions callers pair up.**
-  Doug's architectural call (PrestaShop #176 `4156ad3`), after both ways of getting the
-  pair wrong had shipped: *"the fix also requires that we make closure and enrolment
-  cancelation a single atomic operation, not two separate functions as now. It's just
-  begging to fail in some way."* It was. "Enter manually" closed without cancelling;
+  An architectural ruling (prestashop-plugin PR #176 `4156ad3`), after both ways of
+  getting the pair wrong had shipped: closure and enrolment cancellation are ONE atomic
+  operation, not two separate functions callers pair up. As two functions they failed
+  both ways. "Enter manually" closed without cancelling;
   every dropdown open cancelled without closing. Neither is a bug you find by reading the
   handler that has it — each one reads as a deliberate narrow choice, and the earlier
   version of this very bullet blessed it as one.
@@ -1183,7 +1198,7 @@ Rules that generalise:
   splitting an operation that should not be splittable.
 
 **Every gap this section used to log as "documented rather than fixed" is now FIXED
-(PrestaShop #176 `4156ad3`, `ffe4b53`).** Kept here because the *shape* of each is what a
+(prestashop-plugin PR #176 `4156ad3`, `ffe4b53`).** Kept here because the *shape* of each is what a
 port needs to avoid, and because the fix is the atomic-operation rule above rather than
 anything local to either symptom.
 
@@ -1192,8 +1207,8 @@ anything local to either symptom.
   on screen with nothing holding it, and the next Sole trader click opened a second one.
   Escape reaches this by hand (it goes straight to the panel close and never touches the
   popup), but the *common* trigger was not a buyer gesture at all: the platform's own
-  address-form re-render restores the panel through the same reopen path, and per §17 that
-  event can land tens of milliseconds after the click that opened the panel — its XHR
+  address-form re-render restores the panel through the same reopen path, and that
+  re-render can land tens of milliseconds after the click that opened the panel — its XHR
   callback is not blocked by the buyer being away in the popup window, so this fired at
   buyers who were *looking at* the thing it cancelled. Now a buyer-initiated reopen closes
   the popup as well as cancelling (so nothing is orphaned), and the re-render restore does
@@ -1204,7 +1219,7 @@ anything local to either symptom.
   buyer lookup already in flight still resolved afterwards, and its write-back has no
   manual-entry guard: it overwrote the company name the buyer was now typing by hand and
   rendered the adopted-sole-trader affordance inside manual-entry mode. The credit check
-  then ran on the identity they had just walked away from — §5's write-back state machine,
+  then ran on the identity they had just walked away from — the write-back state machine,
   reached through a gesture rather than a race. Escape has the same hole for the same
   reason (the panel close never cancels either). The chip now abandons; the reopen's
   own cancel does NOT cover this, because that cancel happens *before* the buyer can
@@ -1217,8 +1232,9 @@ anything local to either symptom.
   the reopen deadline being armed: the buyer's own click arms that too, so a re-render
   landing in the same tick as a genuine click would be indistinguishable. An argument at
   the call site cannot be ambiguous however the timing falls.
-- **FIXED — instance teardown discarded the handle** (PrestaShop #176 `ffe4b53`). The
-  platform destroys and rebuilds the search instance on every address-form re-render (§17),
+- **FIXED — instance teardown discarded the handle** (prestashop-plugin PR #176
+  `ffe4b53`). The platform destroys and rebuilds the search instance on every
+  address-form re-render,
   and `destroy()` cancels the enrolment to disown flights that would otherwise resolve
   against a replaced instance — but that cancel also nulled the popup handle, so the full
   re-render path left a live popup owned by nobody. Closing it there would be wrong: the
@@ -1247,7 +1263,7 @@ anything local to either symptom.
   own re-entrancy guard in the ordinary same-session case.
 
 **Cross-platform: WooCommerce had one of these two gaps and its architecture rules out the
-other (WooCommerce PR #487 `7a11acb`).**
+other (woocommerce-plugin PR #487 `7a11acb`).**
 
 - **The re-render trigger cannot reach the flow.** WooCommerce's equivalent reopen path is
   `refresh()` → `hide()`, bound to `updated_checkout` — a coupon apply, a shipping-method
@@ -1269,8 +1285,8 @@ other (WooCommerce PR #487 `7a11acb`).**
   through the same supersession counter the newer-flight case already used. Having exactly
   one choke point is why this was a small fix and not a redesign — the records-not-a-handle
   argument applies to the EXITS, not only the launches.
-  - **The lookup half of that operation is now moot on WooCommerce** (`8e2355f`, §11
-    rule 1): with no email-driven lookup there is nothing left to invalidate, and the
+  - **The lookup half of that operation is now moot on WooCommerce** (`8e2355f`): with
+    no email-driven lookup there is nothing left to invalidate, and the
     exit closes the windows then drops the records, in that order and no other. The
     ordering reason is unchanged and is the portable part — the records hold the only
     handles there are, so a close attempted after the drop has nothing to close. A
@@ -1278,13 +1294,14 @@ other (WooCommerce PR #487 `7a11acb`).**
 - **A divergence that has now RESOLVED, in PrestaShop's direction** — this corrects an
   earlier version of this guide, which logged it as a standing by-design disagreement to
   settle before porting. PrestaShop counts "the write-back has no manual-entry guard" as a
-  bug (fixed above); WooCommerce used to count it as supported and pinned it (#486): a
+  bug (fixed above); WooCommerce used to count it as supported and pinned it
+  (woocommerce-plugin PR #486): a
   buyer who says "my company isn't in the registry", starts typing, then corrects their
   email to one Two knows IS adopted, with the picker re-attached to render the adopted
-  name. That case is unreachable at `8e2355f` — it was email-driven, and §11 rule 1
-  deleted the mechanism. Neither platform now writes a company back off an email edit, so
+  name. That case is unreachable at `8e2355f` — it was email-driven, and that mechanism
+  is deleted. Neither platform now writes a company back off an email edit, so
   there is nothing left to settle here. Do not re-derive the WooCommerce behaviour on a
-  third platform from #486's pinned test.
+  third platform from woocommerce-plugin PR #486's pinned test.
 
 **The same three-way gesture rule, built on a platform with NO panel focus-out close to
 hang it off** (WooCommerce `9692939`, then `cf12ac8`). The rule is identical — refocus
@@ -1351,12 +1368,13 @@ a document.
 ## 15. Delegated-auth tokens expire while checkout sits open
 
 The tokens minted for the signup popup — and, where one still exists, the silent buyer
-lookup (§11 rule 1) — are short-lived. A buyer who parks on checkout past their expiry
+lookup — are short-lived. A buyer who parks on checkout past their expiry
 loses the signup flow entirely, including the post-adoption "select a different sole
 trader" path, which is the one most likely to be used late in a long session. Refresh on
 a 30-minute interval, armed from the mint's own success handler — which, with the mint
 eager, means as soon as an eligible billing country resolves rather than on the first
-click (PrestaShop #172 `458f6bd`, WooCommerce #481 `cb63043`). Arm it in exactly ONE
+click (prestashop-plugin PR #172 `458f6bd`, woocommerce-plugin PR #481 `cb63043`). Arm
+it in exactly ONE
 place, and let that place be the success handler: it covers every mint that can produce
 a first token pair, including a click-driven one on a page where the eager mint was
 declined, so any second arming site is redundant by construction.
@@ -1382,7 +1400,7 @@ Everything below was found by reading the code, not by testing:
 - **Rejected, deliberately:** holding the feature's in-flight/busy flag around the
   background mint. The race it looked like it closed was never closed by it (the
   email-change path did not check that flag before starting its own flight — that path
-  is now deleted outright, §11 rule 1, which removes the race rather than the guard),
+  is now deleted outright, which removes the race rather than the guard),
   and it would make an invisible background job gate real buyer interaction — the chip
   click, the reopen, the click-to-reopen (`e159881`). Still rejected, for the second
   reason alone.
@@ -1412,7 +1430,7 @@ the company-number label's visibility depending on the selected payment method.
   "enter sole-trader mode" unconditionally whenever a flight resolved with a match,
   including while already in it — reachable by editing the email field (never locked,
   unlike the captured fields) while a "select a different" popup is open (`f8c035e`).
-  **That reproduction path is gone with the prefetch itself** (§11 rule 1, `8e2355f`); the rule
+  **That reproduction path is gone with the prefetch itself** (`8e2355f`); the rule
   stands on its own, because any caller that sets a mode it is already in can do the
   same thing.
 - **If platform core can delete the company field outright, register a floor for it.**
@@ -1439,15 +1457,15 @@ dropdown alongside the orphan, and clicks land on the wrong one (or are swallowe
 - **Scope any stale-panel sweep to this field's own results id** (`50aaaa6`) — a
   broader sweep takes out a sibling field's live panel.
 - **`close()` before `destroy()`**, every time.
-- **Deferring a handler by a tick can strand the buyer** — see §7's manual-entry
-  dead end. If you remove UI synchronously and defer the action, every refusal branch
+- **Deferring a handler by a tick can strand the buyer** — see the manual-entry chip
+  dead end above. If you remove UI synchronously and defer the action, every refusal branch
   in that action lands after the UI is already gone.
 
 ## 18. Browser-side calls to Two must identify the client too
 
 Every call the plugin's *browser* code makes straight to Two — company search, company
 detail, order intent, token mint, and any sole-trader buyer lookup the platform still
-has (§11 rule 1) — must carry the same `client` /
+has — must carry the same `client` /
 `client_v` pair the server-side calls have always attached (PrestaShop `cbcf933`).
 Without it a shop's traffic arrives partly unattributed and version-adoption figures
 count only the half that left the server. Details worth copying:
