@@ -73,6 +73,8 @@ final class FxRatesSpec
         self::testCapRoundingToZeroPassesThroughAndKeepsTheOption();
         self::testAbsentCapStillChargesAndOffersTheOption();
         self::testFixedSurchargeRoundingToZeroProceedsWithInfoLog();
+        // ABN-546 - the charged term's quote must resolve.
+        self::testChargedTermQuoteDecidesThePaymentOption();
         // The cart-line-sync half of TWO-25269 lives in SurchargeCartLineSpec,
         // which already owns the real cart/product/tax fixture:
         // testQuoteFailureKeepsLineAndFailsLoudly.
@@ -968,6 +970,131 @@ final class FxRatesSpec
         TinyAssert::true(is_array($pricing), 'the pricing quote must have been requested');
         TinyAssert::same(0.0, $pricing['buyer_fee_share']['surcharge'], 'a negligible fixed amount is quoted as 0.00');
         TinyAssert::same(30.0, $pricing['buyer_fee_share']['cap'], '500000 IDR is a healthy 30.00 EUR cap');
+    }
+
+    /**
+     * gateModule's reachable-checkout fixture plus a stubbed pricing wire and
+     * a cart basis, so the charged-term quote gate (ABN-546) is exercised.
+     *
+     * @param mixed $feeResponse response array, or a callable given the payload
+     */
+    private static function feeGateModule(float $gross, $feeResponse): object
+    {
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[904] = [
+            'id_country' => 826,
+            'company' => 'Example Trading Ltd',
+            'vat_number' => 'GB123456789',
+            'loaded' => true,
+        ];
+        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 1]];
+
+        $module = new class ($feeResponse) extends TwopaymentTestHarness {
+            /** @var array<int,array{endpoint:string,payload:array}> */
+            public array $requests = [];
+            private $feeResponse;
+
+            public function __construct($feeResponse)
+            {
+                parent::__construct();
+                $this->feeResponse = $feeResponse;
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                $this->requests[] = ['endpoint' => $endpoint, 'payload' => $payload];
+                if ($endpoint !== '/v1/pricing/order/fee') {
+                    return ['http_status' => 500];
+                }
+                return is_callable($this->feeResponse)
+                    ? call_user_func($this->feeResponse, $payload)
+                    : $this->feeResponse;
+            }
+
+            protected function getTwoPaymentOption()
+            {
+                return (object) ['method' => 'two'];
+            }
+        };
+        $module->active = true;
+
+        $cart = new Cart(4242);
+        $cart->id_address_invoice = 904;
+        $cart->id_currency = 1;
+        StubStore::$cartTotals[4242][true][Cart::BOTH] = $gross;
+        StubStore::$cartTotals[4242][false][Cart::BOTH] = $gross;
+        $module->context->cart = $cart;
+
+        return $module;
+    }
+
+    /**
+     * ABN-546. A buyer fee quote that does not resolve withholds the payment
+     * option at CHECKOUT, because the alternative is an order created with no
+     * surcharge at all. Only the term the checkout would be charged for is
+     * judged - the selected one, else the first offered - so one broken term
+     * cannot take the store offline, and a quoted zero, an empty basket and a
+     * disabled surcharge are answers rather than failures.
+     */
+    private static function testChargedTermQuoteDecidesThePaymentOption(): void
+    {
+        $failFor = function (int $failingDays) {
+            return function (array $payload) use ($failingDays) {
+                if ((int) $payload['order_terms']['duration_days'] === $failingDays) {
+                    return ['http_status' => 503];
+                }
+                return ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'EUR'];
+            };
+        };
+        $quoted = ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'EUR'];
+
+        $cases = [
+            ['percentage', 100.0, 30, ['http_status' => 503], 0, true, 30, 'a pricing call that fails withholds the option'],
+            ['percentage', 100.0, 30, ['http_status' => 200, 'currency' => 'EUR'], 0, true, 30, 'a 200 carrying no buyer fee share withholds the option'],
+            ['percentage', 100.0, 30, ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'SEK'], 0, true, 30, 'a quote in the wrong currency withholds the option'],
+            ['percentage', 100.0, 30, ['http_status' => 200, 'buyer_fee_share' => '0.00', 'currency' => 'EUR'], 1, false, 30, 'a quote of zero is a real answer and withholds nothing'],
+            ['zero_row', 100.0, 30, ['http_status' => 200, 'buyer_fee_share' => '0.00', 'currency' => 'EUR'], 1, false, 30, 'a charged term with no surcharge configured withholds nothing'],
+            ['percentage', 0.0, 30, ['http_status' => 503], 1, false, null, 'an empty basket never quotes and never withholds'],
+            ['none', 100.0, 30, ['http_status' => 503], 1, false, null, 'a disabled surcharge never quotes and never withholds'],
+            ['percentage', 100.0, 30, $failFor(60), 1, false, 30, 'a failing term that is not the charged term withholds nothing'],
+            ['percentage', 100.0, 60, $failFor(60), 0, true, 60, 'the selected term is the one judged'],
+            ['percentage', 100.0, null, $quoted, 1, false, 30, 'with no term selected the first offered term is judged'],
+        ];
+
+        foreach ($cases as $case) {
+            list($type, $gross, $cookieTerm, $feeResponse, $expectedOptions, $expectLog, $quotedDays, $description) = $case;
+
+            self::reset();
+            self::tableWithoutUsd();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $type === 'none' ? 'none' : 'percentage');
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $type === 'zero_row' ? '0' : '1.5');
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '1.5');
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+            if ($cookieTerm !== null) {
+                Context::getContext()->cookie->two_payment_term = (string) $cookieTerm;
+            }
+
+            $module = self::feeGateModule($gross, $feeResponse);
+            TinyAssert::same($expectedOptions, count($module->hookPaymentOptions([])), $description);
+            TinyAssert::same(
+                $expectLog,
+                self::hasLog('the buyer surcharge quote for the', 3),
+                'the withhold must be logged at error level exactly when it happens: ' . $description
+            );
+
+            $quotes = [];
+            foreach ($module->requests as $request) {
+                if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                    $quotes[] = (int) $request['payload']['order_terms']['duration_days'];
+                }
+            }
+            if ($quotedDays === null) {
+                TinyAssert::same(0, count($quotes), 'no quote may be requested at all: ' . $description);
+                continue;
+            }
+            TinyAssert::true(in_array($quotedDays, $quotes, true), 'the charged term must be the term quoted: ' . $description);
+        }
     }
 
 }

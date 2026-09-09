@@ -13065,14 +13065,13 @@ class Twopayment extends PaymentModule
 
     /**
      * Whether the fee quote for the term this checkout would be charged for
-     * resolves at all (ABN-546). Judges ONE term - the selected one, else the
-     * first offered - deliberately outside the FX loop in the caller, which
-     * must stay term-independent.
+     * resolves at all (ABN-546). ONE term - the selected one, else the first
+     * offered - deliberately outside the caller's FX loop, which must stay
+     * term-independent.
      *
-     * A quote of zero, an empty basket and a term with no configured
-     * surcharge are all real answers rather than failures, and withhold
-     * nothing. Only a null quote does, because the alternative is an order
-     * created with no surcharge at all.
+     * A quoted zero and an empty basket are real answers, not failures. Only
+     * a null quote withholds, because the alternative is an order created
+     * with no surcharge at all.
      *
      * @param Cart $cart
      * @return bool
@@ -13087,10 +13086,6 @@ class Twopayment extends PaymentModule
         if (!in_array($days, $terms, true)) {
             $days = (int) reset($terms);
         }
-        if ($this->buildTwoBuyerFeeShare($days) === null) {
-            return true;
-        }
-
         // The same basis the checkout chips quote against: merchandise plus
         // shipping, with the hidden surcharge line excluded so it never feeds
         // its own quote.
