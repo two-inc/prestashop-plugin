@@ -10829,9 +10829,8 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        // The flattened root only, which is where the five consumers below read
-        // their fields from - a body carrying them somewhere else answers none
-        // of the questions actually asked.
+        // The flattened root only - a body carrying them somewhere else answers
+        // none of the questions actually asked.
         $fields = array(
             'id',
             'available_terms',

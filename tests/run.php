@@ -5059,10 +5059,7 @@ final class OrderBuilderSpec
         }
     }
 
-    /**
-     * A 200 that is not the merchant record must not wipe the siblings the same
-     * fetch feeds: their absent-field default is permissive.
-     */
+    /** The siblings this fetch feeds default permissive on an absent field. */
     private static function testAMerchantRecordlessTwoHundredKeepsTheSiblingCaches(): void
     {
         $minimum = json_encode(['amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net']);
