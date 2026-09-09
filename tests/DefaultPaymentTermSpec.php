@@ -33,6 +33,8 @@ final class DefaultPaymentTermSpec
         // The interaction the last review flagged as untested: a due_in_days the
         // backend-narrowed available_terms set no longer offers must be ignored.
         self::testDefaultIgnoresApiDefaultWithdrawnFromBackendTerms();
+
+        self::testDefaultTermResolution();
     }
 
     private static function enableTerms(array $days): void
@@ -105,6 +107,36 @@ final class DefaultPaymentTermSpec
     }
 
     // ---- getDefaultPaymentTerm preference logic ---------------------------
+
+    /**
+     * Each row: the backend's offerable set, the ticked presets, due_in_days,
+     * the expected default, a description.
+     *
+     * @return array<int,array{0:int[],1:int[],2:int|null,3:int|null,4:string}>
+     */
+    private static function resolutionCases(): array
+    {
+        return [
+            [[7, 15, 30, 60], [7, 15, 30, 60], 15, 15, 'the API default term is used when offered'],
+            [[7, 15, 30], [7, 15, 30], 45, 30, 'an API default term that is not offered falls through'],
+            [[7, 15, 30, 60], [7, 15, 30, 60], null, 30, 'no API default falls through to the offered 30'],
+            [[7, 15, 60], [7, 15, 60], null, 7, 'without 30 offered the shortest offered term is used'],
+            [[], [7, 15, 30], null, null, 'an unresolvable merchant record leaves no default at all'],
+            [[7, 15, 30], [], null, null, 'no ticked term leaves no default at all'],
+        ];
+    }
+
+    private static function testDefaultTermResolution(): void
+    {
+        foreach (self::resolutionCases() as [$backend, $ticked, $apiDefault, $expected, $description]) {
+            StubStore::reset();
+            self::enableTerms($ticked);
+            $module = self::moduleWithApiDefault($apiDefault);
+            $module->primeTwoAvailableTerms($backend);
+
+            TinyAssert::same($expected, $module->getDefaultPaymentTerm(), $description);
+        }
+    }
 
     private static function testDefaultTermPrefersApiDueInDaysWhenOffered(): void
     {

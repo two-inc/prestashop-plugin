@@ -139,6 +139,8 @@ read standing in for a schedule that has stopped.
   With no offered term the tile renders with no term block at all, no fee line
   label is composed, and `controllers/front/payment.php` refuses the submission
   rather than book an order against a term nobody granted.
+  `getDefaultPaymentTerm()` is null in that state and the browser seam publishes
+  0, so neither PHP nor the checkout JS can name a day count (ABN-544).
 - **A record past `MERCHANT_RECORD_STALE_AFTER` (26h) says the schedule is not
   running.** A read then refreshes it itself, at most once an hour and on a 2-second
   cap, and serves the record it holds either way. Staleness withholds nothing.

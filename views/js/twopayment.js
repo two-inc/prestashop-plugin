@@ -42,7 +42,7 @@
             // ABN-533: no default. An absent list means no term is offered, and
             // substituting one offers the buyer a term the merchant may not hold.
             available_payment_terms: config.available_payment_terms || [],
-            default_payment_term: config.default_payment_term || 30,
+            default_payment_term: config.default_payment_term || 0,
             payment_term_type: config.payment_term_type
         };
     }
