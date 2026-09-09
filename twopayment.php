@@ -10726,7 +10726,7 @@ class Twopayment extends PaymentModule
      */
     public function getMerchantAvailableTerms($refresh = false, $resolve_if_unresolved = false)
     {
-        if ($refresh || ($resolve_if_unresolved && $this->isMerchantTermCacheUnresolved())) {
+        if ($refresh || ($resolve_if_unresolved && self::isMerchantTermCacheUnresolved())) {
             $checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
             if ($checked_on <= 0 || ($checked_on + self::MERCHANT_AVAILABLE_TERMS_TTL) <= time()) {
                 $merchant_id = Configuration::get('PS_TWO_MERCHANT_ID');
@@ -10745,7 +10745,7 @@ class Twopayment extends PaymentModule
                         self::API_TIMEOUT_STATE_CHECK
                     );
                     $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
-                    if ($http_status === self::HTTP_STATUS_OK && $this->isTwoMerchantRecordResponse($response)) {
+                    if ($http_status === self::HTTP_STATUS_OK && self::isTwoMerchantRecordResponse($response)) {
                         // ONE fetch feeds BOTH merchant-record caches: the
                         // offerable term list (TWO-24813) and the default-term
                         // seed (due_in_days, TWO-24859). A field absent from an
@@ -10823,13 +10823,15 @@ class Twopayment extends PaymentModule
      * @param mixed $response
      * @return bool
      */
-    private function isTwoMerchantRecordResponse($response)
+    private static function isTwoMerchantRecordResponse($response)
     {
         if (!is_array($response)) {
             return false;
         }
 
-        $body = (isset($response['data']) && is_array($response['data'])) ? $response['data'] : $response;
+        // The flattened root only, which is where the five consumers below read
+        // their fields from - a body carrying them somewhere else answers none
+        // of the questions actually asked.
         $fields = array(
             'id',
             'available_terms',
@@ -10839,7 +10841,7 @@ class Twopayment extends PaymentModule
             'supported_buyer_countries',
         );
         foreach ($fields as $field) {
-            if (array_key_exists($field, $body) || array_key_exists($field, $response)) {
+            if (array_key_exists($field, $response)) {
                 return true;
             }
         }
@@ -10866,7 +10868,7 @@ class Twopayment extends PaymentModule
      *
      * @return bool
      */
-    private function isMerchantTermCacheUnresolved()
+    private static function isMerchantTermCacheUnresolved()
     {
         return self::isTwoConfigUnset(Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS));
     }

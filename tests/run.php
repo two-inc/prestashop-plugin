@@ -169,6 +169,7 @@ final class OrderBuilderSpec
         self::testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault();
         self::testGetMerchantAvailableTermsRefetchDecisionTable();
         self::testGetMerchantAvailableTermsSkipsFetchWithKeysNeverWritten();
+        self::testTheMerchantRecordClockAfterEachResponseShape();
         self::testAMerchantRecordlessTwoHundredKeepsTheSiblingCaches();
         self::testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale();
         self::testGetMerchantAvailableTermsRespectsExplicitEmptyList();
@@ -4989,7 +4990,7 @@ final class OrderBuilderSpec
 
         $cases = [
             ['[30,60]', 0,    false, false, $ok,      0, [30, 60], 'a resolved list is served without touching the wire'],
-            ['[30,60]', -901, false, false, $ok,      0, [30, 60], 'an expired resolved list still costs a cache-only read nothing'],
+            ['[30,60]', -901, false, true,  $ok,      0, [30, 60], 'an expired but resolved list is not a gap to refetch'],
             ['',        0,    false, false, $ok,      0, [],       'an unresolved list stays cache-only for a caller that does not withhold on it'],
             ['',        0,    false, true,  $ok,      1, [7, 30],  'a dropped record is refetched for the caller that withholds on it'],
             [$unset,    0,    false, true,  $ok,      1, [7, 30],  'a list never written at all is unresolved too, not an answer'],
@@ -5026,37 +5027,68 @@ final class OrderBuilderSpec
     }
 
     /**
-     * A 200 that is not the merchant record must not wipe the siblings the same
-     * fetch feeds: their absent-field default is permissive.
+     * What each response shape leaves on the shared clock. A non-record 200 has
+     * to retry on the short backoff like a transport failure, not sit out a
+     * whole TTL as though it had answered.
      */
-    private static function testAMerchantRecordlessTwoHundredKeepsTheSiblingCaches(): void
+    private static function testTheMerchantRecordClockAfterEachResponseShape(): void
     {
+        $backoff = Twopayment::MERCHANT_RECORD_RETRY_BACKOFF - Twopayment::MERCHANT_AVAILABLE_TERMS_TTL;
+
         $cases = [
-            [['http_status' => 200, 'detail' => 'ok'], '["GB"]', 1, 'a body answering none of the fetch\'s questions keeps them'],
-            [['http_status' => 200, 'id' => 'mid'], 'null', 0, 'a real record with the fields absent overwrites them'],
+            [['http_status' => 200, 'available_terms' => [30]], 0, 'a record carrying the term list is fresh for the full TTL'],
+            [['http_status' => 200, 'id' => 'mid'], 0, 'a record with the term list absent has still answered'],
+            [['http_status' => 200, 'detail' => 'ok'], $backoff, 'a 200 that is not the record retries on the short backoff'],
+            [['http_status' => 0], $backoff, 'a transport failure retries on the short backoff'],
         ];
 
-        foreach ($cases as [$response, $expectedCountries, $expectedDistributed, $description]) {
+        foreach ($cases as [$response, $expectedOffset, $description]) {
             self::reset();
             Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
-            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '["GB"]');
-            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 1);
             $module = self::fetchHarness();
             $module->responses[] = $response;
 
             $module->getMerchantAvailableTerms(true);
 
             TinyAssert::same(
-                $expectedCountries,
-                Configuration::get(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES),
-                'buyer countries: ' . $description
+                $expectedOffset,
+                (int) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS) - time(),
+                'clock: ' . $description
             );
-            TinyAssert::same(
-                $expectedDistributed,
-                (int) Configuration::get(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED),
-                'invoice distribution: ' . $description
-            );
+        }
+    }
+
+    /**
+     * A 200 that is not the merchant record must not wipe the siblings the same
+     * fetch feeds: their absent-field default is permissive.
+     */
+    private static function testAMerchantRecordlessTwoHundredKeepsTheSiblingCaches(): void
+    {
+        $minimum = json_encode(['amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net']);
+        $cases = [
+            [['http_status' => 200, 'detail' => 'ok'], '["GB"]', 1, $minimum, 30, 'a body answering none of the fetch\'s questions keeps them'],
+            [['http_status' => 200, 'data' => ['id' => 'mid']], '["GB"]', 1, $minimum, 30, 'a body whose fields sit somewhere the consumers do not read keeps them'],
+            [['http_status' => 200, 'id' => 'mid'], 'null', 0, '', 0, 'a real record with the fields absent overwrites them'],
+        ];
+
+        foreach ($cases as [$response, $countries, $distributed, $min, $due, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '["GB"]');
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 1);
+            Configuration::updateValue(Twopayment::CONFIG_PLATFORM_MIN_ORDER, $minimum);
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS, 30);
+            $module = self::fetchHarness();
+            $module->responses[] = $response;
+
+            $module->getMerchantAvailableTerms(true);
+
+            TinyAssert::same($countries, Configuration::get(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES), 'buyer countries: ' . $description);
+            TinyAssert::same($distributed, (int) Configuration::get(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED), 'invoice distribution: ' . $description);
+            TinyAssert::same($min, Configuration::get(Twopayment::CONFIG_PLATFORM_MIN_ORDER), 'platform minimum: ' . $description);
+            TinyAssert::same($due, (int) Configuration::get(Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS), 'default term: ' . $description);
         }
     }
 
