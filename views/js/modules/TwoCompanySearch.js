@@ -1424,9 +1424,8 @@ class TwoCompanySearch {
      * search does not cover (syncSearchRowCountryGate()), and `.focus()` on a
      * `display:none` element does nothing - which would leave focus on the
      * company-name field, OUTSIDE the panel, where neither the Escape-to-close
-     * nor the close-on-focus-leave handler can see a keystroke. So focus a chip
-     * instead, first one on screen, walked in the order that puts the buyer's
-     * likeliest route first for whichever state suppressed the query row.
+     * nor the close-on-focus-leave handler can see a keystroke. So focus the
+     * first of the three chips that is on screen instead.
      */
     focusPanelEntry() {
         if (this._chipMode === 'sole_trader' || !this.isCurrentCountrySupportedForSearch()) {
@@ -1690,9 +1689,9 @@ class TwoCompanySearch {
      * cover, so the only affordance an uncovered country takes away is the
      * search itself (ABN-525).
      *
-     * Only ever HIDES here. syncQueryFieldSuppression() is the single authority
-     * on showing that row, so a supported country delegates back to it rather
-     * than restating its condition - see the note on that method.
+     * Only ever HIDES here: syncQueryFieldSuppression() is the single authority
+     * on SHOWING that row, so a supported country delegates back to it rather
+     * than restating its sole-trader condition.
      */
     syncSearchRowCountryGate() {
         if (!this._queryField || !this._queryField.length) {
