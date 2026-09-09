@@ -1771,7 +1771,7 @@ class Twopayment extends PaymentModule
                     'name' => 'name'
                 )
             ),
-        );
+        ));
 
         // Deprecated custom term (ABN-522): rendered only while a value worth
         // showing is stored, and then only as keep-or-remove.
@@ -2025,8 +2025,9 @@ class Twopayment extends PaymentModule
 
         // Payment terms checkboxes, over the rendered set as validation and the save loop read it:
         // a term the record offers off the preset list otherwise renders unticked and the next
-        // save writes it away.
-        $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
+        // save writes it away. Resolved the same way the checkbox query resolves it, so one
+        // render cannot see two lists across the TTL-gated fetch.
+        $payment_terms = array_map('strval', $this->getOfferableTermSource(true));
         foreach ($payment_terms as $term) {
             $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
         }
