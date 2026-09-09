@@ -16,11 +16,7 @@ final class DefaultPaymentTermSpec
 {
     public static function runAll(): void
     {
-        // getDefaultPaymentTerm preference logic (due_in_days as a seed).
-        self::testDefaultTermPrefersApiDueInDaysWhenOffered();
-        self::testDefaultTermIgnoresApiDueInDaysWhenNotOffered();
-        self::testDefaultTermFallsBackTo30WhenNoApiDefault();
-        self::testSingleOfferedTermWinsOverApiDefault();
+        self::testDefaultTermResolution();
 
         // Shared merchant-record fetch / cache behaviour.
         self::testSharedFetchPopulatesBothCachesInOneCall();
@@ -33,8 +29,6 @@ final class DefaultPaymentTermSpec
         // The interaction the last review flagged as untested: a due_in_days the
         // backend-narrowed available_terms set no longer offers must be ignored.
         self::testDefaultIgnoresApiDefaultWithdrawnFromBackendTerms();
-
-        self::testDefaultTermResolution();
     }
 
     private static function enableTerms(array $days): void
@@ -121,6 +115,7 @@ final class DefaultPaymentTermSpec
             [[7, 15, 30], [7, 15, 30], 45, 30, 'an API default term that is not offered falls through'],
             [[7, 15, 30, 60], [7, 15, 30, 60], null, 30, 'no API default falls through to the offered 30'],
             [[7, 15, 60], [7, 15, 60], null, 7, 'without 30 offered the shortest offered term is used'],
+            [[30, 60], [60], 30, 60, 'a single offered term wins over the API default'],
             [[], [7, 15, 30], null, null, 'an unresolvable merchant record leaves no default at all'],
             [[7, 15, 30], [], null, null, 'no ticked term leaves no default at all'],
         ];
@@ -136,45 +131,6 @@ final class DefaultPaymentTermSpec
 
             TinyAssert::same($expected, $module->getDefaultPaymentTerm(), $description);
         }
-    }
-
-    private static function testDefaultTermPrefersApiDueInDaysWhenOffered(): void
-    {
-        StubStore::reset();
-        self::enableTerms([7, 15, 30, 60]);
-        $module = self::moduleWithApiDefault(15);
-
-        TinyAssert::same(15, $module->getDefaultPaymentTerm());
-    }
-
-    private static function testDefaultTermIgnoresApiDueInDaysWhenNotOffered(): void
-    {
-        StubStore::reset();
-        self::enableTerms([7, 15, 30]);
-        // due_in_days = 45 is not an offered term: fall through to the historical
-        // DEFAULT_PAYMENT_TERM_DAYS (30), which is offered.
-        $module = self::moduleWithApiDefault(45);
-
-        TinyAssert::same(30, $module->getDefaultPaymentTerm());
-    }
-
-    private static function testDefaultTermFallsBackTo30WhenNoApiDefault(): void
-    {
-        StubStore::reset();
-        self::enableTerms([7, 15, 30, 60]);
-        $module = self::moduleWithApiDefault(null);
-
-        TinyAssert::same(30, $module->getDefaultPaymentTerm());
-    }
-
-    private static function testSingleOfferedTermWinsOverApiDefault(): void
-    {
-        StubStore::reset();
-        self::enableTerms([60]);
-        // Only one term offered: it is the default regardless of due_in_days.
-        $module = self::moduleWithApiDefault(30);
-
-        TinyAssert::same(60, $module->getDefaultPaymentTerm());
     }
 
     // ---- shared merchant-record fetch / cache -----------------------------
