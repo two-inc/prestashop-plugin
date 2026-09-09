@@ -25,7 +25,7 @@ final class MerchantRecordKeyBindingSpec
         self::testAShopWithItsOwnKeyDoesNotReadAWiderTiersRecord();
         self::testAnUnstampedRecordIsStillServed();
         self::testAMismatchedStampRefetchesInsideTheTtl();
-        self::testAForeignRecordIsDroppedEvenWhenTheRefetchFails();
+        self::testAForeignRecordIsNotServedWhenTheRefetchFails();
     }
 
     /**
@@ -59,7 +59,7 @@ final class MerchantRecordKeyBindingSpec
     {
         Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $key);
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
     }
 
     /**
@@ -104,6 +104,9 @@ final class MerchantRecordKeyBindingSpec
             TinyAssert::same($resolved, $read($module), 'served for its own key: ' . $description);
 
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-b');
+            // The term read resolves the record for whatever key it finds (ABN-519), so the
+            // wire has to be down for this to be a read of what is cached.
+            $module->response = ['http_status' => 0];
 
             TinyAssert::same($unresolved, $read($module), 'withheld from another key: ' . $description);
         }
@@ -126,10 +129,13 @@ final class MerchantRecordKeyBindingSpec
 
             Shop::setContext(Shop::CONTEXT_SHOP, 2);
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'shop-2-key');
+            // See the note in testAKeySwapUnderTheRecordReadsAsCold().
+            $module->response = ['http_status' => 0];
 
             TinyAssert::same($unresolved, $read($module), 'shop with its own key: ' . $description);
 
             Shop::setContext(Shop::CONTEXT_SHOP, 1);
+            $module->response = self::RECORD;
 
             TinyAssert::same($resolved, $read($module), 'shop inheriting the global key: ' . $description);
         }
@@ -153,10 +159,10 @@ final class MerchantRecordKeyBindingSpec
 
     /**
      * Given a key swap whose refetch fails, When the record is read, Then the previous key's record
-     * is gone rather than served stale, and the retry waits for the backoff instead of firing on
-     * every render.
+     * is not served, and the retry waits for the backoff instead of firing on every render. The
+     * record itself is kept: only a successful refetch replaces it (ABN-519).
      */
-    private static function testAForeignRecordIsDroppedEvenWhenTheRefetchFails(): void
+    private static function testAForeignRecordIsNotServedWhenTheRefetchFails(): void
     {
         StubStore::reset();
         $module = self::module();
@@ -164,9 +170,14 @@ final class MerchantRecordKeyBindingSpec
 
         $module->response = ['http_status' => 0];
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-b');
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
 
-        TinyAssert::same([], $module->getMerchantAvailableTerms(true), 'the previous key\'s terms are gone');
+        TinyAssert::same([], $module->getMerchantAvailableTerms(), 'the previous key\'s terms are not served');
+        TinyAssert::same(
+            json_encode([14, 30]),
+            (string) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS),
+            'and are still held, for the key they belong to'
+        );
         TinyAssert::same(2, $module->calls, 'the failed retry is not re-fired inside the backoff');
     }
 
@@ -187,7 +198,7 @@ final class MerchantRecordKeyBindingSpec
             self::primeRecordForKey($module, 'key-a');
 
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $key);
-            $module->getMerchantAvailableTerms(true);
+            $module->getMerchantAvailableTerms();
 
             TinyAssert::same($expectedCalls, $module->calls, 'wire calls: ' . $description);
         }

@@ -74,7 +74,6 @@ final class BuyerCountryGateSpec
         self::testThePaymentOptionIsWithheldWhenNoIsoCountryResolves();
         self::testAFetchThatNeverSucceededLeavesTheGateUnrestricted();
         self::testAFailedRefetchDoesNotBlankAnEstablishedAllowlist();
-        self::testAMerchantIdentityChangeDropsTheAllowlist();
         self::testTheWithholdReasonIsLoggedOncePerRequest();
     }
 
@@ -259,7 +258,7 @@ final class BuyerCountryGateSpec
     {
         foreach (self::fetchCases() as [$body, $expected, $state, $raw, $description]) {
             $module = self::moduleWithMerchantResponse(self::merchantResponse($body));
-            $module->getMerchantAvailableTerms(true);
+            $module->getMerchantAvailableTerms();
 
             TinyAssert::same(
                 $expected,
@@ -283,7 +282,7 @@ final class BuyerCountryGateSpec
     {
         foreach (self::fetchCases() as [$body, $expected, $state, $raw, $description]) {
             $module = self::moduleWithMerchantResponse(self::merchantResponse($body));
-            $module->getMerchantAvailableTerms(true);
+            $module->getMerchantAvailableTerms();
 
             TinyAssert::same(
                 $raw,
@@ -313,7 +312,7 @@ final class BuyerCountryGateSpec
     private static function testPresenceIsDetectedWithoutTheRawBody(): void
     {
         $module = self::moduleWithMerchantResponse(['http_status' => 200, 'supported_buyer_countries' => []]);
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
 
         TinyAssert::same('empty', $module->getTwoBuyerCountryRestrictionState());
         TinyAssert::same([], $module->getMerchantBuyerCountries());
@@ -512,7 +511,7 @@ final class BuyerCountryGateSpec
 
         foreach ($cases as [$response, $description]) {
             $module = self::moduleWithMerchantResponse($response);
-            $module->getMerchantAvailableTerms(true);
+            $module->getMerchantAvailableTerms();
             TinyAssert::same(1, $module->fetchCount, 'the fetch must actually have been attempted: ' . $description);
 
             TinyAssert::same(
@@ -541,11 +540,11 @@ final class BuyerCountryGateSpec
     private static function testAFailedRefetchDoesNotBlankAnEstablishedAllowlist(): void
     {
         $module = self::moduleWithMerchantResponse(['http_status' => 200, 'supported_buyer_countries' => ['NO']]);
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
         TinyAssert::same(['NO'], $module->getMerchantBuyerCountries());
 
         $stale = self::moduleWithMerchantResponseKeepingCache(['http_status' => 503]);
-        $stale->getMerchantAvailableTerms(true);
+        $stale->getMerchantAvailableTerms();
 
         TinyAssert::same(
             ['NO'],
@@ -579,27 +578,6 @@ final class BuyerCountryGateSpec
                 return $this->response;
             }
         };
-    }
-
-    /**
-     * Serve-stale must never outlive the identity it belongs to: a new API key
-     * or merchant id means the old merchant's country restriction has to go,
-     * and it must drop to unrestricted rather than to "nothing allowed".
-     */
-    private static function testAMerchantIdentityChangeDropsTheAllowlist(): void
-    {
-        $module = self::moduleWithMerchantResponse(['http_status' => 200, 'supported_buyer_countries' => ['NO']]);
-        $module->getMerchantAvailableTerms(true);
-        TinyAssert::same(['NO'], $module->getMerchantBuyerCountries());
-
-        $module->invalidateMerchantAvailableTerms();
-
-        TinyAssert::same(null, $module->getMerchantBuyerCountries(), 'an identity change must drop the allowlist');
-        TinyAssert::same(
-            true,
-            $module->isTwoBuyerCountrySupported(self::offerableModule('DE', 'DE')->context->cart),
-            'the dropped allowlist must read as unrestricted, not as nothing allowed'
-        );
     }
 
     /**

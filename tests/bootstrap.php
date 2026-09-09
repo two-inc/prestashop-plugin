@@ -890,6 +890,11 @@ namespace {
         }
     }
 
+    /** Stands in for the cron controller's die() so a spec can assert on the response. */
+    class StubCronResponded extends Exception
+    {
+    }
+
     class PrestaShopLogger
     {
         /** @var array<int,array{message:string,severity:int}> */
@@ -2654,6 +2659,12 @@ namespace {
         public function l($string)
         {
             return $string;
+        }
+
+        /** The identity the production write path stamps a merchant record with (ABN-530). */
+        public static function recordKeyStampForTest(string $apiKey): string
+        {
+            return static::verificationSlotKey($apiKey);
         }
     }
 

@@ -168,6 +168,47 @@ Notes:
 - Selecting a group that is later deleted is treated as "not set" — the order is refused, not relayed at 0%.
 - Every order that actually uses the fallback writes a warning to the shop log naming the group, its id and the resolved rate, e.g. `assuming the configured Default shipping tax code "IVA 21%" (tax_rules_group=12, rate=21%)`. If you never see that line, the fallback is not being used.
 
+### Merchant profile refresh
+
+Your offerable payment terms, buyer-surcharge rates, minimum order value and default term are read from Two's merchant record and cached in the shop's configuration. Checkout and admin pages read that cache and never block on the API.
+
+**The cache never expires and is never cleared.** A failed refresh — an outage, a rejected key, a 500, an unreachable API — changes nothing: the shop keeps trading and its admin pages keep showing the last known good values. Saving a new API key or environment refreshes the record but does not clear it either, so a shop whose key was cycled elsewhere and never updated here does not lose the values its admin controls are built from, and a wrong key saved during an outage is undone by pasting the right one back. A record belonging to a key the shop no longer holds is not used, but it is kept until a refresh succeeds.
+
+The cache is replaced only by a successful refresh, and only from one of these:
+
+- the first read on a shop where no fetch has ever succeeded (a fresh install), retried at most every 5 minutes until one does;
+- a save of the API key or the environment;
+- the scheduled refresh (below);
+- **Refresh merchant profile**, in **Module Configuration → Diagnostics**.
+
+If the record is more than 26 hours old, the scheduled refresh is not running. A page read then refreshes it itself, at most once an hour and on a 2-second cap, and serves the record it already holds whichever way that goes. The Diagnostics tab reports when the record was last refreshed and whether page reads are having to stand in.
+
+**Multistore:** the cached record belongs to one shop, so **Refresh merchant profile** and the line above it appear only while the admin is scoped to a single shop.
+
+The record never decides whether Two appears at checkout. Only the API key check does that: if the stored key does not currently verify, for any reason, the payment method is withheld until it does.
+
+#### Scheduled refresh
+
+PrestaShop schedules nothing on a module's behalf, so the scheduled refresh is a URL your server's crontab calls. Copy it from **Scheduled refresh URL** in **Module Configuration → Diagnostics** and add one line to the crontab of the user that owns the shop:
+
+```
+0 3 * * * curl -fsS -o /dev/null 'https://your-shop.example/module/twopayment/cron?token=YOUR_TOKEN'
+```
+
+The token is the only thing guarding the endpoint — treat it as a credential. A request without it, or with the wrong one, gets a 404 that says nothing about why; rejections are logged at most once an hour, so a scanner cannot flood the shop log.
+
+Accepted calls are floored at **one refresh per 15 minutes**: anything sooner gets a 429 and does no work, so holding the token cannot drive one blocking outbound request per call. A once-a-day cron never reaches the floor.
+
+To keep the token out of process listings and proxy access logs, send it as a header or a POST field instead of in the query string:
+
+```
+0 3 * * * curl -fsS -o /dev/null -H 'X-Two-Cron-Token: YOUR_TOKEN' 'https://your-shop.example/module/twopayment/cron'
+```
+
+**Multistore:** the cached record and the token both belong to one shop, so schedule **one line per shop**, each copied from that shop's own Diagnostics tab. The URL and the token are shown only while the admin is scoped to a single shop; in the all-shops or a group context the row says so instead.
+
+**Maintenance mode:** PrestaShop serves the maintenance page before a module front controller runs, so while the shop is closed this URL does nothing unless the calling server's IP is listed under **Shop Parameters → General → Maintenance**.
+
 ## Payment Terms: Standard vs End-of-Month (EOM)
 
 The module supports two types of payment terms to match your B2B invoicing practices:

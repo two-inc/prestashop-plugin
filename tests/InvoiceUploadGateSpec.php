@@ -24,7 +24,6 @@ final class InvoiceUploadGateSpec
 
         // Cache lifecycle shared with the merchant-record seam.
         self::testFailedFetchServesLastKnownFlag();
-        self::testInvalidateFailsClosed();
 
         // Toggle retirement: remnants of PS_TWO_USE_OWN_INVOICES are inert.
         self::testLeftoverToggleEnabledHasNoEffectWhenFlagUnresolved();
@@ -78,7 +77,7 @@ final class InvoiceUploadGateSpec
         StubStore::reset();
         self::configureMerchantIdentity();
         $module = self::moduleWithMerchantResponse($response);
-        $module->getMerchantAvailableTerms(true); // sanctioned refresh point
+        $module->getMerchantAvailableTerms(); // sanctioned refresh point
         return $module;
     }
 
@@ -113,7 +112,7 @@ final class InvoiceUploadGateSpec
         Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 1);
 
         $module = self::moduleWithMerchantResponse(self::okResponse(null));
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
 
         // Unlike the term list (serve-stale on omission), an absent flag is a
         // definitive "not enabled" and must overwrite the stale entitlement.
@@ -146,25 +145,12 @@ final class InvoiceUploadGateSpec
         Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 1);
 
         $module = self::moduleWithMerchantResponse(array('http_status' => 500));
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
 
         // A network blip must not flap the gate off mid-entitlement; only a
         // successful response (with the field absent or false) revokes it.
         TinyAssert::same(1, $module->fetchCount);
         TinyAssert::true($module->isMerchantInvoiceDistributed());
-    }
-
-    private static function testInvalidateFailsClosed(): void
-    {
-        StubStore::reset();
-        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 1);
-
-        $module = new TwopaymentTestHarness();
-        $module->invalidateMerchantAvailableTerms();
-
-        // Identity change: the old merchant's upload entitlement must never
-        // carry over to the new identity.
-        TinyAssert::false($module->isMerchantInvoiceDistributed());
     }
 
     // ---- Retired toggle is inert -------------------------------------------
@@ -189,7 +175,7 @@ final class InvoiceUploadGateSpec
         Configuration::updateValue('PS_TWO_USE_OWN_INVOICES', 0);
 
         $module = self::moduleWithMerchantResponse(self::okResponse(true));
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
 
         TinyAssert::true($module->isMerchantInvoiceDistributed());
     }

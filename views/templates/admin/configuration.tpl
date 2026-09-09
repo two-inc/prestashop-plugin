@@ -69,6 +69,9 @@
     var twoApiKeyCheckingText = '{l s='Checking API key…' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoApiKeyVerifiedText = '{l s='API key verified' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoApiKeyFailedText = '{l s='API key could not be verified' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoRefreshMerchantUrl = '{$two_refresh_merchant_url|escape:'javascript':'UTF-8'}';
+    var twoRefreshMerchantBusyText = '{l s='Refreshing…' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoRefreshMerchantFailedText = '{l s='Could not reach the server. Try again.' mod='twopayment'|escape:'javascript':'UTF-8'}';
 </script>
 {literal}
     <script type="text/javascript">
@@ -76,6 +79,27 @@
             $('#two-tabs a').click(function () {
                 $('#two-tabs a').removeClass('active');
                 $(this).addClass('active');
+            });
+
+            $('#two-refresh-merchant-record').on('click', function () {
+                var button = $(this);
+                var result = $('#two-refresh-merchant-record-result');
+                button.prop('disabled', true);
+                result.removeClass('text-success text-danger').addClass('text-muted').text(twoRefreshMerchantBusyText);
+                $.post(twoRefreshMerchantUrl, {}, null, 'json')
+                    .done(function (response) {
+                        var ok = !!(response && response.success);
+                        result
+                            .removeClass('text-muted text-success text-danger')
+                            .addClass(ok ? 'text-success' : 'text-danger')
+                            .text(response && response.message ? response.message : '');
+                    })
+                    .fail(function () {
+                        result.removeClass('text-muted text-success').addClass('text-danger').text(twoRefreshMerchantFailedText);
+                    })
+                    .always(function () {
+                        button.prop('disabled', false);
+                    });
             });
             
             // Address lookup is only meaningful while the company search is in
