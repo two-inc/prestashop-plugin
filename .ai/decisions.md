@@ -129,15 +129,15 @@ What is deliberately NOT written:
   other address, where the two countries differ by design. Writing the registered country over
   the form's would destroy the enrolment it is completing. The two agreeing needs no write; the
   two disagreeing is exactly where writing is wrong.
-**Every field in the response now lands somewhere (Doug's ruling).** Nothing is dropped for being
+**Every field in the response lands somewhere.** Nothing is dropped for being
 inconvenient to attribute:
 
 - **`building` / `apartment` → `address1`, with `street` moving to `address2`.** Where a building or
   apartment is given it is the more specific locator and takes the first line; where neither is
   given the street takes the first line and the second is left alone. Both present are joined
   most-specific-first (`"Apartment 4, Mill House"`).
-- **No de-duplication against the street**, on Doug's explicit ruling: *"it is valid for some
-  addresses to have a matching first and second line so deduping would be wrong."* So an address
+- **No de-duplication against the street**, ruled deliberately: it is valid for an address to have
+  a matching first and second line, so deduping would be wrong. So an address
   whose `building` equals its `street` writes that text to both lines.
 - **`region` → the form's state/county select where one exists, otherwise appended to `city` with a
   comma** (`"Ashford, Kent"`). The state match is best-effort by necessity: the response carries a
@@ -146,20 +146,19 @@ inconvenient to attribute:
   rather than guessing. Most countries render no state field at all, and the alternative to
   appending is losing the region.
 - **`address2` and `state` are therefore added to `MIRRORED_ADDRESS_FIELDS` and to
-  `Twopayment::MIRROR_WRITE_SESSION_KEYS`, and the pin now judges them.** This is the point Doug
-  made when an earlier draft proposed leaving them out: *"it's just another element of the address;
-  if a buyer specifies that, then yeah it should be pinned same as if the buyer entered a city."*
+  `Twopayment::MIRROR_WRITE_SESSION_KEYS`, and the pin now judges them.** An address line and a
+  state are elements of the address like any other, so a buyer who fills one has pinned the address
+  exactly as if they had entered a city.
   The address-wide rule is "any field the buyer has entered pins the address", so a tracked set
   missing two writable fields would have made the pin miss real buyer-entered data. Widening it does
   mean a buyer-typed second address line now freezes the secondary address where it previously did
   not — that is the intended consequence, not a side effect.
 
-**A `TWO:`-prefixed identifier is ordinary data (Doug's ruling), with ONE platform-forced exception.**
-In Doug's words: *"why are you treating a sole trader number as any different from a registered
-company's org number? You should handle, store and route them exactly the same as each other."* It is
-not even a sole-trader concept — registered companies in some countries (the US among them) carry one
-too. And on stripping the prefix to make it fit: *"we cannot strip the TWO: prefix because it is an
-integral part of the company number. Without it, the number is meaningless to the API."*
+**A `TWO:`-prefixed identifier is ordinary data, with ONE platform-forced exception.** A sole
+trader's number is handled, stored and routed exactly as a registered company's organisation number
+is. It is not even a sole-trader concept — registered companies in some countries (the US among
+them) carry one too. The prefix is never stripped to make the value fit somewhere: it is an integral
+part of the company number, and without it the number is meaningless to the API.
 
 So it is stored, paired, mirrored, routed and submitted through exactly the same code path as any
 other organisation number, byte-identical, prefix intact — **except that it is never written into the
@@ -217,9 +216,8 @@ same method. This is not a new mechanism.
 
 Design constraints, all load-bearing:
 
-- **The value is the BILLING/INVOICE address's**, per Doug: *"the company number we want to persist is
-  the same as the one that drives the intent and the order: the one associated with billing/invoice
-  address."* Captured via `getTwoCheckoutCompanyData(new Address($cart->id_address_invoice))`, a
+- **The value is the BILLING/INVOICE address's** — the same number that drives the intent and the
+  order. Captured via `getTwoCheckoutCompanyData(new Address($cart->id_address_invoice))`, a
   fail-soft wrapper over the very resolver that builds the payload — not a second resolution path, and
   not the raw submitted field. Fail-soft matters here: a throw inside order confirmation would cost the
   buyer an already-approved order.
@@ -304,7 +302,7 @@ because the fix looks obviously correct in isolation and was applied once alread
 - **The 2026-08-10 blocker is real and is closed by the pairing tag, not worked around.** That
   entry correctly identified `clearStaleOrganizationSelection()` reading company-set /
   number-set / tag-absent as "the buyer has edited past a stale selection" and wiping the write on
-  their next keystroke. Every withdrawn attempt wrote an UNTAGGED `companyid`. PR #157 landed
+  their next keystroke. Every withdrawn attempt wrote an UNTAGGED `companyid`. prestashop-plugin PR #157 landed
   `markOrganizationFieldSelected()`, which sets the field and its `data-two-company-name` tag
   together as one operation; a write through it presents a VALID pairing, and the guard leaves it
   alone. The guard itself is untouched - a buyer who genuinely retypes a different name still
@@ -373,9 +371,8 @@ because the fix looks obviously correct in isolation and was applied once alread
   name and hidden pairing still are. That is the existing meaning of that switch, applied here
   unchanged.
 
-**A country change wiping a SEARCH or SOLE-TRADER capture is correct and must keep working** (Doug:
-*"the ONLY time that a country change should not wipe company details is if the control is in manual
-entry mode"*). It currently does — `setupCountryChangeListener()`'s handler blanks the company field
+**A country change wiping a SEARCH or SOLE-TRADER capture is correct and must keep working** — the
+only mode a country change must not wipe is manual entry. It currently does — `setupCountryChangeListener()`'s handler blanks the company field
 and runs `clearSelectedCompany()`, which drops the hidden pair, the tag, the marked `dni` and the
 session company. So the earlier proposal to restore a sole-trader pair after a country rebuild via
 `republishMirroredSelection()` was **wrong and is not implemented**; it would have defeated the
@@ -558,24 +555,25 @@ widening this one. No test anywhere currently fires a country-select `change` wh
 **Status, per item — the design below is NO LONGER uniformly unimplemented:**
 `#6`/`#9` **SHIPPED** (see its own "as built"), `#12` **SHIPPED**, `#13` **SHIPPED**
 (read side needed no code; write side shipped in a different shape — read the
-corrections section first), `#8` **DEFERRED by Doug, deliberately not built**, `#1`
-**WITHDRAWN**. Each item's own "as built" subsection is the authority on what
+corrections section first), `#8` **DEFERRED, deliberately not built**. The tier-safe
+company-search location key rename (TWO-40) is **WITHDRAWN** — see the SUPERSEDED
+section at the end. Each item's own "as built" subsection is the authority on what
 actually exists; the proposals above them are kept for their reasoning, not as a
 description of the code.
 
-Written 2026-08-10 against `origin/staging` @ `0ddad20`. Items are numbered per Doug's own
-consolidated list (#6/#9, #8, #12, #13).
+Written 2026-08-10 against `origin/staging` @ `0ddad20`.
 
-Items **#3 and #7** of the same list are implemented — see PR #154. **Item #1, the config-key rename,
-shipped separately in 2.7.6**: the key is now spelled `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` everywhere
-in live code, in a deliberately simple global-tier-only form (see the SUPERSEDED section at the end for
-what a tier-safe rename would have required, and why it was not built). The designs below use the new
-spelling; item #1 landed independently of everything here.
+Two further pieces of the same work are implemented — see prestashop-plugin PR #154.
+**The config-key rename shipped separately in 2.7.6**: the key is now spelled
+`PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` everywhere in live code, in a deliberately simple
+global-tier-only form (see the SUPERSEDED section at the end for what a tier-safe rename
+would have required, and why it was not built). The designs below use the new spelling;
+that rename landed independently of everything here.
 
 **Every `file:line` below is a HINT, verified against `origin/staging` @ `0ddad20` and nothing else.**
-PR #154 touches most of the files cited below — it deletes ~55 lines from `TwoCompanySearch.js`, ~72
+prestashop-plugin PR #154 touches most of the files cited below — it deletes ~55 lines from `TwoCompanySearch.js`, ~72
 from `override/classes/form/CustomerAddressFormatter.php`, ~20 from
-`controllers/front/orderintent.php` (which carries most of §#12's citations) and ~10 from
+`controllers/front/orderintent.php` (which carries most of `#12`'s citations) and ~10 from
 `TwoCheckoutManager.js`, and rewrites ~32 lines of `twopayment.php` — so essentially every number here
 shifts once it merges. Re-derive with `git grep -n <symbol> <ref>` against a
 freshly fetched ref before acting on any of them — never from a working tree. Several numbers in the
@@ -602,8 +600,8 @@ absent. So `#13`-enabled's mirror as designed — copy company + country from th
 block the search ran in into the billing block — is **not implementable**: when
 the delivery form is on screen there are no invoice inputs to write into. The
 mirror has to be a **cross-page-load** operation, seeding the invoice form when it
-later becomes the editable one. As a corollary, Doug's "no silent population of a
-hidden block" is satisfied for free: there is no hidden block. A module comment claiming a second
+later becomes the editable one. As a corollary, the requirement that no hidden block be
+silently populated is satisfied for free: there is no hidden block. A module comment claiming a second
 `name='company'` input appears once the buyer states the addresses differ was
 wrong, and is the premise this document inherited; it has been corrected in place.
 
@@ -624,7 +622,7 @@ on the page, so the four resolvers' first-match-in-document read cannot pick the
 wrong select. All four were checked and all four already prefer the live select
 when one exists. Dropped rather than deferred — the reason it was wanted has been
 removed, not postponed. The duplicated country-name→ISO maps are untouched and
-remain Doug's separate item.
+remain a separate item.
 
 **D. `window.twopayment.billing_country` was already the right source.**
 `Twopayment::getCheckoutBillingCountryIso()` derives it from the cart's
@@ -674,10 +672,10 @@ bridging that gap today.
 Two pieces of evidence that **cross-order memory was never the intent**:
 
 1. `TwoCompanySearch.storeCompanyDataInSession()` — the browser-side `sessionStorage` write —
-   was dead code and is deleted in PR #154. Even that dead path used `sessionStorage`
+   was dead code and is deleted in prestashop-plugin PR #154. Even that dead path used `sessionStorage`
    (tab-lifetime), not `localStorage`. Nobody ever built a durable store.
 2. The surviving comment block it sat under said the opposite of persistence: *"Company data is
-   now handled by form fields - no complex server persistence needed"* (also deleted in #154).
+   now handled by form fields - no complex server persistence needed"* (also deleted in that PR).
 
 And the 1-hour figure is **arbitrary**. `COOKIE_EXPIRY_ONE_HOUR` is a generic module constant
 shared with the payment-term cookie (`orderintent.php:379`) and other unrelated writes; there is
@@ -685,7 +683,7 @@ no comment anywhere justifying an hour for the company selection specifically, a
 `twopayment.php:11271` notes other code paths merely *rely on* it being that value. It is
 a house default, not a decision about how long a company selection should be trusted.
 
-So Doug's framing is right: nothing needs remembering beyond one checkout attempt. What the
+So nothing needs remembering beyond one checkout attempt. What the
 cookie is actually doing is carrying state across ~2-3 page loads inside one attempt, and it
 happens to keep doing so for an hour afterwards as a side effect.
 
@@ -698,7 +696,7 @@ happens to keep doing so for an hour afterwards as a side effect.
    it outright when `cart_id !== $this->context->cart->id`. An ordered cart is never carried again
    — core's front-controller init unsets the cookie's cart id once `Cart::orderExists()` is true and
    assigns a fresh cart — so a selection cannot survive into a future order even if the cookie
-   physically outlives the checkout. This is the single change that delivers Doug's requirement, and it is strictly
+   physically outlives the checkout. This is the single change that delivers the requirement, and it is strictly
    stronger than shortening the TTL.
 2. **Move it from the PrestaShop cookie to the PHP session** where the shop has one, since the
    semantics wanted are session-scoped, not time-scoped. PrestaShop's `Cookie` object *is* its
@@ -738,7 +736,7 @@ new cart-scoped record exactly where they invalidate the cookie today
 (`TwoCompanySearch.js:2341` → `:2376`), and the record's cart-id check must not be treated as a
 substitute for a generation check — it is a coarser guard on a different axis.
 
-**Open question for Doug:** should a *placed* order's company selection be readable at all after
+**Open question:** should a *placed* order's company selection be readable at all after
 placement (order confirmation page, admin re-render)? Cart-scoping makes it unreadable. If
 anything downstream reads the cookie post-placement this design breaks it, and I have not
 audited the confirmation path for that.
@@ -805,8 +803,8 @@ of a cookie it never wrote, and that line is simply deleted.
 
 ## #8 — DEFERRED, not pending — tile-mode's address-side layer is gated on the wrong thing
 
-**Status: considered and explicitly deferred by Doug (2026-08-11). Nothing below
-is being worked on, and the design was NOT implemented.** His ruling: there are no
+**Status: considered and explicitly deferred. Nothing below is being worked on, and
+the design was NOT implemented.** The ruling: there are no
 plans at present to let the admin enable address population while the company
 search is in the payment tile, so the current no-op is fine. The tile-mode
 inertness stays exactly as it is — address-field writes force-disabled from the
@@ -825,7 +823,8 @@ writes to the visible form element, so there is a working precedent for it now.
 There are **two independent questions** and the code currently answers them with one value:
 
 - *Where does the search UI render?* — `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` (address area vs payment
-  tile; renamed from `PS_TWO_ENABLE_COMPANY_NAME` in 2.7.6, see #1).
+  tile; renamed from `PS_TWO_ENABLE_COMPANY_NAME` in 2.7.6 — see the SUPERSEDED rename
+  section at the end).
 - *May a company selection write into the address form's fields?* — `PS_TWO_ADDRESS_LOOKUP`,
   admin label "Autofill company address".
 
@@ -844,7 +843,7 @@ The two consumers of the resulting flag are `TwoCompanySearch.writeOrganizationT
 (`views/js/modules/TwoCompanySearch.js:1643`) and `autoFillAddress()` (`:3624`), both via
 `isAddressLookupEnabled()` (`:1631-1632`).
 
-### Why the current gate was chosen, and why Doug is right that it is wrong
+### Why the current gate was chosen, and why it is wrong
 
 The tile mount's hardcoded `false` is not arbitrary — the comment at `TwoCheckoutManager.js:2382-2399`
 records a real defect: `autoFillAddress()` writes to `input[name='address1'/'postcode'/'city']`
@@ -884,7 +883,7 @@ a workaround for the conflation, not a feature.
    `addressIdentifierFields()` (`:1692`) to it. Without this, (3) reintroduces the exact defect
    the hardcoded `false` was protecting against.
 
-**Open question for Doug:** in tile mode the address form is usually **not on the page** at the
+**Open question:** in tile mode the address form is usually **not on the page** at the
 payment step. With the gate removed and the merchant switch on, the correct behaviour is "write
 if the fields are there, no-op if they are not" — which is already what the existing
 `if (field.length === 0) return;` guards do (`TwoCompanySearch.js:1654`, `:1717`). Confirm that
@@ -897,7 +896,7 @@ reappears.
 
 **SHIPPED as proposed. See "#12 — as built" at the end of this item.**
 
-### What PR #153 established, and what reverses
+### What prestashop-plugin PR #153 established, and what reverses
 
 `resolveSoleTraderCountryIso()` (`controllers/front/orderintent.php:235-256`) is a three-tier
 trust-ordered chain:
@@ -909,7 +908,7 @@ trust-ordered chain:
 | 3 | the cart's **delivery address** | `:251-253` |
 | — | `''` → the caller refuses (`:182-185`) | `:255` |
 
-Doug now wants tiers 1 and 2 swapped: the live in-page selection wins, always.
+Tiers 1 and 2 are to be swapped: the live in-page selection wins, always.
 
 ### The security concern is confirmed disproven
 
@@ -935,7 +934,7 @@ So promoting the posted tier has **no security consequence**. It is purely a cor
    `/^[A-Z]{2}$/` shape check at `orderintent.php:247` — it is what stops a junk value reaching
    the registry, and it is not the thing that was doing security work.
 2. **Delete the invoice-address tier entirely.** Not demoted — deleted. A committed invoice
-   address is precisely the stale value Doug is ruling out, and leaving it as a lower tier means
+   address is precisely the stale value being ruled out, and leaving it as a lower tier means
    it silently wins whenever the POST is missing a country for an innocuous reason, which is the
    current bug wearing different clothes.
 3. **Delivery address becomes the sole last-resort tier**, reached only when no country was
@@ -986,7 +985,7 @@ editing delivery, is now gated against their **shipping** country rather than th
 real billing country. That is a genuine behaviour change from before this PR, where
 the committed invoice address was tier 1.
 
-It is accepted under Doug's explicit ruling that the live in-page value wins, and it
+It is accepted under the explicit ruling that the live in-page value wins, and it
 has **no security consequence** — minting takes no country parameter at all
 (re-verified: `TwoSoleTrader::mintTokens($module)`), so the country only selects
 which registry answer the availability gate reads, and the browser can already ask
@@ -1004,9 +1003,9 @@ reveal listener, and the `TwoCountry.js` prerequisite. Jump to "#13 — as built
 what exists; the contract table immediately below is still accurate and is the
 requirement the built version satisfies.
 
-### Doug's clarification restated as a contract
+### The clarification restated as a contract
 
-| `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` (renamed in 2.7.6, per #1) | what this mode is about | behaviour |
+| `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` (renamed in 2.7.6) | what this mode is about | behaviour |
 |---|---|---|
 | **enabled** (`'1'`, address area) | **WRITING** | the buyer searches in the address they see first/by default; the *other* address, if they have indicated the two differ, is auto-populated to match (company + country) |
 | **disabled** (`'0'`, tile) | **READING** | address-field layout and behaviour are untouched — tile UI exactly as today; the tile search's and the sole-trader flow's country comes from whichever country is **currently selected on the page** for the billing/invoice address field |
@@ -1017,7 +1016,7 @@ the *read* falling back to a server-saved value instead of the live one.
 
 ### Platform default-address confirmation
 
-Doug's premise holds for PrestaShop, and the repo states it in its own words:
+The premise holds for PrestaShop, and the repo states it in its own words:
 `override/classes/form/CustomerAddressFormatter.php:90-93` — *"PrestaShop collects the SHIPPING
 address first and only reveals the billing block when the buyer ticks 'Billing address differs
 from shipping address', so most buyers never saw either field"*. That comment is the record of a
@@ -1041,9 +1040,9 @@ What would change:
   together or not at all.
 - **A new mirror step** runs after the primary fill: if the billing block is present and revealed
   (the "addresses differ" checkbox is ticked), copy `company` and the country select's value from
-  the block the search ran in into the billing block. Company **name** and **country** only, per
-  Doug — not street/postcode/city, which are legitimately different when the buyer has said the
-  addresses differ.
+  the block the search ran in into the billing block. Company **name** and **country** only — not
+  street/postcode/city, which are legitimately different when the buyer has said the addresses
+  differ.
 - **The mirror must respect `data-two-autofilled-value`.** That marker (written at `:1664` and
   `:3680`, read at `:1720`, `:3660`, `:1608`) is what distinguishes "the plugin put this here"
   from "the buyer typed this". A mirror that overwrites a billing company the buyer typed by hand
@@ -1098,7 +1097,7 @@ legitimately differ: `window.twopayment.billing_country` vs
 `tests/CompanySearchCountrySourcingSpec.php:432-445` is a source-text grep asserting
 `getCurrentCountry()` still contains specific reads, and must be retargeted in the same change.
 
-The hardcoded country-name→ISO maps are **two** copies, not three (Doug's #10 said three):
+The hardcoded country-name→ISO maps are **two** copies, not three:
 `TwoCompanySearch.js:3373-3389` and `TwoSoleTrader.js:448-464`, currently byte-identical, 10
 countries, en/es/fr/nl/no/sv. They ride along in the same extraction.
 
@@ -1149,7 +1148,7 @@ Shape as built, all on `TwoCompanySearch`:
   another platform in this family inverts it, as the reason the abstraction exists
   at all. **Language convention, and it is a code requirement rather than a
   reporting one: "when the buyer states" / "when the buyer's current selection
-  indicates" throughout — never "ticked" or "checked".** Doug's reason: the checkbox
+  indicates" throughout — never "ticked" or "checked".** The reason: the checkbox
   appears on the first pass only and another platform inverts its polarity, so
   checkbox language actively misleads whoever ports this.
 - `visibleAddressFormType()` — which address the one editable form is for, read from
@@ -1278,7 +1277,7 @@ reading, but do not act on it:
 - `TwoCountry.js` extraction: dropped, not deferred (correction C).
 - `#6`/`#9` is independent of all of the above and shipped on its own.
 
-## Open questions for Doug
+## Open questions
 
 1. **`#6`/`#9`:** may a placed order's company selection still be read after placement
    (confirmation page, admin)? Cart-scoping makes it unreadable and I have not audited that path.
@@ -1288,32 +1287,32 @@ reading, but do not act on it:
 3. **`#13`-enabled:** the mirror copies the company **name, its organisation number and the
    country**. Confirm that street / postcode / city are deliberately excluded when the buyer has
    said the addresses differ.
-   **Confirmed by Doug, and built that way.** The organisation number was added in review: without
+   **Confirmed, and built that way.** The organisation number was added in review: without
    it the order could carry a company name the plugin itself wrote with no number beside it.
 4. **`#13`-enabled:** when the buyer has NOT stated the addresses differ, there is one address and
    nothing to mirror. Confirm that is a no-op and not "populate a hidden billing block anyway".
    **Confirmed: a true no-op. It is also moot as a risk — per correction A there is no hidden
    block to populate.**
-5. **`#10` correction:** there are **two** hand-mirrored country-name maps, not three. Confirm
+5. **Country-name map count:** there are **two** hand-mirrored country-name maps, not three. Confirm
    nothing is expected in a third place (PHP, a `.tpl`) — I swept the whole tree and found none.
 
 ---
 
-## Addendum — corrections to the premises in items #4, #8, #10, #12
+## Addendum — corrections to the premises in `#8`, `#12` and the country-resolver items
 
-Recorded here because three of Doug's items rest on a count or a claim that turned out slightly
+Recorded here because three of the items rest on a count or a claim that turned out slightly
 off, and the design above already assumes the corrected version.
 
-1. **#4 / #10 — the ISO chain is mirrored FOUR times, not three.** The fourth is
+1. **The ISO chain is mirrored FOUR times, not three.** The fourth is
    `TwoCheckoutManager.getSelectedCountryIso()` (`views/js/modules/TwoCheckoutManager.js:2605`),
    which delegates to `TwoOrderIntent` when available and otherwise re-implements the chain
    inline. It is easy to miss because it is not named like the other three.
-2. **#4 — the divergence Doug remembered is real and is the right way round.**
+2. **The divergence between the four resolvers is real and is the right way round.**
    `TwoCompanySearch.js:3312` reads only `data-iso-code` / `data-iso`;
    `TwoSoleTrader.js:380`, `TwoOrderIntent.js:584` and `TwoCheckoutManager.js:2614` also read
    `data-country-iso`. So the company search alone can fail to resolve a country on a theme
    that only emits `data-country-iso` — and it is the module that most needs the answer.
-3. **#10 — there are TWO hand-mirrored country-name maps, not three.**
+3. **There are TWO hand-mirrored country-name maps, not three.**
    `TwoCompanySearch.js:3373-3389` and `TwoSoleTrader.js:448-464`. Currently byte-identical: 10
    countries, six languages (en/es/fr/nl/no/sv). No third copy exists anywhere in the tree — PHP,
    JS or `.tpl`. Being identical *today* is what makes them dangerous: nothing detects the first
@@ -1325,11 +1324,11 @@ off, and the design above already assumes the corrected version.
    is nothing for a spoofed country to escalate into.
 5. **#8 — the admin `desc` for "Autofill company address" is wrong on a second count**, beyond
    the tile-mode claim: it tells the merchant the lookup overwrites "the organisation-number
-   fields (DNI / VAT number)". The write side has never touched `vat_number`, and as of PR #154
-   the read side does not either. This string is translated, so fixing it is a catalogue pass —
-   left alone in #154 deliberately.
+   fields (DNI / VAT number)". The write side has never touched `vat_number`, and as of
+   prestashop-plugin PR #154 the read side does not either. This string is translated, so fixing it
+   is a catalogue pass — left alone in that PR deliberately.
 
-### One more open question, from the #154 review
+### One more open question, from the prestashop-plugin PR #154 review
 
 6. **`controllers/front/orderintent.php:574`'s `incomplete_company` message says "go back to your
    billing address and search for your company name".** That instruction is impossible to follow
@@ -1343,10 +1342,10 @@ off, and the design above already assumes the corrected version.
 
 ---
 
-# SUPERSEDED — #1, the company-search location key rename (TWO-40)
+# SUPERSEDED — the company-search location key rename (TWO-40)
 
 **Status: the rename SHIPPED in 2.7.6 as `PS_TWO_ENABLE_COMPANY_NAME` -> `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS`,
-in a deliberately SIMPLE global-tier-only form — not the tier-exact design worked out below.** Doug's
+in a deliberately SIMPLE global-tier-only form — not the tier-exact design worked out below.** The
 explicit ruling: with no live merchants on this plugin there is no multistore override to lose, so the
 tier-exact migration is not worth its risk or its complexity. `upgrade/upgrade-2.7.6.php` does a
 resolving read, one `updateValue()`, and a name-wide `deleteByName()`, and its own header states the
@@ -1368,7 +1367,7 @@ working checkout for the automatic recovery of one config row is the wrong way r
 that a shop which cannot be tidied must still finish upgrading holds here.
 
 The consequence is that **the kept row is a record, not a remedy**: nothing re-runs the script (no
-re-run, and Doug ruled out a read shim), so recovery is a human re-selecting the position on the
+re-run, and a read shim was ruled out), so recovery is a human re-selecting the position on the
 module's configuration page, or copying the value across in `ps_configuration`. The log message says
 that and deliberately promises nothing automatic. Both write-failure shapes — falsy return and raised
 exception — leave the same shop state and so are reported identically; the offline spec pins that, and
@@ -1379,11 +1378,11 @@ ever acquires multistore merchants — at which point the shipped script is not 
 the work. It is also the record of three real defects, kept because each of them was found by review
 rather than by tests, and none of the tests could have found them.
 
-Doug's #1 originally asked for the rename to `PS_TWO_COMPANY_SEARCH_LOCATION` with a real migration,
-and classified it as mechanical/safe. **The premise is right and the classification is wrong.** The
-rename itself is two seds; a *tier-safe migration* is genuinely hard, and review found three
-different variants of silent merchant data loss in it. Every one of those was in this item — `#3`
-and `#7` were clean throughout, which is why they shipped first and this did not.
+The rename was originally asked for as `PS_TWO_COMPANY_SEARCH_LOCATION` with a real migration, and
+classified as mechanical/safe. **The premise is right and the classification is wrong.** The rename
+itself is two seds; a *tier-safe migration* is genuinely hard, and review found three different
+variants of silent merchant data loss in it. Every one of those was in the rename; the two other
+pieces of the same work were clean throughout, which is why they shipped first and this did not.
 
 The confirmation that the rename is purely a location switch **does hold**: `isCompanySearchInAddressArea()`
 resolves to the `'1'`/`'0'` string the checkout JS compares against, `'1'` = address area, `'0'` =
@@ -1453,7 +1452,8 @@ makes core substitute the ambient shop rather than NULL. That is why this has to
 2. **A shop dimension in `tests/bootstrap.php`'s `Configuration` double.** It is a flat name→value
    array today: it cannot distinguish `hasKey`-per-shop from `hasKey`-global, cannot represent a global
    row shadowed by a per-shop one, and therefore cannot fail on any of these defects. A working version
-   was built and then withdrawn with the rest — recover it from PR #154's branch history (`dd93a1f`)
+   was built and then withdrawn with the rest — recover it from prestashop-plugin PR #154's branch
+   history (`dd93a1f`)
    rather than rewriting it, and note the two corrections review found in it: branch on `$idShop`
    being TRUTHY (core does `if ($idShop)`, so `0` means the global tier), and model an ambient
    shop/group context or `updateGlobalValue()` and a bare `updateValue()` stay indistinguishable.
@@ -1482,11 +1482,11 @@ would later put the stale old row back over it. The guard uses the resolving rea
 absent, deliberately not `Configuration::hasKey()` — which counts an empty row as set and would suppress
 a copy the module itself needs.
 
-**Doug ruled: no shim.** His instruction was "not a permanent alias", and 2.7.6 shipped with no read
+**Ruled: no shim, and not a permanent alias either.** 2.7.6 shipped with no read
 shim of any kind — the window is real, unmitigated in code, and documented instead (in
 `upgrade/upgrade-2.7.6.php`'s header and the CHANGELOG entry): running the upgrade once after a
 file-swap deploy — Module Manager → Upgrade, or `dev/ci/upgrade-module.sh` — is a mandatory release
-step. That is option two below. The three options are kept as the record of what was weighed.
+step. That is the no-shim option below. The three options are kept as the record of what was weighed.
 
 - **A self-expiring read shim** — the resolver reads the old key when the new one is absent, with a
   spec that turns red once the declared version reaches 2.8.0 and names what to delete. Built and
@@ -1502,8 +1502,8 @@ step. That is option two below. The three options are kept as the record of what
   `isCompanySearchInAddressArea()` explaining that the key's name is historical buys most of the
   readability for none of the risk.
 
-**The standing recommendation at the time was option three, don't rename at all.** Doug overruled it and
-took the rename with option two's file-swap handling and a global-tier-only migration, on the grounds
+**The standing recommendation at the time was not to rename at all.** That was overruled: the rename
+was taken with the no-shim file-swap handling above and a global-tier-only migration, on the grounds
 that there are no live merchants to lose data belonging to. It landed as its own PR, not bundled with
 unrelated cleanup, which was the other half of the recommendation. The SQL migration and both CI/test
 prerequisites were NOT built — they remain the price of admission the day this plugin has a multistore
@@ -1546,7 +1546,7 @@ which is exactly what hid this. Wants its own small ticket.
 `controllers/front/orderintent.php`'s `$address->companyid = $companyId;` assigns a **dynamic property**
 on an `ObjectModel` subclass. PHP 8.2 deprecates that unless the class carries
 `#[AllowDynamicProperties]`, and I could not confirm whether PrestaShop's `ObjectModel` does. Entirely
-pre-existing and untouched by PR #154 — but that PR promotes the branch READING this property to
+pre-existing and untouched by prestashop-plugin PR #154 — but that PR promotes the branch READING this property to
 priority 2 in `extractOrgNumberFromAddress()` and documents it as load-bearing, so if the assignment
 ever starts emitting deprecations (or stops working under a future PHP), the read is the thing that
 silently returns empty. Worth ten minutes against a real PS 8.2+ shop; a typed column or an explicit
@@ -1625,12 +1625,13 @@ Five reproducible defects. All of the below are re-derived against this branch's
 
 # TWO-40 — the secondary address is editable, and syncs by content match
 
-**Status: RULED and IMPLEMENTED on the TWO-40 address-split branch (PR #157).** It
+**Status: RULED and IMPLEMENTED on the TWO-40 address-split branch (prestashop-plugin
+PR #157).** It
 supersedes the one-way write-once "invoice mirror" recorded in that branch's
 `#13 — as built` section. Where this note and that section disagree, this note is
 both the intent and the code.
 
-Doug's original correction, restated as four requirements:
+The original correction, restated as four requirements:
 
 1. **Editable.** The buyer may edit company and country on the secondary address.
 2. **Conditionally synced.** The secondary defaults to the primary's company and
@@ -1647,31 +1648,25 @@ parallel notions is the defect this note exists to prevent, not a shortcut it ma
 
 ---
 
-## Doug's rulings, verbatim
+## The rulings
 
-**R1 — the pin is triggered by ANY address field, not just company/country.**
+**R1 — the pin is triggered by ANY address field, not just company/country.** The address is
+pinned as soon as the buyer has entered anything into any of its fields.
 
-> "Unfortunately we need to pin it if any address field has been entered, not just
-> country/company."
+**R2 — country for the sole-trader flow splits by where the company search is mounted.** A search
+mounted in an address form takes that form's own live country selection: company search in the
+shipping address reads the shipping country, in the invoice address the invoice country. A search
+in the payment tile, which has no address fields of its own, is driven explicitly by the
+billing/invoice address.
 
-**R2 — country for the sole-trader flow splits by where the company search is
-mounted.**
-
-> "(a.1) and (a.2) resolve to the same rule: sole trader visibility (and country for
-> input to workflow) is driven by the local country selection - ie for company search
-> in shipping address, look at shipping country. (a.3) here, sole trader visibility
-> and workflow should be driven explicitly by the billing / invoice address."
-
-**R3 — no dedicated control; sync is driven by comparing field contents.**
-
-> "No dedicated control. Trim the address lines and ignore case when comparing, but
-> otherwise, sync is driven by a match on field contents."
+**R3 — no dedicated control; sync is driven by comparing field contents.** Trim the address lines
+and ignore case when comparing; otherwise sync is driven by a match on field contents.
 
 ---
 
 ## The platform constraint that rewrites rule 2
 
-Doug's rules are written for a checkout where both address panels can be open at
+The rules are written for a checkout where both address panels can be open at
 once. PrestaShop is not that checkout, and the difference is not cosmetic.
 
 Verified against the official 1.7.8.11, 8 and 9 images (the two checkout address
@@ -1720,7 +1715,7 @@ corners:
   is non-empty, so it mismatches and the address is pinned. Correct.
 - **An EXISTING saved address opened for editing** is non-empty with no last-written
   value, so it is pinned and never synced over. **This is how the silent-overwrite
-  defect earlier called "B2" is closed — by Doug's rule, with no separate
+  defect is closed — by the content match itself, with no separate
   new-versus-existing heuristic.** None was added, and none should be. Concretely: a
   text input gets NO server-rendered baseline. Accepting its rendered `value`
   attribute as "unanswered" is exactly what would sync straight over a saved billing
@@ -1740,7 +1735,7 @@ would make the country unpinnable.
 mirrored, then navigates away WITHOUT saving and comes back finds an empty form with a
 last-written value on record — which reads as a deliberate clear and pins the address.
 Empty-after-a-write and never-filled-in-the-first-place are indistinguishable across a
-page load, and Doug's rule resolves the ambiguity toward never overwriting. The cost is
+page load, and the rule resolves the ambiguity toward never overwriting. The cost is
 one lost re-sync; the alternative default costs the buyer's own data.
 
 ---
@@ -1785,9 +1780,9 @@ an empty unmarked field holds no answer of theirs.
 
 ---
 
-## C3 — (a.3) is phrased by ROLE, never by primary/secondary position
+## C3 — the payment tile's read is phrased by ROLE, never by primary/secondary position
 
-**Decided.** Doug's parenthetical treats WooCommerce's billing address as the
+**Decided.** The original wording treats WooCommerce's billing address as the
 "secondary", but the verified platform fact is that WooCommerce is **billing-FIRST**,
 so billing there IS the primary. The general rule is therefore phrased as:
 
@@ -1796,16 +1791,16 @@ so billing there IS the primary. The general rule is therefore phrased as:
 > by the same content-match mechanism.
 
 That is correct on both platforms. On PrestaShop the billing role is the invoice
-address, which IS the secondary, matching Doug. On WooCommerce the sync clause simply
+address, which IS the secondary, matching the original wording. On WooCommerce the sync clause simply
 does not apply, because the billing address is the one the buyer edits first.
 
-**OPEN QUESTION FOR DOUG (C3):** his (a.3) example describes WooCommerce's billing
+**OPEN QUESTION (C3):** the payment-tile example describes WooCommerce's billing
 address as the secondary one, which contradicts WooCommerce being billing-first. The
 rule above is written so that it is right either way and does not depend on resolving
-the contradiction — but if his mental model of WooCommerce is billing-second, then the
-WooCommerce port's primary/secondary mapping needs his correction before it is written,
+the contradiction — but if the intended model of WooCommerce is billing-second, then the
+WooCommerce port's primary/secondary mapping needs correcting before it is written,
 because the sync direction inverts. Not resolved here, and deliberately not "corrected"
-in his wording.
+in the original wording.
 
 ---
 
@@ -1858,14 +1853,14 @@ the same (in the address-save branch and again in the address-confirmation branc
 addresses step). So the published billing country is the invoice ROLE's country on both
 paths.
 
-**(a.3) — the payment tile — verified, and needs no new resolver.**
+**The payment tile — verified, and needs no new resolver.**
 `TwoSoleTrader.billingCountry()` reads the address form's country select when there is
 one and falls back to `config.billingCountry`, i.e. that same published value. On the
 payment step PrestaShop renders no address form and therefore no select at all, so the
 fallback is what the tile actually uses — which is the billing/invoice address,
-explicitly, exactly as R2 (a.3) requires. Pinned by a spec; no resolver added.
+explicitly, exactly as R2 requires. Pinned by a spec; no resolver added.
 
-**(a.3) — the company half is role-keyed too, by the same key.**
+**The payment tile's company half is role-keyed too, by the same key.**
 `getTwoBrowserCompanySelection()` withholds a record whose country disagrees with
 `getCheckoutBillingCountryIso()`, and withholds one whose captured address id disagrees
 with the cart's `id_address_invoice`. The tile's own "did the buyer pick a company"
@@ -1879,17 +1874,17 @@ the tile then depends on the company/organisation-number pair actually being ON 
 invoice address row. That is why the mirror carries the organisation number and not just
 the name, and why the pairing machinery below is mandatory rather than tidy.
 
-**(a.1) and (a.2) — the local read is CORRECT and stays.** The search mounted in the
+**A search mounted in an address form — the local read is CORRECT and stays.** The search mounted in the
 delivery address reads that address's own live country; the search mounted in the
 invoice address does the same. That is already how it works and it was left alone.
 
-**`resolveSoleTraderCountryIso()` stays exactly as #12 shipped it** — posted country
+**`resolveSoleTraderCountryIso()` stays exactly as `#12` shipped it** — posted country
 first, the cart's delivery address as the only last resort, the committed invoice
 address consulted at no tier. The earlier note in this document argued for restoring an
-invoice tier; Doug ruled against it, and the argument is withdrawn rather than left
+invoice tier; that was ruled against, and the argument is withdrawn rather than left
 standing.
 
-**Its scope was always case (a) only, verified by finding every caller.** There is
+**Its scope was always chip visibility and workflow input only, verified by finding every caller.** There is
 exactly ONE: `ajaxProcessSoleTraderTokens()`. What that country decides is the
 availability gate (`TwoSoleTrader::isAvailable()`), whether the tokens are minted at
 all, and the value echoed back for the JS to save the enrolled company against. It
@@ -1922,7 +1917,7 @@ consume it, and nothing may add a second.
 
 | site | fires regardless of address? | verdict |
 |---|---|---|
-| `override/classes/form/CustomerAddressFormatter::getFormat()` | it does not enforce company at all — it moves the country field, adds the search placeholder, and forces `phone` required | **company is required NOWHERE today, on either address.** So "optional on shipping" already holds. If Doug wants real enforcement on the billing side, this file is the precedent — but note it is handed no address ROLE, so it would have to derive one from the request params (the submitted-form evaluation point above), and it also runs on my-account address forms where there is no role at all |
+| `override/classes/form/CustomerAddressFormatter::getFormat()` | it does not enforce company at all — it moves the country field, adds the search placeholder, and forces `phone` required | **company is required NOWHERE today, on either address.** So "optional on shipping" already holds. If real enforcement on the billing side is ever wanted, this file is the precedent — but note it is handed no address ROLE, so it would have to derive one from the request params (the submitted-form evaluation point above), and it also runs on my-account address forms where there is no role at all |
 | `TwoCheckoutManager.isCompanyDataMissing()` | role-agnostic by construction — it reads the hidden organisation-number field and the confirmed selection, on the payment step, where no address form exists | **no change owed.** Its inputs are already the role-validated published record |
 | `controllers/front/orderintent.php` — the `no_company` / `incomplete_company` gate | gates on the resolved organisation NUMBER, resolved through the invoice-preferring chain | **already role-keyed.** The delivery-address last resort is only reached on a cart with no invoice address at all |
 | `twopayment.php` — `getTwoValidatedSessionCompanyData()`, `getCompanyDataWithFallbacks()` | take the address they are given; the order-payload path gives them the invoice address | already role-keyed by their callers |
@@ -1936,12 +1931,12 @@ company the buyer has no reason to give.
 
 ## Rule 1 — editability needs NO code, confirmed
 
-**Nothing in PR #157 ever made the secondary address read-only.** The mirror only
+**Nothing in prestashop-plugin PR #157 ever made the secondary address read-only.** The mirror only
 declines to overwrite, and the pin only makes it decline more often. The company field's
 `readonly` in search mode is the search affordance, applies identically to both
 addresses, and the search control mounts on whichever form is visible — so the buyer can
 already search or type a company on the secondary address. **No editability feature was
-invented and none is owed.** Doug's correction was phrased as though read-only controls
+invented and none is owed.** The original correction was phrased as though read-only controls
 existed; they do not.
 
 ---
@@ -1958,8 +1953,8 @@ The earlier version of this note listed seven judgment calls. Their disposition:
    what the mirror wrote, so the address is pinned and their correction survives. The
    mirror's own write is NOT what pins it; the buyer's edit on top of it is.
 3. **Does "any field" include street, postcode and city?** Answered by R1: yes. The cost
-   Doug was asked to price — a buyer who fills only the street blocks company syncing for
-   the rest of the cart, in a field the mirror never writes itself — is accepted.
+   of accepting it — a buyer who fills only the street blocks company syncing for
+   the rest of the cart, in a field the mirror never writes itself — is taken.
 4. **"Addresses differ" re-opened after a collapse.** Stale data is overwritten, never
    cleared: clearing means deleting buyer data from an address row on a navigation, which
    is a far worse failure than a stale street the buyer can see and correct. Where the
@@ -1980,7 +1975,7 @@ The earlier version of this note listed seven judgment calls. Their disposition:
 
 ---
 
-## What of PR #157 survives, what changed
+## What of prestashop-plugin PR #157 survives, what changed
 
 **Survives unchanged** — all on `TwoCompanySearch` unless noted:
 
@@ -2036,7 +2031,7 @@ its resume detection are all superseded by R3's content match, which needs none 
 
 ---
 
-## Interaction with B1's pairing fix — mandatory, not optional
+## Interaction with the pairing fix — mandatory, not optional
 
 Every mirrored write of a company name must go through the same `organizationField` +
 `data-two-company-name` pairing machinery a manually-typed primary selection uses, via
@@ -2062,7 +2057,8 @@ the pristine baseline first so nothing else can pass by never syncing; R1's any-
 cases including the street, the postcode, the city and the identification number; C2's
 address-wide case, where every other field matches perfectly and one does not; C1's
 comparison basis, driven with a primary whose live value is neither the recorded value
-nor the field's; R3's trim and case-fold; the existing-saved-address case that closes B2;
+nor the field's; R3's trim and case-fold; the existing-saved-address case that closes the
+silent-overwrite defect;
 and the persistence pair — the same DOM twice, differing only in whether the record
 reached the page.
 
@@ -2102,8 +2098,8 @@ directions plus the cart-id change that invalidates both.
 
 ## Still open
 
-- **C3's WooCommerce contradiction** (above) — needs Doug, before the WooCommerce port.
-- **Rule 4's hard enforcement**, if he wants any. Nothing enforces company on either
+- **C3's WooCommerce contradiction** (above) — needs a ruling before the WooCommerce port.
+- **Rule 4's hard enforcement**, if any is ever wanted. Nothing enforces company on either
   address today; the note above says where it would go and why it must be role-keyed.
 - **#8** remains DEFERRED. No `TwoCountry.js` extraction was made and the duplicated
   country-name maps are untouched.
