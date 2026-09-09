@@ -4524,9 +4524,9 @@ class TwoCompanySearch {
 
     /**
      * @returns {string} the query field's accessible NAME - static,
-     *   describing the field's role, deliberately
-     *   NOT the same string as the placeholder. See the comment in
-     *   buildDropdown() where this is applied for why the two must differ.
+     *   describing the field's role, deliberately NOT the same string as the
+     *   placeholder. See the comment in buildDropdown() where this is applied
+     *   for why the two must differ.
      */
     getQueryAriaLabelText() {
         return this.text('company_search_query_label', 'Search for a company');

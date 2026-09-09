@@ -1523,14 +1523,14 @@
 
 /* Autocomplete Dropdown Styling */
 /*
- * A proper small, contained dropdown matching the field it belongs to, like WC/Magento's select2/selectWoo - not the
- * auto-widening box jQuery UI produces on its own. jQuery UI's `_resizeMenu`
- * sizes this element to whichever is WIDER: the field, or the longest
- * rendered label. With up to 50 results plus the manual-entry row that
- * reliably outgrows the field (625px against a 281px field, live).
- *
- * `max-width` here is what actually contains it: the CSS width-resolution
- * algorithm clamps a used width to `max-width` regardless of what inline
+ * A proper small, contained dropdown matching the field it belongs to, like
+ * WC/Magento's select2/selectWoo - not the auto-widening box jQuery UI
+ * produces on its own. jQuery UI's `_resizeMenu` sizes this element to
+ * whichever is WIDER: the field, or the longest rendered label. With up to 50
+ * results plus the manual-entry row that reliably outgrows the field (625px
+ * against a 281px field, live). `max-width` here is what actually contains
+ * it: the CSS width-resolution algorithm clamps a used width to `max-width`
+ * regardless of what inline
  * `width` jQuery UI sets on this same element, so no `!important` is needed
  * to win against it. The variable is kept current by
  * TwoCompanySearch.constrainAutocompleteMenuWidth(), refreshed on every

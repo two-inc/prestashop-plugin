@@ -797,8 +797,8 @@ test('a mint that resolves after abandon-then-retry still resumes the buyer look
 });
 
 /**
- * TWO-40: getCurrentBuyer() had no in-flight guard of its own (unlike
- * fetchTokens()'s isFetchingTokens)
+ * TWO-40: getCurrentBuyer() had no in-flight guard of its own
+ * (unlike fetchTokens()'s isFetchingTokens)
  * - a second concurrent lookup opened a second signup popup from one gesture.
  */
 test('two concurrent getCurrentBuyer() calls only open one popup', async () => {
@@ -900,8 +900,8 @@ test('a buyer lookup that resolves after abandon-then-retry during the lookup st
 });
 
 /**
- * TWO-40: resumeIfStillEnrolling() checked `enrolling` once at SCHEDULE time
- * then deferred via setTimeout(0)
+ * TWO-40: resumeIfStillEnrolling() checked `enrolling` once at SCHEDULE
+ * time then deferred via setTimeout(0)
  * - a second abandonment landing in that gap ran an unwanted lookup, popping
  * a signup window nobody asked for on the no-match path.
  */

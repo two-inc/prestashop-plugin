@@ -1227,10 +1227,10 @@ anything local to either symptom.
   now takes a flag that disowns the WRITE only (`cancelEnrollment(keepPopupTracked)`) and
   leaves the poll and the handle alone; the settle event's popup-open guard needs no change
   and instead becomes the mechanism, holding the spinner until the buyer's own popup closes.
-- **A surviving popup has to be RE-ADOPTABLE, not just re-findable.** Disowning the
-  write bumps the generation the popup's own
-  completion message is checked against, so keeping the handle alive is only half an
-  answer: the buyer finishes signing up, the message is dropped on that check, and they get
+- **A surviving popup has to be RE-ADOPTABLE, not just re-findable.** Disowning the write
+  bumps the generation the popup's own completion message is checked against, so keeping the
+  handle alive is only half an answer: the buyer finishes signing up, the message is dropped
+  on that check, and they get
   an empty company field, no error, and — once the raise arms a spinner — something on
   screen actively claiming progress. Raising a tracked popup is therefore the same explicit
   resume as starting one, and re-stamps the token generation. Miss this and the two entry
@@ -1306,10 +1306,11 @@ a document.
   closes the popup.
 - **The refocus cannot DECIDE, only SCHEDULE.** The window `focus` is dispatched BEFORE the
   `mousedown` of the click that caused it, so no flag a chip handler sets can be read in
-  time. That is not a reason to skip the chip guard. Instead: arm a short timer (150ms, one native input event's worth of
-  dispatch, with generous margin for a loaded main thread) and let a **capture-phase
-  `mousedown` on `document`** resolve which of the three gestures it was. Capture, and on
-  the document rather than the chips, because the chips are rebuilt on every dropdown open.
+  time. That is not a reason to skip the chip guard. Instead: arm a short timer (150ms,
+  one native input event's worth of dispatch, with generous margin for a loaded main
+  thread) and let a **capture-phase `mousedown` on `document`** resolve which of the
+  three gestures it was. Capture, and on the document rather than the chips, because the
+  chips are rebuilt on every dropdown open.
 - **Coalesce onto the FIRST focus; never reschedule onto a later one.** Window-targeted
   `focus` events arrive in bursts for reasons that are not the buyer's gesture — blurring an
   element fires one, so the picker closing its own dropdown produces a stream — and

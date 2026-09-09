@@ -261,13 +261,13 @@ final class AssetCacheBustingSpec
         TinyAssert::same(8, count($frontStatements), 'expected exactly 8 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 7 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
         TinyAssert::same(1, count($adminStatements), 'expected exactly 1 registerStylesheet() call site in hookActionAdminControllerSetMedia(), found ' . count($adminStatements) . ' - it was added, removed, or renamed');
 
-        // Identity, not just count: a
-        // count-only check passes if one real call site is deleted and a
-        // DIFFERENT one duplicated in its place (e.g. a bad merge/copy-paste
-        // that drops TwoOrderIntent.js but keeps the count at 8 by
-        // duplicating TwoCompanySearch.js) - checkout genuinely loses an
-        // asset while every assertion above stays green. Pin the exact,
-        // ordered set of ids this hook must register, and require each
+        // Identity, not just count: a count-only check passes if one real
+        // call site is deleted and a DIFFERENT one duplicated in its place
+        // (e.g. a bad merge/copy-paste that drops TwoOrderIntent.js but keeps
+        // the count at 8 by duplicating TwoCompanySearch.js) - checkout
+        // genuinely loses an asset while every assertion above stays green.
+        // Pin the exact, ordered set of ids this hook must register, and
+        // require each
         // call's getTwoModuleAssetPath(...) and getTwoAssetVersion(...)
         // arguments to reference the SAME relative path as each other (a
         // duplicated call registering the wrong asset under a fresh id
@@ -280,15 +280,14 @@ final class AssetCacheBustingSpec
         // lands last here). A sorted-set comparison is order-independent but
         // still exact on identity - a delete-one/duplicate-another mutation
         // changes which ids are present regardless of ordering, so it's still
-        // caught.
-        // Maps each id to the ONE relative path it must register. The id-set
-        // and self-consistency checks above only confirm the right SET of ids
-        // is present and that each call is internally self-consistent (its own
-        // getTwoModuleAssetPath() and getTwoAssetVersion() arguments match
-        // each other) - neither catches
-        // a call whose id is left correct but whose backing file is swapped
-        // for a different one (e.g. 'two-order-intent' silently registering
-        // TwoCompanySearch.js instead of TwoOrderIntent.js): the id set is
+        // caught. Maps each id to the ONE relative path it must register. The
+        // id-set and self-consistency checks above only confirm the right SET
+        // of ids is present and that each call is internally self-consistent
+        // (its own getTwoModuleAssetPath() and getTwoAssetVersion() arguments
+        // match each other) - neither catches a call whose id is left correct
+        // but whose backing file is swapped for a different one (e.g.
+        // 'two-order-intent' silently registering TwoCompanySearch.js instead
+        // of TwoOrderIntent.js): the id set is
         // untouched and the call is still self-consistent, so both of those
         // assertions pass while checkout genuinely loses TwoOrderIntent.js.
         // Binding id -> expected path closes that gap.

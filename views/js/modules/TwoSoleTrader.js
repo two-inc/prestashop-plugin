@@ -1673,12 +1673,11 @@ class TwoSoleTrader {
      * @param {boolean} [trustedIdentity] Carried forward from the call being
      *   resumed - see getCurrentBuyer()'s own JSDoc for what this means.
      * @param {boolean} [retriedTrustedLookup] Carried forward too (TWO-40):
-     *   without this, a resume
-     *   landing mid-retry silently reset the retry cap to zero by calling
-     *   getCurrentBuyer() with its default `false` - each abandon/resume
-     *   cycle during the 800ms wait bought the flow ANOTHER retry, contrary
-     *   to the "one retry, not a backoff loop" contract documented on
-     *   getCurrentBuyer()'s own 404 branch.
+     *   without this, a resume landing mid-retry silently reset the retry
+     *   cap to zero by calling getCurrentBuyer() with its default `false` -
+     *   each abandon/resume cycle during the 800ms wait bought the flow
+     *   ANOTHER retry, contrary to the "one retry, not a backoff loop"
+     *   contract documented on getCurrentBuyer()'s own 404 branch.
      *
      * @returns {boolean} whether a resume was actually scheduled. A caller that
      *   suppresses other work because "the lookup is being re-issued" has to
@@ -2076,11 +2075,11 @@ class TwoSoleTrader {
      * @param {Object} buyer
      * @param {number} generation the value of `_enrollGeneration` at the
      *   moment the getCurrentBuyer() call that led here was ISSUED.
-     *   Re-checked again below, after this
-     *   method's own `saveCompany` round trip - that request is itself async
-     *   and long enough for the buyer to reopen search and cancel (or start a
-     *   fresh enrolment) while it is in flight, and a superseded save
-     *   response must not publish over whatever they have since done.
+     *   Re-checked again below, after this method's own `saveCompany` round
+     *   trip - that request is itself async and long enough for the buyer to
+     *   reopen search and cancel (or start a fresh enrolment) while it is in
+     *   flight, and a superseded save response must not publish over whatever
+     *   they have since done.
      */
     applyBuyer(buyer, generation) {
         const self = this;

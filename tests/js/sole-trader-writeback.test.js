@@ -1052,8 +1052,8 @@ describe('the scoped writes reach ONE address block and no other', () => {
 
 describe('a pre-filled secondary address is still written into (the pin does not apply here)', () => {
     /**
-     * adoptSoleTraderBuyer() carries the same reasoning, so the pin is not
-     * reinstated there either.
+     * The pin is deliberately not consulted here, and adoptSoleTraderBuyer()
+     * records the same reasoning so it is not reinstated there.
      *
      * secondaryAddressFormRoot() resolves non-null ONLY when the invoice form is
      * the VISIBLE, editable form - so consulting the mirror's pin here would gate
