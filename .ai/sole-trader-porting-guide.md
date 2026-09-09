@@ -963,7 +963,7 @@ implement wrongly — read both corrections before implementing either.
    the query field must become typable again in the same click. Implemented on
    PrestaShop (`1c1b3d7`, pinned by tests in `40ec6d4`): the handler reverses
    manual-entry and cancels any enrolment, re-renders the chip selection (which is also
-   what brings the query field back from rule 2's hide, readonly and all), and focuses
+   what brings the query field back from the query-row hide, readonly and all), and focuses
    the query field, with no close call anywhere in it. One ordering trap, worth copying
    rather than rediscovering: cancelling the enrolment fires the same "flight settled"
    event that the keep-open spinner's own listener answers by CLOSING the panel, so
@@ -982,7 +982,7 @@ implement wrongly — read both corrections before implementing either.
    popped open unasked on the other route through that branch (a mode revert with no
    dropdown in sight). Two details fell out:
 
-   - **The query-row un-hide (rule 2's mechanism) was already working — on a dropdown
+   - **The query-row un-hide was already working — on a dropdown
      that was no longer on screen.** A hide/un-hide that reads correct in the DOM tells
      you nothing about whether the node is still the one being displayed.
    - **Reopen synchronously, still inside the click.** The widget library binds its
