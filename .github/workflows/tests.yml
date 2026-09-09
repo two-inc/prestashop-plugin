@@ -43,6 +43,8 @@ jobs:
           php -l tests/CheckoutLatencySpec.php
           php -l tests/ShippingCostSourcingSpec.php
           php -l tests/DefaultShippingTaxCodeSpec.php
+          php -l tests/DeprecatedCustomPaymentTermSpec.php
+          php -l classes/TwoStoredTerm.php
           php -l tests/FulfilledStatusMappingSpec.php
           php -l tests/AddressLookupConfigSpec.php
           php -l tests/IntentApprovedNoticeSpec.php

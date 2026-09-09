@@ -429,7 +429,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_90a5f22cdff46c106eb927b92562347f'] = 'Ange manuellt';
 $_MODULE['<{twopayment}prestashop>twopayment_22294ef90aa68e15429879889a0cdaf5'] = 'Registrerat företag';
 $_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Välj en annan enskild firma';
-$_MODULE['<{twopayment}prestashop>twopayment_00106f12870853d59e2c9b3ade06c709'] = 'Valfritt. Erbjud ytterligare ett betalningsvillkor (i dagar) som inte täcks av förinställningarna ovan. Lämna tomt för att endast erbjuda de villkor som valts ovan. %s måste fortfarande tillåta denna villkorslängd för ditt konto - ett ej understött värde ignoreras tyst.';
 $_MODULE['<{twopayment}prestashop>twopayment_85975d3764f15a461e1b4241e4a5b1c3'] = 'Vilket erbjudet betalningsvillkor som är förvalt i kassan som standard. Lämna ej valt för att behålla det automatiska valet (handlarens eget standardvillkor när det erbjuds, annars 30 dagar, annars det kortaste erbjudna villkoret).';
 $_MODULE['<{twopayment}prestashop>twopayment_ea5dc66828c0b5143181e3d1619bd1cf'] = 'Visa förklaringslänken "Vad är %s"';
 $_MODULE['<{twopayment}prestashop>twopayment_e385d49e793ac9d4aa4835d62282469b'] = 'Om du väljer JA ser köparna en info-tooltip "Vad är %1$s?" med en länk till en förklarande resurs i %1$s-betalningsplattan i kassan.';
@@ -438,7 +437,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_8d3876abbdeae12140159a1103397c07'] 
 $_MODULE['<{twopayment}prestashop>twopayment_86fd11dde72d89b72fa81284611b7faa'] = 'Aktivera förhandsgodkännandekontroll för orderavsikt';
 $_MODULE['<{twopayment}prestashop>twopayment_e1459bb98511cce5d23cd0776fccabcf'] = 'Om du väljer JA anropar kassan %1$s för att förhandsgranska ordergodkännande innan köparen skickar betalningen, och visar resultatet i betalningsplattan. Om du väljer NEJ hoppas detta förhandsanrop över - köparen genomgår fortfarande %1$ss verkliga godkännandekontroll när betalningen skickas.';
 $_MODULE['<{twopayment}prestashop>twopayment_b225a7c34ad4043b83b1c54322112056'] = '-- Automatiskt (rekommenderas) --';
-$_MODULE['<{twopayment}prestashop>twopayment_5330a1c71e09ac86436a0c24d6306100'] = 'Anpassat betalningsvillkor måste vara ett helt antal dagar större än noll, eller lämnas tomt.';
 $_MODULE['<{twopayment}prestashop>twopayment_991986a40e760b716f318af6b58acc1e'] = 'Valfritt. Ett lägre tal visar %s tidigare bland betalningsmetoderna som erbjuds i kassan. Lämna tomt för att använda PrestaShops egen ordning (Betalning > Inställningar).';
 $_MODULE['<{twopayment}prestashop>twopayment_b0aeeee23a0905fde43980eebe726ee7'] = 'VARNING: ENDAST FÖR FELSÖKNING. Vid JA hoppas orderavsiktskontrollens CSRF-liknande tokenkontroll över. Aktivera aldrig detta i en skarp produktionsbutik.';
 $_MODULE['<{twopayment}prestashop>twopayment_7c5014deb8a0afa34ddda803c470e3ad'] = 'Rensa inställningar vid avinstallation';
@@ -513,3 +511,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_4009e05973e240e0ae89bfb77b847115'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b42b57d56d7d5c1b63351f4d87e396c0'] = 'Markera "Skicka även från webbläsaren" endast där din IT-administratör kräver headern även för anrop från köparens webbläsare: värdet för den headern publiceras till köparens webbläsare och kan läsas av vem som helst.';
 $_MODULE['<{twopayment}prestashop>twopayment_1063e38cb53d94d386f21227fcd84717'] = 'Ta bort';
 $_MODULE['<{twopayment}prestashop>twopayment_404c493aff65500a37b1f0d09ffa29ae'] = 'Okänd tilläggsmetod: %1$s. Välj en av: %2$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_b1434efcff57bf2bd531c5b528feeab9'] = 'Anpassade betalningsvillkor (dagar) kan endast tas bort, inte ändras.';
+$_MODULE['<{twopayment}prestashop>twopayment_117c08e0ebe802c50ba459a8cd6bdb1d'] = 'Anpassade betalningsvillkor (dagar) innehåller %s, vilket inte är ett användbart antal dagar. Välj Ta bort på fältet för att tömma det.';
+$_MODULE['<{twopayment}prestashop>twopayment_9398138bd940ea2f1e4fcd39b1584e6f'] = 'Anpassade betalningsvillkor (dagar) på %s är nu ett av standardvillkoren du erbjuder, så det har valts under Betalningsvillkor och det anpassade fältet har tömts.';
+$_MODULE['<{twopayment}prestashop>twopayment_615a0b0fa408ef70c0548f8b9d94283b'] = 'Äldre inställning. Detta erbjuder ett anpassat villkor på %s dagar från leverans. Det stöds inte längre och kan inte redigeras. Välj Ta bort för att dra tillbaka det, eller använd betalningsvillkoren ovan för att ändra vad du erbjuder.';
+$_MODULE['<{twopayment}prestashop>twopayment_3a577b3e1f0b2a28d17fe1ffdbe07d29'] = 'Äldre inställning. Detta erbjuder ett anpassat villkor på %s dagar efter månadens slut. Det stöds inte längre och kan inte redigeras. Välj Ta bort för att dra tillbaka det, eller använd betalningsvillkoren ovan för att ändra vad du erbjuder.';
