@@ -27,6 +27,7 @@ final class SurchargeCartLineSpec
         self::testCartLineNetMatchesTwoPayloadFeeLine();
         self::testOrderCreateParityGateFailsClosedOnDivergence();
         self::testOrderCreateParityGateFailsClosedOnUnavailableQuote();
+        self::testOrderCreateCompletesForANonChargingTermDuringAnOutage();
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
         self::testStaleGuardRemovesLineWhenSessionMarkerLost();
         self::testStaleGuardKeepsLegitimateLine();
@@ -447,6 +448,39 @@ final class SurchargeCartLineSpec
                 'merchant_shipping_document_url' => '',
             ]);
         }, 'Surcharge line mismatch');
+    }
+
+    /**
+     * ABN-546: the gate and the line builder share one predicate, so a term
+     * that prices nothing is skipped by both. Without that, the gate offered
+     * Two and the builder then refused the order over a fee of zero - after
+     * the buyer had approved, which cancels the Two order and shows a generic
+     * cart error.
+     */
+    private static function testOrderCreateCompletesForANonChargingTermDuringAnOutage(): void
+    {
+        $module = self::makeModule();
+        // The ordered term prices nothing at all.
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '0');
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '0');
+        $cart = self::makeCart();
+        Context::getContext()->cookie->two_payment_term = 30;
+        $module->forcedFeeResponse = ['http_status' => 503];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-8104', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $feeLines = array_values(array_filter($payload['line_items'], static function ($item) {
+            return isset($item['type']) && $item['type'] === 'SERVICE';
+        }));
+        TinyAssert::count(0, $feeLines, 'a term pricing nothing contributes no fee line');
+        TinyAssert::count(0, $module->feeRequests, 'and is never quoted, so an outage cannot refuse it');
     }
 
     /* ---- requirement 3: stale-line guards ---- */

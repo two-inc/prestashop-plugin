@@ -30,6 +30,7 @@ final class TermSurchargeAmountsSpec
         self::testZeroCartBasisFailsWithoutWireCall();
         self::testTotalApiFailureWithNonzeroBasisStillSucceedsAllZero();
         self::testChipAmountFollowsThePriceDisplayMethod();
+        self::testChipPreviewsNeverWriteTheSessionQuoteCache();
     }
 
     /**
@@ -253,4 +254,27 @@ final class TermSurchargeAmountsSpec
             TinyAssert::same('250.00', (string) $module->payloads[0]['gross_amount'], 'the quote basis stays the cart gross: ' . $case['why']);
         }
     }
+    /**
+     * ABN-546: the chip loop quotes every offered term, so letting it write
+     * the shared session cookie risks pushing the shopper's cookie past the
+     * browser cap mid-checkout. Previews stay request-scoped; only the charge
+     * paths cache across requests.
+     */
+    private static function testChipPreviewsNeverWriteTheSessionQuoteCache(): void
+    {
+        self::reset();
+        $module = self::moduleWithPerTermResponses([
+            30 => ['http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR'],
+            60 => ['http_status' => 200, 'buyer_fee_share' => '7.50', 'currency' => 'EUR'],
+        ]);
+
+        $result = $module->getTwoOfferedTermSurchargeAmounts();
+
+        TinyAssert::true($result['success'], 'the preview itself must still succeed');
+        TinyAssert::false(
+            isset(Context::getContext()->cookie->two_fee_quote_key),
+            'a chip preview must leave no quote in the session cookie'
+        );
+    }
+
 }

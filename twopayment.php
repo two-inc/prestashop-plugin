@@ -202,7 +202,6 @@ class Twopayment extends PaymentModule
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
     const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for render-path fetches (invoice-download state check, merchant-record and FX-rate refreshes, fee quotes)
     const API_TIMEOUT_PDF_FETCH = 10; // Tight timeout for synchronous invoice PDF fetches (buyer + admin download clicks)
-    const API_TIMEOUT_FEE_QUOTE_GATE = 3; // Payment-options gate (ABN-546): every render blocks on it, so it must fail fast
     const API_CONNECT_TIMEOUT = 5; // Connection-establishment timeout for all Two API calls
     
     // Constants for validation tolerances
@@ -5914,7 +5913,7 @@ class Twopayment extends PaymentModule
         // the buyer can switch term after the payment-options gate ran, and a
         // pre-switch term that quoted zero leaves zero on both sides, which the
         // cents comparison reads as agreement.
-        $surchargeParityFailed = $surchargeQuoteUnavailable
+        $surchargeParityFailed = ($surchargeQuoteUnavailable && $enforceSurchargeParity)
             || $surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
         if ($surchargeParityFailed) {
             PrestaShopLogger::addLog(
@@ -12992,9 +12991,9 @@ class Twopayment extends PaymentModule
      * the (shop default -> cart) pair fails identically for every term, so one
      * unresolvable pair condemns all of them, and gating instead on "any
      * offered term is unquotable" would over-reject a whole store because of
-     * one misconfigured term. The quote condition below is the one question
-     * asked of a single term, and of the charged term only, for that same
-     * reason.
+     * one misconfigured term. The quote condition below asks about a single
+     * term for a DIFFERENT reason: a quote can fail for one term and succeed
+     * for another, so judging every term would over-reject.
      *
      *   surcharge enabled
      *   AND cart currency !== the currency the surcharge is configured in
@@ -13077,6 +13076,42 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Whether one term prices a surcharge at all (ABN-546). The ONE definition
+     * shared by the payment-options gate and the line builder: a term that
+     * prices nothing must be skipped by both, or the gate offers Two and the
+     * builder then refuses the order over a fee of zero.
+     *
+     * A cap alone charges nothing (a cap needs a percentage behind it), and in
+     * fee-difference mode the default term is its own reference, so its delta
+     * is structurally zero unless a fixed amount rides along.
+     *
+     * @param int $days
+     * @return bool
+     */
+    public function doesTwoTermPriceASurcharge($days)
+    {
+        $days = (int) $days;
+        $share = $this->buildTwoBuyerFeeShare($days);
+        if ($share === null) {
+            return false;
+        }
+        $fixed = isset($share['surcharge']) ? (float) $share['surcharge'] : 0.0;
+        if ($fixed > 0) {
+            return true;
+        }
+        $percentage = isset($share['percentage']) ? (float) $share['percentage'] : 0.0;
+        if ($percentage <= 0) {
+            return false;
+        }
+        $settings = $this->getTwoSurchargeSettings();
+        if (!empty($settings['differential']) && $days === (int) $this->getDefaultPaymentTerm()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Whether the fee quote for the term this checkout would be charged for
      * resolves at all (ABN-546). ONE term - the selected one, else the
      * merchant default - deliberately outside the caller's FX loop, which
@@ -13091,14 +13126,7 @@ class Twopayment extends PaymentModule
             return true;
         }
         $days = (int) $this->getSelectedPaymentTerm();
-
-        // A term charging nothing must never withhold - on a single-term shop
-        // that is the whole store, over a fee of zero.
-        $share = $this->buildTwoBuyerFeeShare($days);
-        $charges = $share !== null
-            && ((isset($share['percentage']) && (float) $share['percentage'] > 0)
-                || (isset($share['surcharge']) && (float) $share['surcharge'] > 0));
-        if (!$charges) {
+        if (!$this->doesTwoTermPriceASurcharge($days)) {
             return true;
         }
 
@@ -13117,13 +13145,7 @@ class Twopayment extends PaymentModule
         if (Validate::isLoadedObject($currency)) {
             $currency_iso = (string) $currency->iso_code;
         }
-        $quote = $this->fetchTwoTermFee(
-            $days,
-            $gross_basis,
-            $this->resolveTwoBuyerCountryIso($cart),
-            $currency_iso,
-            self::API_TIMEOUT_FEE_QUOTE_GATE
-        );
+        $quote = $this->fetchTwoTermFee($days, $gross_basis, $this->resolveTwoBuyerCountryIso($cart), $currency_iso, true);
         if ($quote !== null) {
             return true;
         }
@@ -13164,12 +13186,12 @@ class Twopayment extends PaymentModule
      * @param float  $gross_amount fee basis (product + shipping gross)
      * @param string $buyer_country ISO-2 code
      * @param string $currency_iso  store currency
-     * @param int|null $timeout seconds; the payment-options gate passes its own
-     *   tighter cap because a hanging endpoint would otherwise be added to
-     *   every render (ABN-546).
+     * @param bool $cacheAcrossRequests whether this quote may use the session
+     *   cookie cache - the charge paths only, never the chip previews, whose
+     *   per-term loop would fill the shared cookie (ABN-546).
      * @return array|null {buyer_fee_share, total_fee_tax_rate, currency}
      */
-    public function fetchTwoTermFee($days, $gross_amount, $buyer_country, $currency_iso, $timeout = null)
+    public function fetchTwoTermFee($days, $gross_amount, $buyer_country, $currency_iso, $cacheAcrossRequests = false)
     {
         $days = (int) $days;
         $gross_amount = (float) $gross_amount;
@@ -13178,9 +13200,11 @@ class Twopayment extends PaymentModule
             return $this->twoFeeCache[$cacheKey];
         }
 
-        $sessionCached = $this->getTwoFeeQuoteFromSession($days, $cacheKey);
-        if ($sessionCached !== null) {
-            return $this->twoFeeCache[$cacheKey] = $sessionCached;
+        if ($cacheAcrossRequests) {
+            $sessionCached = $this->getTwoFeeQuoteFromSession($cacheKey);
+            if ($sessionCached !== null) {
+                return $this->twoFeeCache[$cacheKey] = $sessionCached;
+            }
         }
 
         $share = $this->buildTwoBuyerFeeShare($days);
@@ -13214,13 +13238,7 @@ class Twopayment extends PaymentModule
 
         // Tight timeout: this sits on the checkout/order-build path and must
         // never stall checkout on a slow pricing call.
-        $response = $this->setTwoPaymentRequest(
-            '/v1/pricing/order/fee',
-            $payload,
-            'POST',
-            array(),
-            $timeout !== null ? (int) $timeout : self::API_TIMEOUT_STATE_CHECK
-        );
+        $response = $this->setTwoPaymentRequest('/v1/pricing/order/fee', $payload, 'POST', array(), self::API_TIMEOUT_STATE_CHECK);
         if (!is_array($response)) {
             return $this->twoFeeCache[$cacheKey] = null;
         }
@@ -13247,20 +13265,11 @@ class Twopayment extends PaymentModule
             'total_fee_tax_rate' => isset($response['total_fee_tax_rate']) ? (string) $response['total_fee_tax_rate'] : null,
             'currency' => $respCurrency,
         );
-        $this->storeTwoFeeQuoteInSession($days, $cacheKey, $quote);
+        if ($cacheAcrossRequests) {
+            $this->storeTwoFeeQuoteInSession($cacheKey, $quote);
+        }
 
         return $this->twoFeeCache[$cacheKey] = $quote;
-    }
-
-    /**
-     * Cookie-property prefix for one term's quote slot.
-     *
-     * @param int $days
-     * @return string
-     */
-    private function getTwoFeeQuoteSessionSlot($days)
-    {
-        return 'two_fee_quote_' . (int) $days . '_';
     }
 
     /**
@@ -13270,29 +13279,28 @@ class Twopayment extends PaymentModule
      * country or currency invalidates the cache immediately regardless of TTL.
      * Fail-soft: any malformed/missing cache data is treated as a miss.
      *
-     * One slot PER TERM (ABN-546): a single slot was overwritten by the
-     * chip-preview loop's last term on every render, so nothing but that term
-     * ever read back a cached quote.
+     * ONE slot, holding the CHARGED term's quote only (ABN-546): the whole
+     * cookie shares a 4KB browser cap, and a slot per offered term would let a
+     * chip-preview render push the shopper's session over it. Successes only -
+     * a null lives in the request-scoped cache and no longer.
      *
-     * @param int $days
      * @param string $cacheKey
      * @return array|null
      */
-    private function getTwoFeeQuoteFromSession($days, $cacheKey)
+    private function getTwoFeeQuoteFromSession($cacheKey)
     {
         if (!isset($this->context->cookie)) {
             return null;
         }
-        $slot = $this->getTwoFeeQuoteSessionSlot($days);
-        $cachedKey = isset($this->context->cookie->{$slot . 'key'}) ? (string) $this->context->cookie->{$slot . 'key'} : '';
+        $cachedKey = isset($this->context->cookie->two_fee_quote_key) ? (string) $this->context->cookie->two_fee_quote_key : '';
         if ($cachedKey === '' || $cachedKey !== $cacheKey) {
             return null;
         }
-        $cachedTs = isset($this->context->cookie->{$slot . 'ts'}) ? (int) $this->context->cookie->{$slot . 'ts'} : 0;
+        $cachedTs = isset($this->context->cookie->two_fee_quote_ts) ? (int) $this->context->cookie->two_fee_quote_ts : 0;
         if ($cachedTs <= 0 || (time() - $cachedTs) > self::FEE_QUOTE_CACHE_TTL_SECONDS) {
             return null;
         }
-        $cachedData = isset($this->context->cookie->{$slot . 'data'}) ? (string) $this->context->cookie->{$slot . 'data'} : '';
+        $cachedData = isset($this->context->cookie->two_fee_quote_data) ? (string) $this->context->cookie->two_fee_quote_data : '';
         if ($cachedData === '') {
             return null;
         }
@@ -13314,12 +13322,11 @@ class Twopayment extends PaymentModule
      * order-intent polls on the Payment step). Best-effort: failures to write
      * the cookie never block the quote itself being returned to the caller.
      *
-     * @param int    $days
      * @param string $cacheKey
      * @param array  $quote
      * @return void
      */
-    private function storeTwoFeeQuoteInSession($days, $cacheKey, array $quote)
+    private function storeTwoFeeQuoteInSession($cacheKey, array $quote)
     {
         if (!isset($this->context->cookie)) {
             return;
@@ -13332,10 +13339,9 @@ class Twopayment extends PaymentModule
             // is sufficient reason on its own - no other key is claimed to require
             // any particular lifetime. Staleness here is bounded instead by the
             // two_fee_quote_ts field checked in getTwoFeeQuoteFromSession().
-            $slot = $this->getTwoFeeQuoteSessionSlot($days);
-            $this->context->cookie->{$slot . 'key'} = $cacheKey;
-            $this->context->cookie->{$slot . 'data'} = json_encode($quote);
-            $this->context->cookie->{$slot . 'ts'} = (string) time();
+            $this->context->cookie->two_fee_quote_key = $cacheKey;
+            $this->context->cookie->two_fee_quote_data = json_encode($quote);
+            $this->context->cookie->two_fee_quote_ts = (string) time();
 
             // AJAX controllers (e.g. order-intent polling in orderintent.php's
             // ajaxProcessCheckOrderIntent()) end the request via ajaxDie()/exit
@@ -13623,6 +13629,12 @@ class Twopayment extends PaymentModule
         // otherwise the fee would be recomputed for the default term and the
         // update gross would diverge from the created-order gross. TWO-24752.
         $days = $paymentTermDays !== null ? (int) $paymentTermDays : $this->getSelectedPaymentTerm();
+        if (!$this->doesTwoTermPriceASurcharge($days)) {
+            // No line, and NOT an unavailable quote: the gate concedes this
+            // term on the same predicate, so a pricing outage must not refuse
+            // the order over a fee of zero (ABN-546).
+            return null;
+        }
         $currencyIso = '';
         $currency = new Currency((int) $cart->id_currency);
         if (Validate::isLoadedObject($currency)) {
@@ -13630,7 +13642,7 @@ class Twopayment extends PaymentModule
         }
         $buyerCountry = $this->resolveTwoBuyerCountryIso($cart);
 
-        $fee = $this->fetchTwoTermFee($days, (float) $gross_basis, $buyerCountry, $currencyIso);
+        $fee = $this->fetchTwoTermFee($days, (float) $gross_basis, $buyerCountry, $currencyIso, true);
         if ($fee === null) {
             // TWO-25269: tell the caller this null is an unavailable QUOTE,
             // not an absent surcharge. applyTwoSurchargeCartLineSync must not

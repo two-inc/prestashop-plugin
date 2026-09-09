@@ -1053,12 +1053,14 @@ final class FxRatesSpec
             ['percentage', '1.5', 100.0, 30, $failFor(60), 1, false, 30, null, 'a failing term that is not the charged term withholds nothing'],
             ['percentage', '1.5', 100.0, 60, $failFor(60), 0, true, 60, null, 'the selected term is the one judged'],
             ['percentage', '1.5', 100.0, null, $failFor(30), 0, true, 30, null, 'with no term selected the merchant default term is judged'],
+            ['differential', '1.5', 100.0, 30, $failed, 1, false, null, ['differential' => false], 'the default term in fee-difference mode prices its own delta at zero'],
         ];
 
-        $run = function (string $type, string $pct, float $gross, ?int $cookieTerm, $feeResponse): object {
+        $run = function (string $type, string $pct, float $gross, ?int $cookieTerm, $feeResponse, bool $differential = false): object {
             self::reset();
             self::tableWithoutUsd();
-            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $type);
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $type === 'differential' ? 'percentage' : $type);
+            Configuration::updateValue('PS_TWO_SURCHARGE_DIFFERENTIAL', $differential ? 1 : 0);
             Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $pct);
             Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', $pct);
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
@@ -1081,7 +1083,7 @@ final class FxRatesSpec
         foreach ($cases as $case) {
             list($type, $pct, $gross, $cookieTerm, $feeResponse, $expectedOptions, $expectLog, $quotedDays, $control, $description) = $case;
 
-            $module = $run($type, $pct, $gross, $cookieTerm, $feeResponse);
+            $module = $run($type, $pct, $gross, $cookieTerm, $feeResponse, $type === 'differential');
             TinyAssert::same($expectedOptions, count($module->hookPaymentOptions([])), $description);
             TinyAssert::same(
                 $expectLog,
@@ -1094,15 +1096,6 @@ final class FxRatesSpec
                 TinyAssert::same(0, count($quotes), 'no quote may be requested at all: ' . $description);
             } else {
                 TinyAssert::true(in_array($quotedDays, $quotes, true), 'the charged term must be the term quoted: ' . $description);
-                foreach ($module->requests as $request) {
-                    if ($request['endpoint'] === '/v1/pricing/order/fee') {
-                        TinyAssert::same(
-                            Twopayment::API_TIMEOUT_FEE_QUOTE_GATE,
-                            $request['timeout'],
-                            'the gate must quote on its own tight timeout: ' . $description
-                        );
-                    }
-                }
             }
 
             if ($control === null) {
@@ -1112,15 +1105,18 @@ final class FxRatesSpec
             // lifted: it must quote and withhold, so the row above passes
             // because of that condition and not because the fixture cannot
             // reach the gate at all.
+            $controlType = $control['type'] ?? $type;
             $controlModule = $run(
-                $control['type'] ?? $type,
+                $controlType,
                 $control['pct'] ?? $pct,
                 $control['gross'] ?? $gross,
                 $cookieTerm,
-                $feeResponse
+                $feeResponse,
+                array_key_exists('differential', $control) ? $control['differential'] : ($controlType === 'differential')
             );
+            $expectedControlTerm = $cookieTerm ?? 30;
             TinyAssert::same(0, count($controlModule->hookPaymentOptions([])), 'control must withhold: ' . $description);
-            TinyAssert::same([30], $quotedTerms($controlModule), 'control must quote the charged term: ' . $description);
+            TinyAssert::same([$expectedControlTerm], $quotedTerms($controlModule), 'control must quote the charged term: ' . $description);
         }
     }
 
