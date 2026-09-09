@@ -1509,8 +1509,8 @@ class TwoCompanySearch {
      * one, and the address-step lookup is the only path that captures it - so
      * with address-area search off the chip is a dead end and is not offered.
      * No gating on a confirmed selection or on characters typed: the buyer must
-     * have a route into manual entry without typing a doomed query first (the
-     * WC regression recorded on TWO-25326).
+     * have a route into manual entry without typing a doomed query first, so
+     * this is never gated on the 3-character threshold (TWO-25326).
      */
     syncNotListedVisibility() {
         if (!this._notListedButton || !this._notListedButton.length) {
@@ -3703,7 +3703,7 @@ class TwoCompanySearch {
         // painted from, and the cursor-key navigation all belong to a control
         // that lives inside the panel. `appendTo` keeps the widget's own `<ul>`
         // inside the panel too, which is what stops it being appended to
-        // `<body>` and breaking Tab (a defect recorded on this ticket).
+        // `<body>` and breaking Tab.
         if ($.ui && $.ui.autocomplete && typeof $.fn.autocomplete === 'function') {
             this._queryField.autocomplete({
                 appendTo: this._resultsList,

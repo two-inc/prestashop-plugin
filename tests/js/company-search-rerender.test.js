@@ -622,8 +622,8 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
         makeInstance();
 
         // A buyer must have a route into manual entry without typing a
-        // doomed query first. Gating the control on the 3-character threshold
-        // is the WC regression recorded on TWO-25326.
+        // doomed query first, so the control is never gated on the
+        // 3-character threshold (TWO-25326).
         search('');
         // No row renders below the threshold any more (TWO-40 follow-up) -
         // the assertion that matters here is that manual entry is offered
@@ -2885,8 +2885,8 @@ describe('the custom fallback used when jQuery UI is absent', () => {
 
         test('it is offered before any search, not gated on the threshold', () => {
             // A buyer must have a route into manual entry without typing a
-            // doomed query first. Gating it on the 3-character threshold is
-            // the WC regression recorded on TWO-25326.
+            // doomed query first, so it is never gated on the 3-character
+            // threshold (TWO-25326).
             const search = makeInstance();
             expect(search._customAutocomplete).toBeTruthy();
 

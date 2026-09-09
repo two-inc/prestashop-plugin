@@ -392,7 +392,7 @@ describe('"My company is not on the list"', () => {
     test('the results list is not itself a tab stop', () => {
         // jQuery UI's menu widget sets `tabindex="0"` on its own <ul>, which
         // would put the scroll container between the query field and the
-        // button - the defect recorded against Hyva on this ticket.
+        // button.
         makeInstance();
         openPanel();
         const menu = panelParts().query.autocomplete('widget');
@@ -473,9 +473,9 @@ describe('"My company is not on the list"', () => {
     });
 
     test('is visible with the panel freshly open and nothing typed', () => {
-        // The WC regression recorded on TWO-25326: gating on the 3-character
-        // threshold removed the button for a buyer who typed nothing - the
-        // case a manual-entry route most needs to cover.
+        // Gating on the 3-character threshold would remove the button for a
+        // buyer who typed nothing - the case a manual-entry route most needs
+        // to cover (TWO-25326).
         makeInstance();
         openPanel();
         expect(shown(panelParts().notListed)).toBe(true);
