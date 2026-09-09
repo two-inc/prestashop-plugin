@@ -811,7 +811,7 @@ namespace {
         public static function get($key, $idLang = null, $idShopGroup = null, $idShop = null, $default = false)
         {
             if (self::isLangKey($key)) {
-                return StubStore::$configurationLang[(int) $idLang][$key] ?? false;
+                return StubStore::$configurationLang[(int) $idLang][$key] ?? $default;
             }
 
             list($idShopGroup, $idShop) = self::resolveScope($idShopGroup, $idShop);

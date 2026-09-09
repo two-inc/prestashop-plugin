@@ -3035,7 +3035,7 @@ class Twopayment extends PaymentModule
     protected function getTwoOrderManagementFormValues()
     {
         $fields_values = array();
-        $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', self::getTwoTaxSubtotalsSetting());
+        $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_ENABLE_TAX_SUBTOTALS'));
         // Kept a STRING: an (int) cast would turn the unselected state
         // into 0 and silently pre-select "No tax".
         $fields_values[self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP] = (string) Tools::getValue(
@@ -9056,20 +9056,9 @@ class Twopayment extends PaymentModule
      */
     private function shouldIncludeTaxSubtotals()
     {
-        return (bool) self::getTwoTaxSubtotalsSetting();
-    }
-
-    /**
-     * An absent row is never-configured, not off, and has to agree with the
-     * install() seed (ABN-532).
-     *
-     * @return int The stored flag, 1 when nothing is stored
-     */
-    private static function getTwoTaxSubtotalsSetting()
-    {
-        $value = Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS');
-
-        return self::isTwoConfigUnset($value) ? 1 : (int) $value;
+        // Default-ON: an absent row is never-configured, not off, and has to
+        // agree with the install() seed (ABN-532).
+        return $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_ENABLE_TAX_SUBTOTALS') === '1';
     }
 
     /**

@@ -35,6 +35,7 @@ final class ConfigFallbackSpec
             ['1', true, 1, 'an enabled row sends the breakdown'],
             ['0', false, 0, 'a merchant who turned it off keeps it off'],
             ['', true, 1, 'an emptied row falls back to the install default'],
+            ['2', false, 0, 'a value outside the switch reads as off, as the sibling boolean switches read it'],
         ];
 
         foreach ($cases as list($stored, $expectedGate, $expectedField, $description)) {
