@@ -5766,6 +5766,7 @@ require __DIR__ . '/RequiredPhoneFieldSpec.php';
 require __DIR__ . '/AdminControlsSpec.php';
 require __DIR__ . '/PaymentCountryRestrictionSpec.php';
 require __DIR__ . '/TermDiscoverySpec.php';
+require __DIR__ . '/MerchantRecordKeyBindingSpec.php';
 require __DIR__ . '/BillingCompanyCaptureSpec.php';
 require __DIR__ . '/BuyerCompanyFallbackSpec.php';
 require __DIR__ . '/BuyerCountryGateSpec.php';
@@ -5823,6 +5824,7 @@ $tests = [
     'AdminControlsSpec::runAll' => [AdminControlsSpec::class, 'runAll'],
     'PaymentCountryRestrictionSpec::runAll' => [PaymentCountryRestrictionSpec::class, 'runAll'],
     'TermDiscoverySpec::runAll' => [TermDiscoverySpec::class, 'runAll'],
+    'MerchantRecordKeyBindingSpec::runAll' => [MerchantRecordKeyBindingSpec::class, 'runAll'],
     'BillingCompanyCaptureSpec::runAll' => [BillingCompanyCaptureSpec::class, 'runAll'],
     'BuyerCompanyFallbackSpec::runAll' => [BuyerCompanyFallbackSpec::class, 'runAll'],
     'BuyerCountryGateSpec::runAll' => [BuyerCountryGateSpec::class, 'runAll'],
