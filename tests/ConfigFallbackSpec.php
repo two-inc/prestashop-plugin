@@ -15,6 +15,7 @@ final class ConfigFallbackSpec
     {
         self::testTaxSubtotalsSetting();
         self::testHealthChecklistEnvironmentRow();
+        self::testProductionSslWarning();
         self::testAttemptCleanupRunsWithNoRecordedRun();
     }
 
@@ -60,6 +61,7 @@ final class ConfigFallbackSpec
             [null, 'Not configured', false, 'no row at all is reported as unconfigured, not as staging'],
             ['', 'Not configured', false, 'an emptied row is reported as unconfigured'],
             ['development', 'DEVELOPMENT', false, 'the withdrawn value is shown but not called healthy'],
+            ['Production', 'PRODUCTION', true, 'a shop stored in another case is judged as the host lookup judges it'],
             ['<img src=x onerror=alert(1)>', '&lt;IMG SRC=X ONERROR=ALERT(1)&gt;', false, 'a stored value is escaped before it reaches an admin page'],
         ];
 
@@ -91,6 +93,27 @@ final class ConfigFallbackSpec
         }
 
         throw new RuntimeException('The health checklist rendered no Environment row.');
+    }
+
+    /** The banner and the Environment row judge one value, so a shop stored as `Production` cannot be live and unwarned. */
+    private static function testProductionSslWarning(): void
+    {
+        $cases = [
+            ['production', true, true, 'a bypass in production is warned about'],
+            ['Production', true, true, 'the warning does not turn on the stored casing'],
+            ['production', false, false, 'a verifying production shop is not warned'],
+            ['staging', true, false, 'staging is not production'],
+        ];
+
+        foreach ($cases as list($environment, $bypass, $expected, $description)) {
+            self::reset();
+            StubStore::$configuration['PS_TWO_ENVIRONMENT'] = $environment;
+            StubStore::$configuration['PS_TWO_DISABLE_SSL_VERIFY'] = $bypass ? 1 : 0;
+            $module = new TwopaymentTestHarness();
+
+            $html = (string) (new ReflectionMethod(Twopayment::class, 'renderTwoPluginHealthChecklist'))->invoke($module);
+            TinyAssert::same($expected, strpos($html, 'alert-danger') !== false, $description);
+        }
     }
 
     private static function testAttemptCleanupRunsWithNoRecordedRun(): void

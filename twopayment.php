@@ -3412,7 +3412,9 @@ class Twopayment extends PaymentModule
      */
     protected function renderTwoPluginHealthChecklist()
     {
-        $environment = (string) Configuration::get('PS_TWO_ENVIRONMENT');
+        // Lowered as every runtime read of this key lowers it, so the row, the host
+        // map and the production warning below all judge the same value (ABN-532).
+        $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
         // Same live verdict the checkout gate uses (TWO-25326) - a health row
         // reporting "Verified" while Two is being withheld is worse than no row.
         $api_verified = $this->isTwoApiKeyVerified();
@@ -9061,7 +9063,7 @@ class Twopayment extends PaymentModule
      * An absent row is never-configured, not off, and has to agree with the
      * install() seed (ABN-532).
      *
-     * @return int 0 or 1
+     * @return int The stored flag, 1 when no row is stored
      */
     private static function getTwoTaxSubtotalsSetting()
     {
