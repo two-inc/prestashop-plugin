@@ -190,6 +190,8 @@ Payment is due **X days from the fulfillment date**.
 
 ### End-of-Month (EOM) Payment Terms
 
+EOM is not part of the general rollout, so the **Payment terms type** selector is only shown on a shop already configured for EOM — one whose stored term type is `EOM`. On every other shop the field is absent and terms are Standard. Saving **Standard terms** switches the shop back and the selector disappears with it; a later configuration write of `EOM` brings it back.
+
 Payment is due at the **end of the current month (at fulfillment) plus X days**.
 
 **Example:**

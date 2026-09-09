@@ -1726,8 +1726,10 @@ class Twopayment extends PaymentModule
      */
     protected function getTwoPaymentTermsForm()
     {
-        $inputs = array(
-            array(
+        $inputs = array();
+
+        if ($this->isTwoEomTermTypeConfigured()) {
+            $inputs[] = array(
                 'type' => 'radio',
                 'label' => $this->l('Payment terms type'),
                 'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
@@ -1745,7 +1747,10 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('End-of-month terms (e.g., EOM + 30 days)')
                     ),
                 ),
-            ),
+            );
+        }
+
+        $inputs = array_merge($inputs, array(
             array(
                 'type' => 'checkbox',
                 'label' => $this->l('Payment terms'),
@@ -1794,7 +1799,7 @@ class Twopayment extends PaymentModule
                     'name' => 'name',
                 ),
             ),
-        );
+        ));
 
         // Offset pricing fee (buyer surcharge) fields — method, basis, line
         // description, per-term grid, rounding, tax treatment/class, in
@@ -2113,6 +2118,17 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Whether the EOM selector renders on the Payment Terms form (TWO-25656): the context's own row is EOM, the
+     * same row the field value and the save use. Exact match, like every other read.
+     *
+     * @return bool
+     */
+    protected function isTwoEomTermTypeConfigured()
+    {
+        return Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM';
+    }
+
+    /**
      * Dropdown options for the default-term select (TWO-25386 #10): the
      * currently offered terms (checkboxes + custom days, term-type
      * constrained), so the admin can only ever choose a term that is actually
@@ -2175,7 +2191,7 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoPaymentTermsFormValues()
     {
-        // Save payment term type (STANDARD or EOM)
+        // Save payment term type (STANDARD or EOM); an absent POST (selector hidden, TWO-25656) leaves it untouched.
         $term_type = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE');
         if ($term_type === 'STANDARD' || $term_type === 'EOM') {
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
@@ -4723,6 +4739,9 @@ class Twopayment extends PaymentModule
                 // than translated. Empty/absent is inert here: it means default
                 // copy, never off.
                 'intent_approved_notice' => $this->getIntentApprovedNotice(),
+                // The same two keys for the DECLINED notice.
+                'intent_declined_notice_enabled' => $this->isIntentDeclinedNoticeEnabled(),
+                'intent_declined_notice' => $this->getIntentDeclinedNotice(),
                 'i18n' => $i18n,
                 'phone_i18n' => array(
                     'invalid_number' => $this->l('Invalid phone number'),
@@ -11954,6 +11973,21 @@ class Twopayment extends PaymentModule
      */
     public static function normalizeIntentApprovedNoticeEnabled($configured, &$error = null, $brandCode = 'two')
     {
+        return self::normalizeNoticeEnabled($configured, 'intent_approved_notice_enabled', $error, $brandCode);
+    }
+
+    /**
+     * Shared body of the two notice ON/OFF switches, per the contract on
+     * normalizeIntentApprovedNoticeEnabled().
+     *
+     * @param mixed $configured
+     * @param string $key Brand key being resolved, named in the error message.
+     * @param string|null $error Out-param: null when the value was valid.
+     * @param string $brandCode
+     * @return bool
+     */
+    private static function normalizeNoticeEnabled($configured, $key, &$error = null, $brandCode = 'two')
+    {
         $error = null;
 
         if ($configured === null) {
@@ -11965,14 +11999,49 @@ class Twopayment extends PaymentModule
         }
 
         $error = sprintf(
-            'TwoPayment: brand "%s" declares intent_approved_notice_enabled as %s, but only a boolean is accepted.'
+            'TwoPayment: brand "%s" declares %s as %s, but only a boolean is accepted.'
                 . ' Falling back to the documented default (notice enabled). Fix brands/%s.php.',
             $brandCode,
+            $key,
             gettype($configured),
             $brandCode
         );
 
         return true;
+    }
+
+    /**
+     * Resolve the per-brand order-intent DECLINED notice ON/OFF switch
+     * (brands/two.php 'intent_declined_notice_enabled') into the boolean the
+     * checkout JS receives. Same contract as the approved switch (TWO-25218), and it
+     * hides the notice text only - the order-prevention gate is never switched off with it.
+     *
+     * @return bool
+     */
+    public function isIntentDeclinedNoticeEnabled()
+    {
+        $error = null;
+        $enabled = self::normalizeIntentDeclinedNoticeEnabled(
+            $this->getTwoBrandConfig('intent_declined_notice_enabled'),
+            $error
+        );
+
+        if ($error !== null) {
+            PrestaShopLogger::addLog($error, 3);
+        }
+
+        return $enabled;
+    }
+
+    /**
+     * @param mixed $configured
+     * @param string|null $error Out-param: null when the value was valid.
+     * @param string $brandCode
+     * @return bool
+     */
+    public static function normalizeIntentDeclinedNoticeEnabled($configured, &$error = null, $brandCode = 'two')
+    {
+        return self::normalizeNoticeEnabled($configured, 'intent_declined_notice_enabled', $error, $brandCode);
     }
 
     /**
@@ -12007,11 +12076,44 @@ class Twopayment extends PaymentModule
      */
     public static function normalizeIntentApprovedNotice($configured)
     {
+        return self::normalizeNoticeCopy($configured);
+    }
+
+    /**
+     * Shared body of the two notice COPY overrides, per the contract on
+     * normalizeIntentApprovedNotice().
+     *
+     * @param mixed $configured
+     * @return string|null
+     */
+    private static function normalizeNoticeCopy($configured)
+    {
         if (!is_string($configured) || trim($configured) === '') {
             return null;
         }
 
         return $configured;
+    }
+
+    /**
+     * Resolve the per-brand order-intent DECLINED notice COPY OVERRIDE
+     * (brands/two.php 'intent_declined_notice'). Same contract as the approved
+     * override (TWO-25218) - it cannot switch the notice off.
+     *
+     * @return string|null
+     */
+    public function getIntentDeclinedNotice()
+    {
+        return self::normalizeIntentDeclinedNotice($this->getTwoBrandConfig('intent_declined_notice'));
+    }
+
+    /**
+     * @param mixed $configured
+     * @return string|null
+     */
+    public static function normalizeIntentDeclinedNotice($configured)
+    {
+        return self::normalizeNoticeCopy($configured);
     }
 
     /**

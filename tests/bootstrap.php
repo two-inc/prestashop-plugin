@@ -93,7 +93,17 @@ namespace PrestaShop\PrestaShop\Core\Payment {
 namespace {
     final class StubStore
     {
+        /** Global Configuration rows; group and shop rows are keyed by their id first. */
         public static array $configuration = [];
+        public static array $configurationGroup = [];
+        public static array $configurationShop = [];
+        /** Shop::isFeatureActive(): the multistore feature on AND more than one shop. */
+        public static bool $multistore = false;
+        /** The fleet as [id_shop => id_shop_group]; Shop::setContext() must name a member. */
+        public static array $shops = [1 => 1];
+        public static int $shopContext = 1;
+        public static ?int $contextShopId = 1;
+        public static ?int $contextShopGroupId = 1;
         public static array $countries = [];
         public static array $states = [];
         public static array $customers = [];
@@ -354,6 +364,11 @@ namespace {
 
         public static function reset(): void
         {
+            self::$configurationGroup = [];
+            self::$configurationShop = [];
+            self::$multistore = false;
+            self::$shops = [1 => 1];
+            Shop::setContext(Shop::CONTEXT_SHOP, 1);
             self::$configuration = [
                 'PS_TWO_DEBUG_MODE' => false,
                 'PS_TWO_PAYMENT_TERM_TYPE' => 'STANDARD',
@@ -753,15 +768,47 @@ namespace {
         }
     }
 
+    /**
+     * Core Configuration's scope resolution: get() resolves the shop and group ids as core does (the context's, null
+     * outside multistore) then cascades shop -> group -> global, else FALSE; hasKey() reads one bucket; updateValue()
+     * writes one row at the resolved scope and skips a value that already cascades to the same thing. get()'s 2nd
+     * parameter is honoured as $default here; core's is $id_lang and an absent row answers FALSE, so a module call
+     * site relying on a slot-two default passes here and reads false in production.
+     */
     class Configuration
     {
-        // Core returns false for a key that was never written.
-        public static function get($key, $default = false)
+        /** @return array{0:int,1:int} [id_shop_group, id_shop] */
+        private static function resolveScope($idShopGroup, $idShop): array
         {
-            return array_key_exists($key, StubStore::$configuration) ? StubStore::$configuration[$key] : $default;
+            if ($idShop === null || !Shop::isFeatureActive()) {
+                $idShop = Shop::getContextShopID(true);
+            }
+            if ($idShopGroup === null || !Shop::isFeatureActive()) {
+                $idShopGroup = Shop::getContextShopGroupID(true);
+            }
+
+            return [(int) $idShopGroup, (int) $idShop];
         }
 
-        public static function updateValue($key, $value): bool
+        // Core returns false for a key that was never written.
+        public static function get($key, $default = false, $idShopGroup = null, $idShop = null)
+        {
+            list($idShopGroup, $idShop) = self::resolveScope($idShopGroup, $idShop);
+
+            if ($idShop && self::hasKey($key, null, null, $idShop)) {
+                return StubStore::$configurationShop[$idShop][$key];
+            }
+            if ($idShopGroup && self::hasKey($key, null, $idShopGroup)) {
+                return StubStore::$configurationGroup[$idShopGroup][$key];
+            }
+            if (self::hasKey($key)) {
+                return StubStore::$configuration[$key];
+            }
+
+            return $default;
+        }
+
+        public static function updateValue($key, $value, $html = false, $idShopGroup = null, $idShop = null): bool
         {
             if (!empty(StubStore::$configurationUpdateThrowsOnce[$key])) {
                 $message = StubStore::$configurationUpdateThrowsOnce[$key];
@@ -774,12 +821,32 @@ namespace {
                 return false;
             }
 
-            StubStore::$configuration[$key] = $value;
+            list($idShopGroup, $idShop) = self::resolveScope($idShopGroup, $idShop);
+            $stored = self::get($key, false, $idShopGroup, $idShop);
+            if ((!is_numeric($value) && $value === $stored) || (is_numeric($value) && $value == $stored && self::hasKey($key))) {
+                return true;
+            }
+
+            if ($idShop) {
+                StubStore::$configurationShop[$idShop][$key] = $value;
+            } elseif ($idShopGroup) {
+                StubStore::$configurationGroup[$idShopGroup][$key] = $value;
+            } else {
+                StubStore::$configuration[$key] = $value;
+            }
+
             return true;
         }
 
         public static function hasKey($key, $idLang = null, $idShopGroup = null, $idShop = null): bool
         {
+            if ($idShop) {
+                return isset(StubStore::$configurationShop[$idShop]) && array_key_exists($key, StubStore::$configurationShop[$idShop]);
+            }
+            if ($idShopGroup) {
+                return isset(StubStore::$configurationGroup[$idShopGroup]) && array_key_exists($key, StubStore::$configurationGroup[$idShopGroup]);
+            }
+
             return array_key_exists($key, StubStore::$configuration);
         }
 
@@ -791,6 +858,13 @@ namespace {
             }
 
             unset(StubStore::$configuration[$key]);
+            foreach (array_keys(StubStore::$configurationGroup) as $idShopGroup) {
+                unset(StubStore::$configurationGroup[$idShopGroup][$key]);
+            }
+            foreach (array_keys(StubStore::$configurationShop) as $idShop) {
+                unset(StubStore::$configurationShop[$idShop][$key]);
+            }
+
             return true;
         }
     }
@@ -1985,20 +2059,98 @@ namespace {
         }
     }
 
+    /** Core's shop context. */
     class Shop
     {
-        public const CONTEXT_ALL = 1;
+        public const CONTEXT_SHOP = 1;
+        public const CONTEXT_GROUP = 2;
+        public const CONTEXT_ALL = 4;
 
         /** Core's per-shop id; 1 is the default single-shop install. */
         public int $id = 1;
 
         public static function isFeatureActive(): bool
         {
-            return false;
+            return StubStore::$multistore;
         }
 
-        public static function setContext($context): void
+        public static function getContext(): int
         {
+            return StubStore::$shopContext;
+        }
+
+        public static function setContext($type, $id = null): void
+        {
+            switch ((int) $type) {
+                case self::CONTEXT_ALL:
+                    StubStore::$contextShopId = null;
+                    StubStore::$contextShopGroupId = null;
+                    break;
+                case self::CONTEXT_GROUP:
+                    StubStore::$contextShopId = null;
+                    StubStore::$contextShopGroupId = (int) $id;
+                    break;
+                case self::CONTEXT_SHOP:
+                    if (!isset(StubStore::$shops[(int) $id])) {
+                        throw new PrestaShopException('Shop ' . (int) $id . ' is not in StubStore::$shops');
+                    }
+                    StubStore::$contextShopId = (int) $id;
+                    StubStore::$contextShopGroupId = self::getGroupFromShop($id);
+                    break;
+                default:
+                    throw new PrestaShopException('Unknown context for shop');
+            }
+            StubStore::$shopContext = (int) $type;
+        }
+
+        public static function getContextShopID($null_value_without_multishop = false): ?int
+        {
+            if ($null_value_without_multishop && !self::isFeatureActive()) {
+                return null;
+            }
+
+            return StubStore::$contextShopId;
+        }
+
+        public static function getContextShopGroupID($null_value_without_multishop = false): ?int
+        {
+            if ($null_value_without_multishop && !self::isFeatureActive()) {
+                return null;
+            }
+
+            return StubStore::$contextShopGroupId;
+        }
+
+        /** @return int|false */
+        public static function getGroupFromShop($shop_id, $as_id = true)
+        {
+            return isset(StubStore::$shops[(int) $shop_id]) ? StubStore::$shops[(int) $shop_id] : false;
+        }
+
+        /** @return int[] */
+        public static function getShops($active = true, $id_shop_group = null, $get_as_list_id = false): array
+        {
+            $ids = [];
+            foreach (StubStore::$shops as $idShop => $idShopGroup) {
+                if ($id_shop_group === null || (int) $id_shop_group === (int) $idShopGroup) {
+                    $ids[] = (int) $idShop;
+                }
+            }
+
+            return $ids;
+        }
+
+        /** @return int[] */
+        public static function getContextListShopID($share = false): array
+        {
+            if (self::getContext() == self::CONTEXT_SHOP) {
+                return [(int) self::getContextShopID()];
+            }
+            if (self::getContext() == self::CONTEXT_GROUP) {
+                return self::getShops(true, self::getContextShopGroupID(), true);
+            }
+
+            return self::getShops(true, null, true);
         }
     }
 
