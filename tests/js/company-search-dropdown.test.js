@@ -1,18 +1,18 @@
 /**
- * TWO-25326 §1-§4, pinned against the PrestaShop company-search control.
+ * TWO-25326, pinned against the PrestaShop company-search control.
  *
  * One test per bullet of the cross-platform test script, worded so a failure
  * names the requirement rather than the implementation. These are the bullets
  * PrestaShop was recorded as failing on that ticket:
  *
- *   §1  in-field autocomplete with no separate dropdown control
- *   §1  no query field created at all
- *   §1  zero-result query shows no text
- *   §2  "not on the list" is an <li> inside the scrollable <ul>
- *   §2  reachable by cursor keys, not by Tab
- *   §2  no visual distinction from inert rows
- *   §2  activation behaviour untestable
- *   §4  Tab from query field to "not on the list"
+ *   in-field autocomplete with no separate dropdown control
+ *   no query field created at all
+ *   zero-result query shows no text
+ *   "not on the list" is an <li> inside the scrollable <ul>
+ *   reachable by cursor keys, not by Tab
+ *   no visual distinction from inert rows
+ *   activation behaviour untestable
+ *   Tab from query field to the mode chips
  *
  * jsdom CAVEAT, stated once and relied on throughout: jsdom implements focus,
  * DOM order and event dispatch faithfully, but it does NOT implement the
@@ -117,7 +117,7 @@ afterEach(() => {
     delete window.twopayment;
 });
 
-describe('§1 the dropdown is a real control, not an in-field autocomplete', () => {
+describe('the dropdown is a real control, not an in-field autocomplete', () => {
     test('a click on the company-name field opens a panel anchored to it', () => {
         makeInstance();
         expect(shown(panelParts().panel)).toBe(false);
@@ -129,7 +129,7 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
         expect(shown(panel)).toBe(true);
         // Anchored to the field: a child of the field's own tight wrapper, so
         // it tracks the input's position and width rather than the theme's
-        // padded column - and so DOM order gives tab order (see §2/§4 below).
+        // padded column - and so DOM order gives tab order.
         expect(panel.parent().hasClass('two-company-field-wrap')).toBe(true);
         expect(panel.siblings("input[name='company']").length).toBe(1);
     });
@@ -342,7 +342,7 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
     });
 });
 
-describe('§2 "My company is not on the list"', () => {
+describe('"My company is not on the list"', () => {
     test('is a real <button>, never a pseudo-row', () => {
         makeInstance();
         openPanel();
@@ -392,7 +392,7 @@ describe('§2 "My company is not on the list"', () => {
     test('the results list is not itself a tab stop', () => {
         // jQuery UI's menu widget sets `tabindex="0"` on its own <ul>, which
         // would put the scroll container between the query field and the
-        // button - the defect recorded against Hyva on this ticket.
+        // mode chips.
         makeInstance();
         openPanel();
         const menu = panelParts().query.autocomplete('widget');
@@ -473,21 +473,18 @@ describe('§2 "My company is not on the list"', () => {
     });
 
     test('is visible with the panel freshly open and nothing typed', () => {
-        // The WC regression recorded on TWO-25326: gating on the 3-character
-        // threshold removed the button entirely for a buyer who typed nothing,
-        // which is exactly the case Doug requires a manual-entry route for.
+        // Gating on the 3-character threshold would remove the button for a
+        // buyer who typed nothing - the case a manual-entry route most needs
+        // to cover (TWO-25326).
         makeInstance();
         openPanel();
         expect(shown(panelParts().notListed)).toBe(true);
     });
 
     test('stays visible even once a company IS selected (TWO-40 design revision)', () => {
-        // Was gated on !hasConfirmedSelection() before TWO-40's three-chip
-        // mode selector - Doug's spec for that selector is explicit that
-        // "Enter Manually" and "Registered Company" are ALWAYS in the set,
-        // with no confirmed-selection exception. A buyer who picked the
-        // wrong company must be able to switch straight to manual entry
-        // without first clearing the selection some other way.
+        // Manual entry is always in the mode set, with no
+        // confirmed-selection exception: a buyer who picked the wrong company
+        // switches straight to it rather than clearing the selection first.
         makeInstance();
         openPanel();
         typeQuery('exa');
@@ -622,7 +619,7 @@ describe('regressions in the dropdown\'s own rendering and teardown', () => {
         // row arrow-keyed onto, that fired our `select` handler, which closes
         // the panel and returns focus to company-name - so a buyer who arrowed
         // down to read a result and then tabbed had it silently chosen for
-        // them, and focus went backwards instead of on to "not on the list".
+        // them, and focus went backwards instead of on to the mode chips.
         //
         // Asserted through the widget's own keydown path rather than by
         // calling the guard: what matters is that the widget never SEES the
@@ -738,7 +735,7 @@ describe('regressions in the dropdown\'s own rendering and teardown', () => {
     });
 });
 
-describe('§3 the return-to-search link', () => {
+describe('the return-to-search link', () => {
     function enterManualEntry() {
         openPanel();
         panelParts().notListed.trigger('click');
@@ -797,7 +794,7 @@ describe('§3 the return-to-search link', () => {
     });
 });
 
-describe('§4 keyboard navigation', () => {
+describe('keyboard navigation', () => {
     test('the open panel holds the company field out of the tab order, query field first', () => {
         // TWO-25503: the field's focus opener puts the caret in the query
         // field, so a tab stop on the field would catch shift+Tab coming back
@@ -824,7 +821,7 @@ describe('§4 keyboard navigation', () => {
         openPanel();
         // The browser has already moved focus to the next form control; the
         // panel finds out via focusout. Pulling focus back here is the keyboard
-        // trap §4 forbids, and is the WC defect recorded on this ticket.
+        // trap TWO-25326 forbids.
         const next = $("input[name='dni']").get(0);
         next.focus();
         panelParts().panel.trigger('focusout');
@@ -865,14 +862,14 @@ describe('§4 keyboard navigation', () => {
         const panel = panelParts().panel;
         expect(shown(panel)).toBe(false);
         // Hidden elements are not focusable, so a closed panel cannot trap or
-        // detour a keyboard user - the property §4 asks for.
+        // detour a keyboard user.
         expect(shown(panel)).toBe(false);
         expect(shown(panelParts().query)).toBe(false);
         expect(shown(panelParts().notListed)).toBe(false);
     });
 });
 
-describe('§7 spacing and stray company displays', () => {
+describe('spacing and stray company displays', () => {
     test('the company-name field reserves no spinner space of its own', () => {
         // The spinner moved into the panel's query field, but the 32px
         // `padding-right` that reserved room for it stayed on the company-name
@@ -889,9 +886,8 @@ describe('§7 spacing and stray company displays', () => {
     });
 
     test('nothing displays the company name in the address area', () => {
-        // §7: no additional text labels showing the captured name. The
-        // click-to-reveal chip used to paint the name over the field; it is
-        // gone, and the only remaining label is the §5 company NUMBER.
+        // Nothing paints the captured name over the field; the company
+        // number is the only label a selection adds.
         makeInstance();
         openPanel();
         typeQuery('exa');
@@ -913,14 +909,14 @@ describe('§7 spacing and stray company displays', () => {
         panelParts().notListed.trigger('click');
         const link = $('.two-company-search-back');
         expect(window.getComputedStyle(link.get(0)).marginBottom).toBe('0px');
-        // The wrapper's old unconditional bottom padding is what stacked
-        // underneath it to make the gap Doug found live.
+        // An unconditional bottom padding on the wrapper would stack
+        // underneath the link and reopen the gap.
         expect(window.getComputedStyle(companyField().parent().get(0)).paddingBottom)
             .not.toBe('18px');
     });
 });
 
-describe('§5 the company number after selection', () => {
+describe('the company number after selection', () => {
     test('renders as a plain text label, never an input, and only once picked', () => {
         makeInstance();
         const hint = $('.two-company-id-hint');
@@ -939,9 +935,6 @@ describe('§5 the company number after selection', () => {
     });
 
     test('it takes NO space in the form until a company is selected', () => {
-        // §7: "additional space only when items such as the company number are
-        // visible". The old rule reserved 18px on the wrapper unconditionally
-        // AND still overlapped the field below, which is the defect this fixes.
         makeInstance();
         const wrapper = companyField().parent();
         expect(window.getComputedStyle(wrapper.get(0)).paddingBottom).not.toBe('18px');
@@ -956,8 +949,7 @@ describe('§5 the company number after selection', () => {
         pickResult(0);
 
         // In normal flow rather than absolutely positioned: an in-flow block
-        // takes its own height and cannot be painted over the next row, which
-        // is what the PS §5 collision was.
+        // takes its own height and cannot be painted over the next row.
         const style = window.getComputedStyle($('.two-company-id-hint').get(0));
         expect(style.position).not.toBe('absolute');
         expect(style.display).toBe('block');
@@ -993,7 +985,7 @@ describe('§5 the company number after selection', () => {
     });
 });
 
-describe('the placeholder describes the mode the field is in (TWO-25326 §2)', () => {
+describe('the placeholder describes the mode the field is in (TWO-25326)', () => {
     test('manual entry, which the buyer types into, names itself', () => {
         const search = makeInstance();
         expect(companyField().attr('placeholder')).toBeUndefined();

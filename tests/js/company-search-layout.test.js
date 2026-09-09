@@ -1,19 +1,17 @@
 /**
  * Regression tests for layout bugs found in checkout, on top of the widget
- * already confirmed working (PR two-inc/prestashop-plugin#128): jQuery UI's
+ * already confirmed working (prestashop-plugin PR #128): jQuery UI's
  * own `_resizeMenu` sizes the dropdown to whichever is WIDER, the field or
- * the longest label, so it needs to be explicitly clamped (2.1/2.2).
+ * the longest label, so it needs to be explicitly clamped.
  *
- * TWO-25326 removed the reveal chip and manual-entry row those bugs also
- * touched (2.3/2.4); their reachability behaviour is now pinned in
- * company-search-dropdown.test.js. Only the width work (2.1/2.2) survives
- * here, now anchored to the panel's query field rather than
- * `input[name='company']`.
+ * The clamp is anchored to the panel's query field. Reachability of the
+ * results list and the manual-entry route is pinned in
+ * company-search-dropdown.test.js.
  *
  * jsdom computes no real layout (offsetWidth/getBoundingClientRect are 0
  * regardless of CSS), so these tests pin the DOM structure and computed-style
  * values the width fix depends on; the actual pixel result was verified live
- * against https://prestashop-dev.staging.two.inc instead.
+ * against a staging shop instead.
  */
 
 'use strict';
@@ -62,14 +60,14 @@ function liveField() {
     return $("input[name='company']");
 }
 
-// TWO-25326 §1: the panel's query field, not `input[name='company']`. Resolves
+// TWO-25326: the panel's query field, not `input[name='company']`. Resolves
 // without the panel being open - setupAutocomplete() builds it at instance
 // creation.
 function widgetField() {
     return panelParts().query;
 }
 
-describe('the field wrapper (2.2/2.3)', () => {
+describe('the field wrapper', () => {
     test('wraps the company field in a single tight-fitting wrapper', () => {
         makeInstance();
 
@@ -102,9 +100,8 @@ describe('the field wrapper (2.2/2.3)', () => {
     });
 
     test('the org-id hint lands inside the field wrapper, and nothing can cover it', () => {
-        // TWO-25326 removed the chip (its opaque background painted over the
-        // hint, 2.3); absence is asserted explicitly since re-adding a chip is
-        // exactly how that regression would come back.
+        // No chip: an opaque background painted over the hint is exactly how
+        // this regression comes back (TWO-25326).
         makeInstance();
 
         const wrapper = liveField().parent();
@@ -126,7 +123,7 @@ describe('the field wrapper (2.2/2.3)', () => {
     });
 });
 
-describe('the dropdown width CSS variable (2.1)', () => {
+describe('the dropdown width CSS variable', () => {
     test('constrainAutocompleteMenuWidth() publishes the field width on the instance own panel', () => {
         const instance = makeInstance();
         openPanel();
@@ -356,11 +353,10 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
     });
 });
 
-describe('the manual-entry route stays reachable without scrolling (2.4, reshaped by TWO-25326 §2)', () => {
-    // TWO-25326 §2 took the route out of the scroll container entirely (a
-    // real <button>, sibling of it) rather than pinning it to the bottom of
-    // the list. Behaviour (tab order, activation) is pinned in
-    // company-search-dropdown.test.js; this covers only the layout half.
+describe('the manual-entry route stays reachable without scrolling (TWO-25326)', () => {
+    // The route out is a real <button> sibling of the scroll container, not a
+    // row pinned to the bottom of the list. Tab order and activation are
+    // pinned in company-search-dropdown.test.js; this covers the layout half.
 
     test('the scrolling is confined to the results host, which the route out sits outside', () => {
         installStylesheet('views/css/two.css');
@@ -383,12 +379,11 @@ describe('the manual-entry route stays reachable without scrolling (2.4, reshape
     });
 });
 
-describe('the org-number hint reserves no space until it has something to say (TWO-25326 §5/§7)', () => {
-    // The wrapper's old `padding-bottom` / `--two-company-hint-clearance`
-    // pairing was the defect: `top: 100%` on an absolutely positioned child
-    // resolves against the containing block's PADDING box, so reserved
-    // padding pushed the hint onto the VAT field below rather than making
-    // room above it.
+describe('the org-number hint reserves no space until it has something to say (TWO-25326)', () => {
+    // No `padding-bottom` and no `--two-company-hint-clearance`: `top: 100%`
+    // on an absolutely positioned child resolves against the containing
+    // block's PADDING box, so reserved padding would push the hint onto the
+    // VAT field below rather than making room above it.
 
     test('the wrapper reserves nothing and defines no clearance constant', () => {
         installStylesheet('views/css/two.css');

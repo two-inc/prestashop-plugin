@@ -9,12 +9,9 @@ class TwoCheckoutManager {
             // lookup was unconditional before the toggle existed (TWO-25203),
             // so an omitted value must not turn it off.
             addressLookupEnabled: true,
-            // TWO-25326 §7.1 (2026-08-03 ruling): the EXISTING
-            // PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS switch now decides WHERE the ONE
-            // company-search control renders, not whether it exists - the
-            // control is never off. true (default): address area, unchanged
-            // from before this ticket. false: the same control relocates
-            // into the payment tile instead.
+            // TWO-25326: WHERE the ONE company-search control renders, not
+            // whether it exists - the control is never off. true (default):
+            // address area. false: the payment tile.
             companySearchInAddressArea: true,
             // TWO-25326: whether the shop's stored API key currently verifies.
             // Default-on, matching every other switch here: an omitted value
@@ -1035,9 +1032,8 @@ class TwoCheckoutManager {
         // Saved server-side too so disabling JavaScript can't bypass the client-side block.
         this.saveOrderIntentResultToServer(result.approved);
 
-        // Build company-aware message for display (translated). Sentence
-        // built by TwoOrderIntent.buildCompanyIntentMessage() (TWO-25326
-        // §7.3) - the single place that templates name/number into the
+        // Sentence built by TwoOrderIntent.buildCompanyIntentMessage()
+        // (TWO-25326) - the single place that templates name/number into the
         // wording, shared with this module's own updateUI()/processResult().
         const selectedCompany = this.getSelectedCompany();
         const companyName = selectedCompany.name;
@@ -1065,7 +1061,7 @@ class TwoCheckoutManager {
 
     /**
      * Get the selected company name+number as ONE atomic pair, for the
-     * customer-visible intent sentence (TWO-25326 §7.3).
+     * customer-visible intent sentence (TWO-25326).
      *
      * Deliberately ONE method rather than a name getter and a number getter each
      * independently falling back to a DOM field when its own `this.orderIntent`
@@ -1093,7 +1089,7 @@ class TwoCheckoutManager {
                     number: this.orderIntent.lastCompanyNumber || ''
                 };
             }
-            // TWO-25326 §7.1: the address-area fields are only a
+            // TWO-25326: the address-area fields are only a
             // trustworthy fallback when the search control actually lives
             // there - in tile mode `company` stays visible/typeable by
             // design (never hidden) but is not where the buyer's real
@@ -1133,7 +1129,7 @@ class TwoCheckoutManager {
     /**
      * Swallow the "go back to your billing address and search for your company
      * name" family of prompts when the company-search control is mounted in
-     * the payment tile (TWO-25326 §7.1 follow-up).
+     * the payment tile (TWO-25326).
      *
      * Every one of those prompts - and the "Buy now, pay later - instant
      * credit" subtitle they render underneath, which is the same
@@ -2084,7 +2080,7 @@ class TwoCheckoutManager {
             this.initializeModules();
         }
 
-        // TWO-25326 §7.1: unconditionally, not just on the edge above - a
+        // TWO-25326: unconditionally, not just on the edge above - a
         // payment-fragment REPLACEMENT (twoPaymentOption non-null both
         // before and after) never satisfies the edge check, but can still
         // swap out the mounted #two_tile_company node. initializeCompanySearch()
@@ -2121,7 +2117,7 @@ class TwoCheckoutManager {
         this.detectCheckoutStep();
         this.detectAccountType();
 
-        // Tile mode (TWO-25326 §7.1) does nothing here deliberately: the address
+        // Tile mode (TWO-25326) does nothing here deliberately: the address
         // area's native `company` field stays a plain, unenhanced, typeable
         // text input in that mode (never hidden, never removed - confirmed
         // bug on woocommerce-plugin, checked not to recur here) and is never
@@ -2235,7 +2231,7 @@ class TwoCheckoutManager {
     }
     
     initializeModules() {
-        // TWO-25326 §7.1: company search is never off - only WHERE it
+        // TWO-25326: company search is never off - only WHERE it
         // renders varies (this.config.companySearchInAddressArea). In tile
         // mode the address-area's native `company` field is left exactly
         // alone - plain, unenhanced, still typeable - never hidden or
@@ -2271,8 +2267,8 @@ class TwoCheckoutManager {
     }
     
     /**
-     * TWO-25326 §7.1 (2026-08-03 ruling): the admin setting decides WHERE the
-     * one shared control mounts, never whether it exists. When the tile mount
+     * TWO-25326: the admin setting decides WHERE the one shared control
+     * mounts, never whether it exists. When the tile mount
      * point (`#two_tile_company`, rendered by paymentinfo.tpl only when the
      * setting is on) is present, TwoCompanySearch attaches to THAT field
      * instead of the address form's `input[name='company']` - same class,
@@ -2297,7 +2293,7 @@ class TwoCheckoutManager {
         if (this.config.apiKeyVerified === false) {
             return;
         }
-        // TWO-25326 §7.1: in tile mode, PrestaShop can replace the whole
+        // TWO-25326: in tile mode, PrestaShop can replace the whole
         // payment-options fragment (a surcharge/cart-line sync, a payment-
         // form refresh) with a FRESH #two_tile_company node. The re-init
         // trigger elsewhere in this module (handleDynamicContentChange) only
@@ -2382,11 +2378,10 @@ class TwoCheckoutManager {
 
     initializeOrderIntent() {
         if (!this.orderIntent && window.TwoOrderIntent) {
-            // TWO-25386 #8: `enabled` now follows the admin's order-intent
-            // toggle (this.config.orderIntentEnabled) rather than being
-            // hardcoded - shouldRunOrderIntent() reads it to skip the
-            // pre-approval preview call entirely when the merchant has
-            // turned it off. This is the pre-approval PREVIEW only; it never
+            // TWO-25386: `enabled` follows the admin's order-intent toggle
+            // (this.config.orderIntentEnabled) - shouldRunOrderIntent() reads it
+            // to skip the pre-approval preview call entirely when the merchant
+            // has turned it off. This is the pre-approval PREVIEW only; it never
             // gates the authoritative approval check the backend runs at
             // actual payment submission.
             this.orderIntent = new TwoOrderIntent({
@@ -2394,7 +2389,7 @@ class TwoCheckoutManager {
                 orderIntentUrl: this.config.orderIntentUrl,
                 ajaxToken: this.config.ajaxToken,
                 enablePaymentPreventionOnDecline: true,
-                // TWO-25326 §7.1: so collectFormData() knows not to trust the
+                // TWO-25326: so collectFormData() knows not to trust the
                 // address-area company/companyid DOM fields once search has
                 // relocated to the tile.
                 companySearchInAddressArea: this.config.companySearchInAddressArea !== false,

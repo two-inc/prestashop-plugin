@@ -58,46 +58,7 @@ load order a theme's `<script>` tags produce.
 
 ## What is covered
 
-`company-summary.test.js` — the read-only company display in the payment tile
-(`TwoCompanySummary`, TWO-25288):
-
-- the three capture modes onto the two slots: **search** and **sole trader** show name and
-  number, **manual entry** shows the name with the number slot blank. Blank and *present*,
-  asserted separately — a slot that disappears reads as a rendering fault rather than as an
-  answer.
-- a number whose `data-two-company-name` tag no longer matches the field is **not** shown
-  beside the new name.
-- the number arriving only with the company details (the GB shape) repaints the slot.
-- the display is not editable: **no** `input` / `select` / `textarea` / `button` /
-  `contenteditable` anywhere in the block, both slots are `SPAN`s with no `name`, and no part
-  of the block is inside a `form`.
-- the hidden `companyid` input still carries the number into the submission, inside the
-  address form, exactly one of it, unchanged by 25 renders — and a sole-trader push does not
-  invent one. The identifier mirroring the selection performs is re-pinned here too, because
-  this change added a call into the middle of `onCompanySelected()`.
-- the tile is repainted after a `updatedCart` re-render replaces the block, that the repaint
-  is **deferred** rather than synchronous with the event, and that a second instance does not
-  stack bus handlers (the bus has no `off`, so a per-instance registration leaks silently —
-  only one instance is built today, which is exactly what would have hidden it). `cleanup()`
-  stops the instance listening and is idempotent.
-- a **sole-trader enrolment never outranks a company captured in the form**: selecting or
-  typing one replaces it, and `TwoSoleTrader.setMode('business')` forgets it outright.
-- a **country change** clears the display along with the fields its listener clears.
-- values are written as **text, not markup**: a company name shaped like `<img onerror=...>`
-  from the register, and one typed by the buyer, both render as characters. This is the only
-  injection-relevant line in the module.
-
-It builds its DOM from the **shipped** `views/templates/hook/paymentinfo.tpl` via
-`buildPaymentTile()`, which strips Smarty rather than copying the markup into the test. A
-hand-written fixture would keep passing after someone renamed a class or deleted a slot in
-the real template, which is the failure a tile test exists to catch — nothing else in the
-suite reads that file. It also constructs a real `TwoCompanySummary` **instance**: the
-document-level `input` listener that catches a hand-typed company name belongs to the
-instance, so a suite that only loaded the class would find the manual-entry path dead and
-still pass on the paths that call `render()` directly. That is not hypothetical — it is how
-this suite first failed.
-
-`company-search-dropdown.test.js` — TWO-25326 §1-§5 and §7, one test per bullet of the
+`company-search-dropdown.test.js` — TWO-25326, one test per bullet of the
 cross-platform regression script, worded so a failure names the *requirement* rather than
 the implementation. This is the suite that pins the anchored dropdown rework: that a click
 or a keypress (but **not** plain focus) opens a panel anchored to the field, that the panel
@@ -264,31 +225,18 @@ form (which it does for something as ordinary as a country change):
   and the assertions here were aimed at the *inversion* that made it work: every other
   non-company row carries `ui-state-disabled`/`aria-disabled` so the widget's menu skips
   it, while that one had to be reachable and selectable. None of that applies any more.
-  It is now a real `<button>` and a sibling of the scroll container, so the properties
+  It is now a real `<button>` outside the scroll container, so the properties
   under test are structural instead: that it is a `<button>` and not an element with a
   click handler bolted on, that it renders *outside* the scrollable results host, that it
-  is the next tab stop after the query field by plain document order, that the cursor keys
-  cannot reach it (it is not an item in the widget's menu at all), and that it is coloured
-  distinctly from the inert rows above it. Those live in `company-search-dropdown.test.js`,
-  below.
-
-  **The key-event cases are the ones that matter most, and they must be driven
-  through the real widget.** The widget's focus event fires *after* the menu has
-  focused the row, and its return value gates only the write that mirrors a
-  key-navigated item into the input — and it performs that write only for a
-  **key-type** original event. So calling the `focus` option directly, as an
-  earlier version of these tests did, cannot observe the defect at all: it passes
-  whether the guard is there or not. The cases now trigger the widget's own menu
-  focus event with a synthetic keydown original event, in both list shapes,
-  because the normalizer behaves differently in each — alongside real companies
-  the row keeps an empty value (an unguarded write **blanks** the buyer's term),
-  and alongside a message row every value is rewritten from its label (an
-  unguarded write puts the **affordance text** into the field).
+  is among the tab stops immediately after the query field by plain document order, that
+  the cursor keys cannot reach it (it is not an item in the widget's menu at all), and
+  that it is coloured distinctly from the inert rows above it. Those live in
+  `company-search-dropdown.test.js`, below.
 
   Focus restoration is asserted on both paths, on activation and on the way back,
   via `document.activeElement`. This is the one behaviour whose regression is
   invisible to a sighted mouse user and total for a keyboard one, because
-  activating the row removes the focused element from the list.
+  activating it closes the panel the focused control lives in.
 
   Forgetting the selected company is asserted too, and on all three of the places a
   selection writes the organisation number — because two of them were missing and
@@ -316,20 +264,13 @@ form (which it does for something as ordinary as a country change):
   address-save backstop that holds when the browser's fire-and-forget request never
   arrives.
 
-  On the fallback path the row has no widget to lean on, so it carries its own
-  `role="button"`, `tabindex="0"` and Enter/Space handling, and each of those is asserted
-  directly — including that Space is `preventDefault`ed (its default action is to scroll)
-  and that an unrelated key does nothing. Two fallback-only cases matter more than they
-  look: every one of that path's four renderers wipes the list's `innerHTML`, so the footer
-  is asserted separately in the loading, results, zero-result and failure states; and
-  moving focus onto the row blurs the input, whose blur closes the list 150ms later, so one
-  case blurs the input, focuses the row, advances the timers and then activates it by
-  keyboard. Without the cancel that case pins, the affordance would be pointer-only in
-  practice however good its ARIA looked. A third closes the other half of that:
-  the row re-arms the close on its own blur, because the input is otherwise the
-  only node that closes this list and the row is now the first tab stop after the
-  company field whenever the dropdown is open — so tabbing onward would have left
-  the list painted over the address form indefinitely.
+  On the fallback path it is the SAME element, built once by `buildDropdown()` outside
+  the results host, so no renderer of that path can wipe it. Its visibility is gated all
+  the same, so it is still pinned per render state: alongside real results, through the
+  zero-result render with the panel staying open for it, and through the failure render.
+  Being a real `<button>` also means the browser supplies its role, its focus behaviour
+  and its Enter/Space activation, so this path hand-rolls none of them and cannot drift
+  from the jQuery UI path.
 
   **The PHP half of this element cannot be covered here at all.** Two seams are
   invisible to this suite because it stubs both sides of them: the dictionary keys
@@ -360,7 +301,7 @@ action through the controller's own switch: the tier ordering, the shape check o
 country, and that a posted country is still gated by the registry rather than trusted.
 
 `sole-trader-chip-visibility.test.js` — why the "Sole trader" chip did not render for GB
-at all (Doug, 2026-08-19). The only suite that runs the REAL `TwoSoleTrader` beside the
+at all. The only suite that runs the REAL `TwoSoleTrader` beside the
 real search control: all three defects live in the seam between the module that resolves
 the availability answer and the one that draws the chip, so a stub on either side hides
 them. Covers the answer landing while the panel is already open, every declined-request

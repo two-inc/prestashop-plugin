@@ -7,7 +7,7 @@ declare(strict_types=1);
  * server-side `invoice_distributed_by_merchant` flag, sourced from the same
  * GET /v1/merchant fetch/cache seam as available_terms (TWO-24813) and
  * due_in_days (TWO-24859). The manual PS_TWO_USE_OWN_INVOICES admin toggle is
- * retired (TWO-25106, Option A): leftover configuration rows from upgraded
+ * retired (TWO-25106): leftover configuration rows from upgraded
  * shops must have ZERO effect on behaviour.
  */
 final class InvoiceUploadGateSpec

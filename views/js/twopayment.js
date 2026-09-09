@@ -14,7 +14,7 @@
     // payload) must never read as "disabled".
     function buildCheckoutManagerConfig(config) {
         return {
-            // TWO-25326 §7.1: decides WHERE the one control renders:
+            // TWO-25326: decides WHERE the one control renders:
             // '1' (default) = address area, '0' = payment tile. Absent reads
             // as address-area, matching the server-side resolver.
             companySearchInAddressArea: config.company_name_search !== '0',
@@ -27,7 +27,7 @@
             // TWO-25326: an absent key must read as verified rather than take
             // the search away from a working shop.
             apiKeyVerified: config.api_key_verified !== false,
-            // TWO-25386 #8: an absent key - an older cached config payload
+            // TWO-25386: an absent key - an older cached config payload
             // predating this admin toggle - must read as enabled.
             orderIntentEnabled: config.enable_order_intent !== 0
                 && config.enable_order_intent !== '0'

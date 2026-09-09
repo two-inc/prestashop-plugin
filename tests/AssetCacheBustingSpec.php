@@ -216,7 +216,7 @@ final class AssetCacheBustingSpec
      * rather than a raw line - see stripComments() and
      * extractCallStatements() for what each closes off. Reverting any one
      * call site back to appending the version onto the path - the change
-     * that broke checkout in PR #127/TWO-53PS - drops that call's own
+     * that broke checkout in prestashop-plugin PR #127 / TWO-53PS - drops that call's own
      * statement text below both tokens, and this fails.
      */
     private static function testCheckoutHookUsesCleanPathAndVersionParamForEveryRegisteredAsset(): void
@@ -293,7 +293,7 @@ final class AssetCacheBustingSpec
         // Binding id -> expected path closes that gap.
         $expectedFrontPathsById = array(
             'two-css' => 'views/css/two.css',
-            // TWO-25326 §12: shared company-number display rule, registered
+            // TWO-25326: shared company-number display rule, registered
             // ahead of both modules that render a number.
             'two-company-number' => 'views/js/modules/TwoCompanyNumber.js',
             'two-company-search' => 'views/js/modules/TwoCompanySearch.js',

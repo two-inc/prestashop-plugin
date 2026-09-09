@@ -72,7 +72,7 @@ final class SessionCompanyClearSpec
         self::testBrowserSelectionIsReadOnlyOnAMissingCountryMarker();
     }
 
-    /* ---- TWO-40 #13: what the browser is allowed to be told ---- */
+    /* ---- TWO-40: what the browser is allowed to be told ---- */
 
     /**
      * Happy path first, so the withholding cases below cannot pass by publishing

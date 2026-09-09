@@ -119,7 +119,7 @@ function loadScript(relPath) {
 }
 
 /**
- * Load the shared company-number display helper (TWO-25326 §12).
+ * Load the shared company-number display helper (TWO-25326).
  *
  * Must load before any module that calls `window.TwoCompanyNumber` unguarded
  * - the priority order twopayment.php uses on a real page.
@@ -156,7 +156,7 @@ function loadCompanySearch() {
 }
 
 /**
- * Load TwoOrderIntent as a <script> tag would (TWO-25326 §7.3) - no jQuery/
+ * Load TwoOrderIntent as a <script> tag would (TWO-25326) - no jQuery/
  * bus setup needed, since buildCompanyIntentMessage() only reads
  * window.twopayment.
  *
@@ -792,7 +792,7 @@ function renderPaymentTile(soleTrader) {
         throw new Error('harness: paymentinfo.tpl produced no .two-payment-container');
     }
     // The `{if}` strip is non-greedy, so each `{if}...{/if}` block in the
-    // template (the tile-location company-search mount, TWO-25326 §7.1, and
+    // template (the tile-location company-search mount, TWO-25326, and
     // the optional-fields block below it) is stripped independently as long
     // as they do not nest or overlap.
     global.document.body.appendChild(container);
@@ -800,11 +800,10 @@ function renderPaymentTile(soleTrader) {
 }
 
 /**
- * The panel's own controls (TWO-25326 §1/§2).
+ * The panel's own controls (TWO-25326).
  *
- * Every test that used to type into `input[name='company']` types HERE now:
- * the company-name field stopped being the search box when the anchored
- * dropdown grew a query field of its own.
+ * Every test that types a query types HERE: the search box is the anchored
+ * dropdown's own query field, not the company-name field.
  *
  * Resolved from the live DOM on each call, never cached - PrestaShop replaces
  * the address form wholesale on `updatedAddressForm`, and a cached node is the
@@ -870,7 +869,7 @@ function shown(el) {
 
 /**
  * Open the dropdown the way a buyer does: a real mousedown on the
- * company-name field (§1 - focus alone must NOT open it).
+ * company-name field, not a synthetic openDropdown() call.
  *
  * @returns {Object} the query field, as a jQuery object
  */
@@ -927,7 +926,7 @@ function resultTexts() {
  * @returns {Function} the TwoSoleTrader class
  */
 function loadSoleTrader() {
-    // TWO-25326 §12: applyBuyer()'s status display now calls
+    // TWO-25326: applyBuyer()'s status display calls
     // window.TwoCompanyNumber.forDisplay() unguarded, exactly as the real page
     // does (twopayment.php loads it at a lower priority than every module that
     // renders a number, TwoSoleTrader included) - so it must be in place

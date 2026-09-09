@@ -11,7 +11,7 @@ require_once __DIR__ . '/../controllers/front/orderintent.php';
  * the buyer's live in-page selection - and falls back to the cart's delivery
  * address only when no usable country was posted. The cart's INVOICE address is
  * not consulted at any tier. Minting is otherwise UNCONDITIONAL (TWO-40
- * follow-up, Doug): once a country resolves at all, neither the registry's
+ * follow-up): once a country resolves at all, neither the registry's
  * per-country answer nor a merchant buyer-country record has any bearing on
  * whether minting proceeds - that authorisation belongs to the Two API these
  * tokens are minted against.

@@ -1,9 +1,8 @@
 /**
- * TWO-25326. Doug found this running a real checkout with "Enable Company
- * Search In Address Entry" set to No (company search relocated into the
- * payment tile): the order-intent check ran the instant the payment tile
- * mounted/was selected, before the buyer had picked a company from the
- * search results the tile contains.
+ * TWO-25326. With "Enable Company Search In Address Entry" set to No (company
+ * search relocated into the payment tile), the order-intent check ran the
+ * instant the payment tile mounted/was selected, before the buyer had picked
+ * a company from the search results the tile contains.
  *
  * Address mode never had this problem - by the time the payment step (and
  * its generic "Two payment selected" triggers) exists, address-step company

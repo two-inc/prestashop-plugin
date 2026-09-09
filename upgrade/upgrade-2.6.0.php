@@ -2,8 +2,8 @@
 /**
  * UPGRADE SCRIPT: Version 2.6.0
  *
- * Retire the PS_TWO_USE_OWN_INVOICES admin toggle (TWO-25111 / TWO-25106
- * Option A): the plugin-side invoice upload is now gated solely on the
+ * Retire the PS_TWO_USE_OWN_INVOICES admin toggle (TWO-25111, TWO-25106):
+ * the plugin-side invoice upload is now gated solely on the
  * merchant's server-side `invoice_distributed_by_merchant` flag, read from
  * the cached GET /v1/merchant record. The configuration row is deleted so no
  * remnant can be mistaken for a live setting; the code never reads it again

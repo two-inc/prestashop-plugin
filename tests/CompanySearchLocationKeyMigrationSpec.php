@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Coverage for upgrade/upgrade-2.7.6.php - the company-search location key
  * rename `PS_TWO_ENABLE_COMPANY_NAME` -> `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS`
- * (TWO-40 item #1).
+ * (TWO-40).
  *
  * Kept separate from CompanySearchLocationConfigSpec, which pins how the key is
  * RESOLVED and round-tripped. This file pins the one-time MIGRATION, which has
@@ -46,8 +46,8 @@ declare(strict_types=1);
  *
  * The offline `Configuration` double is a flat name->value array with no shop
  * dimension, so nothing here says anything about the multistore tiers. That is
- * deliberate and matches the script, which is global-tier-only on Doug's
- * explicit ruling - see the script's header and `.ai/decisions.md`.
+ * deliberate and matches the script, which is global-tier-only by decision -
+ * see the script's header and `.ai/decisions.md`.
  */
 final class CompanySearchLocationKeyMigrationSpec
 {

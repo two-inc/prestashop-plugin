@@ -2,17 +2,14 @@
  * TWO-25326. The payment tile must not flicker on ANY payment-option change,
  * because a payment-option change must no longer navigate the document.
  *
- * Doug: "when I select our payment method, the tile is rendered then flickers -
- * looks like it is removed and re-rendered. [...] And when I click to another
- * payment method, it is still behaving as before: after disappearing, our tile
- * reappears for a fraction of a second before disappearing again."
+ * Two symptoms: selecting Two renders the tile and then destroys and rebuilds
+ * it; selecting another method hides the tile, shows it again for a fraction of
+ * a second, then hides it for good.
  *
- * Hiding the reload's artefacts at first paint - the earlier approach - could
- * only ever address the second sentence, and only for the inner
- * `.two-payment-container`; the first sentence has no first paint to suppress at
- * all - the tile the buyer just opened is genuinely destroyed with the old
- * document and rebuilt in the new one. So this suite is written against the
- * CAUSE: the navigation.
+ * Suppressing the reload's artefacts at first paint reaches neither - the tile
+ * the buyer just opened is genuinely destroyed with the old document and
+ * rebuilt in the new one, so there is no first paint to suppress. This suite is
+ * written against the CAUSE: the navigation.
  *
  * The navigation is core's, and it is entered from this module's own request for
  * it. Emitting `updateCart` reaches `themes/_core/js/cart.js`, which on the
@@ -24,8 +21,8 @@
  * jsdom cannot navigate, so `installCoreCartPlumbing()` below stands in for it -
  * faithfully, and deliberately not as a spy on an event name. It reproduces what
  * a real navigation DOES to the tile: the checkout subtree is torn down and a
- * fresh one is built a tick later, exactly the "removed and re-rendered" Doug
- * describes. `installCorePaymentStep()` likewise mirrors
+ * fresh one is built a tick later, exactly the destroy-and-rebuild the buyer
+ * sees. `installCorePaymentStep()` likewise mirrors
  * `Payment.toggleOrderButton()` from `themes/_core/js/checkout-payment.js` -
  * collapse every additional-information block, then show only the selected one -
  * which is the mechanism behind the reappear-and-vanish beat, because the
@@ -286,9 +283,8 @@ async function selectOptionAndReportCartChanged(radioId) {
 
 describe('a payment-option change never navigates the document', () => {
     /**
-     * Doug's first sentence. The whole tile, not a chip inside it: an existence
-     * run of 'present,gone,present' IS the report, and the first-paint guard
-     * left it completely unaddressed.
+     * The whole tile, not a chip inside it: an existence run of
+     * 'present,gone,present' IS the symptom.
      */
     test('selecting Two does not destroy and rebuild the tile', async () => {
         makeManager();
@@ -308,8 +304,8 @@ describe('a payment-option change never navigates the document', () => {
     });
 
     /**
-     * Doug's second sentence. The tile must collapse ONCE and stay collapsed;
-     * 'shown,hidden,shown,hidden' is the reported symptom.
+     * The tile must collapse ONCE and stay collapsed;
+     * 'shown,hidden,shown,hidden' is the symptom.
      */
     test('selecting another method collapses the tile once and it stays collapsed', async () => {
         document.getElementById(TWO_RADIO_ID).checked = true;

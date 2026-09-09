@@ -234,7 +234,7 @@ afterEach(() => {
     global.window.localStorage.clear();
 });
 
-describe('Doug\'s three rules on focus (TWO-25658)', () => {
+describe('focus on a checkout control settles the open signup popup (TWO-25658)', () => {
     const TARGETS = {
         'the Sole trader chip': () => panelParts().soleTrader.get(0),
         'the Registered chip': () => panelParts().registered.get(0),
@@ -260,20 +260,20 @@ describe('Doug\'s three rules on focus (TWO-25658)', () => {
     }
 
     test.each([
-        ['popup open', 'the Sole trader chip', 1, false, false, true, 'rule 1: a Tab arrival leaves an open popup open'],
-        ['popup open', 'the Registered chip', 1, true, false, true, 'rule 2: closed on focus arrival, the click is still to come'],
-        ['popup open', 'the Enter manually chip', 1, true, false, true, 'rule 2: closed on focus arrival'],
-        ['popup open', 'a non-chip control inside the panel', 1, true, false, true, 'rule 2: closed, panel kept'],
-        ['popup open', 'the company-name field', 1, true, false, true, 'rule 2 closes the popup; the field is the popover\'s own trigger and its focus opener holds the popover open'],
-        ['popup open', 'a control outside the popover', 1, true, false, false, 'rules 2+3: popup and panel close'],
-        ['popup open', 'a "Select a different sole trader" button', 1, true, false, false, 'rule 2: a control like any other, its click relaunches'],
-        ['popup closed', 'the Sole trader chip', 1, false, false, true, 'rule 1: a Tab arrival with no popup opens none'],
+        ['popup open', 'the Sole trader chip', 1, false, false, true, 'a Tab arrival leaves an open popup open'],
+        ['popup open', 'the Registered chip', 1, true, false, true, 'closed on focus arrival, the click is still to come'],
+        ['popup open', 'the Enter manually chip', 1, true, false, true, 'closed on focus arrival'],
+        ['popup open', 'a non-chip control inside the panel', 1, true, false, true, 'closed, panel kept'],
+        ['popup open', 'the company-name field', 1, true, false, true, 'focus closes the popup; the field is the popover\'s own trigger and its focus opener holds the popover open'],
+        ['popup open', 'a control outside the popover', 1, true, false, false, 'popup and panel close'],
+        ['popup open', 'a "Select a different sole trader" button', 1, true, false, false, 'a control like any other, its click relaunches'],
+        ['popup closed', 'the Sole trader chip', 1, false, false, true, 'a Tab arrival with no popup opens none'],
         ['popup closed', 'the Registered chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'the Enter manually chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'a non-chip control inside the panel', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'the company-name field', 1, false, false, true, 'the field reopens the popover it triggers'],
-        ['popup closed', 'a control outside the popover', 1, false, false, false, 'rule 3: the panel closes'],
-        ['popup closed', 'a "Select a different sole trader" button', 1, false, false, false, 'rule 3: the panel closes']
+        ['popup closed', 'a control outside the popover', 1, false, false, false, 'the panel closes'],
+        ['popup closed', 'a "Select a different sole trader" button', 1, false, false, false, 'the panel closes']
     ])('%s, focus lands on %s: opens=%s closed=%s raised=%s panelOpen=%s - %s', async (state, target, opens, closed, raised, panelOpen) => {
         await launchWithPopupOpen();
         if (state === 'popup closed') {
@@ -435,7 +435,7 @@ describe('Doug\'s three rules on focus (TWO-25658)', () => {
     });
 });
 
-describe('the other mode chips (Doug: close on focus, the click never cancels, the mode change proceeds)', () => {
+describe('the other mode chips (close on focus, the click never cancels, the mode change proceeds)', () => {
     test.each([
         ['registered', 'the query row is back and focused'],
         ['notListed', 'manual entry, company field focused']
@@ -767,7 +767,7 @@ describe('the popup opening', () => {
         ['the Sole trader chip', async () => {
             makeInstance();
             openPanel();
-            // The focus arrival is inert (rule 1); the click that follows is the launch.
+            // The focus arrival is inert; the click that follows is the launch.
             panelParts().soleTrader.get(0).focus();
             panelParts().soleTrader.trigger('click');
         }],

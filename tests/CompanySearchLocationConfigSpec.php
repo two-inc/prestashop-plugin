@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 /**
  * Coverage for the company-search location behaviour of PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS
- * - TWO-25326 §7.1 (2026-08-03 design ruling).
+ * - TWO-25326.
  *
- * No new setting was added. Doug's explicit correction: reuse the EXISTING
- * "Enable company search in address entry" switch (label/desc rebadged,
- * same Configuration key) to decide WHERE the one shared company-search
- * control renders, rather than whether it exists at all:
+ * No new setting was added: the EXISTING "Enable company search in address
+ * entry" switch (label/desc rebadged, same Configuration key) decides WHERE
+ * the one shared company-search control renders, rather than whether it
+ * exists at all:
  *
  *  - Yes (default, install value 1): address area, unchanged from before
  *    this ticket.

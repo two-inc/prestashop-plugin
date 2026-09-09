@@ -1,16 +1,13 @@
 /**
- * TWO-25326 §7.1 follow-up: three browser-side defects found running a real
- * checkout with "Enable company search in address entry" set to "No" (the
- * company-search control mounted in the payment tile instead).
+ * TWO-25326: the company-search control as it is mounted in the payment tile,
+ * which is where it lands when "Enable company search in address entry" is
+ * set to "No". Three things it must get right there: search the API as the
+ * buyer types, match the width of the tile's other fields, and drop the "go
+ * back to your billing address" prompt, the search being right there.
  *
  * Every test builds the tile WITHOUT an address form: PrestaShop only renders
  * `select[name='id_country']` on the address step, not the payment step, so a
  * test with the address form present would pass for the wrong reason.
- *
- *   Bug 1  the control renders wider than every other field in the tile
- *   Bug 2  the "go back to your billing address and search for your company"
- *          prompt is shown even though the search is right there in the tile
- *   Bug 3  typing into the control's query field fires no search at all
  */
 
 'use strict';
@@ -99,7 +96,7 @@ afterEach(() => {
     delete window.twopayment;
 });
 
-describe('Bug 3: the tile-mounted control actually searches', () => {
+describe('the tile-mounted control actually searches', () => {
     beforeEach(() => {
         jest.useFakeTimers();
     });
@@ -188,7 +185,7 @@ describe('Bug 3: the tile-mounted control actually searches', () => {
     });
 });
 
-describe('Bug 1: the control is the same width as the tile\'s other fields', () => {
+describe('the control is the same width as the tile\'s other fields', () => {
     /**
      * Asserted against the optional-field block, not a hardcoded value: both
      * blocks are direct children of `.two-payment-container` with
@@ -207,7 +204,7 @@ describe('Bug 1: the control is the same width as the tile\'s other fields', () 
     });
 });
 
-describe('Bug 2: no "go back to your billing address" prompt in tile mode', () => {
+describe('no "go back to your billing address" prompt in tile mode', () => {
     let TwoCheckoutManager;
 
     /** The manager's own `init()` runs on construction against the

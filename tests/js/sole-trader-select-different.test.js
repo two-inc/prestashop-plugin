@@ -398,15 +398,14 @@ describe('destroy() abandons an in-flight replacement flow too (f)', () => {
 });
 
 /**
- * TWO-40 follow-up, Doug: the replacement flow gets the SAME in-flight
- * spinner, in the SAME place, for the SAME duration as the Sole trader chip's
- * first-time enrolment - it previously showed none at all, so a buyer who
- * clicked "Select a different sole trader" got an idle-looking checkout while
- * tokens were minted and a popup was opened.
+ * TWO-40 follow-up: the replacement flow gets the SAME in-flight spinner, in the
+ * SAME place, for the SAME duration as the Sole trader chip's first-time
+ * enrolment, so "Select a different sole trader" does not leave checkout looking
+ * idle while tokens are minted and a popup is opened.
  *
- * Both entry points now run through beginSoleTraderLoading(). The only
- * difference between them is whether a dropdown happens to be open, and that
- * is resolved by closing it only if it is - never by a second code path.
+ * Both entry points run through beginSoleTraderLoading(). The only difference
+ * between them is whether a dropdown happens to be open, and that is resolved by
+ * closing it only if it is - never by a second code path.
  */
 describe('the shared in-flight spinner (TWO-40 follow-up)', () => {
     let sheet;
@@ -451,12 +450,10 @@ describe('the shared in-flight spinner (TWO-40 follow-up)', () => {
     });
 
     /**
-     * Doug's own resolution of the one real difference between the two entry
-     * points: hide the dropdown at flow-complete ONLY IF it is open, a no-op
+     * The dropdown is hidden at flow-complete ONLY IF it is open, a no-op
      * otherwise. The link click never had one open, so the settle must not run
-     * closeDropdown()'s side effects - of which yanking focus back to the
-     * company field is the one a buyer would actually feel, since by then they
-     * may well have tabbed on.
+     * closeDropdown()'s side effects - yanking focus back to the company field
+     * being the one a buyer would feel, having likely tabbed on by then.
      */
     test('completing a link-launched flight does not run a close on a dropdown that was never open', () => {
         const instance = makeSearchInstance();
@@ -506,8 +503,7 @@ describe('the shared in-flight spinner (TWO-40 follow-up)', () => {
     });
 
     /**
-     * The guard is now shared between the two entry points, which is a real
-     * behaviour change and the one guide §14 asks for: one hosted popup at a
+     * The guard is shared between the two entry points: one hosted popup at a
      * time, whichever control asked for it.
      */
     test('a link click is refused while a chip-launched flight is still in progress, and vice versa', () => {

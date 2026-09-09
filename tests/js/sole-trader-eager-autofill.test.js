@@ -1,5 +1,5 @@
 /**
- * TWO-40 follow-up, Doug: the autofill lookup runs at mount, together with the
+ * TWO-40 follow-up: the autofill lookup runs at mount, together with the
  * token mint, and its ANSWER is held client-side. "I'm a sole trader" is then a
  * synchronous branch on state already known - autofill, prompt, or the signup
  * popup opened inside the click's own call stack, which is what keeps that

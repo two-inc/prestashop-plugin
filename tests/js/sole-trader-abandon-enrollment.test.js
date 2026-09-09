@@ -164,7 +164,7 @@ test('cancelling first would leave the window open - which is why the pair is on
     instance.cancelEnrollment();
     instance.closeSignupPopup();
 
-    // Live window owned by nobody: Sole trader would open a SECOND one (guide §14).
+    // Live window owned by nobody: Sole trader would open a SECOND one.
     expect(popup.closeCalls).toBe(0);
     expect(popup.closed).toBe(false);
     expect(instance._popup).toBeNull();
@@ -173,10 +173,11 @@ test('cancelling first would leave the window open - which is why the pair is on
 });
 
 /**
- * Guide §14: a caller that is NOT a buyer gesture and does NOT close the
- * window - TwoCompanySearch.destroy(), fired on every address-form re-render -
- * disowns the write and keeps the popup, since the buyer may be filling it
- * in right now. Mutation caught: dropping the argument nulls the handle.
+ * A caller that is NOT a buyer gesture and does NOT close the window -
+ * TwoCompanySearch.destroy(), fired on every address-form re-render - disowns the
+ * write and keeps the popup, since the buyer may be filling it in right now, and
+ * only one hosted popup exists at a time. Mutation caught: dropping the argument
+ * nulls the handle.
  */
 test('cancelEnrollment(true) disowns the write but keeps the popup tracked', async () => {
     jest.useFakeTimers();

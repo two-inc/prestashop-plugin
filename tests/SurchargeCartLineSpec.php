@@ -1047,7 +1047,7 @@ final class SurchargeCartLineSpec
     /**
      * The surcharge is a real hidden cart product; CartPresenter would
      * otherwise render it as an ordinary line item. Table covers both
-     * price-display modes (PR #211) crossed with whether the shop's own
+     * price-display modes (prestashop-plugin PR #211) crossed with whether the shop's own
      * tax-breakdown subtotal row is present, since insertion must still
      * land immediately before 'shipping' either way.
      */
@@ -1088,7 +1088,7 @@ final class SurchargeCartLineSpec
             TinyAssert::same($expectedProductsAmount, $data['subtotals']['products']['amount'], 'Subtotal reduced by exactly the surcharge amount: ' . $case['why']);
             TinyAssert::same(Tools::displayPrice($expectedProductsAmount), $data['subtotals']['products']['value'], 'Subtotal display value recomputed: ' . $case['why']);
 
-            TinyAssert::same($case['expectedAmount'], $data['subtotals']['two_surcharge_fee']['amount'], 'surcharge row amount carries PR #211\'s display value through: ' . $case['why']);
+            TinyAssert::same($case['expectedAmount'], $data['subtotals']['two_surcharge_fee']['amount'], 'surcharge row amount carries prestashop-plugin PR #211\'s display value through: ' . $case['why']);
             TinyAssert::same($module->getTwoSurchargeLineLabel(30), $data['subtotals']['two_surcharge_fee']['label'], 'surcharge row label: ' . $case['why']);
 
             if ($case['withTaxRow']) {

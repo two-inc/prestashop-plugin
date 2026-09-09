@@ -261,8 +261,7 @@ test.each([
 /**
  * openPopup()'s never-open-over-a-live-window guard gates on the window being
  * live, not on the raise succeeding. A throwing focus() must still return the
- * existing handle, or a second popup opens and orphans the first untracked
- * (guide §14).
+ * existing handle, or a second popup opens and orphans the first untracked.
  */
 test('openPopup() returns the live popup even when raising it throws, rather than opening a second', () => {
     buildPaymentTile();
@@ -314,9 +313,9 @@ test('closeSignupPopup() is a safe no-op with no popup, or one that has already 
  * window on 'ACCEPTED', so the 500ms poll often observes `closed` while the
  * write-back chain it started is still in flight.
  *
- * Doug's definition of complete (TWO-40 follow-up): popup closed AND lookup
- * resolved AND company written - all three. This test is written to FAIL
- * against a popup-close-only settle, and checks the ordering too.
+ * Complete means all three (TWO-40): popup closed AND lookup resolved AND
+ * company written. Written to FAIL against a popup-close-only settle, and
+ * checks the ordering too.
  */
 test('the popup closing does NOT settle the flight while the write-back is still out - the write does', async () => {
     buildPaymentTile();
@@ -445,9 +444,9 @@ test('a network failure on the buyer lookup fires the settle event', async () =>
 });
 
 /**
- * TWO-40 follow-up, Doug: spinner was clearing as soon as window.open()
- * returned, not when the popup closed. Pins the fix: settle stays held
- * until watchPopupUntilClosed()'s poll observes `popup.closed`.
+ * TWO-40: the settle waits for watchPopupUntilClosed()'s poll to observe
+ * `popup.closed`, not for window.open() to return - the spinner must not
+ * clear while the buyer is still in the popup.
  */
 test('a no-match buyer lookup handed off directly to the popup (address-editor page) keeps the spinner up until the popup actually closes', async () => {
     buildAddressForm();

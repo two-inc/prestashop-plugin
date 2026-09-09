@@ -1,5 +1,5 @@
 /**
- * TWO-25326 §7.3. buildCompanyIntentMessage() is the ONE place that builds the
+ * TWO-25326. buildCompanyIntentMessage() is the ONE place that builds the
  * intent sentence - processResult(), updateUI() and
  * TwoCheckoutManager.handleOrderIntentResult() all call it, so pinning its
  * output here covers every caller.

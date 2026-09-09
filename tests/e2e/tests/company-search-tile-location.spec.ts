@@ -6,8 +6,7 @@ import { addFirstProductToCartAndGoToCheckout } from "../pages/store.js";
 import { completeGuestStep, twoPaymentOption } from "../pages/checkout.js";
 
 /**
- * TWO-25326 §7.1 (2026-08-03 design ruling, with two follow-up corrections
- * from Doug). No new admin setting was added - the EXISTING
+ * TWO-25326. No new admin setting was added - the EXISTING
  * PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS switch ("Enable company search in address
  * entry" - the shipped label, pinned by tests/AddressLookupGatingSpec.php) now
  * decides WHERE the one shared company-search control renders:
@@ -17,8 +16,8 @@ import { completeGuestStep, twoPaymentOption } from "../pages/checkout.js";
  *   - No: the SAME control instead renders in the payment tile. The
  *     address area's native `company` field is NOT hidden or removed - it
  *     stays visible and typeable, just without the search enhancement (a
- *     bug found on woocommerce-plugin that this suite checks does not
- *     recur here).
+ *     bug confirmed on the WooCommerce plugin; this suite checks it does
+ *     not recur here).
  *
  * This suite drives both settings for real, against a real running
  * checkout. The toggle itself runs via `docker exec`, from the test
@@ -45,7 +44,7 @@ function setCompanySearchInAddressArea(enabled: boolean): void {
   execFileSync("docker", ["exec", container, "bash", "-c", "rm -rf /var/www/html/var/cache/*"]);
 }
 
-test.describe("TWO-25326 §7.1 company-search location", () => {
+test.describe("TWO-25326 company-search location", () => {
   test("address area (default): full search control renders in the address step, no tile mount", async ({
     page
   }) => {
@@ -61,8 +60,8 @@ test.describe("TWO-25326 §7.1 company-search location", () => {
     // exist in the DOM at all with the default (Yes / address-area) setting.
     await expect(page.locator("#two-tile-company-search")).toHaveCount(0);
 
-    // Same TwoCompanySearch behaviour as before this ticket (§1): clicking
-    // the field opens the anchored dropdown panel.
+    // Unchanged address-area behaviour: clicking the field opens the anchored
+    // dropdown panel.
     await companyField.click();
     await expect(page.locator(".two-company-dropdown")).toBeVisible({ timeout: 10_000 });
   });
@@ -77,10 +76,9 @@ test.describe("TWO-25326 §7.1 company-search location", () => {
     const addr = page.locator("#checkout-addresses-step");
     const companyField = addr.locator('input[name="company"]');
 
-    // The address area's native `company` field must stay visible and
-    // typeable - never hidden, never removed. Confirmed regression on
-    // woocommerce-plugin (2026-08-04); this is the PS-side check for the
-    // same bug.
+    // The address area's native `company` field must stay visible and typeable -
+    // never hidden, never removed - the regression confirmed on the WooCommerce
+    // plugin must not recur here.
     await expect(companyField).toBeVisible();
     await expect(companyField).toBeEditable();
     // Plain, unenhanced: no search/autocomplete attached in this mode -
@@ -126,9 +124,9 @@ test.describe("TWO-25326 §7.1 company-search location", () => {
     const tileField = page.locator("#two_tile_company");
     await expect(tileField).toBeVisible({ timeout: 15_000 });
 
-    // Same TwoCompanySearch.js control, just mounted here (§7.1: "genuinely
-    // move/reuse the component"): clicking it must open the same dropdown
-    // behaviour as the address-area control does in the other test.
+    // The same TwoCompanySearch.js control, moved rather than reimplemented:
+    // clicking it must open the same dropdown behaviour as the address-area
+    // control does in the other test.
     await tileField.click();
     await expect(page.locator(".two-company-dropdown")).toBeVisible({ timeout: 10_000 });
     // "Enter Manually" is suppressed here (TWO-25503: manual entry captures no
@@ -140,13 +138,12 @@ test.describe("TWO-25326 §7.1 company-search location", () => {
     await expect(page.locator(".two-company-mode-chips")).toBeHidden();
     await expect(page.locator("button.two-company-not-listed")).toBeHidden();
 
-    // And it SEARCHES, not merely opens (TWO-25326 §7.1 follow-up). The
-    // control opened correctly while being completely unable to search: on
-    // this step PrestaShop renders an address selector rather than the address
-    // form, so `select[name='id_country']` - the only country source the
-    // browser side had - does not exist, and every keystroke resolved no
-    // country and declined to search. The buyer-visible symptom is this row,
-    // pointing at a country control that is not on the page.
+    // And it SEARCHES, not merely opens (TWO-25326). On this step PrestaShop
+    // renders an address selector rather than the address form, so
+    // `select[name='id_country']` does not exist. A browser-side-only country
+    // source therefore resolved nothing and every keystroke declined to
+    // search, whose buyer-visible symptom was this row pointing at a country
+    // control that is not on the page.
     //
     // Asserted as the absence of that row rather than on results, so it needs
     // no live company register and cannot flake on one: typing enough

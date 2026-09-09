@@ -1035,16 +1035,14 @@ final class OrderBuilderSpec
         $cart->id_carrier = 0;
         self::ensureCartTaxAddress($cart); // seeds ES (country 34) invoice address
 
-        // Plumbing proof for the Canary-IGIC class of bug: the getProducts()
-        // row still carries the country-only 'rate' field (21.0), but the
-        // product's declared group resolves 7% for THIS cart's tax address
-        // and PrestaShop applied 7% to the amounts. The relay must emit the
-        // address-correct 7%, proving the country-only 'rate' field is dead.
-        // NOTE: the stub resolves rates by COUNTRY id, so this pins the
-        // "row field ignored, TaxManagerFactory wins" plumbing only — real
-        // sub-national (state/zip) zone resolution can only be proven
-        // against a live PrestaShop tax engine (design doc section 7.1b:
-        // staging Canary/Ceuta order, post-merge validation).
+        // The getProducts() row carries the country-only 'rate' field (21.0)
+        // while the product's declared group resolves 7% for this cart's tax
+        // address, so the relay must emit 7%. The stub resolves rates by
+        // country id, so this pins only that the row field loses to
+        // TaxManagerFactory — real sub-national (state/zip) zone resolution
+        // can only be proven against a live PrestaShop tax engine, and is
+        // still owed a live staging order to a Canary Islands or Ceuta
+        // address.
         StubStore::$cartProducts[17] = [[
             'id_product' => 502,
             'link_rewrite' => 'igic-product',

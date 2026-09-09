@@ -1,5 +1,5 @@
 /**
- * Two Payment - company/organisation number display rules (TWO-25326 §12).
+ * Two Payment - company/organisation number display rules (TWO-25326).
  *
  * Some organisation numbers are not register numbers at all: the sole-trader
  * enrolment flow mints a SYNTHETIC identifier prefixed `TWO:` and stores it in

@@ -1,7 +1,7 @@
 /**
  * TWO-40: the SECONDARY address's sync pin.
  *
- * Doug's rulings, which these specs exist to hold:
+ * The rules these specs exist to hold:
  *  - triggered by ANY address field entered, not only company/country;
  *  - no dedicated control - driven by a match on FIELD CONTENTS, trimmed
  *    and case-folded;
@@ -139,10 +139,10 @@ describe('the pin: a pristine secondary address is synced', () => {
 
 describe('the pin is triggered by ANY address field, address-wide', () => {
     /**
-     * Doug: "we need to pin it if any address field has been entered, not just
-     * country/company". The street is the case that proves it, because the mirror
-     * never writes the street itself - so a per-field rule would sync the company
-     * happily while the buyer had already described a different place.
+     * Any address field the buyer entered pins the address, not just
+     * country/company. The street proves it: the mirror never writes the street
+     * itself, so a per-field rule would sync the company happily while the buyer
+     * had already described a different place.
      */
     test('a street the buyer entered pins the whole address, so the company is not written', () => {
         buildAddressesStep({ editing: 'invoice' });
@@ -216,12 +216,11 @@ describe('the pin is triggered by ANY address field, address-wide', () => {
     });
 
     /**
-     * TWO-40: `address2` and `state` joined the tracked set when the sole-trader
-     * autofill started routing `building`/`apartment` into the second line and
-     * `region` into the state select (Doug's ruling). A buyer typing a second address
-     * line, or choosing a county, is stating an independent answer exactly as much as
-     * one typing a city - so it has to pin the address like any other field. While
-     * they were absent from the record the address-wide rule missed both cases.
+     * TWO-40: `address2` and `state` are tracked because the sole-trader autofill
+     * routes `building`/`apartment` into the second line and `region` into the state
+     * select. A buyer typing a second address line, or choosing a county, is stating
+     * an independent answer exactly as much as one typing a city, so it pins the
+     * address like any other field.
      */
     test('the tracked field set includes the second address line and the state', () => {
         // The whole list, not a containment check: a field silently dropped from it is
@@ -437,10 +436,9 @@ describe('the content match trims and folds case', () => {
 
 describe('an existing saved billing address is never synced over', () => {
     /**
-     * The silent-overwrite case, and Doug's rule closes it with no separate
-     * new-versus-existing heuristic: an address that already exists renders
-     * non-empty, nothing is on record as having written those values, so it is
-     * pinned.
+     * The silent-overwrite case, closed with no separate new-versus-existing
+     * heuristic: an address that already exists renders non-empty and nothing is on
+     * record as having written those values, so it is pinned.
      *
      * A rule that accepted the server-rendered `value` attribute as "unanswered" for
      * a text input would sync straight over the buyer's saved billing address, which

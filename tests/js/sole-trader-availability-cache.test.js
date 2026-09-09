@@ -1,24 +1,15 @@
 /**
  * TWO-40 follow-up: two defects, one fix each.
  *
- * Defect 1 (live on staging, Doug's report): the "I'm a sole trader" row
- * never appeared on the address-editor page, even for a registry-supported
- * country (GB). Root cause - refreshAvailability() early-returned whenever
- * `.two-sole-trader` was absent from the page, BEFORE it ever resolved the
- * billing country or fired the fetch. That container only ever exists on the
- * payment step (rendered by paymentinfo.tpl); nothing renders it on the
- * address-editor page at all. So availability never resolved for ANY country
- * on any page other than the payment step, however eligible the country was.
- * See TwoSoleTrader.js's refreshAvailability() for the fix and its full
- * reasoning.
+ * refreshAvailability() early-returned whenever `.two-sole-trader` was absent from
+ * the page, before it resolved the billing country or fired the fetch. That
+ * container only exists on the payment step, so the "I'm a sole trader" row never
+ * appeared on the address-editor page even for a registry-supported country.
  *
- * Defect 2 (Doug's own request): even with the container gap above fixed,
- * every fresh page load re-fires the availability round trip before the chip
- * can appear, because `availabilityByCountry` is in-memory only and resets on
- * every navigation. A localStorage cache, keyed per ISO country and
- * namespaced per checkout environment (see availabilityStorageKey()'s doc),
- * with a 24h TTL, lets a later page paint from cache with no round trip at
- * all.
+ * `availabilityByCountry` is in-memory only and resets on every navigation, so each
+ * fresh page load re-fired the availability round trip before the chip could appear.
+ * A localStorage cache, keyed per ISO country and namespaced per checkout
+ * environment, with a 24h TTL, lets a later page paint from cache with no round trip.
  */
 
 'use strict';
@@ -368,15 +359,11 @@ describe('a transport failure is never persisted to the cache', () => {
     });
 
     test('a "success: false" server answer is NOT an answer, and is cached nowhere', async () => {
-        // Reverses what this test asserted before (TWO-40 follow-up, Doug
-        // live-test finding - the GB chip disappearing). The fetch resolving is
-        // not the same as the server ANSWERING: `success: false` is what this
-        // endpoint says for a stale ajax token and for an unknown action, HTTP
-        // 200 with a JSON body either way, so the catch() below never sees it.
-        // Treating it as "this country does not do sole traders" cached a
-        // declined request as a real answer - for the page in memory, and for
-        // 24h in localStorage on every later load, with nothing that re-asks
-        // inside the TTL. Full coverage in sole-trader-chip-visibility.test.js.
+        // A resolved fetch is not the same as the server ANSWERING: `success: false`
+        // is what this endpoint says for a stale ajax token and for an unknown
+        // action, HTTP 200 either way, so the catch() below never sees it. Treating
+        // it as "this country does not do sole traders" would cache a declined
+        // request as a real answer for 24h, with nothing re-asking inside the TTL.
         global.window.fetch = (url) => {
             if (url.indexOf('soleTraderAvailability') === -1) {
                 return Promise.resolve({ json: () => Promise.resolve({ success: false }) });

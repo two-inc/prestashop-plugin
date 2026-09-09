@@ -142,14 +142,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * (TWO-24755). The merchant API key stays server-side; tokens are scoped
      * and short-lived by the Two API.
      *
-     * Minting is unconditional once a country resolves (TWO-40 follow-up,
-     * Doug: neither the registry's per-country answer nor a merchant
-     * buyer-country record has any bearing on whether minting is
-     * authorised - that decision belongs to the Two API these tokens are
-     * minted against). A country still has to resolve at all - not an
-     * eligibility check, just what mintTokensRequest()'s caller needs to
-     * report back to the browser - so this is not a token oracle for a
-     * cart with nothing to mint FOR.
+     * Minting is unconditional once a country resolves (TWO-40 follow-up):
+     * neither the registry's per-country answer nor a merchant buyer-country
+     * record has any bearing on whether minting is authorised - that decision
+     * belongs to the Two API these tokens are minted against. A country still
+     * has to resolve at all - not an eligibility check, just what
+     * mintTokensRequest()'s caller needs to report back to the browser - so
+     * this is not a token oracle for a cart with nothing to mint FOR.
      *
      * A posted country is preferred over the cart's (TWO-40): mintTokens()
      * itself takes no country at all, its delegation scopes are fixed, so a
@@ -478,7 +477,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
     public function ajaxProcessCheckOrderIntent()
     {
-        // Order intent pre-approval preview toggle (TWO-25386 #8). Server-side
+        // Order intent pre-approval preview toggle (TWO-25386). Server-side
         // hard gate, defense-in-depth alongside the client-side
         // shouldRunOrderIntent() check in TwoOrderIntent.js. Never touches
         // Twopayment::checkTwoOrderIntentApprovalAtPayment() - the authoritative
@@ -764,14 +763,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Helper method to validate AJAX token.
-     *
-     * DEBUG ESCAPE HATCH (TWO-25386 #4, ported from woocommerce-plugin's
-     * `skip_confirm_auth`): PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when enabled,
-     * skips this token check entirely on every action on this controller.
-     * Default OFF - matches the pre-existing always-checked behaviour.
-     */
-    /**
      * Company-name search, relayed server-side so the firewall token stays out
      * of the browser. Two's status and body are passed through untouched:
      * callers read `error_code`/`error_message` off the failing response.
@@ -892,6 +883,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->sendJsonResponse(json_encode($body));
     }
 
+    /**
+     * DEBUG ESCAPE HATCH (TWO-25386): PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when
+     * enabled, skips this token check entirely on every action on this
+     * controller. Default OFF - matches the pre-existing always-checked
+     * behaviour.
+     */
     public function validateAjaxToken()
     {
         if ($this->module->isTwoSkipConfirmTokenCheckEnabled()) {

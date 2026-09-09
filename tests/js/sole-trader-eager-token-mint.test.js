@@ -1,5 +1,5 @@
 /**
- * TWO-40 follow-up, Doug: the delegated auth tokens the sole-trader flow signs
+ * TWO-40 follow-up: the delegated auth tokens the sole-trader flow signs
  * against are minted when the component mounts and an eligible billing country
  * resolves, not on the buyer's first "I'm a sole trader" click. By the time
  * that click happens a token pair is already minted and refreshing.
