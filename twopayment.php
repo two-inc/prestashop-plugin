@@ -3429,8 +3429,12 @@ class Twopayment extends PaymentModule
             ),
             array(
                 'label' => $this->l('Environment'),
-                'value' => $environment === '' ? $this->l('Not configured') : strtoupper($environment),
-                'ok' => $environment !== '',
+                // Anything outside ENVIRONMENT_HOSTS silently resolves to the sandbox, so
+                // reporting it as healthy is the same untruth as inventing one (ABN-532).
+                'value' => $environment === ''
+                    ? $this->l('Not configured')
+                    : htmlspecialchars(strtoupper($environment), ENT_QUOTES, 'UTF-8'),
+                'ok' => array_key_exists($environment, self::ENVIRONMENT_HOSTS),
             ),
             array(
                 'label' => $this->l('SSL verification'),

@@ -777,9 +777,7 @@ namespace {
     /**
      * Core Configuration's scope resolution: get() resolves the shop and group ids as core does (the context's, null
      * outside multistore) then cascades shop -> group -> global, else FALSE; hasKey() reads one bucket; updateValue()
-     * writes one row at the resolved scope and skips a value that already cascades to the same thing. get()'s 2nd
-     * parameter is honoured as $default here; core's is $id_lang and an absent row answers FALSE, so a module call
-     * site relying on a slot-two default passes here and reads false in production.
+     * writes one row at the resolved scope and skips a value that already cascades to the same thing.
      */
     class Configuration
     {

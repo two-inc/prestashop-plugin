@@ -51,7 +51,7 @@ final class ConfigFallbackSpec
         }
     }
 
-    /** An unset environment resolves to the sandbox hosts at runtime, so naming 'staging' here was untrue twice over. */
+    /** Anything ENVIRONMENT_HOSTS does not name resolves to the sandbox at runtime, so the panel must not call it healthy. */
     private static function testHealthChecklistEnvironmentRow(): void
     {
         $cases = [
@@ -59,6 +59,8 @@ final class ConfigFallbackSpec
             ['staging', 'STAGING', true, 'a staging shop reports staging'],
             [null, 'Not configured', false, 'no row at all is reported as unconfigured, not as staging'],
             ['', 'Not configured', false, 'an emptied row is reported as unconfigured'],
+            ['development', 'DEVELOPMENT', false, 'the withdrawn value is shown but not called healthy'],
+            ['<img src=x onerror=alert(1)>', '&lt;IMG SRC=X ONERROR=ALERT(1)&gt;', false, 'a stored value is escaped before it reaches an admin page'],
         ];
 
         foreach ($cases as list($stored, $expected, $expectedOk, $description)) {
