@@ -692,6 +692,9 @@ final class ApiKeyVerificationSpec
             Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS => '30',
             Twopayment::CONFIG_PLATFORM_MIN_ORDER => '250',
             Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED => '1',
+            // Stamped for the key it was fetched with (ABN-530), which is the shape
+            // every record has once fetched: an unstamped one cannot be dropped at all.
+            Twopayment::CONFIG_MERCHANT_RECORD_KEY => TwopaymentTestHarness::recordKeyStampForTest('stored-key'),
         );
 
         foreach ($cases as list($outcome, $apiKey, $environment, $case)) {

@@ -25,7 +25,7 @@ final class MerchantRecordKeyBindingSpec
         self::testAShopWithItsOwnKeyDoesNotReadAWiderTiersRecord();
         self::testAnUnstampedRecordIsStillServed();
         self::testAMismatchedStampRefetchesInsideTheTtl();
-        self::testAForeignRecordIsDroppedEvenWhenTheRefetchFails();
+        self::testAForeignRecordIsNotServedWhenTheRefetchFails();
     }
 
     /**
@@ -159,10 +159,10 @@ final class MerchantRecordKeyBindingSpec
 
     /**
      * Given a key swap whose refetch fails, When the record is read, Then the previous key's record
-     * is gone rather than served stale, and the retry waits for the backoff instead of firing on
-     * every render.
+     * is not served, and the retry waits for the backoff instead of firing on every render. The
+     * record itself is kept: only a successful refetch replaces it (ABN-519).
      */
-    private static function testAForeignRecordIsDroppedEvenWhenTheRefetchFails(): void
+    private static function testAForeignRecordIsNotServedWhenTheRefetchFails(): void
     {
         StubStore::reset();
         $module = self::module();
@@ -172,7 +172,12 @@ final class MerchantRecordKeyBindingSpec
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-b');
         $module->getMerchantAvailableTerms();
 
-        TinyAssert::same([], $module->getMerchantAvailableTerms(), 'the previous key\'s terms are gone');
+        TinyAssert::same([], $module->getMerchantAvailableTerms(), 'the previous key\'s terms are not served');
+        TinyAssert::same(
+            json_encode([14, 30]),
+            (string) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS),
+            'and are still held, for the key they belong to'
+        );
         TinyAssert::same(2, $module->calls, 'the failed retry is not re-fired inside the backoff');
     }
 

@@ -109,7 +109,9 @@ beside the save confirmation instead.
 - Storing a different key or environment refreshes the cached merchant record and
   never clears it (ABN-519). A merchant with two shops who cycles their key and
   updates only one must not have the other forget the terms, fees and minimum its
-  admin controls are built from.
+  admin controls are built from, and a typo saved during an outage must be
+  recoverable by pasting the right key back. A record fetched for another key is
+  withheld (ABN-530), not dropped.
 - **A 200 carrying no merchant `id` is not a verified key** — a proxy, a captive
   portal or a maintenance page answers 200 too, and there is no identity to offer
   the method under. The buyer gate withholds Two on it, as on every non-OK verdict.

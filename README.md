@@ -172,7 +172,7 @@ Notes:
 
 Your offerable payment terms, buyer-surcharge rates, minimum order value and default term are read from Two's merchant record and cached in the shop's configuration. Checkout and admin pages read that cache and never block on the API.
 
-**The cache never expires and is never cleared.** A failed refresh — an outage, a rejected key, a 500, an unreachable API — changes nothing: the shop keeps trading and its admin pages keep showing the last known good values. Saving a new API key or environment refreshes the record but does not clear it either, so a shop whose key was cycled elsewhere and never updated here does not lose the values its admin controls are built from.
+**The cache never expires and is never cleared.** A failed refresh — an outage, a rejected key, a 500, an unreachable API — changes nothing: the shop keeps trading and its admin pages keep showing the last known good values. Saving a new API key or environment refreshes the record but does not clear it either, so a shop whose key was cycled elsewhere and never updated here does not lose the values its admin controls are built from, and a wrong key saved during an outage is undone by pasting the right one back. A record belonging to a key the shop no longer holds is not used, but it is kept until a refresh succeeds.
 
 The cache is replaced only by a successful refresh, and only from one of these:
 

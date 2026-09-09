@@ -2660,6 +2660,12 @@ namespace {
         {
             return $string;
         }
+
+        /** The identity the production write path stamps a merchant record with (ABN-530). */
+        public static function recordKeyStampForTest(string $apiKey): string
+        {
+            return static::verificationSlotKey($apiKey);
+        }
     }
 
     StubStore::reset();

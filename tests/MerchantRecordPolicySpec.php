@@ -17,6 +17,7 @@ final class MerchantRecordPolicySpec
         self::testAScheduledRunClearsTheStandInMark();
         self::testARecordWithNoSuccessStampHasNothingToServe();
         self::testARecordStampedForAnotherKeyIsNothingToServe();
+        self::testAKeyChangeDuringAnOutageIsRecoverableByRevertingTheKey();
         self::testAFailingScheduleIsNotReportedAsAScheduleThatNeverRan();
         self::testTheDiagnosticsRowsFollowTheContextTheRecordLivesIn();
     }
@@ -77,10 +78,16 @@ final class MerchantRecordPolicySpec
             {
                 ++$this->calls;
                 $this->timeouts[] = (int) $timeout;
+                if (is_callable($this->onRequest)) {
+                    return call_user_func($this->onRequest);
+                }
                 $next = array_shift($this->responses);
 
                 return $next === null ? array('http_status' => 0) : $next;
             }
+
+            /** @var callable|null Runs in place of the queued response. */
+            public $onRequest = null;
 
             public function refreshTwoFxRates()
             {
@@ -485,6 +492,38 @@ final class MerchantRecordPolicySpec
         }
 
         StubStore::reset();
+    }
+
+    /**
+     * The record survives a key change whose refetch cannot succeed, so a merchant who
+     * saved a typo during an outage gets everything back by pasting the right key again.
+     * A foreign record is withheld, never dropped (ABN-519).
+     */
+    private static function testAKeyChangeDuringAnOutageIsRecoverableByRevertingTheKey(): void
+    {
+        $module = self::harness();
+        $module->onRequest = static function () {
+            return array('http_status' => 0);
+        };
+        self::seedHeldRecord(10);
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_RECORD_KEY, TwopaymentTestHarness::recordKeyStampForTest('key-a'));
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-a');
+        $expected = self::heldValues();
+
+        // A typo saved while Two is unreachable.
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-typo');
+        TinyAssert::false($module->refreshMerchantRecord(), 'the refetch under the wrong key fails');
+        TinyAssert::same(array(), $module->getMerchantAvailableTerms(), 'the foreign record is withheld');
+        TinyAssert::same($expected, self::heldValues(), 'but every cached value is still held');
+
+        // The right key pasted back, still no API.
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-a');
+
+        TinyAssert::same(
+            array(30, 60),
+            $module->getMerchantAvailableTerms(),
+            'reverting the key restores what the shop was serving'
+        );
     }
 
     /**

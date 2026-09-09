@@ -52,6 +52,9 @@ class Twopayment extends PaymentModule
     const CONFIG_MERCHANT_RECORD_STOOD_IN_TS = 'PS_TWO_MERCHANT_RECORD_STOOD_IN_TS';
     // The once-per-hour floor between stand-ins, rewritten by each one.
     const CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS = 'PS_TWO_MERCHANT_RECORD_STALE_TS';
+    // The retry floor while the held record belongs to another key. Its own stamp cannot
+    // serve as one - a mismatch is a cold cache, not a young one (ABN-530).
+    const CONFIG_MERCHANT_RECORD_FOREIGN_TS = 'PS_TWO_MERCHANT_RECORD_FOREIGN_TS';
     // Guards the refresh front controller, which the shop's own crontab calls.
     const CONFIG_CRON_TOKEN = 'PS_TWO_CRON_TOKEN';
     // Throttles the rejected-request log line on that public URL.
@@ -1013,6 +1016,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_MERCHANT_DUE_IN_DAYS);
         Configuration::deleteByName(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS);
         Configuration::deleteByName(self::CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_RECORD_FOREIGN_TS);
         Configuration::deleteByName(self::CONFIG_CRON_TOKEN);
         Configuration::deleteByName(self::CONFIG_CRON_REJECT_LOG_TS);
         Configuration::deleteByName(self::CONFIG_CRON_LAST_RUN_TS);
@@ -10590,7 +10594,7 @@ class Twopayment extends PaymentModule
      *
      * @return string
      */
-    private static function verificationSlotKey($apiKey)
+    protected static function verificationSlotKey($apiKey)
     {
         return md5((string) $apiKey . '|' . Tools::strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT')));
     }
@@ -10978,14 +10982,24 @@ class Twopayment extends PaymentModule
      */
     protected function refreshMerchantRecordIfDue()
     {
-        // A record fetched for another key is not this shop's to serve (ABN-530),
-        // so its stamp says nothing about what this shop holds.
-        $checked_on = self::isMerchantRecordSlotForCurrentKey()
-            ? (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS)
-            : 0;
+        // A record fetched for another key is unservable and its stamp says nothing
+        // about this shop, so it gets a floor of its own. It is NOT dropped: only a
+        // successful refetch replaces it (ABN-519).
+        if (!self::isMerchantRecordSlotForCurrentKey()) {
+            $tried_on = (int) Configuration::get(self::CONFIG_MERCHANT_RECORD_FOREIGN_TS);
+            if ($tried_on > 0 && ($tried_on + self::MERCHANT_RECORD_RETRY_BACKOFF) > time()) {
+                return false;
+            }
+            Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_FOREIGN_TS, time());
+            $this->refreshMerchantRecord();
 
-        // A stamp of zero beside a fetched-looking row is an install whose record
-        // was dropped by a version that still evicted; there is nothing to serve.
+            return true;
+        }
+
+        $checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+
+        // A stamp of zero beside a fetched-looking row is an install whose record was
+        // dropped by a version that still evicted; there is nothing to serve.
         if (!$this->hasFetchedMerchantRecord() || $checked_on <= 0) {
             if ($checked_on > 0 && ($checked_on + self::MERCHANT_RECORD_RETRY_BACKOFF) > time()) {
                 return false;
@@ -11046,8 +11060,19 @@ class Twopayment extends PaymentModule
      */
     public function hasFetchedMerchantRecord()
     {
-        return self::isMerchantRecordSlotForCurrentKey()
-            && !self::isTwoConfigUnset(Configuration::get(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED));
+        return self::isMerchantRecordSlotForCurrentKey() && self::hasStoredMerchantRecord();
+    }
+
+    /**
+     * Whether a record is stored at all, whichever key it was fetched for. The
+     * invoice-distribution flag reads back '1' or '0' once fetched, and carries
+     * nothing before that.
+     *
+     * @return bool
+     */
+    private static function hasStoredMerchantRecord()
+    {
+        return !self::isTwoConfigUnset(Configuration::get(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED));
     }
 
     /**
@@ -11067,14 +11092,6 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        if (!self::isMerchantRecordSlotForCurrentKey()) {
-            // The held record belongs to another key, so keeping it would serve another
-            // merchant. Dropped before the call and claimed for this key, so the clock
-            // below covers concurrent reads as it does any cold cache (ABN-530).
-            $this->invalidateMerchantAvailableTerms();
-            Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_KEY, self::verificationSlotKey($api_key));
-        }
-
         // Clock bumped BEFORE the wire call so a concurrent read shares this
         // attempt instead of firing a second one (TWO-24859).
         $previous_checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
@@ -11089,11 +11106,11 @@ class Twopayment extends PaymentModule
         $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
         if ($http_status !== self::HTTP_STATUS_OK || !self::isTwoMerchantRecordResponse($response)) {
             // Nothing cached is touched. The stamp is rolled back so it keeps
-            // describing the record actually held, which is what the staleness
-            // check judges; a record never fetched keeps the bumped stamp, which
-            // is its own retry floor. Last write wins against a concurrent
-            // refresh, as the pre-fetch bump above already does.
-            if ($this->hasFetchedMerchantRecord()) {
+            // describing the record actually held - whichever key that record
+            // belongs to; a shop holding none keeps the bumped stamp, which is its
+            // own retry floor. Last write wins against a concurrent refresh, as
+            // the pre-fetch bump above already does.
+            if (self::hasStoredMerchantRecord()) {
                 Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, $previous_checked_on);
             }
 
@@ -11132,6 +11149,7 @@ class Twopayment extends PaymentModule
         );
         // Written last: every slot above now belongs to this key (ABN-530).
         Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_KEY, self::verificationSlotKey($api_key));
+        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_FOREIGN_TS, 0);
 
         return true;
     }
@@ -11284,25 +11302,6 @@ class Twopayment extends PaymentModule
     private static function isTwoConfigUnset($value)
     {
         return $value === false || Tools::isEmpty($value);
-    }
-
-    /**
-     * Blank every cached merchant-record value. The ONLY caller is the foreign-record
-     * drop in refreshMerchantRecord(): a record fetched for another key is not this
-     * shop's to keep (ABN-530). Nothing else evicts, on any failure path (ABN-519).
-     */
-    public function invalidateMerchantAvailableTerms()
-    {
-        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, '');
-        Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, 0);
-        // '' is "no minimum": fail open until the refetch, the API enforces the real one at order create.
-        Configuration::updateValue(self::CONFIG_PLATFORM_MIN_ORDER, '');
-        // '' is "never fetched": hasFetchedMerchantRecord() is false and the upload gate fails closed.
-        Configuration::updateValue(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, '');
-        Configuration::updateValue(self::CONFIG_MERCHANT_BUYER_COUNTRIES, '');
-        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
-        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS, 0);
-        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS, 0);
     }
 
     /**
