@@ -1080,6 +1080,12 @@ final class FxRatesSpec
             return $terms;
         };
 
+        TinyAssert::notSame(
+            Twopayment::API_TIMEOUT_STATE_CHECK,
+            Twopayment::API_TIMEOUT_FEE_QUOTE_GATE,
+            'the gate ceiling must be its own bound, not the render-path default'
+        );
+
         foreach ($cases as $case) {
             list($type, $pct, $gross, $cookieTerm, $feeResponse, $expectedOptions, $expectLog, $quotedDays, $control, $description) = $case;
 
@@ -1096,6 +1102,15 @@ final class FxRatesSpec
                 TinyAssert::same(0, count($quotes), 'no quote may be requested at all: ' . $description);
             } else {
                 TinyAssert::true(in_array($quotedDays, $quotes, true), 'the charged term must be the term quoted: ' . $description);
+                foreach ($module->requests as $request) {
+                    if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                        TinyAssert::same(
+                            Twopayment::API_TIMEOUT_FEE_QUOTE_GATE,
+                            $request['timeout'],
+                            'the gate must quote on its own ceiling: ' . $description
+                        );
+                    }
+                }
             }
 
             if ($control === null) {

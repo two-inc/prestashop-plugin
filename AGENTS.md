@@ -115,10 +115,11 @@ ABN-546. The same failure means different things on the two surfaces.
   runs at render, and the buyer can switch term inside the rendered tile; an
   unresolvable quote for the ordered term is a parity failure there and refuses the
   order, because zero on both sides otherwise reads as agreement.
-- **The gate quotes on the same render-path timeout every charging path uses.** A
-  tighter cap of its own would withhold Two from a shop whose pricing is merely slow
-  but would price the order correctly. The cost during an outage is one such timeout
-  per payment-options render, and that is accepted.
+- **The gate quotes on its own ceiling** (`API_TIMEOUT_FEE_QUOTE_GATE`), not the
+  render-path default. The ceiling favours availability over render latency: a shop
+  whose pricing is merely slow keeps the tile rather than having it withheld over a
+  fee the order would have priced correctly. The cost during an outage is one such
+  timeout per payment-options render, and that is accepted.
 - **The cross-request cookie cache holds the CHARGED term's successful quote only.**
   The whole cookie shares a 4KB browser cap, so a slot per offered term would let a
   chip-preview render push the shopper's session over it and lose their cart. Chip
