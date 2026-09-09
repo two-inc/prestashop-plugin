@@ -47,8 +47,7 @@ return array(
     // What is switched: the buyer-facing reassurance messaging around the
     // order-intent pre-check - the APPROVED notice, and the loading overlay
     // shown while the check runs (TWO-25224; it carries our own "Checking Two
-    // payment eligibility..." copy, so the two switch together). Declined and
-    // error messages are functional and always render.
+    // payment eligibility..." copy, so the two switch together).
     'intent_approved_notice_enabled' => true,
     // COPY OVERRIDE ONLY for that notice (TWO-25218), resolved by
     // Twopayment::getIntentApprovedNotice():
@@ -63,4 +62,8 @@ return array(
     // 'intent_approved_notice_enabled' above and nothing else. An override
     // replaces the company variant only; the no-company copy stays default.
     'intent_approved_notice' => null,
+    // DECLINED VERDICT notice, contract as above; hides that text only, never the block.
+    'intent_declined_notice_enabled' => true,
+    // COPY OVERRIDE ONLY for the declined notice, contract as 'intent_approved_notice' above.
+    'intent_declined_notice' => null,
 );

@@ -65,13 +65,41 @@ class TwoOrderIntent {
     }
 
     /**
+     * Same contract as approvedNoticeEnabled(): only an explicit `false` turns the notice
+     * off, so an older cached JS file or template can never mean off.
+     */
+    declinedNoticeEnabled() {
+        const configured = window.twopayment ? window.twopayment.intent_declined_notice_enabled : null;
+        return typeof configured === 'boolean' ? configured : true;
+    }
+
+    /** Declined copy override; empty and whitespace-only are inert, never off. */
+    declinedNoticeOverride() {
+        const configured = window.twopayment ? window.twopayment.intent_declined_notice : null;
+        if (typeof configured !== 'string' || configured.trim() === '') {
+            return null;
+        }
+        return configured;
+    }
+
+    /** A real verdict FROM Two, not a transport failure: only these may be suppressed. */
+    isRealVerdict(result) {
+        // handleError() reports approved:false and sets no rawResponse, so this excludes it.
+        return !!(result && result.rawResponse);
+    }
+
+    isDeclinedNoticeSuppressed(result) {
+        return this.declinedNoticeEnabled() === false && this.isRealVerdict(result);
+    }
+
+    /**
      * TWO-25326 §7.3. The single place the company name and number are folded
      * into the sentence, so every caller renders identical wording. Omits the
      * parenthesised number when none is known ("Example Ltd", never
      * "Example Ltd ()").
      *
-     * A brand override (`intent_approved_notice`, TWO-25218) stays name-only:
-     * no PrestaShop brand overlay defines its own template today.
+     * A brand override (`intent_approved_notice` / `intent_declined_notice`, TWO-25218)
+     * stays name-only: no PrestaShop brand overlay defines its own template today.
      */
     buildCompanyIntentMessage(approved, name, number) {
         // TWO-25326 §12: `TWO:`-prefixed internal identifiers are never shown.
@@ -88,6 +116,10 @@ class TwoOrderIntent {
                 ? this.t('invoice_likely_accepted_for', 'This order by %s (%s) is likely to be accepted by Two')
                 : this.t('invoice_likely_accepted_for_no_number', 'This order by %s is likely to be accepted by Two');
             return TwoOrderIntent.fillTemplate(template, hasNumber ? [name, displayNumber] : [name]);
+        }
+        const declinedOverride = this.declinedNoticeOverride();
+        if (declinedOverride !== null) {
+            return TwoOrderIntent.fillTemplate(declinedOverride, [name]);
         }
         const template = hasNumber
             ? this.t('invoice_cannot_be_approved_for', 'Two is not available for this order by %s (%s)')
@@ -644,8 +676,9 @@ class TwoOrderIntent {
                 : this.t('invoice_cannot_be_approved', 'Your invoice with Two cannot be approved at this time')),
             rawResponse: response.rawResponse || response
         };
-        // Declines keep their message - it drives setupOrderPrevention.
-        if (result.approved && approvedSuppressed) {
+        // Prevention is armed from result.approved, not from this message, so a suppressed decline still blocks.
+        const declinedSuppressed = this.isDeclinedNoticeSuppressed(result);
+        if (result.approved ? approvedSuppressed : declinedSuppressed) {
             result.message = '';
         }
         // TWO-25326 §7.1: the address-area field is not a trustworthy source
@@ -665,9 +698,9 @@ class TwoOrderIntent {
             }
         }
         if (this.lastCompany && typeof this.lastCompany === 'string' && this.lastCompany.trim().length > 0) {
-            if (!result.approved) {
+            if (!result.approved && !declinedSuppressed) {
                 result.message = this.buildCompanyIntentMessage(false, this.lastCompany, this.lastCompanyNumber);
-            } else if (!approvedSuppressed) {
+            } else if (result.approved && !approvedSuppressed) {
                 result.message = this.buildCompanyIntentMessage(true, this.lastCompany, this.lastCompanyNumber);
             }
         }
@@ -771,13 +804,16 @@ class TwoOrderIntent {
             return $(element).find('[data-module-name="twopayment"]').length > 0;
         });
         if ($twoPaymentOption.length === 0) return;
-        // Notice switched off for this brand (TWO-25218): render no element at
-        // all, and drop any element left over from an earlier decline so a
-        // stale message cannot outlive an approval.
-        if (result.approved && !this.approvedNoticeEnabled()) {
+        // Switched off for this brand (TWO-25218): render no element, and drop one left from the other verdict.
+        if (result.approved ? !this.approvedNoticeEnabled() : this.isDeclinedNoticeSuppressed(result)) {
             $twoPaymentOption.find('.two-order-intent-message').remove();
-            $twoPaymentOption.removeClass('disabled');
-            $twoPaymentOption.find('input[type="radio"]').prop('disabled', false);
+            if (result.approved) {
+                $twoPaymentOption.removeClass('disabled');
+                $twoPaymentOption.find('input[type="radio"]').prop('disabled', false);
+            } else if (this.config.enablePaymentPreventionOnDecline) {
+                // The notice is the brand's to suppress; the block is not.
+                this.setupOrderPrevention();
+            }
             return;
         }
         let $messageContainer = $twoPaymentOption.find('.two-order-intent-message');
@@ -844,7 +880,8 @@ class TwoOrderIntent {
     }
 
     showOrderPreventionMessage() {
-        const message = this.lastResult
+        // A suppressed verdict still blocks the order, so the buyer gets the generic reason rather than none.
+        const message = this.lastResult && !this.isDeclinedNoticeSuppressed(this.lastResult)
             ? this.lastResult.message
             : this.t('resolve_payment_issue_before_continuing', 'Please resolve the payment issue before continuing.');
         const $twoPaymentOption = $('.payment-option').filter((_, element) => {

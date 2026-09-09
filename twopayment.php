@@ -4742,6 +4742,9 @@ class Twopayment extends PaymentModule
                 // than translated. Empty/absent is inert here: it means default
                 // copy, never off.
                 'intent_approved_notice' => $this->getIntentApprovedNotice(),
+                // The same two keys for the DECLINED notice.
+                'intent_declined_notice_enabled' => $this->isIntentDeclinedNoticeEnabled(),
+                'intent_declined_notice' => $this->getIntentDeclinedNotice(),
                 'i18n' => $i18n,
                 'phone_i18n' => array(
                     'invalid_number' => $this->l('Invalid phone number'),
@@ -11973,6 +11976,21 @@ class Twopayment extends PaymentModule
      */
     public static function normalizeIntentApprovedNoticeEnabled($configured, &$error = null, $brandCode = 'two')
     {
+        return self::normalizeNoticeEnabled($configured, 'intent_approved_notice_enabled', $error, $brandCode);
+    }
+
+    /**
+     * Shared body of the two notice ON/OFF switches, per the contract on
+     * normalizeIntentApprovedNoticeEnabled().
+     *
+     * @param mixed $configured
+     * @param string $key Brand key being resolved, named in the error message.
+     * @param string|null $error Out-param: null when the value was valid.
+     * @param string $brandCode
+     * @return bool
+     */
+    private static function normalizeNoticeEnabled($configured, $key, &$error = null, $brandCode = 'two')
+    {
         $error = null;
 
         if ($configured === null) {
@@ -11984,14 +12002,49 @@ class Twopayment extends PaymentModule
         }
 
         $error = sprintf(
-            'TwoPayment: brand "%s" declares intent_approved_notice_enabled as %s, but only a boolean is accepted.'
+            'TwoPayment: brand "%s" declares %s as %s, but only a boolean is accepted.'
                 . ' Falling back to the documented default (notice enabled). Fix brands/%s.php.',
             $brandCode,
+            $key,
             gettype($configured),
             $brandCode
         );
 
         return true;
+    }
+
+    /**
+     * Resolve the per-brand order-intent DECLINED notice ON/OFF switch
+     * (brands/two.php 'intent_declined_notice_enabled') into the boolean the
+     * checkout JS receives. Same contract as the approved switch (TWO-25218), and it
+     * hides the notice text only - the order-prevention gate is never switched off with it.
+     *
+     * @return bool
+     */
+    public function isIntentDeclinedNoticeEnabled()
+    {
+        $error = null;
+        $enabled = self::normalizeIntentDeclinedNoticeEnabled(
+            $this->getTwoBrandConfig('intent_declined_notice_enabled'),
+            $error
+        );
+
+        if ($error !== null) {
+            PrestaShopLogger::addLog($error, 3);
+        }
+
+        return $enabled;
+    }
+
+    /**
+     * @param mixed $configured
+     * @param string|null $error Out-param: null when the value was valid.
+     * @param string $brandCode
+     * @return bool
+     */
+    public static function normalizeIntentDeclinedNoticeEnabled($configured, &$error = null, $brandCode = 'two')
+    {
+        return self::normalizeNoticeEnabled($configured, 'intent_declined_notice_enabled', $error, $brandCode);
     }
 
     /**
@@ -12026,11 +12079,44 @@ class Twopayment extends PaymentModule
      */
     public static function normalizeIntentApprovedNotice($configured)
     {
+        return self::normalizeNoticeCopy($configured);
+    }
+
+    /**
+     * Shared body of the two notice COPY overrides, per the contract on
+     * normalizeIntentApprovedNotice().
+     *
+     * @param mixed $configured
+     * @return string|null
+     */
+    private static function normalizeNoticeCopy($configured)
+    {
         if (!is_string($configured) || trim($configured) === '') {
             return null;
         }
 
         return $configured;
+    }
+
+    /**
+     * Resolve the per-brand order-intent DECLINED notice COPY OVERRIDE
+     * (brands/two.php 'intent_declined_notice'). Same contract as the approved
+     * override (TWO-25218) - it cannot switch the notice off.
+     *
+     * @return string|null
+     */
+    public function getIntentDeclinedNotice()
+    {
+        return self::normalizeIntentDeclinedNotice($this->getTwoBrandConfig('intent_declined_notice'));
+    }
+
+    /**
+     * @param mixed $configured
+     * @return string|null
+     */
+    public static function normalizeIntentDeclinedNotice($configured)
+    {
+        return self::normalizeNoticeCopy($configured);
     }
 
     /**
