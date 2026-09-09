@@ -1312,9 +1312,8 @@ class TwoCheckoutManager {
     }
 
     showOrderIntentDecline(message) {
-        // Notice switched off for this brand (TWO-25218): render no message and create no
-        // container for one. The caller arms disableTwoPayment() either way, and only a real
-        // decline reaches here - showOrderIntentError() takes the transport failures.
+        // Notice switched off for this brand (TWO-25218): render no message, create no container.
+        // The caller arms disableTwoPayment() either way, and errors route to showOrderIntentError().
         if (!this.declinedNoticeEnabled()) {
             const existing = document.querySelector('.two-payment-info') ||
                 document.querySelector('#two-order-intent-messages');
