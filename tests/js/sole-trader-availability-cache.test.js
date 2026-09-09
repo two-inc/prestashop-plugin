@@ -1,23 +1,24 @@
 /**
- * TWO-40 follow-up: two bugs, one fix each.
+ * TWO-40 follow-up: two defects, one fix each.
  *
- * Bug 1 (live on staging, Doug's report): the "I'm a sole trader" row never
- * appeared on the address-editor page, even for a registry-supported country
- * (GB). Root cause - refreshAvailability() early-returned whenever
+ * Defect 1 (live on staging, Doug's report): the "I'm a sole trader" row
+ * never appeared on the address-editor page, even for a registry-supported
+ * country (GB). Root cause - refreshAvailability() early-returned whenever
  * `.two-sole-trader` was absent from the page, BEFORE it ever resolved the
  * billing country or fired the fetch. That container only ever exists on the
  * payment step (rendered by paymentinfo.tpl); nothing renders it on the
- * address-editor page at all. So availability never resolved for ANY
- * country on any page other than the payment step, however eligible the
- * country was. See TwoSoleTrader.js's refreshAvailability() for the fix and
- * its full reasoning.
+ * address-editor page at all. So availability never resolved for ANY country
+ * on any page other than the payment step, however eligible the country was.
+ * See TwoSoleTrader.js's refreshAvailability() for the fix and its full
+ * reasoning.
  *
- * Even with the container gap above fixed, every fresh page load
- * re-fires the availability round trip before the chip can appear, because
- * `availabilityByCountry` is in-memory only and resets on every navigation.
- * A localStorage cache, keyed per ISO country and namespaced per checkout
- * environment (see availabilityStorageKey()'s doc), with a 24h TTL, lets a
- * later page paint from cache with no round trip at all.
+ * Defect 2 (Doug's own request): even with the container gap above fixed,
+ * every fresh page load re-fires the availability round trip before the chip
+ * can appear, because `availabilityByCountry` is in-memory only and resets on
+ * every navigation. A localStorage cache, keyed per ISO country and
+ * namespaced per checkout environment (see availabilityStorageKey()'s doc),
+ * with a 24h TTL, lets a later page paint from cache with no round trip at
+ * all.
  */
 
 'use strict';

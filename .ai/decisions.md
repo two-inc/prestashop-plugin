@@ -192,10 +192,10 @@ column), the cart-scoped session record, the in-memory `$address->companyid` the
 controller sets, the order-scoped record described below, and the API payload. The prefix survives all
 of them unchanged.
 
-**Refusing the write for its own sake is superseded**, and the distinction matters: that also
-withheld the pairing and the name, and every defect that followed came from
-*that* divergence — a mismatched name/number pair in the invoice form, the "name and number travel
-together" invariant broken, and the required-field dead-end above. Here the hidden pair, its tag, the
+**Refusing to write the identifier at all is NOT the rule here**, and the distinction matters:
+refusing it also withheld the pairing and the name, and that divergence is what produced a
+mismatched name/number pair in the invoice form, the broken "name and number travel together"
+invariant, and the required-field dead-end above. Here the hidden pair, its tag, the
 session record, the mirror and the routing all stay completely uniform. Only the buyer's own fiscal
 field is left alone.
 
@@ -977,9 +977,9 @@ and not demoted), the two address-resolution-failure cases moved onto the delive
 tier, and `testPostedCountryCannotConjureAvailability` is unchanged and is now the
 more load-bearing of the pair.
 
-**The coupling to `#13`, and the trade-off it leaves — accepted, not absent.** PrestaShop renders
-only ever ONE country select on the page, so the browser cannot post the wrong one. But *which* address
-that one select belongs to depends on which pass the buyer is on: on the
+**The coupling to `#13`, and the trade-off it leaves — accepted, not absent.** PrestaShop
+renders only ever ONE country select on the page, so the browser cannot post the wrong
+one. But *which* address that one select belongs to depends on which pass the buyer is on: on the
 delivery-address-editing pass it is the DELIVERY country. So a buyer whose billing
 address differs from their shipping address, clicking the sole-trader chip while
 editing delivery, is now gated against their **shipping** country rather than their

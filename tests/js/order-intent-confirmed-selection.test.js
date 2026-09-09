@@ -1,8 +1,7 @@
 /**
- * TWO-25326, second attempt. Doug re-tested the shipped fix live and the
- * defect was still there: search a company -> intent fires for it (correct);
- * search again, select a DIFFERENT company -> the intent fires for the FIRST
- * one.
+ * TWO-25326, second attempt. Doug re-tested the shipped fix live and the defect
+ * was still there: search a company -> intent fires for it (correct); search
+ * again, select a DIFFERENT company -> the intent fires for the FIRST one.
  *
  * order-intent-stale-selection.test.js pins a `requestSeq` gate against a slow
  * response overwriting a fast one, but mocks `collectFormData` out entirely -

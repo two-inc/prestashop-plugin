@@ -360,11 +360,10 @@ test('an ACCEPTED that arrives while a lookup is already in flight is not droppe
  * effect of the `.then()` handler that scheduled it - returning from that
  * handler settles the promise immediately, so the chained `.finally()`
  * released `isFetchingBuyer` right away, roughly 800ms BEFORE the retry
- * itself ran. For the whole wait, the re-entrancy guard read `false` even
- * though a retry was logically still pending - reopening the exact
- * concurrent-lookup window the re-entrancy guard exists to close, for a
- * second 'ACCEPTED' landing mid-wait. Must now stay held for the entire
- * wait, released only right before the retry decides what to do.
+ * itself ran. For the whole wait, `isFetchingBuyer` read `false` even though
+ * a retry was logically still pending - so a second 'ACCEPTED' landing
+ * mid-wait could start its own concurrent lookup. Must now stay held for the
+ * entire wait, released only right before the retry decides what to do.
  */
 test('the guard stays held for the whole 404-retry wait, not just until the retry is scheduled', async () => {
     const publishes = stubManager();

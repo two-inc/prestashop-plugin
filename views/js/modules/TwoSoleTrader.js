@@ -145,9 +145,9 @@ class TwoSoleTrader {
         // re-fetching.
         this.availabilityByCountry = {};
         this.renderedForCountry = null;
-        // TWO-25326: the container node this instance last adopted an
-        // answer into. `renderedForCountry` alone is not a record of what is on
-        // the page - PrestaShop REPLACES the payment fragment while the checkout
+        // TWO-25326: the container node this instance last adopted an answer
+        // into. `renderedForCountry` alone is not a record of what is on the
+        // page - PrestaShop REPLACES the payment fragment while the checkout
         // step settles, and the replacement arrives with no adopted answer at
         // all. Keyed on the node, the settled-check can tell "already adopted"
         // from "adopted into a node that no longer exists".
@@ -156,14 +156,14 @@ class TwoSoleTrader {
         // The country-change subscription, held so destroy() can detach it.
         // stopObserving() deliberately does NOT - see both methods.
         this._countryChangeHandler = null;
-        // Bumped every time a SERVER-rendered answer is adopted (TWO-25326).
-        // An availability request captures it before it starts and drops
-        // its own result if it has moved: the server's answer arrived later than
-        // the request did, so the request is stale however in-order it looked
-        // when it was issued.
+        // Bumped every time a SERVER-rendered answer is adopted (TWO-25326). An
+        // availability request captures it before it starts and drops its own
+        // result if it has moved: the server's answer arrived later than the
+        // request did, so the request is stale however in-order it looked when
+        // it was issued.
         this._adoptGeneration = 0;
-        // TWO-25326: the country an availability request is currently out
-        // for, and the debounce handle for the MutationObserver. See init() and
+        // TWO-25326: the country an availability request is currently out for,
+        // and the debounce handle for the MutationObserver. See init() and
         // refreshAvailability() for what each prevents.
         this.pendingCountry = null;
         this._refreshTimeoutId = null;
@@ -225,9 +225,9 @@ class TwoSoleTrader {
         // instance when it resolves.
         this._destroyed = false;
 
-        // TWO-25326: take the availability answer the SERVER already
-        // resolved as this instance's settled state, before init() can decide to
-        // fetch anything.
+        // TWO-25326: take the availability answer the SERVER already resolved
+        // as this instance's settled state, before init() can decide to fetch
+        // anything.
         this.adoptServerRenderedToggle();
 
         this.init();
@@ -296,14 +296,14 @@ class TwoSoleTrader {
         };
         document.addEventListener('change', this._countryChangeHandler);
         this.watchFocus();
-        // DEBOUNCED (TWO-25326): this observer watches the whole body
-        // subtree, and PrestaShop's own address-form/payment-fragment re-renders
-        // mutate that subtree constantly, once per mutation record.
+        // DEBOUNCED (TWO-25326): this observer watches the whole body subtree,
+        // and PrestaShop's own address-form/payment-fragment re-renders mutate
+        // that subtree constantly, once per mutation record.
         this.observer = new MutationObserver(function () {
             // Container-identity check runs UNDEBOUNCED, the availability
-            // refresh does not (TWO-25326): a replaced fragment carries
-            // its OWN server-rendered answer, so waiting out the 100ms debounce
-            // leaves the availability cache answering for a node that no longer
+            // refresh does not (TWO-25326): a replaced fragment carries its OWN
+            // server-rendered answer, so waiting out the 100ms debounce leaves
+            // the availability cache answering for a node that no longer
             // exists. Re-adopting is pure DOM work with no request in it, and a
             // no-op once a container IS adopted.
             self.adoptReplacedContainer();
@@ -367,11 +367,11 @@ class TwoSoleTrader {
     /**
      * Detach EVERY page-level subscription this instance owns.
      *
-     * Separate from stopObserving() on purpose (TWO-25326):
-     * stopObserving() means "this flow is resolved", which is NOT the same as
-     * "this instance is gone" - a resolved instance must still react to a
-     * country change (see above). This is the "gone" one: nothing left bound,
-     * for a teardown or a test that must not leave a second writer behind.
+     * Separate from stopObserving() on purpose (TWO-25326): stopObserving()
+     * means "this flow is resolved", which is NOT the same as "this instance is
+     * gone" - a resolved instance must still react to a country change (see
+     * above). This is the "gone" one: nothing left bound, for a teardown or a
+     * test that must not leave a second writer behind.
      */
     destroy() {
         this._destroyed = true;
@@ -458,7 +458,7 @@ class TwoSoleTrader {
             // TwoCompanySearch.getCurrentCountry() and TwoOrderIntent.js's
             // getCurrentAddressCountryISO() both already read. Needed for any
             // theme/PS version whose country <option>s carry none of the three
-            // data- attributes above: without it a later country change is
+            // data-attributes above: without it a later country change is
             // never seen, and this instance keeps answering for the country
             // already "settled" in availabilityByCountry.
             const countryId = option.value;
@@ -478,12 +478,12 @@ class TwoSoleTrader {
             }
         }
         // The cart's billing country BEFORE the shop's own country (TWO-25326).
-        // PrestaShop only renders the address FORM - and therefore the
-        // select read above - while the buyer is editing an address; on the
-        // payment step there is no select at all, so this fallback is what that
-        // step uses. `shopCountry` is the wrong answer there (visitor/shop
-        // country, not the country the order will be billed to) and stays only
-        // as a last resort for a payload that predates this key.
+        // PrestaShop only renders the address FORM - and therefore the select
+        // read above - while the buyer is editing an address; on the payment
+        // step there is no select at all, so this fallback is what that step
+        // uses. `shopCountry` is the wrong answer there (visitor/shop country,
+        // not the country the order will be billed to) and stays only as a last
+        // resort for a payload that predates this key.
         return (this.config.billingCountry || this.config.shopCountry || '').toUpperCase();
     }
 
@@ -544,10 +544,10 @@ class TwoSoleTrader {
         }
         const container = this.container();
         // Settled means "this container, for this country" - not the country
-        // alone (TWO-25326): a country-only check reports the answer as
-        // settled after PrestaShop has replaced the container out from under it.
-        // A page with NO container at all (TWO-40: the address-editor page)
-        // has nothing that can go stale that way, so it settles on the country
+        // alone (TWO-25326): a country-only check reports the answer as settled
+        // after PrestaShop has replaced the container out from under it. A page
+        // with NO container at all (TWO-40: the address-editor page) has
+        // nothing that can go stale that way, so it settles on the country
         // alone once a REAL answer is on record for it (`country in
         // availabilityByCountry`) and apply() ran with no container either -
         // otherwise EVERY unrelated DOM mutation on that page (there is no
@@ -582,8 +582,8 @@ class TwoSoleTrader {
             this.apply(country, persisted);
             return;
         }
-        // One request in flight per country (TWO-25326). The observer
-        // above fires while the answer for the first-ever country is still
+        // One request in flight per country (TWO-25326). The observer above
+        // fires while the answer for the first-ever country is still
         // outstanding, with `renderedForCountry` null and nothing cached yet -
         // and beyond the request storm, this endpoint is fail-soft to "not
         // available", so one duplicate failing or timing out could overwrite an
@@ -593,11 +593,11 @@ class TwoSoleTrader {
         }
         this.pendingCountry = country;
         const self = this;
-        // Captured BEFORE the request starts (TWO-25326). If a
-        // server-rendered answer is adopted while this is in flight - which
-        // happens whenever PrestaShop replaces the payment fragment - then the
-        // server has answered more recently than this request was even issued,
-        // and this result must be discarded rather than applied over it.
+        // Captured BEFORE the request starts (TWO-25326). If a server-rendered
+        // answer is adopted while this is in flight - which happens whenever
+        // PrestaShop replaces the payment fragment - then the server has
+        // answered more recently than this request was even issued, and this
+        // result must be discarded rather than applied over it.
         const generation = this._adoptGeneration;
         const superseded = function () {
             if (self._adoptGeneration === generation) {
@@ -1644,8 +1644,8 @@ class TwoSoleTrader {
      * Re-run getCurrentBuyer() for whichever generation is CURRENT, called from
      * getCurrentBuyer()'s own superseded branches when `enrolling` is still
      * true - i.e. a later click abandoned-then-resumed while THIS lookup was
-     * outstanding, riding it via the isFetchingBuyer single- flight guard
-     * rather than issuing its own (TWO-40).
+     * outstanding, riding it via the isFetchingBuyer single-flight guard rather
+     * than issuing its own (TWO-40).
      *
      * Deferred to a macrotask (`setTimeout(..., 0)`), not called directly.
      * This runs from INSIDE the `.then()`/`.catch()` handler of the request
@@ -1856,13 +1856,12 @@ class TwoSoleTrader {
         // a bare side effect, not something the promise chain awaits -
         // returning from that handler settles the promise immediately, so the
         // chained `.finally()` fires right away too, ~800ms BEFORE the retry
-        // actually runs. Releasing `isFetchingBuyer` there reopens the exact
-        // concurrent-lookup window the re-entrancy guard exists to close, for
-        // the whole retry wait. `.finally()` below checks this flag and, if
-        // set, leaves the guard alone - `settle()` releases it instead, called
-        // from the retry's own callback right before it decides what to do, the
-        // same moment it would have been released for an ordinary (non-retry)
-        // request.
+        // actually runs. Releasing `isFetchingBuyer` there lets a second
+        // concurrent lookup start for the whole retry wait. `.finally()` below
+        // checks this flag and, if set, leaves the guard alone - `settle()`
+        // releases it instead, called from the retry's own callback right
+        // before it decides what to do, the same moment it would have been
+        // released for an ordinary (non-retry) request.
         let retryScheduled = false;
         // Set wherever this lookup is about to be re-issued - by the 404
         // read-after-write retry, or by a resume for the current generation.
@@ -1912,11 +1911,9 @@ class TwoSoleTrader {
         };
         // Same reasoning as fetchTokens()'s own try/catch around its pre-fetch
         // setup (TWO-40): `this.tokens.autofill_token` below throws
-        // synchronously if `this.tokens` is ever null when this runs, and
-        // nothing before this fix protected `isFetchingBuyer` against that - a
-        // stuck-true guard here silently no-ops every future click for the rest
-        // of the page's life, the exact failure mode this whole PR chain exists
-        // to close.
+        // synchronously if `this.tokens` is ever null when this runs, and an
+        // unprotected throw leaves `isFetchingBuyer` stuck true - which
+        // silently no-ops every future click for the rest of the page's life.
         let request;
         try {
             request = this.buyerLookupRequest();
@@ -1982,12 +1979,12 @@ class TwoSoleTrader {
                     // firing against a destroyed instance is not a real
                     // precondition yet.
                     setTimeout(function () {
-                        // The guard was deliberately left held for this
-                        // entire wait, not released back in `.finally()` -
-                        // see `settle()`'s own comment above. Release it now,
-                        // right before deciding what to do - the same moment
-                        // it would have been released for an ordinary
-                        // (non-retry) request.
+                        // The guard was deliberately left held for this entire
+                        // wait, not released back in `.finally()` - see
+                        // `settle()`'s own comment above. Release it now, right
+                        // before deciding what to do - the same moment it would
+                        // have been released for an ordinary (non-retry)
+                        // request.
                         if (settle()) {
                             // A pending trusted resume was waiting (a SECOND
                             // 'ACCEPTED' that arrived during this wait, found
@@ -2159,16 +2156,16 @@ class TwoSoleTrader {
                     // TWO-25326: publish the enrolled sole trader as the
                     // confirmed selection, exactly as a search selection does.
                     //
-                    // Required, not tidying. The order-intent check now
-                    // prefers the browser's in-memory selection over the
-                    // session cookie this request just wrote - so a buyer who
-                    // picked a registered company FIRST and then enrolled as a
-                    // sole trader would have the check keep posting that
-                    // earlier company, and the endpoint re-stores whatever it
-                    // is posted into the session - overwriting the sole-trader
-                    // record the ORDER payload reads. Publishing here keeps
-                    // the in-memory copy and the cookie agreeing on which
-                    // entity the buyer is.
+                    // Required, not tidying. The order-intent check now prefers
+                    // the browser's in-memory selection over the session cookie
+                    // this request just wrote - so a buyer who picked a
+                    // registered company FIRST and then enrolled as a sole
+                    // trader would have the check keep posting that earlier
+                    // company, and the endpoint re-stores whatever it is posted
+                    // into the session - overwriting the sole-trader record the
+                    // ORDER payload reads. Publishing here keeps the in-memory
+                    // copy and the cookie agreeing on which entity the buyer
+                    // is.
                     self.publishConfirmedSelection(companyLabel, buyer.organization_number || '');
                     // TWO-25503: through the SAME call a search re-selection
                     // uses. Without it the tile kept showing the previously
@@ -2724,10 +2721,10 @@ class TwoSoleTrader {
             // check.
             if (self._enrollGeneration !== self._tokensGeneration) {
                 if (event.data === 'ACCEPTED' && self._signupPopupOpened) {
-                    // Not acted on here, but a signup this instance opened
-                    // has completed, so the held answer is falsified even
-                    // though this message is not this attempt's to act on.
-                    // Consumed, so a repeated message cannot re-ask on loop.
+                    // Not acted on here, but a signup this instance opened has
+                    // completed, so the held answer is falsified even though
+                    // this message is not this attempt's to act on. Consumed,
+                    // so a repeated message cannot re-ask on loop.
                     self._signupPopupOpened = false;
                     self.clearHeldBuyerResult();
                     self.startEagerTokenMint();

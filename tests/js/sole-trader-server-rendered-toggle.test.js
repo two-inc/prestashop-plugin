@@ -1,10 +1,10 @@
 /**
- * TWO-25326. TWO-40 later removed the upfront Business/Sole trader toggle
- * chips entirely; the entry point now lives inside TwoCompanySearch.js's
- * dropdown. What survives here, still load-bearing, is the AVAILABILITY ANSWER
- * handover this module adopts from the server: TwoCompanySearch.js's "I'm a sole
- * trader" row reads `isAvailableForCurrentCountry()`, which must be correct at
- * first paint, across country changes, and across PrestaShop's payment-fragment
+ * TWO-25326. TWO-40 later removed the upfront Business/Sole trader toggle chips
+ * entirely; the entry point now lives inside TwoCompanySearch.js's dropdown.
+ * What survives here, still load-bearing, is the AVAILABILITY ANSWER handover
+ * this module adopts from the server: TwoCompanySearch.js's "I'm a sole trader"
+ * row reads `isAvailableForCurrentCountry()`, which must be correct at first
+ * paint, across country changes, and across PrestaShop's payment-fragment
  * replacements - with no request when the server has already answered.
  *
  * Keying the settled-check on the container node and an in-flight guard are both

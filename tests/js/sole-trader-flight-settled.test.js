@@ -731,12 +731,11 @@ test('cancelEnrollment() does NOT fire the settle event when there was nothing t
 });
 
 /**
- * TWO-40: abandon-then- retry while the FIRST mint is still outstanding used
- * to leave the second attempt's spinner running forever. fetchTokens()'s
- * single in-flight guard means the second click rides the first mint's
- * request; when it resolves, the fix must resume the lookup for whichever
- * generation is CURRENT, not drop tokens because they no longer match the
- * stale generation.
+ * TWO-40: abandon-then-retry while the FIRST mint is still outstanding used to
+ * leave the second attempt's spinner running forever. fetchTokens()'s single
+ * in-flight guard means the second click rides the first mint's request; when
+ * it resolves, the fix must resume the lookup for whichever generation is
+ * CURRENT, not drop tokens because they no longer match the stale generation.
  */
 test('a mint that resolves after abandon-then-retry still resumes the buyer lookup for the current attempt', async () => {
     buildAddressForm();

@@ -226,16 +226,16 @@ class TwoOrderIntent {
      * TwoCompanySearch through TwoCheckoutManager (`getConfirmedCompany`,
      * injected in initializeOrderIntent()).
      *
-     * TWO-25326: the request payload, not the response ordering, was the
-     * stale half. In tile mode collectFormData() reads nothing from the
-     * address-area DOM and falls through to the `getCompany` round trip, which
-     * reads the SESSION COOKIE - written by persistCompanyToCookie()'s
-     * fire-and-forget `saveCompany` request issued in the same tick. A cookie
-     * written by a response the browser has not received yet is not in the
-     * request it has already sent, so `getCompany` answers with the PREVIOUS
-     * company and the intent fires, legitimately and in order, for company A
-     * while the buyer is looking at company B. No response-sequencing gate can
-     * see that, because the stale request IS the current one.
+     * TWO-25326: the request payload, not the response ordering, was the stale
+     * half. In tile mode collectFormData() reads nothing from the address-area
+     * DOM and falls through to the `getCompany` round trip, which reads the
+     * SESSION COOKIE - written by persistCompanyToCookie()'s fire-and-forget
+     * `saveCompany` request issued in the same tick. A cookie written by a
+     * response the browser has not received yet is not in the request it has
+     * already sent, so `getCompany` answers with the PREVIOUS company and the
+     * intent fires, legitimately and in order, for company A while the buyer is
+     * looking at company B. No response-sequencing gate can see that, because
+     * the stale request IS the current one.
      *
      * The in-memory selection needs no round trip and cannot be stale, so it is
      * authoritative - but only while it still applies to the CURRENT checkout
@@ -314,9 +314,9 @@ class TwoOrderIntent {
                 try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
             }
 
-            // TWO-25326: prefer the in-memory selection over the session
-            // cookie - see getConfirmedCompanySelection() for why the cookie
-            // read is systematically one selection behind in tile mode.
+            // TWO-25326: prefer the in-memory selection over the session cookie
+            // - see getConfirmedCompanySelection() for why the cookie read is
+            // systematically one selection behind in tile mode.
             //
             // Positioned AFTER the address-area DOM read and gated on it having
             // produced nothing: where those fields ARE the control (address

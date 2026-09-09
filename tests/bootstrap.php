@@ -39,9 +39,8 @@ namespace {
 namespace PrestaShop\PrestaShop\Core\Payment {
     /**
      * Core's fluent payment-option value object, exercised through
-     * getTwoPaymentOption() (TWO-25326). A fluent builder is unusable
-     * without its setters: the first call fatals rather than failing an
-     * assertion.
+     * getTwoPaymentOption() (TWO-25326). A fluent builder is unusable without
+     * its setters: the first call fatals rather than failing an assertion.
      *
      * Records rather than validates - the specs that use this care about what the
      * module hands the TEMPLATE, and core's own contract for these values is not

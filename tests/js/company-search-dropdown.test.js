@@ -787,8 +787,8 @@ describe('§3 the return-to-search link', () => {
     });
 
     test('clicking it does not let the click reach the accordion above', () => {
-        // the theme's delegated accordion-toggle handler read
-        // this click as "collapse the address step".
+        // the theme's delegated accordion-toggle handler read this click as
+        // "collapse the address step".
         makeInstance();
         const seen = [];
         $('.js-address-form').on('click', () => seen.push('accordion'));

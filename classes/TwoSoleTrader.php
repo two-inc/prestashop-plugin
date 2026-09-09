@@ -62,8 +62,8 @@ class TwoSoleTrader
     private static $types_cache = array();
 
     /**
-     * Countries whose lookup FAILED during this request, so it is attempted at
-     * most once per request per country (TWO-25326).
+     * Countries whose lookup FAILED during this request, so it is attempted
+     * at most once per request per country (TWO-25326).
      *
      * Deliberately separate from $types_cache: a failure must never be stored
      * as an ANSWER (a registry blip would then read as a cached "business-only
@@ -112,8 +112,8 @@ class TwoSoleTrader
 
     /**
      * The same three-state answer, but ONLY if it is already known - never a
-     * network call (TWO-25326). This is what the payment tile renders
-     * from: a render-path network call would pay a registry timeout on every
+     * network call (TWO-25326). This is what the payment tile renders from: a
+     * render-path network call would pay a registry timeout on every
      * payment-step render for a shop that can't reach the registry, which is
      * buyer-visible latency a rendering nicety doesn't justify.
      *
@@ -146,8 +146,8 @@ class TwoSoleTrader
     /**
      * The already-known answer for a country, or null if there is none.
      *
-     * ONE reader for both callers: keeps COOKIE_KEY, CACHE_TTL_SECONDS and the
-     * stored JSON shape defined in one place instead of two
+     * ONE reader for both callers: keeps COOKIE_KEY, CACHE_TTL_SECONDS and
+     * the stored JSON shape defined in one place instead of two
      * independently-maintained copies.
      *
      * Request memo first, then the cookie: the memo is only ever populated from a
@@ -239,9 +239,9 @@ class TwoSoleTrader
 
         $types = self::fetchSupportedCompanyTypes($module, $countryIso);
         if ($types === null) {
-            // Recorded as a FAILURE, not as an answer (TWO-25326):
-            // caller is told "unresolved" rather than caching a blip as a
-            // definite "business-only country". See $failed_lookups.
+            // Recorded as a FAILURE, not as an answer (TWO-25326): caller is
+            // told "unresolved" rather than caching a blip as a definite
+            // "business-only country". See $failed_lookups.
             self::$failed_lookups[$countryIso] = true;
 
             return null;
@@ -275,13 +275,13 @@ class TwoSoleTrader
             'GET',
             array(),
             // Tight timeout rather than setTwoPaymentRequest()'s 60s default
-            // (API_TIMEOUT_LONG), which is sized for file uploads. This lookup
-            // is reached from the module's own AJAX controller while a buyer
-            // waits on the checkout for the toggle to appear, so a minute is
-            // the wrong bound for it whichever side of the page it runs on.
-            // The payment tile deliberately does NOT reach this method - it
-            // reads resolveAvailabilityFromCache() so the checkout render
-            // makes no call at all.
+            // (API_TIMEOUT_LONG), which is sized for file uploads. This
+            // lookup is reached from the module's own AJAX controller while a
+            // buyer waits on the checkout for the toggle to appear, so a
+            // minute is the wrong bound for it whichever side of the page it
+            // runs on. The payment tile deliberately does NOT reach this
+            // method - it reads resolveAvailabilityFromCache() so the
+            // checkout render makes no call at all.
             Twopayment::API_TIMEOUT_STATE_CHECK
         );
         if (

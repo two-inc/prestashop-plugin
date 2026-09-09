@@ -361,14 +361,14 @@ describe('the company-search hints (TWO-25288)', () => {
 
             search('');
 
-            // a click into an empty field must open
-            // something, i.e. the PANEL - a plain `response([])` here is
-            // indistinguishable from "not a dropdown at all", which was the
-            // live complaint. TWO-25326 §1's separate focus-hint row and the
-            // too-short row it later merged into are BOTH gone now (TWO-40
-            // follow-up): the empty query renders no row at all, and the
-            // requirement lives in the query field's placeholder. Still not a
-            // real search, so no request goes out.
+            // a click into an empty field must open something, i.e. the PANEL -
+            // a plain `response([])` here is indistinguishable from "not a
+            // dropdown at all", which was the live complaint. TWO-25326 §1's
+            // separate focus-hint row and the too-short row it later merged
+            // into are BOTH gone now (TWO-40 follow-up): the empty query
+            // renders no row at all, and the requirement lives in the query
+            // field's placeholder. Still not a real search, so no request goes
+            // out.
             expect(rows()).toHaveLength(0);
             expect(ajax.calls).toHaveLength(0);
         });

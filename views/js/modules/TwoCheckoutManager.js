@@ -48,9 +48,9 @@ class TwoCheckoutManager {
         // mode, where company capture already happened at the address step,
         // well before the payment tile (and this flag) exist.
         this._tileCompanySelected = false;
-        // TWO-25326: the company the buyer has actually picked, held for
-        // the page's lifetime rather than on the search instance that a
-        // re-render replaces. See getConfirmedCompanySelection().
+        // TWO-25326: the company the buyer has actually picked, held for the
+        // page's lifetime rather than on the search instance that a re-render
+        // replaces. See getConfirmedCompanySelection().
         this._confirmedCompanySelection = null;
         // TWO-40: what the invoice-address mirror has already written on this page.
         // Lives HERE, not on the search instance, because this class destroys and
@@ -2120,8 +2120,8 @@ class TwoCheckoutManager {
         // TwoCompanySearch's own note on this event), so an unconditional clear
         // here could wipe a selection the buyer had just made, which is the
         // defect this holder exists to close. A country select being present
-        // means an address form is
-        // genuinely rendered, which is the only case this needs to cover.
+        // means an address form is genuinely rendered, which is the only case
+        // this needs to cover.
         if (document.querySelector("select[name='id_country'], select[name='country']")) {
             this.clearConfirmedCompanySelection();
         }
@@ -2363,8 +2363,8 @@ class TwoCheckoutManager {
                 // address-area company/companyid DOM fields once search has
                 // relocated to the tile.
                 companySearchInAddressArea: this.config.companySearchInAddressArea !== false,
-                // TWO-25326: read through a getter rather than passed by
-                // value, so the module always sees the CURRENT selection - this
+                // TWO-25326: read through a getter rather than passed by value,
+                // so the module always sees the CURRENT selection - this
                 // instance is built once, on the first Two selection, and long
                 // outlives any individual company choice.
                 getConfirmedCompany: () => this.getConfirmedCompanySelection(),

@@ -1411,8 +1411,7 @@ the company-number label's visibility depending on the selected payment method.
   "enter sole-trader mode" unconditionally whenever a flight resolved with a match,
   including while already in it — reachable by editing the email field (never locked,
   unlike the captured fields) while a "select a different" popup is open (`f8c035e`).
-  **That
-  reproduction path is gone with the prefetch itself** (§11 rule 1, `8e2355f`); the rule
+  **That reproduction path is gone with the prefetch itself** (§11 rule 1, `8e2355f`); the rule
   stands on its own, because any caller that sets a mode it is already in can do the
   same thing.
 - **If platform core can delete the company field outright, register a floor for it.**
