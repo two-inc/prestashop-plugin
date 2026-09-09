@@ -168,8 +168,8 @@ final class CheckoutWithholdReasonSpec
                 static function ($module): void {
                     $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503);
                 },
-                'Not shown at checkout - the API key could not be verified just now.',
-                'a transient verdict withholds today, so the row says so',
+                'Shown at checkout',
+                'ABN-533: a transient verdict falls through to the cached record and withholds nothing',
             ],
             [
                 static function ($module): void {

@@ -555,5 +555,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] 
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'ingen land er aktivert for denne modulen under Betaling > Innstillinger.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'ingen valuta er aktivert for denne modulen under Betaling > Innstillinger.';
 $_MODULE['<{twopayment}prestashop>twopayment_65a3ef692e6a51f50564d0b7bf51c9b9'] = 'merchant-kontoen din er ennå ikke identifisert. Lagre %s for å verifisere API-nøkkelen.';
-$_MODULE['<{twopayment}prestashop>twopayment_6fbe5140ef909d7a59af5c3112015e77'] = 'API-nøkkelen kunne ikke verifiseres akkurat nå.';
 $_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] = 'skjult for handlekorger i en valuta kjøpertillegget ikke kan prises i';

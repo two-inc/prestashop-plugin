@@ -555,5 +555,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] 
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'er is geen land geactiveerd voor deze module onder Betaling > Voorkeuren.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'er is geen valuta geactiveerd voor deze module onder Betaling > Voorkeuren.';
 $_MODULE['<{twopayment}prestashop>twopayment_65a3ef692e6a51f50564d0b7bf51c9b9'] = 'uw merchant-account is nog niet geïdentificeerd. Sla %s op om de API-sleutel te verifiëren.';
-$_MODULE['<{twopayment}prestashop>twopayment_6fbe5140ef909d7a59af5c3112015e77'] = 'de API-sleutel kon op dit moment niet worden geverifieerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] = 'verborgen voor winkelwagens in een valuta waarin de toeslag voor de koper niet kan worden berekend';

@@ -3514,12 +3514,8 @@ class Twopayment extends PaymentModule
         }
         if ($reason === null) {
             $status = $this->getTwoApiKeyVerificationStatus();
-            if ($status['status'] === self::API_KEY_STATUS_INVALID) {
+            if (self::isDefinitiveFailureStatus($status['status'])) {
                 $reason = $this->l('the API key was rejected. Check API key and Environment.');
-            } elseif ($status['status'] !== self::API_KEY_STATUS_OK) {
-                // hookPaymentOptions() withholds on any non-OK verdict today.
-                // ABN-533's fall-through owns this arm's removal.
-                $reason = $this->l('the API key could not be verified just now.');
             }
         }
         if ($reason === null && $this->getTwoSurchargeSettingsOrNull() === null) {
