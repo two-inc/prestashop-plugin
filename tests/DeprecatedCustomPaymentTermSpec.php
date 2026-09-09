@@ -15,6 +15,7 @@ final class DeprecatedCustomPaymentTermSpec
     {
         self::testStoredTermNormalisation();
         self::testFieldRendersKeepOrRemove();
+        self::testAnyRenderedCheckboxCountsAsASelection();
         self::testSaveStates();
         self::testFoldsInOnlyAgainstAResolvedOfferedSet();
     }
@@ -135,6 +136,34 @@ final class DeprecatedCustomPaymentTermSpec
                 self::harness($offered)->paymentTermsFormValuesForTest()['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'],
                 $description . ' - the form preselects the keep option'
             );
+            Tools::setTestValue(self::KEY, '');
+            TinyAssert::same(
+                '',
+                self::harness($offered)->paymentTermsFormValuesForTest()['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'],
+                $description . ' - a re-rendered form keeps the Remove the merchant chose'
+            );
+            Tools::resetTestValues();
+        }
+    }
+
+    /**
+     * A checkbox is rendered for every term the record offers, so ticking one counts as a
+     * selection whether or not it is one of the module's own preset lengths.
+     */
+    private static function testAnyRenderedCheckboxCountsAsASelection(): void
+    {
+        $cases = array(
+            array(array(15, 120), 120, true, 'a term the record offers off the preset list counts'),
+            array(array(15, 120), 15, true, 'a preset term counts'),
+            array(array(15), 120, false, 'a term with no rendered checkbox does not'),
+        );
+        foreach ($cases as list($offered, $ticked, $accepted, $description)) {
+            StubStore::reset();
+            Tools::resetTestValues();
+            Tools::setTestValue('PS_TWO_PAYMENT_TERMS_' . $ticked, 1);
+            $errors = self::harness($offered)->validatePaymentTermsForTest();
+
+            TinyAssert::same($accepted, $errors === array(), $description);
         }
     }
 
@@ -172,6 +201,7 @@ final class DeprecatedCustomPaymentTermSpec
             ),
             array('30.0', '', '', '', true, 'an unusable value can still be removed'),
             array('45', array(), '', '45', true, 'a post carrying something other than a value leaves the stored term alone'),
+            array('30.0', null, '', '30.0', true, 'an unusable value the post does not carry blocks nothing'),
         );
         foreach ($cases as list($stored, $posted, $refusal, $stored_after, $ticked_after, $description)) {
             StubStore::reset();

@@ -2197,7 +2197,11 @@ class Twopayment extends PaymentModule
      */
     protected function getTwoLegacyCustomTermOptionValue()
     {
-        return htmlspecialchars($this->getTwoStoredCustomTerm(), ENT_QUOTES, 'UTF-8');
+        $stored = $this->getTwoStoredCustomTerm();
+        // A refused save re-renders the form, so a Remove the merchant already chose stands.
+        $posted = $this->getTwoPostedCustomTerm();
+
+        return $posted === '' ? '' : htmlspecialchars($stored, ENT_QUOTES, 'UTF-8');
     }
 
     /**
@@ -2280,8 +2284,9 @@ class Twopayment extends PaymentModule
 
     protected function validTwoPaymentTermsFormValues()
     {
-        // Validate payment terms
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        // The rendered set, as the save loop writes from: a term the record offers off the
+        // hardcoded list has a checkbox, so ticking it has to count as a selection.
+        $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
         $selected_terms = array();
         foreach ($payment_terms as $term) {
             if (Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term)) {
