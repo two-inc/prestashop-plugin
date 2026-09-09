@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 /**
  * fetchTwoMerchantFeeRates() - the merchant-fee lookup behind the inline fee
- * display on the admin "Available Payment Terms" checkboxes (Magento parity:
- * Controller/Adminhtml/Config/Fees.php). Contract under test:
+ * display on the admin "Available Payment Terms" checkboxes. Contract under
+ * test:
  *
  *  - POST /pricing/v1/merchant/rates with {buyer_country_code,
  *    recourse_pricing: false, net_terms: int[]} on a tight render-path
@@ -18,6 +18,9 @@ declare(strict_types=1);
  *    stamped with fetched_at; a failed fetch serves it back with
  *    stale => true, and a 60s cooldown suppresses the wire call meanwhile.
  *    {success: false} only when nothing was ever stored for that identity.
+ *  - An unrenderable answer (ABN-540) - no currency, or no term priced at
+ *    all - is a failed fetch, so it can neither be drawn nor displace the
+ *    stored set. A partial answer is renderable and stays a success.
  */
 final class MerchantFeeRatesSpec
 {
@@ -30,7 +33,8 @@ final class MerchantFeeRatesSpec
         self::testNon200Fails();
         self::testMalformedBodyFails();
         self::testMalformedRateRowsAreSkipped();
-        self::testAbsentCurrencyNormalisesToEmptyString();
+        self::testUnrenderableAnswersAreRefusedAndKeepTheStoredSet();
+        self::testPartialAnswerIsStillASuccess();
         self::testLastKnownGoodLifecycle();
         self::testTerminalFailuresNeverReachTheWire();
         self::testStoredSetIsIdentityScoped();
@@ -218,19 +222,80 @@ final class MerchantFeeRatesSpec
         TinyAssert::same(['percentage' => 0.0, 'fixed' => 1.25], $result['fees']['60']);
     }
 
-    private static function testAbsentCurrencyNormalisesToEmptyString(): void
+    /**
+     * An answer nobody can act on is a failed fetch: it is neither drawn nor
+     * allowed to displace figures that were once real.
+     */
+    private static function testUnrenderableAnswersAreRefusedAndKeepTheStoredSet(): void
+    {
+        $pricedRow = ['net_terms' => 30, 'percentage_fee' => '1.00', 'fixed_fee' => '0.25'];
+        // response, desc
+        $cases = [
+            [['http_status' => 200, 'rates' => [$pricedRow]], 'an answer with no currency key at all'],
+            [['http_status' => 200, 'currency' => '', 'rates' => [$pricedRow]], 'an answer whose currency is empty'],
+            [['http_status' => 200, 'currency' => '  ', 'rates' => [$pricedRow]], 'an answer whose currency is blank space'],
+            [['http_status' => 200, 'currency' => ['NOK'], 'rates' => [$pricedRow]], 'an answer whose currency is not a string'],
+            [['http_status' => 200, 'currency' => 'NOK', 'rates' => []], 'an answer carrying no rate rows'],
+            [
+                ['http_status' => 200, 'currency' => 'NOK', 'rates' => [['net_terms' => 'soon'], ['net_terms' => -30], 'junk']],
+                'an answer whose every rate row fails normalisation',
+            ],
+        ];
+
+        foreach ($cases as $case) {
+            list($response, $desc) = $case;
+
+            // Nothing stored: the refusal is what the caller gets.
+            StubStore::reset();
+            self::configureMerchantIdentity();
+            Configuration::updateValue('PS_COUNTRY_DEFAULT', 47);
+            $module = self::moduleWithRatesResponse($response);
+            $result = $module->fetchTwoMerchantFeeRates([15, 30]);
+
+            TinyAssert::false($result['success'], 'refused: ' . $desc);
+            TinyAssert::same(Twopayment::FEE_RATES_ERROR_UPSTREAM, $result['error'], 'error category: ' . $desc);
+            TinyAssert::same(false, isset($result['fees']), 'no figures offered: ' . $desc);
+
+            // A good set already stored: it survives, labelled stale.
+            StubStore::reset();
+            self::configureMerchantIdentity();
+            Configuration::updateValue('PS_COUNTRY_DEFAULT', 47);
+            $stored = self::scriptedModule();
+            $stored->response = self::okResponse();
+            $good = $stored->fetchTwoMerchantFeeRates([15, 30]);
+            TinyAssert::true($good['success'], 'stored a good set first: ' . $desc);
+
+            $stored->response = $response;
+            $after = $stored->fetchTwoMerchantFeeRates([15, 30]);
+
+            TinyAssert::true($after['success'], 'still answers from the stored set: ' . $desc);
+            TinyAssert::true($after['stale'], 'stored set is labelled stale: ' . $desc);
+            TinyAssert::same($good['fees'], $after['fees'], 'stored figures are not displaced by: ' . $desc);
+            TinyAssert::same($good['currency'], $after['currency'], 'stored currency is not displaced by: ' . $desc);
+        }
+    }
+
+    /**
+     * Boundary: a partial answer is renderable, so this layer keeps it. The
+     * term the answer skipped is labelled as unpriced on the screen instead.
+     */
+    private static function testPartialAnswerIsStillASuccess(): void
     {
         StubStore::reset();
         self::configureMerchantIdentity();
 
         $module = self::moduleWithRatesResponse([
             'http_status' => 200,
-            'rates' => [['net_terms' => 30, 'percentage_fee' => '1.00', 'fixed_fee' => '0.00']],
+            'currency' => 'EUR',
+            'rates' => [['net_terms' => 30, 'percentage_fee' => '2.00', 'fixed_fee' => '0.50']],
         ]);
-        $result = $module->fetchTwoMerchantFeeRates([30]);
+        $result = $module->fetchTwoMerchantFeeRates([15, 30, 60]);
 
-        TinyAssert::true($result['success']);
-        TinyAssert::same('', $result['currency'], 'absent currency must normalise to empty string, not be invented');
+        TinyAssert::true($result['success'], 'one priced term out of three is still a renderable answer');
+        TinyAssert::same('EUR', $result['currency']);
+        TinyAssert::count(1, $result['fees']);
+        TinyAssert::same(['percentage' => 2.0, 'fixed' => 0.5], $result['fees']['30']);
+        TinyAssert::same(false, isset($result['fees']['15']), 'an unpriced term carries no invented figure');
     }
 
     /**

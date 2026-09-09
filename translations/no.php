@@ -533,6 +533,7 @@ $_MODULE['<{twopayment}prestashop>configuration_50176febc840de876892956d58f9f60b
 $_MODULE['<{twopayment}prestashop>configuration_9ab5e860e0e28be037094acd09e148f2'] = 'Gebyrene kunne ikke oppdateres, så beløpene som ble hentet %s vises.';
 $_MODULE['<{twopayment}prestashop>configuration_06df3dcf3281499cc51356b8ea10c05b'] = 'Gebyrene kunne ikke lastes fordi pristjenesten ikke var tilgjengelig. Beløpene ved siden av hvert betalingsvilkår mangler, de er ikke null.';
 $_MODULE['<{twopayment}prestashop>configuration_ee619aca6b3894beb307b1b40c63d27d'] = 'Gebyrer kan ikke vises før en API-nøkkel er lagret på fanen Generelt.';
+$_MODULE['<{twopayment}prestashop>configuration_537cf2676b0429c81d86a016bc4da9f1'] = 'ikke oppgitt';
 $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] = 'Den mellomlagrede profilen hører til én butikk. Bytt til én enkelt butikk for å se eller oppdatere den.';
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'Den mellomlagrede profilen hører til én butikk. Bytt til én enkelt butikk for å oppdatere den.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Hver butikk har sin egen oppdaterings-URL. Bytt til én enkelt butikk for å se den.';

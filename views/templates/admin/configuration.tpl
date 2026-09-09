@@ -76,6 +76,7 @@
     var twoFeesStaleDatedText = '{l s='Fees could not be refreshed, so the figures retrieved on %s are shown.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesUnavailableText = '{l s='Fees could not be loaded because the pricing service could not be reached. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesNoApiKeyText = '{l s='Fees cannot be shown until an API key is saved on the General tab.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeeNoFigureText = '{l s='no figure' mod='twopayment'|escape:'javascript':'UTF-8'}';
 </script>
 {literal}
     <script type="text/javascript">
@@ -328,16 +329,18 @@
                     } else {
                         setTwoFeeNotice('');
                     }
-                    // Currency must come from the API response - the fee
-                    // amounts do too. Without it, any fixed amount would be
-                    // ambiguous, so only the percentage is shown then.
+                    // Currency comes from the API response, never guessed: the
+                    // fee amounts are its too. A set without one is refused
+                    // server-side rather than drawn.
                     var currency = String(response.currency || '').toUpperCase().replace(/^\s+|\s+$/g, '');
                     var suffix = currency !== '' ? ' ' + currency : '';
                     $('.two-term-fee').each(function () {
                         var $span = $(this);
                         var fee = response.fees[String($span.data('term'))];
                         if (!fee) {
-                            $span.text('');
+                            // An empty span reads as "no fee for this term",
+                            // so a term the answer did not price says so.
+                            $span.text('(' + twoFeeNoFigureText + ')');
                             return;
                         }
                         var pctStr = formatTwoFeeAmount(fee.percentage || 0);
@@ -345,10 +348,6 @@
                         var zero = formatTwoFeeAmount(0);
                         var pctZero = pctStr === zero;
                         var fixedZero = fixedStr === zero;
-                        if (currency === '') {
-                            $span.text(pctZero ? '' : '(' + pctStr + '%)');
-                            return;
-                        }
                         var inner;
                         if (pctZero && fixedZero) {
                             inner = zero + suffix;
