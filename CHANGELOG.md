@@ -327,7 +327,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **jQuery UI's `<ul>` painted a second bordered box inside the panel** — the rule flattening it into normal flow set `border`/`box-shadow` without `!important`, and the generic `.ui-autocomplete` rule sets them with it
 - **Enter in the query field could submit the address form.** jQuery UI only suppresses Enter when it has an active menu item, so on the ordinary too-short and "No matches found" states the key reached PrestaShop's `<form>` and triggered implicit submission — type a company name, press Enter before the results land, and the address step submits. Enter is now suppressed whenever the panel is open, on both render paths
 - **ArrowUp from the unselected state skipped a row** on the fallback path, landing on the second-to-last rather than the last
-- **The panel was anchored to the wrapper's full height**, which grows by the org-number label once a company is selected, so reopening it dropped the panel further from the field than the required 8px. Anchored to the input's own height instead
+- **The panel was anchored to the wrapper's full height**, which grows by the org-number label once a company is selected, so reopening it dropped the panel further from the field than the 8px TWO-25326 requires. Anchored to the input's own height instead
 
 ### Added
 - **Norwegian, Dutch and Swedish translation catalogues** (TWO-24760)

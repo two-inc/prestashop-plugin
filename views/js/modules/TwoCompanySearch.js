@@ -547,8 +547,8 @@ class TwoCompanySearch {
             hintField = $('<span class="two-company-id-hint"></span>');
             this.companyField.after(hintField);
             // Normal flow inside `.two-company-field-wrap`, immediately after
-            // the input (see two.css): absolute positioning paints it over the
-            // VAT-number field below (TWO-25326).
+            // the input (see two.css): absolute positioning would paint it over
+            // the VAT-number field below (TWO-25326).
         }
 
         this.companyIdHintField = hintField;
@@ -3142,11 +3142,6 @@ class TwoCompanySearch {
         memory.companyid = selection.companyid;
         memory.company = wroteCompany ? selection.company : '';
         memory.organization = wroteNumber ? selection.companyid : '';
-        // A name written onto a form with no identification field leaves the number
-        // half owing. Usually there is nowhere for it to go and it stays owing
-        // harmlessly - but a mirrored COUNTRY write can rebuild this form into one
-        // that does have the field, and then it is owed to a form that can take it.
-        //
         // No `TWO:` carve-out here either: with the write gate gone, an internal
         // identifier owes and settles exactly as any other number does.
         // Owed whenever the name landed and the number did NOT, which is now two
@@ -4190,8 +4185,6 @@ class TwoCompanySearch {
      * It would not: the resolver returns the session company first, with no
      * comparison against the address, so a dropped or still-in-flight clear
      * would on its own yield a WRONG order rather than a rejected one - silently.
-     * (An earlier version of this comment claimed the opposite. It was wrong, and
-     * the guarantee it appealed to did not exist.)
      *
      * What makes it tolerable is that the same clear happens server-side and
      * unconditionally: Twopayment::hookActionCustomerAddressSave() drops the
@@ -4694,9 +4687,7 @@ class TwoCompanySearch {
      * and the "not on the list" button are built by buildDropdown() and are
      * identical on both paths - this method just supplies the debounce, the
      * request and the row rendering that jQuery UI's widget would otherwise
-     * supply. One engine per path, one panel for both: two complete and
-     * divergent dropdown implementations meant every panel defect had to be
-     * fixed - or was missed - twice.
+     * supply. One engine per path, one panel for both.
      */
     setupCustomAutocomplete() {
         if (!this._queryField || !this._queryField.length || !this._resultsList || !this._resultsList.length) {
@@ -6088,9 +6079,7 @@ class TwoCompanySearch {
      * The whole point of the enrolment flow is that the buyer's registered data
      * lands in the checkout, and until this existed none of it did. The completion
      * posted to `saveCompany`, published an in-memory selection, and wrote nothing
-     * to any input at all - reported as: "Sole trader workflow is not actually
-     * populating company name or address from the autofill call. Absolutely
-     * nothing is being populated."
+     * to any input at all.
      *
      * Deliberately composed from the writers a real search selection already uses,
      * rather than a second set of its own. Three previous attempts at this

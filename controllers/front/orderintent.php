@@ -763,14 +763,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Helper method to validate AJAX token.
-     *
-     * DEBUG ESCAPE HATCH (TWO-25386): PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when
-     * enabled, skips this token check entirely on every action on this
-     * controller. Default OFF - matches the pre-existing always-checked
-     * behaviour.
-     */
-    /**
      * Company-name search, relayed server-side so the firewall token stays out
      * of the browser. Two's status and body are passed through untouched:
      * callers read `error_code`/`error_message` off the failing response.
@@ -891,6 +883,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $this->sendJsonResponse(json_encode($body));
     }
 
+    /**
+     * DEBUG ESCAPE HATCH (TWO-25386): PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when
+     * enabled, skips this token check entirely on every action on this
+     * controller. Default OFF - matches the pre-existing always-checked
+     * behaviour.
+     */
     public function validateAjaxToken()
     {
         if ($this->module->isTwoSkipConfirmTokenCheckEnabled()) {

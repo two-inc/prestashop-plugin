@@ -16,7 +16,7 @@ import { completeGuestStep, twoPaymentOption } from "../pages/checkout.js";
  *   - No: the SAME control instead renders in the payment tile. The
  *     address area's native `company` field is NOT hidden or removed - it
  *     stays visible and typeable, just without the search enhancement (a
- *     bug confirmed on the WooCommerce plugin that this suite checks does
+ *     bug confirmed on the WooCommerce plugin; this suite checks it does
  *     not recur here).
  *
  * This suite drives both settings for real, against a real running
@@ -77,8 +77,8 @@ test.describe("TWO-25326 company-search location", () => {
     const companyField = addr.locator('input[name="company"]');
 
     // The address area's native `company` field must stay visible and typeable -
-    // never hidden, never removed. The PS-side check for a regression confirmed
-    // on the WooCommerce plugin.
+    // never hidden, never removed - the regression confirmed on the WooCommerce
+    // plugin must not recur here.
     await expect(companyField).toBeVisible();
     await expect(companyField).toBeEditable();
     // Plain, unenhanced: no search/autocomplete attached in this mode -

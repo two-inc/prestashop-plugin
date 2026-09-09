@@ -2742,8 +2742,7 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    // Skip confirm-order token check (TWO-25386,
-                    // ported from woocommerce-plugin's `skip_confirm_auth`).
+                    // Skip confirm-order token check (TWO-25386).
                     // DEBUG ONLY - gates the CSRF-style token check
                     // (validateAjaxToken()) on the order-intent front
                     // controller's confirm/save-result actions. Default OFF.
@@ -2810,9 +2809,8 @@ class Twopayment extends PaymentModule
                             array('id' => 'PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION_OFF', 'value' => 0, 'label' => $this->l('No')),
                         ),
                     ),
-                    // View error log action (TWO-25386, ported from
-                    // magento-plugin's Block/Adminhtml/System/Config/Button/ErrorCheck.php).
-                    // PS has no admin-config "button" field type, so this is
+                    // View error log action (TWO-25386). PS has no
+                    // admin-config "button" field type, so this is
                     // rendered as an 'html' field - a link to the module's own
                     // AdminTwoErrorLog controller, which lists the module's
                     // recent PrestaShopLogger entries.

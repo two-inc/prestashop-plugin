@@ -2378,11 +2378,10 @@ class TwoCheckoutManager {
 
     initializeOrderIntent() {
         if (!this.orderIntent && window.TwoOrderIntent) {
-            // TWO-25386: `enabled` now follows the admin's order-intent
-            // toggle (this.config.orderIntentEnabled) rather than being
-            // hardcoded - shouldRunOrderIntent() reads it to skip the
-            // pre-approval preview call entirely when the merchant has
-            // turned it off. This is the pre-approval PREVIEW only; it never
+            // TWO-25386: `enabled` follows the admin's order-intent toggle
+            // (this.config.orderIntentEnabled) - shouldRunOrderIntent() reads it
+            // to skip the pre-approval preview call entirely when the merchant
+            // has turned it off. This is the pre-approval PREVIEW only; it never
             // gates the authoritative approval check the backend runs at
             // actual payment submission.
             this.orderIntent = new TwoOrderIntent({

@@ -363,7 +363,7 @@ describe('the company-search hints (TWO-25288)', () => {
 
             // a click into an empty field must open something, i.e. the PANEL -
             // a plain `response([])` here is indistinguishable from "not a
-            // dropdown at all", which was the live complaint. The empty query
+            // dropdown at all". The empty query
             // renders no row at all (TWO-40 follow-up); the requirement lives
             // in the query field's placeholder. Still not a real search, so no
             // request goes out.

@@ -4,14 +4,8 @@
  * @license Two Commercial License
  */
 
-/*
- * `.two-company-search-input` is a marker class only - setupAutocomplete()
- * adds it to the company-name field for other code to key off, and it carries
- * no appearance of its own. The search spinner belongs to the panel's own
- * query field (`.two-company-dropdown__spinner`), and the company-name field
- * has to size and space exactly like every other input on the address form
- * (TWO-25326).
- */
+/* `.two-company-search-input` is a JS marker class with no styles of its own: the
+ * company-name field sizes and spaces like every other address input (TWO-25326). */
 
 /* Remove custom styling that modifies core radio/checkbox visuals for consistency */
 .two-payment-option .custom-radio  {

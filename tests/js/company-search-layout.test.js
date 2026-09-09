@@ -1,6 +1,6 @@
 /**
  * Regression tests for layout bugs found in checkout, on top of the widget
- * already confirmed working (PR two-inc/prestashop-plugin#128): jQuery UI's
+ * already confirmed working (prestashop-plugin PR #128): jQuery UI's
  * own `_resizeMenu` sizes the dropdown to whichever is WIDER, the field or
  * the longest label, so it needs to be explicitly clamped.
  *

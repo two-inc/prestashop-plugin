@@ -3,10 +3,6 @@
  * written into the visible `dni` ("Identification number") address field.
  * Everything else about such a number stays byte-identical to any other.
  *
- * Replaces `internal-identifier-visibility.test.js`, which pinned the opposite
- * (write into `dni`, then hide the field with CSS) - every spec here is the
- * inverse of one that stood there.
- *
  * Why the write is wrong, verified against real PrestaShop core:
  *
  *  1. CORE REFUSES TO SAVE THE ADDRESS. `Validate::isDniLite()` is
