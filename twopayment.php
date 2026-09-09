@@ -17,6 +17,7 @@ require_once dirname(__FILE__) . '/classes/TwoCompanySearchCountries.php';
 require_once dirname(__FILE__) . '/classes/TwoCheckoutAmountException.php';
 require_once dirname(__FILE__) . '/classes/TwoSurchargeMethodException.php';
 require_once dirname(__FILE__) . '/classes/TwoRateLimiter.php';
+require_once dirname(__FILE__) . '/classes/TwoStoredTerm.php';
 
 class Twopayment extends PaymentModule
 {
@@ -1770,20 +1771,16 @@ class Twopayment extends PaymentModule
                     'name' => 'name'
                 )
             ),
-            // Custom payment term in days (TWO-25386, ported from
-            // magento-plugin's payment_terms_duration_days / woocommerce-plugin's
-            // payment_terms_custom_days): a merchant-typed term length in
-            // addition to the preset checkboxes above. Unioned into
-            // getAvailablePaymentTerms() when > 0 AND still within Two's own
-            // backend-permitted term set (see that method) - it bypasses the
-            // EOM/STANDARD checkbox split, never the backend restriction.
-            array(
-                'type' => 'text',
-                'label' => $this->l('Custom payment terms (days)'),
-                'name' => 'PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS',
-                'required' => false,
-                'desc' => sprintf($this->l('Optional. Offer an additional payment term (in days) not covered by the presets above. Leave empty to only offer the terms selected above. %s must still permit this term length for your account - an unsupported value is silently ignored.'), $this->getTwoBrandConfig('product_name')),
-            ),
+        ));
+
+        // Deprecated custom term (ABN-522): rendered only while a value worth
+        // showing is stored, and then only as keep-or-remove.
+        $legacy_custom_term = $this->getTwoLegacyCustomTermInput();
+        if ($legacy_custom_term !== null) {
+            $inputs[] = $legacy_custom_term;
+        }
+
+        $inputs = array_merge($inputs, array(
             // Default pre-selected term (TWO-25386 #10): an explicit admin
             // choice that takes priority over getDefaultPaymentTerm()'s
             // derived default (API due_in_days, else 30 days, else lowest
@@ -2026,12 +2023,15 @@ class Twopayment extends PaymentModule
         // Payment term type (STANDARD or EOM)
         $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
 
-        // Payment terms checkboxes
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        // Payment terms checkboxes, over the rendered set as validation and the save loop read it:
+        // a term the record offers off the preset list otherwise renders unticked and the next
+        // save writes it away. Resolved the same way the checkbox query resolves it, so one
+        // render cannot see two lists across the TTL-gated fetch.
+        $payment_terms = array_map('strval', $this->getOfferableTermSource(true));
         foreach ($payment_terms as $term) {
             $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
         }
-        $fields_values['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'] = Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', Configuration::get('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'));
+        $fields_values['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'] = $this->getTwoLegacyCustomTermSelected();
         $fields_values['PS_TWO_DEFAULT_PAYMENT_TERM'] = (string) Tools::getValue(
             'PS_TWO_DEFAULT_PAYMENT_TERM',
             $this->getTwoDefaultPaymentTermFormDefault()
@@ -2106,20 +2106,143 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Custom payment term (TWO-25386 #9): the merchant-typed extra term in
-     * days, or null when unset/invalid. Digits only, > 0 - anything else is
-     * treated as unset rather than erroring the checkout render.
+     * The stored custom payment term in days, or null where it names none.
      *
      * @return int|null
      */
     protected function getTwoCustomPaymentTermDays()
     {
-        $raw = trim((string) Configuration::get('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'));
-        if ($raw === '' || !ctype_digit($raw)) {
+        return TwoStoredTerm::days(Configuration::get('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'));
+    }
+
+    /**
+     * The stored custom payment term, trimmed.
+     *
+     * @return string
+     */
+    protected function getTwoStoredCustomTerm()
+    {
+        $stored = Configuration::get('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS');
+
+        return is_scalar($stored) ? trim((string) $stored) : '';
+    }
+
+    /**
+     * The offered term a stored custom value names, or null where it names none.
+     * An unresolved offered set matches nothing, so an API outage cannot delete a
+     * migration value (ABN-522).
+     *
+     * @return int|null
+     */
+    protected function getTwoCustomTermFoldTarget()
+    {
+        $days = TwoStoredTerm::days($this->getTwoStoredCustomTerm());
+        if ($days === null) {
             return null;
         }
-        $days = (int) $raw;
-        return $days > 0 ? $days : null;
+        $offered = $this->getMerchantAvailableTerms(false);
+        if ($offered === array() || !in_array($days, $offered, true)) {
+            return null;
+        }
+
+        // The checkbox set is term-type constrained but the custom term is not, so folding a term
+        // End-of-Month does not carry onto its checkbox would withdraw what checkout offers today.
+        if (Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM'
+            && !in_array($days, self::EOM_PAYMENT_TERMS_OPTIONS, true)
+        ) {
+            return null;
+        }
+
+        return $days;
+    }
+
+    /**
+     * The deprecated custom-term row, or null where there is nothing worth
+     * showing. Keep-or-remove only: the sole edit offered is the only one the
+     * save accepts (ABN-522).
+     *
+     * @return array|null
+     */
+    protected function getTwoLegacyCustomTermInput()
+    {
+        $stored = $this->getTwoStoredCustomTerm();
+        if (TwoStoredTerm::isBlank($stored) || $this->getTwoCustomTermFoldTarget() !== null) {
+            return null;
+        }
+        $days = TwoStoredTerm::days($stored);
+
+        $escaped = $this->getTwoLegacyCustomTermOptionValue();
+
+        return array(
+            'type' => 'select',
+            'label' => $this->l('Custom payment terms (days)'),
+            'name' => 'PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS',
+            'desc' => $this->getTwoLegacyCustomTermHint($stored),
+            'options' => array(
+                'query' => array(
+                    array(
+                        'id_option' => $escaped,
+                        'name' => $days === null ? $escaped : sprintf($this->l('%d days'), $days),
+                    ),
+                    array('id_option' => '', 'name' => $this->l('Remove')),
+                ),
+                'id' => 'id_option',
+                'name' => 'name',
+            ),
+        );
+    }
+
+    /**
+     * The stored term as the keep option carries it. The core form templates emit option values
+     * unescaped, and the browser posts the decoded value back, so keep still round-trips.
+     *
+     * @return string
+     */
+    protected function getTwoLegacyCustomTermOptionValue()
+    {
+        return htmlspecialchars($this->getTwoStoredCustomTerm(), ENT_QUOTES, 'UTF-8');
+    }
+
+    /**
+     * Which of the two options the form arrives on. A refused save re-renders the section, so a
+     * Remove the merchant already chose stands rather than reverting to keep.
+     *
+     * @return string
+     */
+    protected function getTwoLegacyCustomTermSelected()
+    {
+        return $this->getTwoPostedCustomTerm() === '' ? '' : $this->getTwoLegacyCustomTermOptionValue();
+    }
+
+    /**
+     * The posted custom term, trimmed, or null where the form carried no row to post.
+     *
+     * @return string|null
+     */
+    protected function getTwoPostedCustomTerm()
+    {
+        $posted = Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', null);
+
+        return is_scalar($posted) ? trim((string) $posted) : null;
+    }
+
+    /**
+     * Help text for the deprecated custom-term row, naming End-of-Month
+     * semantics only where that type is stored.
+     *
+     * @param string $stored
+     * @return string
+     */
+    protected function getTwoLegacyCustomTermHint($stored)
+    {
+        $days = TwoStoredTerm::days($stored);
+        $shown = $days === null ? htmlspecialchars($stored, ENT_QUOTES, 'UTF-8') : (string) $days;
+
+        if (Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM') {
+            return sprintf($this->l('Legacy setting. This offers a custom term of %s days after the end of the month. It is no longer supported and cannot be edited. Choose Remove to withdraw it, or use the payment terms above to change what you offer.'), $shown);
+        }
+
+        return sprintf($this->l('Legacy setting. This offers a custom term of %s days from fulfilment. It is no longer supported and cannot be edited. Choose Remove to withdraw it, or use the payment terms above to change what you offer.'), $shown);
     }
 
     /**
@@ -2171,8 +2294,9 @@ class Twopayment extends PaymentModule
 
     protected function validTwoPaymentTermsFormValues()
     {
-        // Validate payment terms
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        // The rendered set, as the save loop writes from: a term the record offers off the
+        // hardcoded list has a checkbox, so ticking it has to count as a selection.
+        $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
         $selected_terms = array();
         foreach ($payment_terms as $term) {
             if (Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term)) {
@@ -2180,15 +2304,30 @@ class Twopayment extends PaymentModule
             }
         }
 
-        if (empty($selected_terms)) {
+        // Deprecated custom term (ABN-522). The row is absent from the form
+        // whenever it holds nothing worth showing, so an unposted field means
+        // "leave the stored value alone", not "clear it".
+        $stored_custom = $this->getTwoStoredCustomTerm();
+        $posted_custom = $this->getTwoPostedCustomTerm();
+        $effective_custom = $posted_custom === null ? $stored_custom : $posted_custom;
+
+        // A custom term satisfies the mandatory selection, as on the other platforms - but only
+        // one checkout would actually offer, else the shop falls back to a term nobody chose.
+        if (empty($selected_terms)
+            && !in_array(TwoStoredTerm::days($effective_custom), $this->getOfferableTermSource(false), true)
+        ) {
             $this->errors[] = $this->l('You must select at least one payment term.');
         }
 
-        // Custom payment term days (TWO-25386 #9): empty is a legitimate "no
-        // custom term" state; anything non-empty must be a positive integer.
-        $raw_custom_days = trim((string) Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'));
-        if ($raw_custom_days !== '' && (!ctype_digit($raw_custom_days) || (int) $raw_custom_days <= 0)) {
-            $this->errors[] = $this->l('Custom payment term must be a whole number of days greater than zero, or left empty.');
+        if ($posted_custom !== null) {
+            if ($effective_custom !== '' && $effective_custom !== $stored_custom) {
+                $this->errors[] = $this->l('Custom payment terms (days) can only be removed, not changed.');
+            } elseif (TwoStoredTerm::isUnusable($effective_custom)) {
+                $this->errors[] = sprintf(
+                    $this->l('Custom payment terms (days) holds "%s", which is not a usable number of days. Choose Remove on that field to clear it.'),
+                    htmlspecialchars($effective_custom, ENT_QUOTES, 'UTF-8')
+                );
+            }
         }
 
         $this->validTwoSurchargeFormValues();
@@ -2216,14 +2355,13 @@ class Twopayment extends PaymentModule
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
         }
 
-        // Custom payment term days (TWO-25386 #9). Passed
-        // validTwoPaymentTermsFormValues above (digits-only, > 0, or
-        // empty).
-        $raw_custom_days = trim((string) Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'));
-        Configuration::updateValue(
-            'PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS',
-            ($raw_custom_days !== '' && ctype_digit($raw_custom_days)) ? (int) $raw_custom_days : ''
-        );
+        // Deprecated custom term (ABN-522): the post can only clear it, and
+        // validTwoPaymentTermsFormValues has already refused anything else.
+        if ($this->getTwoPostedCustomTerm() === '') {
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', '');
+        }
+        // After the checkbox writes, so the fold-in tick survives them.
+        $this->foldInTwoLegacyCustomTerm();
 
         // Default pre-selected term (TWO-25386 #10). Read AFTER the term-type,
         // checkbox and custom-days writes above so getAvailablePaymentTerms()
@@ -2247,6 +2385,25 @@ class Twopayment extends PaymentModule
         $this->saveTwoSurchargeFormValues();
 
         $this->output .= $this->displayConfirmation($this->l('Payment terms settings are updated.'));
+    }
+
+    /**
+     * Moves a stored custom term the merchant record offers onto that term's
+     * checkbox, and says so - the merchant's offered set changed under them, so
+     * a silent move would look like a lost setting (ABN-522).
+     */
+    protected function foldInTwoLegacyCustomTerm()
+    {
+        $days = $this->getTwoCustomTermFoldTarget();
+        if ($days === null) {
+            return;
+        }
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $days, 1);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', '');
+        $this->output .= $this->displayWarning(sprintf(
+            $this->l('Custom payment terms (days) of %s is now one of the standard terms you offer, so it has been selected under Payment terms and the custom field cleared.'),
+            $days
+        ));
     }
 
     protected function renderTwoCompanyLookupForm()

@@ -429,7 +429,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_90a5f22cdff46c106eb927b92562347f'] = 'Angi manuelt';
 $_MODULE['<{twopayment}prestashop>twopayment_22294ef90aa68e15429879889a0cdaf5'] = 'Registrert virksomhet';
 $_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Velg et annet enkeltpersonforetak';
-$_MODULE['<{twopayment}prestashop>twopayment_00106f12870853d59e2c9b3ade06c709'] = 'Valgfritt. Tilby en ekstra betalingsfrist (i dager) som ikke er dekket av forhåndsinnstillingene ovenfor. La stå tomt for å kun tilby betingelsene valgt ovenfor. %s må fortsatt tillate denne fristlengden for kontoen din - en ustøttet verdi ignoreres stille.';
 $_MODULE['<{twopayment}prestashop>twopayment_85975d3764f15a461e1b4241e4a5b1c3'] = 'Hvilken tilbudt betalingsfrist som er forhåndsvalgt i kassen som standard. La stå uvalgt for å beholde det automatiske valget (forhandlerens egen standardfrist når den tilbys, ellers 30 dager, ellers den kortest tilbudte fristen).';
 $_MODULE['<{twopayment}prestashop>twopayment_ea5dc66828c0b5143181e3d1619bd1cf'] = 'Vis forklaringslenken "Hva er %s"';
 $_MODULE['<{twopayment}prestashop>twopayment_e385d49e793ac9d4aa4835d62282469b'] = 'Hvis du velger JA, ser kjøperne en info-verktøytips "Hva er %1$s?" med en lenke til en forklaringsressurs i %1$s-betalingsflisen ved kassen.';
@@ -438,7 +437,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_8d3876abbdeae12140159a1103397c07'] 
 $_MODULE['<{twopayment}prestashop>twopayment_86fd11dde72d89b72fa81284611b7faa'] = 'Aktiver forhåndsgodkjenningskontroll for bestillingsintensjon';
 $_MODULE['<{twopayment}prestashop>twopayment_e1459bb98511cce5d23cd0776fccabcf'] = 'Hvis du velger JA, kaller kassen %1$s for å forhåndsvise ordregodkjenning før kjøperen sender betalingen, og viser resultatet i betalingsflisen. Hvis du velger NEI, hoppes dette forhåndskallet over - kjøperen går fortsatt gjennom %1$ss reelle godkjenningskontroll når betalingen sendes.';
 $_MODULE['<{twopayment}prestashop>twopayment_b225a7c34ad4043b83b1c54322112056'] = '-- Automatisk (anbefalt) --';
-$_MODULE['<{twopayment}prestashop>twopayment_5330a1c71e09ac86436a0c24d6306100'] = 'Egendefinert betalingsfrist må være et helt tall dager større enn null, eller stå tom.';
 $_MODULE['<{twopayment}prestashop>twopayment_991986a40e760b716f318af6b58acc1e'] = 'Valgfritt. Et lavere tall viser %s tidligere blant betalingsmetodene som tilbys i kassen. La stå tom for å bruke PrestaShops egen rekkefølge (Betaling > Innstillinger).';
 $_MODULE['<{twopayment}prestashop>twopayment_b0aeeee23a0905fde43980eebe726ee7'] = 'ADVARSEL: KUN FOR FEILSØKING. Ved JA hoppes bestillingsintensjon-kontrollerens CSRF-lignende tokenkontroll over. Aktiver dette aldri i en live produksjonsbutikk.';
 $_MODULE['<{twopayment}prestashop>twopayment_7c5014deb8a0afa34ddda803c470e3ad'] = 'Fjern innstillinger ved avinstallering';
@@ -513,3 +511,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_4009e05973e240e0ae89bfb77b847115'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b42b57d56d7d5c1b63351f4d87e396c0'] = 'Kryss av for "Send også fra nettleseren" bare der IT-administratoren din krever headeren også for kall fra kjøperens nettleser: verdien til den headeren vil bli publisert til kjøperens nettleser og kan leses av hvem som helst.';
 $_MODULE['<{twopayment}prestashop>twopayment_1063e38cb53d94d386f21227fcd84717'] = 'Fjern';
 $_MODULE['<{twopayment}prestashop>twopayment_404c493aff65500a37b1f0d09ffa29ae'] = 'Ukjent tilleggsmetode: %1$s. Velg en av: %2$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_b1434efcff57bf2bd531c5b528feeab9'] = 'Egendefinerte betalingsvilkår (dager) kan bare fjernes, ikke endres.';
+$_MODULE['<{twopayment}prestashop>twopayment_117c08e0ebe802c50ba459a8cd6bdb1d'] = 'Egendefinerte betalingsvilkår (dager) inneholder %s, som ikke er et brukbart antall dager. Velg Fjern på feltet for å tømme det.';
+$_MODULE['<{twopayment}prestashop>twopayment_9398138bd940ea2f1e4fcd39b1584e6f'] = 'Egendefinerte betalingsvilkår (dager) på %s er nå en av standardbetingelsene du tilbyr, så den er valgt under Betalingsbetingelser og det egendefinerte feltet er tømt.';
+$_MODULE['<{twopayment}prestashop>twopayment_615a0b0fa408ef70c0548f8b9d94283b'] = 'Eldre innstilling. Denne tilbyr et egendefinert vilkår på %s dager fra oppfyllelse. Den støttes ikke lenger og kan ikke redigeres. Velg Fjern for å trekke den tilbake, eller bruk betalingsvilkårene ovenfor for å endre hva du tilbyr.';
+$_MODULE['<{twopayment}prestashop>twopayment_3a577b3e1f0b2a28d17fe1ffdbe07d29'] = 'Eldre innstilling. Denne tilbyr et egendefinert vilkår på %s dager etter månedens slutt. Den støttes ikke lenger og kan ikke redigeres. Velg Fjern for å trekke den tilbake, eller bruk betalingsvilkårene ovenfor for å endre hva du tilbyr.';

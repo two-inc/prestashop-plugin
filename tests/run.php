@@ -5776,6 +5776,7 @@ require __DIR__ . '/AdminFirewallRateLimitFieldsSpec.php';
 require __DIR__ . '/DefaultShippingTaxCodeSpec.php';
 require __DIR__ . '/EomTermTypeVisibilitySpec.php';
 require __DIR__ . '/IntentDeclinedNoticeSpec.php';
+require __DIR__ . '/DeprecatedCustomPaymentTermSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5835,6 +5836,7 @@ $tests = [
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
     'EomTermTypeVisibilitySpec::runAll' => [EomTermTypeVisibilitySpec::class, 'runAll'],
     'IntentDeclinedNoticeSpec::runAll' => [IntentDeclinedNoticeSpec::class, 'runAll'],
+    'DeprecatedCustomPaymentTermSpec::runAll' => [DeprecatedCustomPaymentTermSpec::class, 'runAll'],
 ];
 
 $failed = 0;
