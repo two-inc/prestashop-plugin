@@ -28,6 +28,7 @@ final class SurchargeCartLineSpec
         self::testOrderCreateParityGateFailsClosedOnDivergence();
         self::testOrderCreateParityGateFailsClosedOnUnavailableQuote();
         self::testOrderCreateCompletesForANonChargingTermDuringAnOutage();
+        self::testNonEnforcingPathStaysQuietOnAnUnavailableQuote();
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
         self::testStaleGuardRemovesLineWhenSessionMarkerLost();
         self::testStaleGuardKeepsLegitimateLine();
@@ -481,6 +482,46 @@ final class SurchargeCartLineSpec
         }));
         TinyAssert::count(0, $feeLines, 'a term pricing nothing contributes no fee line');
         TinyAssert::count(0, $module->feeRequests, 'and is never quoted, so an outage cannot refuse it');
+    }
+
+    /**
+     * ABN-546: the admin order-update path never refuses, so an unresolvable
+     * quote there is not a parity event to report - only the enforcing paths
+     * treat it as one.
+     */
+    private static function testNonEnforcingPathStaysQuietOnAnUnavailableQuote(): void
+    {
+        $method = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
+        $cases = [
+            [false, false, 'the update path reports nothing and never throws'],
+            [true, true, 'an enforcing path refuses the order'],
+        ];
+
+        foreach ($cases as $case) {
+            list($enforce, $expectThrow, $description) = $case;
+
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $module->forcedFeeResponse = ['http_status' => 503];
+            Context::getContext()->cookie->two_payment_term = 30;
+            PrestaShopLogger::reset();
+
+            $threw = false;
+            try {
+                $method->invoke($module, $cart, 'spec context', false, 30, $enforce);
+            } catch (Exception $e) {
+                $threw = strpos($e->getMessage(), 'Surcharge line mismatch') !== false;
+            }
+            TinyAssert::same($expectThrow, $threw, $description);
+
+            $logged = false;
+            foreach (PrestaShopLogger::$logs as $entry) {
+                if (strpos($entry['message'], 'surcharge parity mismatch') !== false) {
+                    $logged = true;
+                }
+            }
+            TinyAssert::same($expectThrow, $logged, 'the parity log follows enforcement: ' . $description);
+        }
     }
 
     /* ---- requirement 3: stale-line guards ---- */
