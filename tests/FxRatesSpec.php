@@ -74,6 +74,7 @@ final class FxRatesSpec
         self::testAbsentCapStillChargesAndOffersTheOption();
         self::testFixedSurchargeRoundingToZeroProceedsWithInfoLog();
         self::testChargedTermQuoteDecidesThePaymentOption();
+        self::testSurchargePricingCeilingIsSharedByEveryPath();
         // The cart-line-sync half of TWO-25269 lives in SurchargeCartLineSpec,
         // which already owns the real cart/product/tax fixture:
         // testQuoteFailureKeepsLineAndFailsLoudly.
@@ -1080,12 +1081,6 @@ final class FxRatesSpec
             return $terms;
         };
 
-        TinyAssert::notSame(
-            Twopayment::API_TIMEOUT_STATE_CHECK,
-            Twopayment::API_TIMEOUT_FEE_QUOTE_GATE,
-            'the gate ceiling must be its own bound, not the render-path default'
-        );
-
         foreach ($cases as $case) {
             list($type, $pct, $gross, $cookieTerm, $feeResponse, $expectedOptions, $expectLog, $quotedDays, $control, $description) = $case;
 
@@ -1105,9 +1100,9 @@ final class FxRatesSpec
                 foreach ($module->requests as $request) {
                     if ($request['endpoint'] === '/v1/pricing/order/fee') {
                         TinyAssert::same(
-                            Twopayment::API_TIMEOUT_FEE_QUOTE_GATE,
+                            Twopayment::API_TIMEOUT_SURCHARGE_PRICING,
                             $request['timeout'],
-                            'the gate must quote on its own ceiling: ' . $description
+                            'the gate must quote on the surcharge-pricing ceiling: ' . $description
                         );
                     }
                 }
@@ -1133,6 +1128,63 @@ final class FxRatesSpec
             TinyAssert::same(0, count($controlModule->hookPaymentOptions([])), 'control must withhold: ' . $description);
             TinyAssert::same([$expectedControlTerm], $quotedTerms($controlModule), 'control must quote the charged term: ' . $description);
         }
+    }
+
+    /**
+     * ABN-546 - gate and charge quote on the same ceiling, and neither falls
+     * through to the request adapter's own default.
+     */
+    private static function testSurchargePricingCeilingIsSharedByEveryPath(): void
+    {
+        $quoted = ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'EUR'];
+
+        $prepare = function (): void {
+            self::reset();
+            self::tableWithoutUsd();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '1.5');
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+            Context::getContext()->cookie->two_payment_term = '30';
+        };
+
+        $cases = [
+            [function (object $module) {
+                $module->hookPaymentOptions([]);
+            }, 'the payment-options gate'],
+            [function (object $module) {
+                $module->fetchTwoTermFee(30, 100.0, 'GB', 'EUR', true);
+            }, 'the charging path'],
+        ];
+
+        $seen = [];
+        foreach ($cases as $case) {
+            list($invoke, $description) = $case;
+
+            $prepare();
+            $module = self::feeGateModule(100.0, $quoted);
+            $invoke($module);
+
+            $timeouts = [];
+            foreach ($module->requests as $request) {
+                if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                    $timeouts[] = $request['timeout'];
+                }
+            }
+            TinyAssert::true(count($timeouts) > 0, 'nothing was priced at all: ' . $description);
+            foreach ($timeouts as $timeout) {
+                // A null here is the failure worth catching: the adapter would
+                // silently supply its own, much longer, upload-sized default.
+                TinyAssert::true(is_int($timeout), 'the pricing call must carry its own ceiling: ' . $description);
+                TinyAssert::same(
+                    Twopayment::API_TIMEOUT_SURCHARGE_PRICING,
+                    $timeout,
+                    'the ceiling must come from the one surcharge-pricing constant: ' . $description
+                );
+                $seen[] = $timeout;
+            }
+        }
+
+        TinyAssert::same(1, count(array_unique($seen, SORT_REGULAR)), 'gate and charge must price on one ceiling');
     }
 
 }
