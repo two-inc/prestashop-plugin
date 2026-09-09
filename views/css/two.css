@@ -590,7 +590,7 @@
 }
 
 /*
- * Tight-fitting positioned wrapper around the company field (TWO-30.x.10),
+ * Tight-fitting positioned wrapper around the company field (),
  * created once by TwoCompanySearch.ensureFieldWrapper(). A plain block
  * element with no padding of its own stretches to exactly the input's width,
  * whatever a theme's own `.form-group`/column wrapper happens to add - which
@@ -1523,7 +1523,7 @@
 
 /* Autocomplete Dropdown Styling */
 /*
- * TWO-30.x.10 element 1: a proper small, contained dropdown matching the
+ *  element 1: a proper small, contained dropdown matching the
  * field it belongs to, like WC/Magento's select2/selectWoo - not the
  * auto-widening box jQuery UI produces on its own. jQuery UI's `_resizeMenu`
  * sizes this element to whichever is WIDER: the field, or the longest
@@ -1539,7 +1539,7 @@
  * before that has ever run.
  *
  * The clamp itself is scoped to `.two-company-autocomplete-menu` (added to
- * the widget element by TwoCompanySearch, review finding) rather than the
+ * the widget element by TwoCompanySearch) rather than the
  * bare `.ui-autocomplete` every other rule in this section still targets:
  * `.ui-autocomplete` is jQuery UI's own un-namespaced default class, shared
  * by any OTHER jQuery UI autocomplete the page might have live (a native
@@ -1556,7 +1556,7 @@
     border: 1px solid #ccc !important;
     border-radius: 4px !important;
     /*
-     * #30.x.14 bug 2.1, live-verified: with the previous shadow the panel's
+     * with the previous shadow the panel's
      * grey border sat flush against the field's own border (0px gap live),
      * reading as one continuous control rather than a floating panel - on
      * top of the JS `position` option now opening an 8px gap (see
@@ -1699,7 +1699,7 @@
     background: none;
     font: inherit;
     color: #1976d2;
-    /* #30.x.14 bug 2.4, live-verified: Doug does not want this underlined. */
+    /* Doug does not want this underlined. */
     text-decoration: none;
     cursor: pointer;
 }

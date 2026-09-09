@@ -213,10 +213,10 @@ describe('site (c): the order-intent sentence', () => {
 });
 
 /**
- * A FOURTH display site: TwoSoleTrader.applyBuyer() falls
- * back to `buyer.organization_number` as its status LABEL when
- * `buyer.company_name` is blank - exactly when the number is the synthetic
- * `TWO:`-prefixed one this requirement exists to hide.
+ * A FOURTH display site: TwoSoleTrader.applyBuyer() falls back to
+ * `buyer.organization_number` as its status LABEL when `buyer.company_name` is
+ * blank - exactly when the number is the synthetic `TWO:`-prefixed one this
+ * requirement exists to hide.
  */
 describe('a fourth site: the sole-trader status label', () => {
     function buildSoleTrader() {

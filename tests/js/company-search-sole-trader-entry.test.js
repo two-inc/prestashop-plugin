@@ -129,11 +129,11 @@ describe('visibility', () => {
 describe('activation', () => {
     /**
      * Regression test (TWO-40, live-verified against a real browser - see
-     * .ai/decisions.md): PR #159 called renderChipSelection() in the SAME
-     * tick as closeDropdown(), so a real browser never painted the
-     * `--selected` class before `display:none` hid it - jsdom's paint-less
-     * assertion passed anyway. The selection must be visible WHILE the panel
-     * is still open, not merely true in an unwatched document.
+     * .ai/decisions.md): PR #159 called renderChipSelection() in the SAME tick
+     * as closeDropdown(), so a real browser never painted the `--selected`
+     * class before `display:none` hid it - jsdom's paint-less assertion passed
+     * anyway. The selection must be visible WHILE the panel is still open, not
+     * merely true in an unwatched document.
      */
     test('the selected chip is visibly applied while the panel is still open, not only after it closes', () => {
         stubSoleTrader(true);
@@ -148,9 +148,9 @@ describe('activation', () => {
     });
 
     /**
-     * TWO-40, Doug's request: keep the panel open with a spinner for
-     * the Sole Trader autofill round trip, driven by the real
-     * notifyEnrollmentSettled() settle event, not a fixed timeout.
+     * TWO-40, Doug's request: keep the panel open with a spinner for the Sole
+     * Trader autofill round trip, driven by the real notifyEnrollmentSettled()
+     * settle event, not a fixed timeout.
      *
      * Spinner is on the company-NAME field, not the query field (TWO-40
      * follow-up, Doug): the query row is hidden once this chip is selected,
@@ -192,17 +192,16 @@ describe('activation', () => {
         expect(() => panelParts().soleTrader.trigger('click')).not.toThrow();
 
         // TWO-40: this fallback branch skips beginSoleTraderLoading()'s
-        // keep-open window, so it needs its own deferred (rAF) close -
-        // without it the same-tick paint bug returns.
+        // keep-open window, so it needs its own deferred (rAF) close - without
+        // it the same-tick paint bug returns.
         jest.advanceTimersByTime(20);
         expect(shown(panelParts().panel)).toBe(false);
     });
 
     /**
      * Regression test (TWO-40): the chip stays clickable for the whole round
-     * trip, so a second click
-     * while the first is still waiting could re-enter startEnrollment() and
-     * open a second signup popup.
+     * trip, so a second click while the first is still waiting could re-enter
+     * startEnrollment() and open a second signup popup.
      */
     test('a second click while already loading does not start a second enrolment attempt', () => {
         const soleTrader = stubSoleTrader(true);
@@ -231,8 +230,8 @@ describe('activation', () => {
 
     /**
      * Regression test (TWO-40): startEnrollment() is foreign-module code, so
-     * without this try/catch a synchronous
-     * throw left the panel stuck open with the spinner running.
+     * without this try/catch a synchronous throw left the panel stuck open
+     * with the spinner running.
      */
     test('a synchronous throw from startEnrollment() does not leave the panel stuck open with the spinner running', () => {
         const soleTrader = stubSoleTrader(true);

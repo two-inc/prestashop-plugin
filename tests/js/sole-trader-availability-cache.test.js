@@ -12,7 +12,7 @@
  * country was. See TwoSoleTrader.js's refreshAvailability() for the fix and
  * its full reasoning.
  *
- * Bug 2 (Doug's own request): even with bug 1 fixed, every fresh page load
+ * Even with the container gap above fixed, every fresh page load
  * re-fires the availability round trip before the chip can appear, because
  * `availabilityByCountry` is in-memory only and resets on every navigation.
  * A localStorage cache, keyed per ISO country and namespaced per checkout
@@ -266,9 +266,9 @@ describe('a stale (>24h) cache entry is not used', () => {
     });
 
     test('a FUTURE `ts` (skewed clock, or planted by another script) is rejected, not treated as fresher-than-fresh', async () => {
-        // Adversarial review finding: `Date.now() - parsed.ts` going negative
-        // must not read as "not yet expired" - that would pin this answer
-        // for the country indefinitely, however long it actually sat there.
+        // `Date.now() - parsed.ts` going negative must not read as "not yet
+        // expired" - that would pin this answer for the country indefinitely,
+        // however long it actually sat there.
         seedCache('GB', true, -60 * 1000); // ts is 1 minute in the FUTURE
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();

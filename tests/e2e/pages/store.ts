@@ -35,8 +35,8 @@ export async function addFirstProductToCartAndGoToCheckout(page: Page) {
   await addToCartButton.waitFor({ state: "visible" });
 
   // Wait for the actual add-to-cart ajax call to complete rather than a
-  // fixed sleep (TWO-25110 review finding: this harness's own
-  // no-blind-sleeps convention - see boot-prestashop.sh's header).
+  // fixed sleep (TWO-25110): this harness's own no-blind-sleeps
+  // convention - see boot-prestashop.sh's header.
   const [cartResponse] = await Promise.all([
     page.waitForResponse(
       (r) => r.url().includes("/module/ps_shoppingcart/ajax") && r.request().method() === "POST"

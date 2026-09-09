@@ -160,14 +160,13 @@ test('a real OTP round trip applies the buyer even when their email differs from
 });
 
 /**
- * TWO-40: a 404 on
- * `/autofill/v1/buyer/current` right after the popup's real 'ACCEPTED' is
- * ordinary read-after-write lag, not "no registration" - the OTP round trip
- * just completed server-side and this GET can briefly not see it yet.
- * Falling straight into showPrompt()/openPopup() on that 404 reopens the
- * exact popup the buyer had just finished with - the reported bug's symptom,
- * reached via a timing race instead of a guaranteed email mismatch. One
- * retry, after a short delay, must be given before giving up.
+ * TWO-40: a 404 on `/autofill/v1/buyer/current` right after the popup's real
+ * 'ACCEPTED' is ordinary read-after-write lag, not "no registration" - the
+ * OTP round trip just completed server-side and this GET can briefly not see
+ * it yet. Falling straight into showPrompt()/openPopup() on that 404 reopens
+ * the exact popup the buyer had just finished with - the reported bug's
+ * symptom, reached via a timing race instead of a guaranteed email mismatch.
+ * One retry, after a short delay, must be given before giving up.
  */
 test('a 404 immediately after a real ACCEPTED is retried once, not treated as no registration', async () => {
     const publishes = stubManager();
@@ -271,8 +270,8 @@ test('a 404 immediately after a real ACCEPTED is retried once, not treated as no
 });
 
 /**
- * TWO-40: if a genuine 'ACCEPTED' arrives
- * while a DIFFERENT getCurrentBuyer() call is already out (isFetchingBuyer),
+ * TWO-40: if a genuine 'ACCEPTED' arrives while a DIFFERENT
+ * getCurrentBuyer() call is already out (isFetchingBuyer),
  * getCurrentBuyer(true) would previously just no-op on its own re-entrancy
  * guard - silently dropping the authentication event, leaving the busy
  * (untrusted) call to resolve on its own and potentially fail the
@@ -357,16 +356,15 @@ test('an ACCEPTED that arrives while a lookup is already in flight is not droppe
 });
 
 /**
- * TWO-40: the 404-retry
- * fix's own `setTimeout(..., 800)` is a bare side effect of the `.then()`
- * handler that scheduled it - returning from that handler settles the
- * promise immediately, so the chained `.finally()` released `isFetchingBuyer`
- * right away, roughly 800ms BEFORE the retry itself ran. For the whole wait,
- * the re-entrancy guard read `false` even though a retry was logically still
- * pending - reopening the exact concurrent-lookup window the re-entrancy guard
- * exists to close, for a second 'ACCEPTED' landing mid-wait. Must now stay
- * held for the entire wait, released only right before the retry decides
- * what to do.
+ * TWO-40: the 404-retry fix's own `setTimeout(..., 800)` is a bare side
+ * effect of the `.then()` handler that scheduled it - returning from that
+ * handler settles the promise immediately, so the chained `.finally()`
+ * released `isFetchingBuyer` right away, roughly 800ms BEFORE the retry
+ * itself ran. For the whole wait, the re-entrancy guard read `false` even
+ * though a retry was logically still pending - reopening the exact
+ * concurrent-lookup window the re-entrancy guard exists to close, for a
+ * second 'ACCEPTED' landing mid-wait. Must now stay held for the entire
+ * wait, released only right before the retry decides what to do.
  */
 test('the guard stays held for the whole 404-retry wait, not just until the retry is scheduled', async () => {
     const publishes = stubManager();

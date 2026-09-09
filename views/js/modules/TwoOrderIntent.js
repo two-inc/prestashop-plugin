@@ -226,7 +226,7 @@ class TwoOrderIntent {
      * TwoCompanySearch through TwoCheckoutManager (`getConfirmedCompany`,
      * injected in initializeOrderIntent()).
      *
-     * TWO-25326 bug 8: the request payload, not the response ordering, was the
+     * TWO-25326: the request payload, not the response ordering, was the
      * stale half. In tile mode collectFormData() reads nothing from the
      * address-area DOM and falls through to the `getCompany` round trip, which
      * reads the SESSION COOKIE - written by persistCompanyToCookie()'s
@@ -314,7 +314,7 @@ class TwoOrderIntent {
                 try { sessionStorage.removeItem('two_country_changed'); } catch (e) {}
             }
 
-            // TWO-25326 bug 8: prefer the in-memory selection over the session
+            // TWO-25326: prefer the in-memory selection over the session
             // cookie - see getConfirmedCompanySelection() for why the cookie
             // read is systematically one selection behind in tile mode.
             //

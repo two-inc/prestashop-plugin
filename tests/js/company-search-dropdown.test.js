@@ -253,7 +253,7 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
         expect(ajax.calls.length).toBe(0);
     });
 
-    test('the query field\'s aria-label names its ROLE, not the length-requirement placeholder (adversarial review finding)', () => {
+    test('the query field\'s aria-label names its ROLE, not the length-requirement placeholder', () => {
         // aria-label is the field's accessible NAME, set once and never
         // re-synced - unlike placeholder, which visually disappears the
         // moment the field has a value. Naming the field after a hint that
@@ -534,7 +534,7 @@ describe('panel handler binding', () => {
     });
 });
 
-describe('regressions found in adversarial review', () => {
+describe('regressions in the dropdown\'s own rendering and teardown', () => {
     test('Enter in the query field never submits the address form', () => {
         // jQuery UI only preventDefaults Enter when it has an ACTIVE menu
         // item. In every other state - too short to search, "No matches found",
@@ -787,7 +787,7 @@ describe('§3 the return-to-search link', () => {
     });
 
     test('clicking it does not let the click reach the accordion above', () => {
-        // #30.x.14 bug 2.5: the theme's delegated accordion-toggle handler read
+        // the theme's delegated accordion-toggle handler read
         // this click as "collapse the address step".
         makeInstance();
         const seen = [];

@@ -373,11 +373,11 @@ test('a tick still runs if the billing country has diverged from the country the
 });
 
 /**
- * The entry guard on `this._popup`
- * only proves no popup was open when the tick STARTED - it says nothing
- * about a popup opened WHILE that tick's mint POST is still out.
- * openPopup() (via the on-page prompt's click handler) has no
- * `isFetchingTokens` guard of its own, so this is a real, if narrow, window.
+ * The entry guard on `this._popup` only proves no popup was open when the
+ * tick STARTED - it says nothing about a popup opened WHILE that tick's
+ * mint POST is still out. openPopup() (via the on-page prompt's click
+ * handler) has no `isFetchingTokens` guard of its own, so this is a real,
+ * if narrow, window.
  */
 test('a popup opened while a background mint is still in flight is not orphaned by that mint landing', async () => {
     let mintCalls = 0;
@@ -423,18 +423,16 @@ test('a popup opened while a background mint is still in flight is not orphaned 
 });
 
 /**
- * A mint still outstanding when
- * destroy() runs (e.g. PrestaShop swaps in a fresh instance for a replaced
- * payment fragment) must not arm a NEW setInterval on the now-dead instance
- * when it eventually resolves - nothing will ever call destroy() on it
- * again to clear it.
+ * A mint still outstanding when destroy() runs (e.g. PrestaShop swaps in a
+ * fresh instance for a replaced payment fragment) must not arm a NEW
+ * setInterval on the now-dead instance when it eventually resolves -
+ * nothing will ever call destroy() on it again to clear it.
  */
 test('a mint that resolves after destroy() does not arm a background-refresh interval', async () => {
-    // `_tokenRefreshIntervalId`
-    // is a proxy the code under test writes itself - a mutant that armed a
-    // REAL setInterval() without recording its handle there would still
-    // read null here. jest.getTimerCount() proves no timer, of any kind,
-    // was actually scheduled.
+    // `_tokenRefreshIntervalId` is a proxy the code under test writes
+    // itself - a mutant that armed a REAL setInterval() without recording
+    // its handle there would still read null here. jest.getTimerCount()
+    // proves no timer, of any kind, was actually scheduled.
     jest.useFakeTimers();
     try {
         let resolveMint;
@@ -455,10 +453,10 @@ test('a mint that resolves after destroy() does not arm a background-refresh int
 });
 
 /**
- * fetchTokens()'s own
- * success branch checks `_destroyed` before touching `this.tokens` -
- * refreshTokens()'s should too, for the same reason (this instance is gone,
- * nothing is safe to act on), even though it arms nothing that could leak.
+ * fetchTokens()'s own success branch checks `_destroyed` before touching
+ * `this.tokens` - refreshTokens()'s should too, for the same reason (this
+ * instance is gone, nothing is safe to act on), even though it arms nothing
+ * that could leak.
  */
 test('a background mint that resolves after destroy() does not write to a torn-down instance', async () => {
     let mintCalls = 0;

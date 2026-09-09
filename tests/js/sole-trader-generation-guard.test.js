@@ -1,18 +1,18 @@
 /**
- * TWO-40: a sole-trader enrolment that is
- * still resolving asynchronously (token mint, then the buyer-lookup round
- * trip, then the saveCompany round trip) must not publish over a REAL
- * company the buyer explicitly searched for and selected in the meantime.
+ * TWO-40: a sole-trader enrolment that is still resolving asynchronously
+ * (token mint, then the buyer-lookup round trip, then the saveCompany round
+ * trip) must not publish over a REAL company the buyer explicitly searched
+ * for and selected in the meantime.
  *
  * The message listener for the hosted signup popup is deliberately NOT
  * gated on `enrolling` (that is what stops a genuine completion being
- * dropped - see sole-trader-server-rendered-toggle.test.js), so gating on `enrolling`
- * here would just reintroduce that bug from the other side. The actual fix
- * is a generation counter (`_enrollGeneration`), bumped unconditionally by
- * cancelEnrollment() - which TwoCompanySearch.js calls on every dropdown
- * open, i.e. on every route back into ordinary search - and checked before
- * ANY buyer-lookup response is allowed to touch the DOM or publish a
- * selection.
+ * dropped - see sole-trader-server-rendered-toggle.test.js), so gating on
+ * `enrolling` here would just reintroduce that bug from the other side. The
+ * actual fix is a generation counter (`_enrollGeneration`), bumped
+ * unconditionally by cancelEnrollment() - which TwoCompanySearch.js calls
+ * on every dropdown open, i.e. on every route back into ordinary search -
+ * and checked before ANY buyer-lookup response is allowed to touch the DOM
+ * or publish a selection.
  */
 
 'use strict';
@@ -168,11 +168,11 @@ test('a buyer lookup resolving BEFORE any cancellation still publishes normally'
  * Checking the generation on the IN-FLIGHT call alone only closes the race
  * where a getCurrentBuyer()/applyBuyer() call was ALREADY IN FLIGHT when
  * cancelEnrollment() fired. It missed the case where the tokens/popup from
- * a CANCELLED attempt produce a BRAND NEW getCurrentBuyer() call afterward -
- * a stale hosted-signup popup finishing on its own, well after the buyer
+ * a CANCELLED attempt produce a BRAND NEW getCurrentBuyer() call afterward
+ * - a stale hosted-signup popup finishing on its own, well after the buyer
  * has moved on - because that new call re-captures whatever generation is
- * CURRENT at the moment it fires, which looks legitimate on its own. The fix
- * is `_tokensGeneration`: stamped onto the tokens at mint (or explicit
+ * CURRENT at the moment it fires, which looks legitimate on its own. The
+ * fix is `_tokensGeneration`: stamped onto the tokens at mint (or explicit
  * resume) time, and checked by the popup-completion listener BEFORE it acts
  * on a message at all - not inside getCurrentBuyer()/applyBuyer(), which by
  * then have already re-captured a fresh, misleading generation.

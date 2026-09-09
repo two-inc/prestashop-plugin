@@ -1,19 +1,18 @@
 /**
- * TWO-25326. The payment tile must not flicker on ANY payment-option
- * change, because a payment-option change must no longer navigate the document.
+ * TWO-25326. The payment tile must not flicker on ANY payment-option change,
+ * because a payment-option change must no longer navigate the document.
  *
- * Doug: "when I select our payment method, the tile is
- * rendered then flickers - looks like it is removed and re-rendered. [...] And
- * when I click to another payment method, it is still behaving as before: after
- * disappearing, our tile reappears for a fraction of a second before
- * disappearing again."
+ * Doug: "when I select our payment method, the tile is rendered then flickers -
+ * looks like it is removed and re-rendered. [...] And when I click to another
+ * payment method, it is still behaving as before: after disappearing, our tile
+ * reappears for a fraction of a second before disappearing again."
  *
  * Hiding the reload's artefacts at first paint - the earlier approach - could
- * only ever address the second sentence, and only for the
- * inner `.two-payment-container`; the first sentence has no first paint to
- * suppress at all - the tile the buyer just opened is genuinely destroyed with
- * the old document and rebuilt in the new one. So this suite is written against
- * the CAUSE: the navigation.
+ * only ever address the second sentence, and only for the inner
+ * `.two-payment-container`; the first sentence has no first paint to suppress at
+ * all - the tile the buyer just opened is genuinely destroyed with the old
+ * document and rebuilt in the new one. So this suite is written against the
+ * CAUSE: the navigation.
  *
  * The navigation is core's, and it is entered from this module's own request for
  * it. Emitting `updateCart` reaches `themes/_core/js/cart.js`, which on the

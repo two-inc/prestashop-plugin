@@ -1,5 +1,5 @@
 /**
- * TWO-25326 bug 8, second attempt. Doug re-tested the shipped fix live and the
+ * TWO-25326, second attempt. Doug re-tested the shipped fix live and the
  * defect was still there: search a company -> intent fires for it (correct);
  * search again, select a DIFFERENT company -> the intent fires for the FIRST
  * one.
@@ -175,10 +175,10 @@ describe('the confirmed selection is still subject to every existing invalidatio
     /**
      * Every test in this block asserts a POSITIVE control alongside the
      * invalidated case. Expecting only the cookie's value cannot distinguish
-     * "correctly invalidated" from
-     * "the shortcut was never consulted at all" - both produce it. Each test
-     * therefore runs the same scenario twice, once with the invalidating
-     * condition and once without, and requires the two to DIFFER.
+     * "correctly invalidated" from "the shortcut was never consulted at all" -
+     * both produce it. Each test therefore runs the same scenario twice, once
+     * with the invalidating condition and once without, and requires the two to
+     * DIFFER.
      */
     test('a pending country change discards it - and without the flag it is used', async () => {
         const store = managerStore();
@@ -256,10 +256,10 @@ describe('the REAL TwoCheckoutManager store, not a stand-in', () => {
      * Every other test in this file substitutes a hand-written store, which
      * leaves the manager half unverified: gutting
      * setConfirmedCompanySelection() and deleting the getter injection keeps
-     * the whole suite green. These tests run the real methods, on a
-     * real instance, and read the result through the intent module's own
-     * config - so the injection, the capture of the address/country context and
-     * the clear paths are all executed.
+     * the whole suite green. These tests run the real methods, on a real
+     * instance, and read the result through the intent module's own config - so
+     * the injection, the capture of the address/country context and the clear
+     * paths are all executed.
      */
     let TwoCheckoutManager;
 

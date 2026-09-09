@@ -570,7 +570,7 @@ final class TwoSoleTraderSpec
     }
 
     /**
-     * TWO-25326 bug 9: the toggle is rendered SERVER-side, so the payment tile
+     * TWO-25326: the toggle is rendered SERVER-side, so the payment tile
      * carries the registry answer and the country it answers about.
      *
      * The seam no Jest test can see. TwoSoleTrader.adoptServerRenderedToggle

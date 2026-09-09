@@ -1,5 +1,5 @@
 /**
- * TWO-30.x.10. Regression tests for layout bugs found in checkout, on top of
+ * Regression tests for layout bugs found in checkout, on top of
  * the widget already confirmed working (PR two-inc/prestashop-plugin#128):
  * jQuery UI's own `_resizeMenu` sizes the dropdown to whichever is WIDER, the
  * field or the longest label, so it needs to be explicitly clamped (2.1/2.2).
@@ -178,7 +178,7 @@ describe('the dropdown width CSS variable (2.1)', () => {
     });
 
     test('the widget gets the scoping marker class, not left as bare .ui-autocomplete', () => {
-        // TWO-30.x.10: `.ui-autocomplete` is jQuery UI's own un-namespaced
+        // `.ui-autocomplete` is jQuery UI's own un-namespaced
         // class, shared by any other autocomplete widget on the page.
         makeInstance();
 
@@ -188,7 +188,7 @@ describe('the dropdown width CSS variable (2.1)', () => {
     });
 
     test('a throwing autocomplete("widget") degrades to an unclamped dropdown, not a dead company search', () => {
-        // TWO-30.x.10: cosmetic clamp, not core search - an uncaught throw
+        // cosmetic clamp, not core search - an uncaught throw
         // here would escape setupAutocomplete()/init()/the ctor since
         // TwoCheckoutManager.initializeCompanySearch() has no surrounding
         // try/catch.
@@ -229,10 +229,9 @@ describe('the dropdown width CSS variable (2.1)', () => {
 
 describe('the field wrapper width is pinned explicitly, not left to block auto-sizing (2.2 hardening)', () => {
     test('ensureFieldWrapper() sets the wrapper width to the field\'s own outerWidth()', () => {
-        // TWO-30.x.10: a `display:block` wrapper with no padding only
-        // matches input width when the input already fills its
-        // container - false when the theme gives the field its own narrower
-        // intrinsic width.
+        // a `display:block` wrapper with no padding only matches
+        // input width when the input already fills its container - false when
+        // the theme gives the field its own narrower intrinsic width.
         const instance = makeInstance();
         jest.spyOn($.fn, 'outerWidth').mockReturnValue(240);
 
@@ -272,9 +271,9 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
     });
 
     test('destroy() actually unbinds the handler - a later resize no longer refreshes geometry', () => {
-        // TWO-30.x.10: a bare "does not throw" assertion passes whether or
-        // not the listener was removed, since the handler itself
-        // never throws.
+        // a bare "does not throw" assertion passes whether or
+        // not the listener was removed, since the handler itself never
+        // throws.
         jest.useFakeTimers();
         const instance = makeInstance();
         const wrapperSpy = jest.spyOn(instance, 'ensureFieldWrapper');
@@ -307,7 +306,7 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
     });
 
     test('unbinds by function reference, not by namespace alone, so a sibling instance is never at risk', () => {
-        // TWO-30.x.10: `window` is page-wide - a namespace-only
+        // `window` is page-wide - a namespace-only
         // `.off('.twoCompanyWidth')` would remove ANY instance's handler
         // under that name, not just this one.
         const instance = makeInstance();
@@ -324,9 +323,9 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
     });
 
     test('the search source callback also refreshes the wrapper width, not just the CSS variable', () => {
-        // TWO-30.x.10: a field hidden behind a collapsed checkout step
-        // measures 0 width at construction, and no resize fires when a
-        // later step reveals it - the first keystroke is the next chance to
+        // a field hidden behind a collapsed checkout step
+        // measures 0 width at construction, and no resize fires when a later
+        // step reveals it - the first keystroke is the next chance to
         // remeasure.
         const instance = makeInstance();
         const query = widgetField();
@@ -340,7 +339,7 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
     });
 
     test('the geometry refresh also fires in manual-entry mode, not only normal search', () => {
-        // TWO-30.x.10: the manual-entry early-return (`response([])`) sits
+        // the manual-entry early-return (`response([])`) sits
         // below both geometry calls in `source` - pinned so a future
         // reordering above them fails this test rather than regress silently.
         const instance = makeInstance();

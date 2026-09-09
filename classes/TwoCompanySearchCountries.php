@@ -3,9 +3,9 @@
  * Country gate for the "Registered Company" search chip (TWO-25288 follow-up).
  *
  * Relays GET /companies/v2/supported-countries - the full ISO alpha-2 list
- * company search can serve, published by bifrost (PR #832). Unlike
- * TwoSoleTrader's per-country registry lookup, this is ONE global list, so
- * the cache is a single cookie slot with no per-country keying.
+ * company search can serve. Unlike TwoSoleTrader's per-country registry
+ * lookup, this is ONE global list, so the cache is a single cookie slot with
+ * no per-country keying.
  */
 
 if (!defined('_PS_VERSION_')) {
@@ -28,9 +28,8 @@ class TwoCompanySearchCountries
     /**
      * The supported-countries list, or null if it could not be resolved
      * (network/non-200/malformed - never cached as an answer). Callers must
-     * treat null as UNKNOWN and fail open (offer search), matching bifrost's
-     * own guidance to treat a failed response as unknown rather than
-     * unsupported.
+     * treat null as UNKNOWN and fail open (offer search): per the endpoint's
+     * contract an unresolved response means unknown, never unsupported.
      *
      * @param Twopayment $module
      *

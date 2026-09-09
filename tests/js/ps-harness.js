@@ -727,8 +727,8 @@ function buildPaymentTile() {
 }
 
 /**
- * The same tile, with the SERVER-side sole-trader answer resolved (TWO-25326
- * bug 9; TWO-40 removed the chip UI this answer used to draw).
+ * The same tile, with the SERVER-side sole-trader answer resolved (TWO-25326;
+ * TWO-40 removed the chip UI this answer used to draw).
  *
  * buildPaymentTile() leaves every `{if}` block stripped, which reproduces a
  * render where Smarty gave no answer - the fallback path where TwoSoleTrader

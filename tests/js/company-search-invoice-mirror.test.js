@@ -954,13 +954,13 @@ describe('the gate reports whether the number actually reached a field', () => {
      * the next render read the empty field as buyer tampering and pin the whole
      * secondary address.
      *
-     * A round that wrote the value there was tried and reversed. Core declares `dni`
-     * with `isDniLite` (`/^[0-9A-Za-z-.]{1,16}$/U`) at size 16, which
+     * Writing the value there refuses the save. Core declares `dni` with
+     * `isDniLite` (`/^[0-9A-Za-z-.]{1,16}$/U`) at size 16, which
      * `TWO:ST123456789012` fails twice - the colon is not in the class and it is 18
-     * characters - so core REFUSED TO SAVE THE ADDRESS, with the error landing on a
-     * field that round was hiding. It was also unreadable: this plugin's own
-     * extractOrgNumberFromAddress() validates `dni` against `/^[A-Z0-9\-]{5,20}$/i`,
-     * which rejects the colon too.
+     * characters - so core REFUSES TO SAVE THE ADDRESS, with the error landing on a
+     * field that would then be hidden. It is also unreadable: this plugin's own
+     * extractOrgNumberFromAddress() validates `dni` against
+     * `/^[A-Z0-9\-]{5,20}$/i`, which rejects the colon too.
      *
      * The inverse of the test that used to stand here: re-introducing the write fails
      * this.

@@ -39,7 +39,7 @@ namespace {
 namespace PrestaShop\PrestaShop\Core\Payment {
     /**
      * Core's fluent payment-option value object, exercised through
-     * getTwoPaymentOption() (TWO-25326 bug 9). A fluent builder is unusable
+     * getTwoPaymentOption() (TWO-25326). A fluent builder is unusable
      * without its setters: the first call fatals rather than failing an
      * assertion.
      *

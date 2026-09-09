@@ -172,7 +172,7 @@ expect "the bare class name without a call does not count" 1 \
     "printf '<?php\nclass Foo extends FooCore { public function a() { return 1; } }\n' > override/classes/form/Foo.php
      printf '<?php\nfunction upgrade_module_9_9_9(\$m) { \$c = \"TwoOverrideMigrator\"; Configuration::updateValue(\"X\", \$c); }\n' > upgrade/upgrade-9.9.9.php"
 
-# Raised in adversarial review. `grep -qF Foo` is satisfied by `FooBar`, so a
+# `grep -qF Foo` is satisfied by `FooBar`, so a
 # retired Foo.php would pass the gate on an upgrade script that only ever
 # mentions an unrelated FooBar. Substring matching in a gate is a false PASS,
 # which is the only direction that matters.

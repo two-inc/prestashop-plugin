@@ -298,8 +298,8 @@ describe('the pin is triggered by ANY address field, address-wide', () => {
      * placeholder, so a state holding a real value is the buyer's own saved answer,
      * and it pins the address exactly as a saved city would.
      *
-     * An earlier round gave `state` the country's baseline by symmetry. That let the
-     * registered region overwrite a state the buyer had saved.
+     * Giving `state` the country's baseline by symmetry would let the registered
+     * region overwrite a state the buyer had saved.
      */
     test('a state holding a real value pins the address, even straight from the server', () => {
         buildAddressesStep({ editing: 'invoice' });

@@ -530,7 +530,7 @@ describe('class-static result cache', () => {
         expect(search.getCurrentCountry()).toBe('NL');
     });
 
-    describe('the option-text map covers this shop\'s own locales (TWO-40 follow-up, adversarial review)', () => {
+    describe('the option-text map covers this shop\'s own locales (TWO-40)', () => {
         // This shop ships nl/no/sv translations. A map with only English/
         // Spanish/French country names was blind for exactly the locales this
         // shop actually serves, on a theme with no ISO attribute and no id in
@@ -553,7 +553,7 @@ describe('class-static result cache', () => {
         });
     });
 
-    test('a select named "country" (no "id_" prefix) is resolved too, not just "id_country" (adversarial review finding)', () => {
+    test('a select named "country" (no "id_" prefix) is resolved too, not just "id_country"', () => {
         // TwoSoleTrader.js's billingCountry() and TwoOrderIntent.js's
         // getCurrentAddressCountryISO() both already fall back to
         // `select[name='country']`. This method used to check `id_country`

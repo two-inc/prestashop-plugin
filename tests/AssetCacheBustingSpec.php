@@ -113,12 +113,11 @@ final class AssetCacheBustingSpec
      * for. Safe for the narrow slices this spec scans: none of the string
      * literals in the register*() calls it guards contain "//" or "/*".
      *
-     * A per-line version of this test is defeatable by a decoy TRAILING
-     * COMMENT on the same line as a reverted call - e.g. `...->registerJavascript('id', 'path' .
-     * '?v=' . @filemtime(...), [...]); // getTwoModuleAssetPath( 'version' =>
-     * $this->getTwoAssetVersion(` - which contains both guarded-for tokens
-     * without ever really calling either. Stripping comments first closes
-     * that gap.
+     * A decoy TRAILING COMMENT on the same line as a reverted call - e.g.
+     * `...->registerJavascript('id', 'path' . '?v=' . @filemtime(...), [...]);
+     * // getTwoModuleAssetPath( 'version' => $this->getTwoAssetVersion(` -
+     * carries both guarded-for tokens without ever calling either, so the
+     * comments come off before anything is matched.
      */
     private static function stripComments(string $php): string
     {
@@ -129,26 +128,23 @@ final class AssetCacheBustingSpec
     /**
      * Extracts each `->$methodCall(...)` statement as its own string, from
      * the method name through the matching (paren-depth-balanced) closing
-     * `)`. A per-LINE version of this test both misses the admin hook's
-     * registerStylesheet() call (which spans several lines) and is fragile
-     * against any future legitimate line-wrap of a checkout-hook call.
-     * Matching the whole
-     * statement, wherever its parens close, fixes both: multi-line calls are
-     * captured whole, and a decoy elsewhere in the body can no longer stand
-     * in for tokens the call itself must carry.
+     * `)`. Whole statements rather than lines, because the admin hook's
+     * registerStylesheet() call spans several of them and any future
+     * legitimate line-wrap of a checkout-hook call would break a per-line
+     * match; matching to wherever the parens close also stops a decoy
+     * elsewhere in the body standing in for tokens the call itself must carry.
      *
      * Paren-counting is string-literal-aware: a literal '(' or ')' inside a
-     * single- or double-quoted PHP
-     * string argument is valid code and must not perturb the depth count,
-     * or a call whose id/path string happens to contain a stray paren could
-     * either truncate its own capture early or run past its closing paren
-     * into the NEXT call's text - silently dropping that next call from the
-     * results (which the exact-count assertion below exists to catch) or, in
-     * the worst case, absorbing so much text that a later strpos() offset
-     * moves past a real call site entirely. Not exploitable against any
-     * current asset id/path in this module (verified: none contain '(', ')',
-     * '//', or '/*'), but the scanner itself must not depend on that staying
-     * true forever.
+     * single- or double-quoted PHP string argument is valid code and must not
+     * perturb the depth count, or a call whose id/path string happens to
+     * contain a stray paren could either truncate its own capture early or
+     * run past its closing paren into the NEXT call's text - silently
+     * dropping that next call from the results (which the exact-count
+     * assertion below exists to catch) or, in the worst case, absorbing so
+     * much text that a later strpos() offset moves past a real call site
+     * entirely. Not exploitable against any current asset id/path in this
+     * module (verified: none contain '(', ')', '//', or '/*'), but the
+     * scanner itself must not depend on that staying true forever.
      *
      * @return array<int, string> one entry per call site found
      */
@@ -257,12 +253,11 @@ final class AssetCacheBustingSpec
         $adminStatements = self::extractCallStatements($adminBody, '->registerStylesheet(');
 
         // Exact counts, not a loose ">=" floor: a floor only catches a
-        // surviving call site reverting its
-        // pattern, not a whole call site vanishing outright - which is
-        // exactly the silent-asset-drop failure mode TWO-53PS caused. These
-        // numbers are the real current count of register*() calls in each
-        // hook; update them deliberately if a call site is ever added or
-        // removed on purpose.
+        // surviving call site reverting its pattern, not a whole call site
+        // vanishing outright - which is exactly the silent-asset-drop failure
+        // mode TWO-53PS caused. These numbers are the real current count of
+        // register*() calls in each hook; update them deliberately if a call
+        // site is ever added or removed on purpose.
         TinyAssert::same(8, count($frontStatements), 'expected exactly 8 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 7 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
         TinyAssert::same(1, count($adminStatements), 'expected exactly 1 registerStylesheet() call site in hookActionAdminControllerSetMedia(), found ' . count($adminStatements) . ' - it was added, removed, or renamed');
 
