@@ -63,7 +63,7 @@ class TwoSoleTrader
 
     /**
      * Countries whose lookup FAILED during this request, so it is attempted at
-     * most once per request per country (TWO-25326 bug 9, round 3).
+     * most once per request per country (TWO-25326 bug 9).
      *
      * Deliberately separate from $types_cache: a failure must never be stored
      * as an ANSWER (a registry blip would then read as a cached "business-only
@@ -112,7 +112,7 @@ class TwoSoleTrader
 
     /**
      * The same three-state answer, but ONLY if it is already known - never a
-     * network call (TWO-25326 bug 9, round 3 review, finding 2). This is what
+     * network call (TWO-25326 bug 9). This is what
      * the payment tile renders from: a render-path network call would pay a
      * registry timeout on every payment-step render for a shop that can't
      * reach the registry, which is buyer-visible latency a rendering nicety
@@ -147,7 +147,7 @@ class TwoSoleTrader
     /**
      * The already-known answer for a country, or null if there is none.
      *
-     * ONE reader for both callers (round 4 review, finding 4): keeps
+     * ONE reader for both callers: keeps
      * COOKIE_KEY, CACHE_TTL_SECONDS and the stored JSON shape defined in one
      * place instead of two independently-maintained copies.
      *
@@ -240,7 +240,7 @@ class TwoSoleTrader
 
         $types = self::fetchSupportedCompanyTypes($module, $countryIso);
         if ($types === null) {
-            // Recorded as a FAILURE, not as an answer (TWO-25326 bug 9, round 3):
+            // Recorded as a FAILURE, not as an answer (TWO-25326 bug 9):
             // caller is told "unresolved" rather than caching a blip as a
             // definite "business-only country". See $failed_lookups.
             self::$failed_lookups[$countryIso] = true;
@@ -282,7 +282,7 @@ class TwoSoleTrader
             // bound for it whichever side of the page it runs on. The payment tile
             // deliberately does NOT reach this method - it reads
             // resolveAvailabilityFromCache() so the checkout render makes no call
-            // at all (round 3 review, finding 2).
+            // at all.
             Twopayment::API_TIMEOUT_STATE_CHECK
         );
         if (

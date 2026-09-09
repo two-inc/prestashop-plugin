@@ -1,5 +1,5 @@
 /**
- * TWO-25326 bug 9, round 3. TWO-40 later removed the upfront Business/Sole
+ * TWO-25326 bug 9. TWO-40 later removed the upfront Business/Sole
  * trader toggle chips entirely; the entry point now lives inside
  * TwoCompanySearch.js's dropdown. What survives here, still load-bearing, is
  * the AVAILABILITY ANSWER handover this module adopts from the server:
@@ -8,8 +8,8 @@
  * across country changes, and across PrestaShop's payment-fragment
  * replacements - with no request when the server has already answered.
  *
- * Round 2's fixes (keying the settled-check on the container node, an
- * in-flight guard) were real but did not touch the flicker window BEFORE an
+ * Keying the settled-check on the container node and an in-flight guard are
+ * both necessary but neither touches the flicker window BEFORE an
  * answer arrives - measured on staging at ~280ms of `display:none` on every
  * load, because the answer was resolved only after a round trip. So
  * paymentinfo.tpl now renders `.two-sole-trader`'s data- attributes from the
@@ -118,7 +118,7 @@ describe('a server-rendered answer is adopted, not re-fetched', () => {
         TwoSoleTrader = loadSoleTrader();
 
         // Before construction, i.e. what the buyer's browser knows at FIRST
-        // PAINT - the assertion round 2 could not make.
+        // PAINT.
         expect(container().getAttribute('data-two-available')).toBe('1');
         expect(container().getAttribute('data-two-country')).toBe('GB');
 
@@ -351,7 +351,7 @@ describe('a replaced container is re-adopted from its own markup', () => {
     });
 
     test('an in-flight request cannot clobber an answer adopted while it was out', async () => {
-        // Round 3 review, finding 1 - and the worst failure mode in this design.
+        // The worst failure mode in this design.
         // The load starts with NO server answer, so the module fetches. Prestashop
         // then replaces the payment fragment with one that DOES carry an answer,
         // which is adopted. The already-outstanding request then answers: the
@@ -393,7 +393,7 @@ describe('a replaced container is re-adopted from its own markup', () => {
     });
 
     test('a superseded request leaves the CURRENT country resolved, not stuck', async () => {
-        // Round 4 review, finding 1. The generation counter is per instance, not
+        // The generation counter is per instance, not
         // per country, so an adoption for country A supersedes an outstanding
         // request for country B - and dropping that result must not leave B
         // unresolved with nothing scheduled to resolve it. The debounced refresh

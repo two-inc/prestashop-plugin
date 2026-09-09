@@ -1307,8 +1307,8 @@ class TwoSoleTrader {
         }
         this.isFetchingTokens = true;
         const self = this;
-        // Captured BEFORE the request starts (round 3 adversarial review
-        // finding) - a mint still outstanding when the buyer reopens search
+        // Captured BEFORE the request starts - a mint still outstanding
+        // when the buyer reopens search
         // and cancels must resolve into tokens correctly stamped as STALE,
         // not as current-at-resolution-time. Stamping with whatever
         // `_enrollGeneration` happens to read at the moment the mint
@@ -1317,8 +1317,8 @@ class TwoSoleTrader {
         // whole check.
         const generation = this._enrollGeneration;
         // Everything from here down to the fetch() call starting is
-        // synchronous and, before this try (TWO-40 round 5 follow-up, Vader
-        // finding round 2), unprotected: a throw anywhere in it - e.g.
+        // synchronous and, without this try, unprotected: a throw
+        // anywhere in it - e.g.
         // billingCountry() or moduleUrl() reading a malformed config - left
         // `isFetchingTokens` stuck `true` forever. Every later click would
         // then silently no-op on that guard for the rest of the page's
@@ -1340,8 +1340,8 @@ class TwoSoleTrader {
             .then(function (response) { return response.json(); })
             .then(function (json) {
                 if (self._destroyed) {
-                    // Round 2 adversarial review (Leia): this instance is
-                    // gone - nothing below is safe to act on.
+                    // This instance is gone - nothing below is safe to
+                    // act on.
                     return;
                 }
                 if (json && json.success && json.autofill_token) {
@@ -1374,8 +1374,7 @@ class TwoSoleTrader {
                         self._tokensGeneration = generation;
                         self.afterTokensReady();
                     } else if (waiting) {
-                        // TWO-40 round 5 (adversarial review finding, Han +
-                        // Yoda independently): THIS mint's own generation is
+                        // TWO-40: THIS mint's own generation is
                         // stale (cancelEnrollment() ran while it was out -
                         // e.g. the buyer abandoned via "Registered Company"
                         // then clicked "Sole Trader" again before this
@@ -1501,13 +1500,11 @@ class TwoSoleTrader {
      * refreshing them, so there is nothing here for a generation check to
      * protect.
      *
-     * IS gated on the open-popup check below (adversarial review, round 1 -
-     * Han/Vader/Yoda independently) - it protects an invariant that has
+     * IS gated on the open-popup check below - it protects an invariant that has
      * nothing to do with `_enrollGeneration` but that this call can still
      * break silently.
      *
-     * Known residual gap (round 2/3 adversarial review, Vader finding,
-     * accepted): while a popup stays open, EVERY tick is skipped, so tokens
+     * Known residual gap, accepted: while a popup stays open, EVERY tick is skipped, so tokens
      * baked into that popup's URL at open time are never refreshed for as
      * long as it stays open. A popup left open past the server's own token
      * TTL still hits the expiry this file exists to fix - just narrowed from
@@ -1518,9 +1515,9 @@ class TwoSoleTrader {
      * (bindPopupMessageListener() -> getCurrentBuyer()), which fires and
      * reads `this.tokens.autofill_token` BEFORE the popup close is ever
      * observed - watchPopupUntilClosed()'s poll runs after, not before,
-     * that read. So the accepted trade is specifically against the
-     * round-1 bug (silently authenticating against a token pair the
-     * popup's own OTP flow never ran through), not a placeholder for an
+     * that read. So the accepted trade is specifically against silently
+     * authenticating against a token pair the popup's own OTP flow never
+     * ran through, not a placeholder for an
      * easy popup-close-triggered fix. Not fixed here.
      *
      * Unlike fetchTokens()'s OWN failure handling, a failed refresh leaves
@@ -1584,8 +1581,8 @@ class TwoSoleTrader {
                     // legitimate effect to have.
                     return;
                 }
-                // Re-checked, not just checked at entry (round 2 adversarial
-                // review, Han finding): the guard above only proves no popup
+                // Re-checked, not just checked at entry: the guard above
+                // only proves no popup
                 // was open when this tick STARTED. The buyer can still click
                 // the on-page prompt - openPopup() has no isFetchingTokens
                 // guard of its own and bakes whatever `this.tokens` holds
@@ -1654,8 +1651,7 @@ class TwoSoleTrader {
      * from getCurrentBuyer()'s own superseded branches when `enrolling` is
      * still true - i.e. a later click abandoned-then-resumed while THIS
      * lookup was outstanding, riding it via the isFetchingBuyer single-
-     * flight guard rather than issuing its own (TWO-40 round 5 follow-up,
-     * Han finding round 2).
+     * flight guard rather than issuing its own (TWO-40).
      *
      * Deferred to a macrotask (`setTimeout(..., 0)`), not called directly.
      * This runs from INSIDE the `.then()`/`.catch()` handler of the request
@@ -1677,14 +1673,14 @@ class TwoSoleTrader {
      * A future refactor that DOES tear down and rebuild the instance
      * mid-page needs to clear any pending timer from this method in its
      * own destroy(), the same way removeDropdown()/closeDropdown() already
-     * clear TwoCompanySearch.js's own timers - round 3 adversarial review
-     * observation (Vader), not fixed here because the precondition it
+     * clear TwoCompanySearch.js's own timers - not fixed here because the
+     * precondition it
      * guards against does not exist in this codebase today.
      *
      * @param {boolean} [trustedIdentity] Carried forward from the call being
      *   resumed - see getCurrentBuyer()'s own JSDoc for what this means.
-     * @param {boolean} [retriedTrustedLookup] Carried forward too (TWO-40
-     *   round 9, adversarial review finding, Vader): without this, a resume
+     * @param {boolean} [retriedTrustedLookup] Carried forward too (TWO-40):
+     *   without this, a resume
      *   landing mid-retry silently reset the retry cap to zero by calling
      *   getCurrentBuyer() with its default `false` - each abandon/resume
      *   cycle during the 800ms wait bought the flow ANOTHER retry, contrary
@@ -1701,8 +1697,8 @@ class TwoSoleTrader {
         }
         const self = this;
         setTimeout(function () {
-            // Re-check at FIRE time, not just at schedule time (round 7
-            // adversarial review finding, Han): the gap between scheduling
+            // Re-check at FIRE time, not just at schedule time: the
+            // gap between scheduling
             // this macrotask and it actually running is real time in a real
             // browser, and a second abandon can land in it - a second
             // "Registered Company"/"Enter Manually" click, or another
@@ -1837,8 +1833,7 @@ class TwoSoleTrader {
      *   pass this from a new call site.
      */
     getCurrentBuyer(trustedIdentity = false, retriedTrustedLookup = false) {
-        // Re-entrancy guard (TWO-40 round 5, adversarial review finding -
-        // Han + Vader independently caught this): unlike fetchTokens()
+        // Re-entrancy guard (TWO-40): unlike fetchTokens()
         // (isFetchingTokens), this had no guard of its own before. A second
         // click while a lookup was already outstanding fired a second,
         // concurrent lookup - on the no-match path each one independently
@@ -1854,8 +1849,8 @@ class TwoSoleTrader {
         }
         this.isFetchingBuyer = true;
         const self = this;
-        // Captured BEFORE the request starts (round 2 adversarial review
-        // finding). cancelEnrollment() bumps this on every call, including
+        // Captured BEFORE the request starts. cancelEnrollment() bumps this
+        // on every call, including
         // one triggered by the buyer reopening search and picking a
         // DIFFERENT, real company while this request is still out - see
         // cancelEnrollment()'s own comment. Every continuation below checks
@@ -1867,13 +1862,13 @@ class TwoSoleTrader {
             return self._enrollGeneration !== generation;
         };
         // Set true by the 404-retry branch below, and read by `.finally()`
-        // (TWO-40 round 9, adversarial review finding, Han + Vader): a
+        // (TWO-40): a
         // `setTimeout` scheduled from inside a `.then()` handler is a bare
         // side effect, not something the promise chain awaits - returning
         // from that handler settles the promise immediately, so the chained
         // `.finally()` fires right away too, ~800ms BEFORE the retry
         // actually runs. Releasing `isFetchingBuyer` there reopens the exact
-        // concurrent-lookup window the round-5 guard exists to close, for
+        // concurrent-lookup window the re-entrancy guard exists to close, for
         // the whole retry wait. `.finally()` below checks this flag and, if
         // set, leaves the guard alone - `settle()` releases it instead,
         // called from the retry's own callback right before it decides what
@@ -1887,13 +1882,12 @@ class TwoSoleTrader {
         let reissuePending = false;
         // @returns {boolean} true if a pending resume was consumed and
         //   re-issued - the caller must not ALSO act on its own terms in
-        //   that case (round 9 follow-up: the retry's own callback below
-        //   used to check `isFetchingBuyer` AFTER calling this to decide
-        //   whether to defer, but that flag is exactly what THIS call just
-        //   set when it fired the resume, so the check always read "busy"
-        //   because of its own action, not someone else's, and queued a
-        //   second, redundant resume that fired again once the first one's
-        //   own request finished - a self-inflicted double buyer lookup for
+        //   that case. Checking `isFetchingBuyer` AFTER calling this to
+        //   decide whether to defer does not work: that flag is exactly what
+        //   THIS call just set when it fired the resume, so the check reads
+        //   "busy" because of its own action, not someone else's, and queues
+        //   a second, redundant resume that fires again once the first one's
+        //   own request finishes - a self-inflicted double buyer lookup for
         //   one authentication event. JS is single-threaded and everything
         //   here runs synchronously, so if a resume WASN'T fired, nothing
         //   else could have raced `isFetchingBuyer` true in the meantime
@@ -1928,7 +1922,7 @@ class TwoSoleTrader {
             return false;
         };
         // Same reasoning as fetchTokens()'s own try/catch around its
-        // pre-fetch setup (TWO-40 round 5 follow-up, Vader finding round 2):
+        // pre-fetch setup (TWO-40):
         // `this.tokens.autofill_token` below throws synchronously if
         // `this.tokens` is ever null when this runs, and nothing before
         // this fix protected `isFetchingBuyer` against that - a stuck-true
@@ -1958,7 +1952,7 @@ class TwoSoleTrader {
                     return;
                 }
                 if (superseded()) {
-                    // TWO-40 round 5 follow-up (Han finding, round 2): the
+                    // TWO-40: the
                     // SAME abandon-then-retry shape fetchTokens()'s success
                     // branch was fixed for above, one stage deeper. This
                     // lookup's own single-flight guard (isFetchingBuyer)
@@ -1977,8 +1971,7 @@ class TwoSoleTrader {
                     return;
                 }
                 if (trustedIdentity && !buyer && !retriedTrustedLookup) {
-                    // Round 8 adversarial review finding (Han + Vader
-                    // independently): a 404 here right after a genuine
+                    // A 404 here right after a genuine
                     // 'ACCEPTED' is read-after-write lag, not "not
                     // registered" - the popup's own OTP round trip just
                     // completed server-side, and this GET can briefly not
@@ -1991,8 +1984,8 @@ class TwoSoleTrader {
                     // delay, before treating "not visible yet" the same as
                     // "no registration exists". `retriedTrustedLookup` caps
                     // it at exactly one - this is not a backoff loop, and
-                    // `resumeIfStillEnrolling()` now forwards it too (round 9
-                    // finding, Vader) - without that, a resume landing
+                    // `resumeIfStillEnrolling()` forwards it too - without
+                    // that, a resume landing
                     // mid-wait bought the flow another retry, resetting the
                     // cap to zero every abandon/resume cycle.
                     retryScheduled = true;
@@ -2002,8 +1995,7 @@ class TwoSoleTrader {
                     // its JSDoc): `window.TwoSoleTrader_Instance` is created
                     // once and never torn down in production today, so this
                     // firing against a destroyed instance is not a real
-                    // precondition yet (round 10 adversarial review
-                    // observation, Han).
+                    // precondition yet.
                     setTimeout(function () {
                         // The guard was deliberately left held for this
                         // entire wait, not released back in `.finally()` -
@@ -2019,18 +2011,14 @@ class TwoSoleTrader {
                             // bindPopupMessageListener()). settle() just
                             // re-issued it fresh; that already stands in for
                             // THIS retry, so do not also fire a second,
-                            // concurrent lookup on top of it (round 9
-                            // follow-up finding, self-caught: the earlier
-                            // shape of this check queued a redundant resume
-                            // for its own action, not someone else's).
+                            // concurrent lookup on top of it.
                             return;
                         }
                         if (!self.enrolling) {
                             // Already settled by another lookup while this
                             // retry was waiting (success, error, or a genuine
                             // cancel) - mirrors resumeIfStillEnrolling()'s own
-                            // re-check (round 9 finding, Han + Vader);
-                            // nothing left to retry for. settle() suppressed
+                            // re-check; nothing left to retry for. settle() suppressed
                             // its eager re-attempt for a retry that is now
                             // not happening, so do it here.
                             self.startEagerTokenMint();
@@ -2058,8 +2046,8 @@ class TwoSoleTrader {
                     return;
                 }
                 if (superseded()) {
-                    // Same reasoning as the success branch above (round 5
-                    // follow-up, Han finding round 2): a resumed click may
+                    // Same reasoning as the success branch above: a resumed
+                    // click may
                     // be riding this exact request. A network failure on it
                     // is a real failure for that resumed click too, not just
                     // for the stale one that originally issued it - retry
@@ -2076,8 +2064,7 @@ class TwoSoleTrader {
                 if (retryScheduled) {
                     // Guard intentionally left held - see `settle()` and the
                     // retry's own setTimeout callback above, which releases
-                    // it right before firing, not now (round 9 adversarial
-                    // review finding, Han + Vader).
+                    // it right before firing, not now.
                     return;
                 }
                 settle();
@@ -2107,8 +2094,8 @@ class TwoSoleTrader {
     /**
      * @param {Object} buyer
      * @param {number} generation the value of `_enrollGeneration` at the
-     *   moment the getCurrentBuyer() call that led here was ISSUED (round 2
-     *   adversarial review finding). Re-checked again below, after this
+     *   moment the getCurrentBuyer() call that led here was ISSUED.
+     *   Re-checked again below, after this
      *   method's own `saveCompany` round trip - that request is itself async
      *   and long enough for the buyer to reopen search and cancel (or start a
      *   fresh enrolment) while it is in flight, and a superseded save
@@ -2393,8 +2380,8 @@ class TwoSoleTrader {
         // instead of the new one would leave the spinner stuck forever. Focus
         // the existing popup instead.
         //
-        // Gated on LIVENESS, not on whether the raise succeeded (round 2
-        // adversarial review finding). focusSignupPopup() answers "did I raise
+        // Gated on LIVENESS, not on whether the raise succeeded.
+        // focusSignupPopup() answers "did I raise
         // it?", which is what the Sole trader chip needs and NOT what this
         // branch needs: it reports false for a focus() that threw, and
         // returning false here would fall through and open the second window
@@ -2451,7 +2438,7 @@ class TwoSoleTrader {
             // address-page path, TWO-40 follow-up) - console.error is the
             // only signal left there, so it is not a completely silent
             // dead end even in that edge case. showError() also notifies
-            // (TWO-40 round 4) - do not ALSO notify below, or a blocked
+            // (TWO-40) - do not ALSO notify below, or a blocked
             // popup would fire the settle event twice for one click.
             this.showError();
             if (!this.container()) {
@@ -2713,13 +2700,13 @@ class TwoSoleTrader {
         const self = this;
         // Held on the instance, same reasoning as `_countryChangeHandler`,
         // so destroy() can detach it (found chasing test isolation for the
-        // round-3 generation-guard tests, which is exactly the shape of leak
+        // generation-guard tests, which is exactly the shape of leak
         // this would cause on a real page too - a destroyed instance's
         // listener would go on reacting to a LATER instance's popup, on the
         // rare page that ever constructs a second one).
         this._messageHandler = function (event) {
-            // Deliberately NOT gated on `self.enrolling` (round 1 adversarial
-            // review finding, TWO-40). The buyer can click back into company
+            // Deliberately NOT gated on `self.enrolling` (TWO-40). The
+            // buyer can click back into company
             // search - which calls cancelEnrollment() unconditionally on
             // every open, see TwoCompanySearch.openDropdown() - while the
             // hosted signup popup is still open in another window; that is
@@ -2731,8 +2718,8 @@ class TwoSoleTrader {
             if (event.origin !== new URL(self.tokens.signup_url).origin) {
                 return;
             }
-            // Gated on the STAMP, not on `enrolling` (round 3 adversarial
-            // review finding). cancelEnrollment() bumps `_enrollGeneration`
+            // Gated on the STAMP, not on `enrolling`.
+            // cancelEnrollment() bumps `_enrollGeneration`
             // but deliberately does not close the popup or invalidate
             // `tokens` - the flow is resumable - so this popup can still be
             // open and go on to complete, or fail, long after the buyer has
@@ -2783,8 +2770,8 @@ class TwoSoleTrader {
             }
             self.enrolling = true;
             if (self.isFetchingBuyer) {
-                // Round 8 adversarial review finding (Han): a lookup for a
-                // DIFFERENT call - an untrusted passive probe, or an earlier
+                // A lookup for a DIFFERENT call - an untrusted passive
+                // probe, or an earlier
                 // resumed click - is already out. getCurrentBuyer(true)
                 // would just no-op on its own re-entrancy guard below,
                 // silently dropping this genuine authentication event; the
@@ -2875,7 +2862,7 @@ class TwoSoleTrader {
     }
 
     /**
-     * Tell TwoCompanySearch.js's in-flight spinner (TWO-40 round 4) that
+     * Tell TwoCompanySearch.js's in-flight spinner (TWO-40) that
      * THIS click's own round trip has reached a terminal state, whatever
      * that state is - a completed autofill, a signup prompt/popup handed
      * off to, or a failure. Fired from every terminal branch of

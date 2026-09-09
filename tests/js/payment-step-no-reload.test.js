@@ -1,15 +1,15 @@
 /**
- * TWO-25326, round 4. The payment tile must not flicker on ANY payment-option
+ * TWO-25326. The payment tile must not flicker on ANY payment-option
  * change, because a payment-option change must no longer navigate the document.
  *
- * Doug, after round 3 shipped: "when I select our payment method, the tile is
+ * Doug: "when I select our payment method, the tile is
  * rendered then flickers - looks like it is removed and re-rendered. [...] And
  * when I click to another payment method, it is still behaving as before: after
  * disappearing, our tile reappears for a fraction of a second before
  * disappearing again."
  *
- * Round 3 measured the reload and then tried to hide its artefacts at first
- * paint. That could only ever address the second sentence, and only for the
+ * Hiding the reload's artefacts at first paint - the earlier approach - could
+ * only ever address the second sentence, and only for the
  * inner `.two-payment-container`; the first sentence has no first paint to
  * suppress at all - the tile the buyer just opened is genuinely destroyed with
  * the old document and rebuilt in the new one. So this suite is written against
@@ -288,8 +288,8 @@ async function selectOptionAndReportCartChanged(radioId) {
 describe('a payment-option change never navigates the document', () => {
     /**
      * Doug's first sentence. The whole tile, not a chip inside it: an existence
-     * run of 'present,gone,present' IS the report, and it is what round 3 left
-     * completely unaddressed.
+     * run of 'present,gone,present' IS the report, and the first-paint guard
+     * left it completely unaddressed.
      */
     test('selecting Two does not destroy and rebuild the tile', async () => {
         makeManager();

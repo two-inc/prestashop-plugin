@@ -260,11 +260,11 @@ describe('the scope fails closed rather than widening', () => {
         expect($("input[name='companyid']").val()).toBe('');
     });
 
-    // Round 6. The guard above recognised address blocks by their ids only, so the
-    // very case it was written for got through: drop core's ids, keep the rest of
-    // its markup, and the step wrapper - which core emits itself - looks blockless
-    // while the other address is still inside it. Probed at HEAD before the fix: the
-    // root resolved to `js-address-form` with the delivery radio inside the scope.
+    // Recognising address blocks by their ids ALONE lets the very case the guard
+    // exists for through: drop core's ids, keep the rest of its markup, and the
+    // step wrapper - which core emits itself - looks blockless while the other
+    // address is still inside it, resolving the root to `js-address-form` with the
+    // delivery radio inside the scope.
     test('resolves nothing when the other block kept core\'s classes but lost its ids', () => {
         buildAddressesStep({
             editing: 'invoice',

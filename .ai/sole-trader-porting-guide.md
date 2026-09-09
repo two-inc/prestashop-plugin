@@ -1227,8 +1227,8 @@ anything local to either symptom.
   now takes a flag that disowns the WRITE only (`cancelEnrollment(keepPopupTracked)`) and
   leaves the poll and the handle alone; the settle event's popup-open guard needs no change
   and instead becomes the mechanism, holding the spinner until the buyer's own popup closes.
-- **A surviving popup has to be RE-ADOPTABLE, not just re-findable** (round 2 adversarial
-  review of the fix above). Disowning the write bumps the generation the popup's own
+- **A surviving popup has to be RE-ADOPTABLE, not just re-findable.** Disowning the write
+  bumps the generation the popup's own
   completion message is checked against, so keeping the handle alive is only half an
   answer: the buyer finishes signing up, the message is dropped on that check, and they get
   an empty company field, no error, and — once the raise arms a spinner — something on
@@ -1411,8 +1411,8 @@ the company-number label's visibility depending on the selected payment method.
   same-mode call zeroed a live re-signup counter mid-flight: the prefetch called
   "enter sole-trader mode" unconditionally whenever a flight resolved with a match,
   including while already in it — reachable by editing the email field (never locked,
-  unlike the captured fields) while a "select a different" popup is open (`f8c035e`,
-  round 6, after rounds 4 and 5 fixed the same bug via a different path). **That
+  unlike the captured fields) while a "select a different" popup is open (`f8c035e`).
+  **That
   reproduction path is gone with the prefetch itself** (§11 rule 1, `8e2355f`); the rule
   stands on its own, because any caller that sets a mode it is already in can do the
   same thing.

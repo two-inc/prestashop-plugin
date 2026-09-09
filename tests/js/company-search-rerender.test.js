@@ -215,7 +215,7 @@ describe('a click and a focus arrival both open the control', () => {
     });
 
     test('moving to a replaced field during setupAutocomplete() unbinds the old field\'s pointer/focus handlers', () => {
-        // Round-1 adversarial review finding (Han): setupAutocomplete()'s
+        // setupAutocomplete()'s
         // "moving to a replaced field" branch released the old field's
         // jQuery UI widget but left `focus.twoCompanyOpen` /
         // `mousedown.twoCompanyOpen` bound to it directly (they are bound
@@ -762,7 +762,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
     });
 
     test('#30.x.14: clicking the reverse link fires exactly one search, not two', () => {
-        // Round-1 adversarial review finding (Vader): exitManualEntryMode()
+        // exitManualEntryMode()
         // used to BOTH `.trigger('focus')` (which the then-ungated
         // `focus.twoCompanyOpen` handler treated as a fresh open) AND make
         // its own explicit `autocomplete('search', term)` call - firing the

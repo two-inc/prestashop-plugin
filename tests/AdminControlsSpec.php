@@ -97,8 +97,8 @@ final class AdminControlsSpec
     }
 
     /**
-     * A custom day count Two's backend does not offer at all - review-round-1
-     * finding: this must NOT be unioned in regardless of what the merchant
+     * A custom day count Two's backend does not offer at all: this must NOT
+     * be unioned in regardless of what the merchant
      * types, or the custom field becomes a bypass for the backend
      * available_terms restriction (TWO-24813) - a real business/credit-risk
      * control, not just a UI narrowing. 99 is not in PAYMENT_TERMS_OPTIONS

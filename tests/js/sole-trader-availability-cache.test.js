@@ -413,13 +413,12 @@ describe('a server-rendered adoption also persists to the cache', () => {
         instance.destroy();
     });
 
-    test('a matching re-adoption does NOT rewrite the cache entry (adversarial review, "Han" finding, round 2)', async () => {
-        // Round 1 fixed adoptServerRenderedToggle() writing to localStorage on
-        // EVERY container swap, even an unchanged answer - the file's own
-        // comments say PrestaShop swaps `.two-sole-trader` "constantly" while
-        // a checkout step settles, undebounced. Round 2 review noted nothing
-        // actually pinned that skip: this proves a same-value re-adoption
-        // leaves the stored `ts` untouched rather than rewriting it.
+    test('a matching re-adoption does NOT rewrite the cache entry', async () => {
+        // adoptServerRenderedToggle() must skip the localStorage write on an
+        // unchanged answer - the file's own comments say PrestaShop swaps
+        // `.two-sole-trader` "constantly" while a checkout step settles,
+        // undebounced. This proves a same-value re-adoption leaves the stored
+        // `ts` untouched rather than rewriting it.
         const { buildPaymentTileWithSoleTraderAnswer } = require('./ps-harness');
         buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         buildCountry('GB');

@@ -4529,8 +4529,8 @@ class Twopayment extends PaymentModule
             // enforces.
             'company_search_query_placeholder' => $this->l('Enter %d or more characters'),
             // The query field's accessible NAME, deliberately a different
-            // string from the placeholder above (adversarial review finding,
-            // TWO-40 follow-up round 2). `aria-label` is set once and never
+            // string from the placeholder above (TWO-40). `aria-label` is
+            // set once and never
             // re-synced, so naming the field after the length-requirement hint
             // left a screen reader still announcing "Enter N or more
             // characters" as what the field IS long after the buyer has typed
@@ -5051,7 +5051,7 @@ class Twopayment extends PaymentModule
         $optional_fields = $this->getOptionalCheckoutFieldsForDisplay();
 
         // Sole-trader AVAILABILITY, resolved HERE rather than in the browser
-        // (TWO-25326 bug 9, round 3; TWO-40 removed the chip UI this used to
+        // (TWO-25326 bug 9; TWO-40 removed the chip UI this used to
         // drive). TwoSoleTrader.js used to build Business / Sole trader chips
         // only after its own availability round trip, so they were absent from
         // every first paint of the payment step and appeared a few hundred
@@ -5068,7 +5068,7 @@ class Twopayment extends PaymentModule
         // have been told. Cost is bounded: that answer is memoised per request
         // and cached in the context cookie for the endpoint's own max-age, and
         // it REPLACES the per-page-load AJAX call rather than adding to it.
-        // THREE-state, not two (round 3 review). A registry timeout and a genuine
+        // THREE-state, not two. A registry timeout and a genuine
         // business-only country are both `false` to isAvailable() - right for a
         // capability gate, wrong here, because the browser adopts this answer as
         // settled and never re-asks, so flattening a blip into "no" would launder
@@ -5076,7 +5076,7 @@ class Twopayment extends PaymentModule
         // renders as NO answer and the client's own retrying request path stays
         // live.
         //
-        // CACHE-ONLY, and never a live call (round 3 review, finding 2). This runs
+        // CACHE-ONLY, and never a live call. This runs
         // inside a shopper's checkout render, and a payment-option change reloads
         // that page - so resolving live meant every payment-step render on a shop
         // that cannot reach the registry paid the request timeout again (the

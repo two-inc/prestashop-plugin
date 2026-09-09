@@ -1,5 +1,5 @@
 /**
- * TWO-40 round 4: pins TwoSoleTrader.js's notifyEnrollmentSettled(), which
+ * TWO-40: pins TwoSoleTrader.js's notifyEnrollmentSettled(), which
  * dispatches 'two:sole-trader-flight-settled' from every terminal branch of
  * startEnrollment()'s call graph. Each test drives one branch and asserts
  * the event fires - a fixed timeout in TwoCompanySearch.js would pass all
@@ -260,7 +260,7 @@ test.each([
 
 /**
  * openPopup()'s never-open-over-a-live-window guard gates on the window
- * being live, not on the raise succeeding (round 2 finding). A throwing
+ * being live, not on the raise succeeding. A throwing
  * focus() must still return the existing handle, or a second popup opens
  * and orphans the first untracked (guide §14).
  */
@@ -697,7 +697,7 @@ test('a blocked popup still fires the settle event exactly once (not twice, desp
 });
 
 /**
- * TWO-40 round 5, adversarial review finding (Leia): cancelEnrollment()
+ * TWO-40: cancelEnrollment()
  * only bumped the generation counter and hid the prompt - it never told
  * TwoCompanySearch.js's spinner/listener the flight was over. apply() calls
  * it directly off a billing-country change while enrolling, a real path.
@@ -731,7 +731,7 @@ test('cancelEnrollment() does NOT fire the settle event when there was nothing t
 });
 
 /**
- * TWO-40 round 5, adversarial review finding (Han + Yoda): abandon-then-
+ * TWO-40: abandon-then-
  * retry while the FIRST mint is still outstanding used to leave the second
  * attempt's spinner running forever. fetchTokens()'s single in-flight guard
  * means the second click rides the first mint's request; when it resolves,
@@ -798,7 +798,7 @@ test('a mint that resolves after abandon-then-retry still resumes the buyer look
 });
 
 /**
- * TWO-40 round 5, adversarial review finding (Han + Vader): getCurrentBuyer()
+ * TWO-40: getCurrentBuyer()
  * had no in-flight guard of its own (unlike fetchTokens()'s isFetchingTokens)
  * - a second concurrent lookup opened a second signup popup from one gesture.
  */

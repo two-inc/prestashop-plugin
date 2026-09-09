@@ -1,12 +1,12 @@
 /**
- * TWO-40 round 2 adversarial review BLOCKER: a sole-trader enrolment that is
+ * TWO-40: a sole-trader enrolment that is
  * still resolving asynchronously (token mint, then the buyer-lookup round
  * trip, then the saveCompany round trip) must not publish over a REAL
  * company the buyer explicitly searched for and selected in the meantime.
  *
  * The message listener for the hosted signup popup is deliberately NOT
- * gated on `enrolling` (round 1's own fix for a dropped genuine completion -
- * see sole-trader-server-rendered-toggle.test.js), so gating on `enrolling`
+ * gated on `enrolling` (that is what stops a genuine completion being
+ * dropped - see sole-trader-server-rendered-toggle.test.js), so gating on `enrolling`
  * here would just reintroduce that bug from the other side. The actual fix
  * is a generation counter (`_enrollGeneration`), bumped unconditionally by
  * cancelEnrollment() - which TwoCompanySearch.js calls on every dropdown
@@ -165,7 +165,7 @@ test('a buyer lookup resolving BEFORE any cancellation still publishes normally'
 });
 
 /**
- * Round 3 adversarial review finding: round 2's fix only closed the race
+ * Checking the generation on the IN-FLIGHT call alone only closes the race
  * where a getCurrentBuyer()/applyBuyer() call was ALREADY IN FLIGHT when
  * cancelEnrollment() fired. It missed the case where the tokens/popup from
  * a CANCELLED attempt produce a BRAND NEW getCurrentBuyer() call afterward -

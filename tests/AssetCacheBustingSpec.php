@@ -113,9 +113,8 @@ final class AssetCacheBustingSpec
      * for. Safe for the narrow slices this spec scans: none of the string
      * literals in the register*() calls it guards contain "//" or "/*".
      *
-     * Round-2 adversarial review (Vader) found the previous per-line version
-     * of this test could be defeated by a decoy TRAILING COMMENT on the same
-     * line as a reverted call - e.g. `...->registerJavascript('id', 'path' .
+     * A per-line version of this test is defeatable by a decoy TRAILING
+     * COMMENT on the same line as a reverted call - e.g. `...->registerJavascript('id', 'path' .
      * '?v=' . @filemtime(...), [...]); // getTwoModuleAssetPath( 'version' =>
      * $this->getTwoAssetVersion(` - which contains both guarded-for tokens
      * without ever really calling either. Stripping comments first closes
@@ -130,16 +129,16 @@ final class AssetCacheBustingSpec
     /**
      * Extracts each `->$methodCall(...)` statement as its own string, from
      * the method name through the matching (paren-depth-balanced) closing
-     * `)`. Round-2 adversarial review (Han/Vader) found the previous per-LINE
-     * version of this test both missed the admin hook's registerStylesheet()
-     * call (which spans several lines) and was fragile against any future
-     * legitimate line-wrap of a checkout-hook call. Matching the whole
+     * `)`. A per-LINE version of this test both misses the admin hook's
+     * registerStylesheet() call (which spans several lines) and is fragile
+     * against any future legitimate line-wrap of a checkout-hook call.
+     * Matching the whole
      * statement, wherever its parens close, fixes both: multi-line calls are
      * captured whole, and a decoy elsewhere in the body can no longer stand
      * in for tokens the call itself must carry.
      *
-     * Paren-counting is string-literal-aware (round-3 adversarial review,
-     * Vader): a literal '(' or ')' inside a single- or double-quoted PHP
+     * Paren-counting is string-literal-aware: a literal '(' or ')' inside a
+     * single- or double-quoted PHP
      * string argument is valid code and must not perturb the depth count,
      * or a call whose id/path string happens to contain a stray paren could
      * either truncate its own capture early or run past its closing paren
@@ -257,8 +256,8 @@ final class AssetCacheBustingSpec
         );
         $adminStatements = self::extractCallStatements($adminBody, '->registerStylesheet(');
 
-        // Exact counts, not a loose ">=" floor (round-3 adversarial review,
-        // Han): a floor only catches a surviving call site reverting its
+        // Exact counts, not a loose ">=" floor: a floor only catches a
+        // surviving call site reverting its
         // pattern, not a whole call site vanishing outright - which is
         // exactly the silent-asset-drop failure mode TWO-53PS caused. These
         // numbers are the real current count of register*() calls in each
@@ -267,7 +266,7 @@ final class AssetCacheBustingSpec
         TinyAssert::same(8, count($frontStatements), 'expected exactly 8 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 7 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
         TinyAssert::same(1, count($adminStatements), 'expected exactly 1 registerStylesheet() call site in hookActionAdminControllerSetMedia(), found ' . count($adminStatements) . ' - it was added, removed, or renamed');
 
-        // Identity, not just count (round-4 adversarial review, Vader): a
+        // Identity, not just count: a
         // count-only check passes if one real call site is deleted and a
         // DIFFERENT one duplicated in its place (e.g. a bad merge/copy-paste
         // that drops TwoOrderIntent.js but keeps the count at 8 by
@@ -284,18 +283,18 @@ final class AssetCacheBustingSpec
         // pattern-call order, not the source's actual line order (two-css
         // is a registerStylesheet call textually first in the hook, but
         // lands last here). A sorted-set comparison is order-independent but
-        // still exact on identity - Vader's delete-one/duplicate-another
-        // mutation changes which ids are present regardless of ordering, so
-        // it's still caught.
-        // Maps each id to the ONE relative path it must register (round-5
-        // adversarial review, Vader): round 4's checks only confirmed the
-        // right SET of ids is present and that each call is internally
-        // self-consistent (its own getTwoModuleAssetPath() and
-        // getTwoAssetVersion() arguments match each other) - neither catches
+        // still exact on identity - a delete-one/duplicate-another mutation
+        // changes which ids are present regardless of ordering, so it's still
+        // caught.
+        // Maps each id to the ONE relative path it must register. The id-set
+        // and self-consistency checks above only confirm the right SET of ids
+        // is present and that each call is internally self-consistent (its own
+        // getTwoModuleAssetPath() and getTwoAssetVersion() arguments match
+        // each other) - neither catches
         // a call whose id is left correct but whose backing file is swapped
         // for a different one (e.g. 'two-order-intent' silently registering
         // TwoCompanySearch.js instead of TwoOrderIntent.js): the id set is
-        // untouched and the call is still self-consistent, so both round-4
+        // untouched and the call is still self-consistent, so both of those
         // assertions pass while checkout genuinely loses TwoOrderIntent.js.
         // Binding id -> expected path closes that gap.
         $expectedFrontPathsById = array(
@@ -322,7 +321,7 @@ final class AssetCacheBustingSpec
         self::assertCallsMatchExpectedPaths($frontStatements, $expectedFrontPathsById);
         self::assertCallsMatchExpectedPaths($adminStatements, $expectedAdminPathsById);
 
-        // TWO-25326 round 4: NOTHING may be registered head-side any more. The
+        // TWO-25326: NOTHING may be registered head-side any more. The
         // one asset that ever was (the payment-step flash guard) existed to hide
         // the tile through the first paint of the checkout-page reload the
         // surcharge sync used to trigger; that sync no longer navigates the page

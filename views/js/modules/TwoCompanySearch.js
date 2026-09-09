@@ -753,7 +753,7 @@ class TwoCompanySearch {
      */
     removeDropdown() {
         // A full teardown must not leave the settle listener bound past the
-        // panel it would have called closeDropdown() on (TWO-40 round 4).
+        // panel it would have called closeDropdown() on (TWO-40).
         this.endSoleTraderLoading();
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
@@ -843,7 +843,7 @@ class TwoCompanySearch {
                 // step".
                 event.stopPropagation();
                 this._chipMode = 'manual';
-                // Abandons any Sole Trader wait in progress (TWO-40 round 4)
+                // Abandons any Sole Trader wait in progress (TWO-40)
                 // - this handler does not go through closeDropdown(), so
                 // without this the name-field spinner would keep spinning
                 // and the settle listener would stay bound past the flow the
@@ -886,7 +886,7 @@ class TwoCompanySearch {
                     this._closeTimerId = null;
                     return;
                 }
-                // Re-entrancy guard (TWO-40 round 5): this button stays
+                // Re-entrancy guard (TWO-40): this button stays
                 // clickable for the WHOLE round trip. TwoSoleTrader.js's own
                 // guards only cover the token-mint stage (`isFetchingTokens`);
                 // a second click landing during the buyer-lookup stage
@@ -918,14 +918,14 @@ class TwoCompanySearch {
                 if (soleTrader && typeof soleTrader.startEnrollment === 'function') {
                     // Keep the panel OPEN and show the company-name field's
                     // spinner for the actual duration of this click's autofill
-                    // round trip (Doug, TWO-40 round 4). See
+                    // round trip (Doug, TWO-40). See
                     // beginSoleTraderLoading()/endSoleTraderLoading() for the
                     // event contract with TwoSoleTrader.js.
                     this.beginSoleTraderLoading();
                     try {
                         // startEnrollment() is foreign-module code: a
                         // synchronous throw would leave the spinner open with
-                        // nothing left to ever settle it (TWO-40 round 5).
+                        // nothing left to ever settle it (TWO-40).
                         soleTrader.startEnrollment(
                             this._instanceNs,
                             this._soleTraderButton && this._soleTraderButton.get(0)
@@ -940,7 +940,7 @@ class TwoCompanySearch {
                     // through beginSoleTraderLoading()'s keep-open window, so
                     // renderChipSelection() and closeDropdown() would otherwise
                     // land in the same synchronous tick with zero painted
-                    // frames (TWO-40 round 5). Only reachable when the global
+                    // frames (TWO-40). Only reachable when the global
                     // instance is missing/malformed.
                     window.requestAnimationFrame(() => this.closeDropdown(true));
                 }
@@ -1394,7 +1394,7 @@ class TwoCompanySearch {
      */
     closeDropdown(returnFocus) {
         // Every way the panel closes must leave no sole-trader spinner or stray
-        // settle-listener behind (TWO-40 round 4) - Escape, for instance, goes
+        // settle-listener behind (TWO-40) - Escape, for instance, goes
         // straight to closeDropdown() otherwise.
         this.endSoleTraderLoading();
         clearTimeout(this._closeTimerId);
@@ -1882,7 +1882,7 @@ class TwoCompanySearch {
         });
 
         this.companyField.on('mousedown.twoCompanyOpen', (event) => {
-            // NOT guarded on `this._dropdownOpen` (TWO-40 round 5): clicking
+            // NOT guarded on `this._dropdownOpen` (TWO-40): clicking
             // the company field again - even while the panel is already open,
             // e.g. with a Sole Trader wait in progress - is the buyer's own
             // deliberate way back to ordinary search.
@@ -2275,7 +2275,7 @@ class TwoCompanySearch {
      * Used to recognise a candidate scope that is really the STEP: anything with
      * one of these INSIDE it spans more than one address, and is not a scope.
      *
-     * The ids alone are NOT enough (TWO-40, round 6): a theme is free to drop
+     * The ids alone are NOT enough (TWO-40): a theme is free to drop
      * core's ids while keeping the rest of its markup, and then the step's outer
      * wrapper looks blockless while still containing the other address. Hence
      * also the classes core puts on a saved-address selector and its items, and
@@ -2312,7 +2312,7 @@ class TwoCompanySearch {
      * `<form>` inside the step's outer one (HTML drops the inner tag, so the
      * block element is the reliable boundary, not the form).
      *
-     * FAILS CLOSED (TWO-40, round 5): a candidate that CONTAINS another address
+     * FAILS CLOSED (TWO-40): a candidate that CONTAINS another address
      * block is rejected outright rather than used. The outer `.js-address-form`
      * wrapper core emits around the whole step contains BOTH address blocks, and
      * writing into it is precisely the document-wide write this feature exists
@@ -2808,7 +2808,7 @@ class TwoCompanySearch {
         // rules out.
         //
         // COMPLETE is NOT inert on a pinned address, and that is deliberate rather
-        // than an oversight (TWO-40, round 1 of the content-match rework). A pin
+        // than an oversight (TWO-40). A pin
         // raised by a DIFFERENT field - a city the buyer typed - leaves the marked
         // company name untouched, so the completion still fires there. It is
         // bounded instead of gated: it writes only the NUMBER half of a pair the
@@ -3564,7 +3564,7 @@ class TwoCompanySearch {
         // Scope resolves on this render, so the withheld branch above did not
         // just run - drop any forced entry an earlier render on this SAME
         // instance left set, or it would stay stuck true for the rest of this
-        // instance's life with nothing left to clear it (round 2 review).
+        // instance's life with nothing left to clear it.
         this._manualEntryForced = false;
 
         // The anchored panel and its query field (TWO-25326 §1). Same re-run
@@ -3640,9 +3640,9 @@ class TwoCompanySearch {
                     // that is simply how the CSS width algorithm resolves
                     // width against max-width.
                     //
-                    // ensureFieldWrapper() refreshed alongside it (round-2
-                    // review finding, Vader): a field hidden behind a
-                    // collapsed checkout step at page load measures 0 width,
+                    // ensureFieldWrapper() refreshed alongside it: a field
+                    // hidden behind a collapsed checkout step at page load
+                    // measures 0 width,
                     // so the wrapper's pinned width is cleared rather than
                     // set - and no `resize`/`orientationchange` fires just
                     // because a later step reveals it. The first keystroke
@@ -3820,8 +3820,8 @@ class TwoCompanySearch {
             // PrestaShop lookup, another module). `addClass` is idempotent, so
             // this is safe to repeat on every setupAutocomplete() re-run.
             //
-            // Wrapped in try/catch (round-2 review finding, Han): this is
-            // cosmetic, not core search functionality, and
+            // Wrapped in try/catch: this is cosmetic, not core search
+            // functionality, and
             // `autocomplete('widget')`/`autocomplete('instance')` below it is
             // ALREADY documented as capable of throwing on a non-standard
             // jQuery UI build. An uncaught throw here would escape
@@ -4477,8 +4477,8 @@ class TwoCompanySearch {
     }
 
     /**
-     * @returns {string} the query field's accessible NAME (adversarial review
-     *   finding, round 2) - static, describing the field's role, deliberately
+     * @returns {string} the query field's accessible NAME - static,
+     *   describing the field's role, deliberately
      *   NOT the same string as the placeholder. See the comment in
      *   buildDropdown() where this is applied for why the two must differ.
      */
@@ -5237,8 +5237,8 @@ class TwoCompanySearch {
      * hand; there is no test or build step that would catch one drifting from
      * the other.
      *
-     * nl/no/sv entries added (adversarial review finding, TWO-40 follow-up
-     * round 2): this shop ships nl/no/sv translations, so a theme with no
+     * nl/no/sv entries added (TWO-40): this shop ships nl/no/sv
+     * translations, so a theme with no
      * `data-iso*` attribute and no id in `window.twopayment.countries`,
      * rendered in one of those locales, used to fall through this map
      * silently - reaching only English/Spanish/French country names left the
@@ -5494,7 +5494,7 @@ class TwoCompanySearch {
             const addresses = (details && (details.addresses || (details.company && details.company.addresses))) || [];
             if (Array.isArray(addresses) && addresses.length > 0 && stillOnSameCompany) {
                 // THREE states here, not two, and the two that look alike are not
-                // (TWO-40, round 1 of the content-match rework):
+                // (TWO-40):
                 //
                 //  - the form on screen IS the secondary address: the fill's writes
                 //    go into the address the pin judges, so they have to be
@@ -5919,8 +5919,8 @@ class TwoCompanySearch {
         // outliving this instance. The width CSS variable lives on this
         // instance's own panel, already removed above, so it needs no clearing.
         try {
-            // By reference, not by namespace alone (round-2 review finding,
-            // Vader) - `window` is a genuine page-wide singleton, so a
+            // By reference, not by namespace alone - `window` is a genuine
+            // page-wide singleton, so a
             // namespace-only `.off('.twoCompanyWidth')` would remove another
             // still-live instance's handler too, were one ever to exist at
             // the same time as this one's teardown.
@@ -5991,7 +5991,7 @@ class TwoCompanySearch {
      * writes does not merely miss a hint: it produces a selection the stale-
      * selection guard cannot see at all, which is a credit check on one company
      * under another company's name. That is exactly what the invoice-address
-     * mirror did before it was routed through here (TWO-40, round 5).
+     * mirror did before it was routed through here (TWO-40).
      *
      * Does NOT publish to the manager and does NOT persist to the session: those
      * are separate concerns with separate ordering requirements, and one caller -
@@ -6106,11 +6106,10 @@ class TwoCompanySearch {
             && this.visibleAddressFormType() === 'invoice'
             && !this.visibleAddressFormRoot();
 
-        // THE PIN IS DELIBERATELY NOT CONSULTED HERE. This reverses an earlier
-        // review fix, and the reasoning is recorded so it is not "fixed" again.
+        // THE PIN IS DELIBERATELY NOT CONSULTED HERE, and the reasoning is
+        // recorded so it is not "fixed" again.
         //
-        // Round 1 added `secondaryAddressIsPinned()` as an early return, by analogy
-        // with the invoice mirror. Round 2 showed the analogy is false, in two ways.
+        // The analogy with the invoice mirror is false, in two ways.
         // secondaryAddressFormRoot() resolves non-null ONLY when the invoice form is
         // the VISIBLE, editable form - so the pin here gates the form the buyer is
         // looking at and has just acted on, which is the opposite of what the pin is

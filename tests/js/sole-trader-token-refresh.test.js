@@ -373,7 +373,7 @@ test('a tick still runs if the billing country has diverged from the country the
 });
 
 /**
- * Round 2 adversarial review (Han finding): the entry guard on `this._popup`
+ * The entry guard on `this._popup`
  * only proves no popup was open when the tick STARTED - it says nothing
  * about a popup opened WHILE that tick's mint POST is still out.
  * openPopup() (via the on-page prompt's click handler) has no
@@ -423,14 +423,14 @@ test('a popup opened while a background mint is still in flight is not orphaned 
 });
 
 /**
- * Round 2 adversarial review (Leia finding): a mint still outstanding when
+ * A mint still outstanding when
  * destroy() runs (e.g. PrestaShop swaps in a fresh instance for a replaced
  * payment fragment) must not arm a NEW setInterval on the now-dead instance
  * when it eventually resolves - nothing will ever call destroy() on it
  * again to clear it.
  */
 test('a mint that resolves after destroy() does not arm a background-refresh interval', async () => {
-    // Round 3 adversarial review (Vader finding): `_tokenRefreshIntervalId`
+    // `_tokenRefreshIntervalId`
     // is a proxy the code under test writes itself - a mutant that armed a
     // REAL setInterval() without recording its handle there would still
     // read null here. jest.getTimerCount() proves no timer, of any kind,
@@ -455,7 +455,7 @@ test('a mint that resolves after destroy() does not arm a background-refresh int
 });
 
 /**
- * Round 3 adversarial review (Leia/Yoda, convergent): fetchTokens()'s own
+ * fetchTokens()'s own
  * success branch checks `_destroyed` before touching `this.tokens` -
  * refreshTokens()'s should too, for the same reason (this instance is gone,
  * nothing is safe to act on), even though it arms nothing that could leak.

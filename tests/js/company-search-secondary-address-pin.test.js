@@ -639,7 +639,7 @@ describe('the country is compared as an ISO code', () => {
 });
 
 /**
- * TWO-40, round 1 of the content-match rework.
+ * TWO-40.
  *
  * The pin gates the POPULATE and nothing else. Of the three repair operations,
  * RE-MARK writes no value at all and RE-PUBLISH is gated on the mirror's own marked
@@ -763,7 +763,7 @@ describe('scope: the pin only applies where there is a secondary address', () =>
     });
 
     /**
-     * TWO-40, round 1 of the content-match rework.
+     * TWO-40.
      *
      * "No secondary address on screen" and "the invoice form IS on screen but the
      * scope resolution failed closed" are different states, and the fill used to

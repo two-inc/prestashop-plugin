@@ -253,8 +253,7 @@ script, or a database user with no `ALTER` privilege — and naming a nonexisten
 ENTIRE insert. That row carries `two_order_id`, the invoice URL and everything later status syncs key
 on, and the write happens inside the confirmation callback for an order Two has already approved.
 Losing the snapshot costs an empty organisation number on two admin PUTs; losing the row costs the
-buyer their order. The degradation is therefore exactly the pre-TWO-40 behaviour. Found by review
-round 4 — the first implementation logged the failure and wrote the column anyway.
+buyer their order. The degradation is therefore exactly the pre-TWO-40 behaviour.
 
 **Two known residuals on the `dni` path, recorded rather than patched.** Both exist only because a
 `TWO:` number no longer reaches `dni`, and both are mitigated server-side because the cart-scoped
@@ -277,9 +276,8 @@ session record is resolver priority 1:
   number would silently re-label a funded invoice. Preferring one and re-resolving the other would
   pair a new name with an old number, which is worse than either.
 
-**The address-wide pin is deliberately NOT consulted, and that is a REVERSAL of a review fix.**
-Round 1 of the adversarial review added `secondaryAddressIsPinned()` as an early return, reasoning by
-analogy with the invoice mirror. Round 2 showed the analogy is false, in two ways:
+**The address-wide pin is deliberately NOT consulted.** The analogy with the invoice mirror that
+would justify `secondaryAddressIsPinned()` as an early return here is false, in two ways:
 
 - `secondaryAddressFormRoot()` resolves non-null **only** when the invoice form is the VISIBLE,
   editable form. So the pin was gating the form the buyer is looking at and has just acted on - the
@@ -980,10 +978,8 @@ and not demoted), the two address-resolution-failure cases moved onto the delive
 tier, and `testPostedCountryCannotConjureAvailability` is unchanged and is now the
 more load-bearing of the pair.
 
-**The coupling to `#13`, and the trade-off it leaves — accepted, not absent**
-(corrected in round 5; an earlier revision of this paragraph said "which select" was
-"never a question on PrestaShop", which is true but incomplete, and reads as a claim
-that nothing can go wrong here). Per correction C there is only ever ONE country
+**The coupling to `#13`, and the trade-off it leaves — accepted, not absent.**
+Per correction C there is only ever ONE country
 select on the page, so the browser cannot post the wrong one. But *which* address
 that one select belongs to depends on which pass the buyer is on: on the
 delivery-address-editing pass it is the DELIVERY country. So a buyer whose billing
@@ -1216,8 +1212,8 @@ Four things worth knowing before touching it:
     field carrying no marker of any kind. A number the mirror wrote and the buyer
     then cleared is not owed, and no COMPLETION refills it **on a form that kept its
     identification field** — which is the case the gate is about.
-  - **That qualification is not the whole story, and there is a SECOND route**
-    (round 6). It is not enough to scope the promise to the completion path: since
+  - **That qualification is not the whole story, and there is a SECOND route.**
+    It is not enough to scope the promise to the completion path: since
     the mirror publishes the selection through the hidden `companyid` field the way a
     real selection does, the submit handler's
     `syncOrganizationToAddressIdentifiers()` reads that field and writes its value
@@ -1230,7 +1226,7 @@ Four things worth knowing before touching it:
     beside it. Recorded because these two sentences exist to be accurate about what
     the code guarantees, and a qualification that is merely narrower than the old
     absolute is still false.
-  - **The residual, stated rather than claimed away** (round 5): the re-mark path
+  - **The residual, stated rather than claimed away**: the re-mark path
     re-pends a placed number when the rebuild renders a country whose format has NO
     identification field, and it does so from the field being ABSENT, without
     consulting the value it held. So a number the buyer cleared themselves, followed
@@ -1559,7 +1555,7 @@ ever starts emitting deprecations (or stops working under a future PHP), the rea
 silently returns empty. Worth ten minutes against a real PS 8.2+ shop; a typed column or an explicit
 carrier would be the durable fix.
 
-## Round 5 (independent adversarial review): what was fixed, and what was noted instead
+## Independent adversarial review: what was fixed, and what was noted instead
 
 Five reproducible defects, not findings. All of the below are re-derived against this
 branch's HEAD, not carried over from the review's own line numbers.
