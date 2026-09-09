@@ -756,8 +756,7 @@ namespace {
 
     class Configuration
     {
-        // Default `false`, matching PrestaShop core: several gates tell an unset
-        // key (false) apart from a stored empty string.
+        // Core returns false for a key that was never written.
         public static function get($key, $default = false)
         {
             return array_key_exists($key, StubStore::$configuration) ? StubStore::$configuration[$key] : $default;

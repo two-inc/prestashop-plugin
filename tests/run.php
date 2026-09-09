@@ -169,6 +169,7 @@ final class OrderBuilderSpec
         self::testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault();
         self::testGetMerchantAvailableTermsRefetchDecisionTable();
         self::testGetMerchantAvailableTermsSkipsFetchWithKeysNeverWritten();
+        self::testAMerchantRecordlessTwoHundredKeepsTheSiblingCaches();
         self::testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale();
         self::testGetMerchantAvailableTermsRespectsExplicitEmptyList();
         self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
@@ -4983,7 +4984,8 @@ final class OrderBuilderSpec
     {
         $unset = null; // never written: PrestaShop reads an absent key back as false
         $ok = ['http_status' => 200, 'available_terms' => [30, 7]];
-        $noField = ['http_status' => 200];
+        $noField = ['http_status' => 200, 'id' => 'mid'];
+        $notARecord = ['http_status' => 200, 'detail' => 'ok'];
 
         $cases = [
             ['[30,60]', 0,    false, false, $ok,      0, [30, 60], 'a resolved list is served without touching the wire'],
@@ -4994,6 +4996,7 @@ final class OrderBuilderSpec
             ['',        -100, false, true,  $ok,      0, [],       'the shared clock still rate-limits the unresolved-list refetch'],
             ['[]',      0,    false, true,  $ok,      0, [],       'an explicitly empty offer set is an answer, not a gap to refetch'],
             ['',        0,    false, true,  $noField, 1, [],       'a 200 that carries no term list leaves it unresolved'],
+            ['',        0,    false, true,  $notARecord, 1, [],    'a 200 that is not the merchant record at all is a failed fetch'],
             ['',        0,    true,  false, $ok,      1, [7, 30],  'a sanctioned refresh point still fetches a dropped record'],
         ];
 
@@ -5001,8 +5004,8 @@ final class OrderBuilderSpec
             self::reset();
             Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
-            // After the harness, whose constructor seeds a resolved list only
-            // when the key is absent.
+            // fetchHarness() seeds a resolved list when the key is absent, so
+            // the cache row is set after it.
             $module = self::fetchHarness();
             if ($cached === null) {
                 Configuration::deleteByName(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS);
@@ -5019,6 +5022,41 @@ final class OrderBuilderSpec
 
             TinyAssert::same($expectedCalls, $module->calls, 'wire calls: ' . $description);
             TinyAssert::same($expectedTerms, $terms, 'terms: ' . $description);
+        }
+    }
+
+    /**
+     * A 200 that is not the merchant record must not wipe the siblings the same
+     * fetch feeds: their absent-field default is permissive.
+     */
+    private static function testAMerchantRecordlessTwoHundredKeepsTheSiblingCaches(): void
+    {
+        $cases = [
+            [['http_status' => 200, 'detail' => 'ok'], '["GB"]', 1, 'a body answering none of the fetch\'s questions keeps them'],
+            [['http_status' => 200, 'id' => 'mid'], 'null', 0, 'a real record with the fields absent overwrites them'],
+        ];
+
+        foreach ($cases as [$response, $expectedCountries, $expectedDistributed, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '["GB"]');
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 1);
+            $module = self::fetchHarness();
+            $module->responses[] = $response;
+
+            $module->getMerchantAvailableTerms(true);
+
+            TinyAssert::same(
+                $expectedCountries,
+                Configuration::get(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES),
+                'buyer countries: ' . $description
+            );
+            TinyAssert::same(
+                $expectedDistributed,
+                (int) Configuration::get(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED),
+                'invoice distribution: ' . $description
+            );
         }
     }
 

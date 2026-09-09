@@ -4901,6 +4901,12 @@ class Twopayment extends PaymentModule
             return [];
         }
 
+        $cart = $this->context->cart;
+        if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
+            PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
+            return [];
+        }
+
         // Term-discovery gate (TWO-25503). PAYMENT_TERMS_OPTIONS is a
         // build-time admin UI preset, never a runtime substitute for terms
         // Two hasn't actually sanctioned for this merchant.
@@ -4912,12 +4918,6 @@ class Twopayment extends PaymentModule
                     2
                 );
             }
-            return [];
-        }
-
-        $cart = $this->context->cart;
-        if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
-            PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
             return [];
         }
 
@@ -10705,11 +10705,9 @@ class Twopayment extends PaymentModule
      * (15 min, 10s cap) runs when $refresh === true, from the sanctioned refresh
      * points (the checkout media hook and the admin config render).
      *
-     * $resolve_if_unresolved is for the callers whose answer is a WITHHOLD
-     * decision. For them an unresolved list is a cache miss, not an answer -
-     * nothing else on their path refetches it, so leaving it unresolved because
-     * nobody asked would withhold the payment method until something unrelated
-     * happened to refresh (ABN-495). Rate-limited by the same shared clock.
+     * For a caller whose answer is a WITHHOLD decision, an unresolved list is a
+     * cache miss and nothing else on its path refetches - hence
+     * $resolve_if_unresolved, on the same shared clock (ABN-495).
      * The cached list is overwritten only by a successful response carrying an
      * `available_terms` array; a fetch failure (or an older backend omitting the
      * field) serves the last-known list for another TTL rather than blanking the
@@ -10747,7 +10745,7 @@ class Twopayment extends PaymentModule
                         self::API_TIMEOUT_STATE_CHECK
                     );
                     $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
-                    if ($http_status === self::HTTP_STATUS_OK && is_array($response)) {
+                    if ($http_status === self::HTTP_STATUS_OK && $this->isTwoMerchantRecordResponse($response)) {
                         // ONE fetch feeds BOTH merchant-record caches: the
                         // offerable term list (TWO-24813) and the default-term
                         // seed (due_in_days, TWO-24859). A field absent from an
@@ -10805,7 +10803,7 @@ class Twopayment extends PaymentModule
         }
 
         $cached = Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS);
-        if (Tools::isEmpty($cached)) {
+        if (self::isTwoConfigUnset($cached)) {
             return array();
         }
         $decoded = json_decode($cached, true);
@@ -10813,6 +10811,40 @@ class Twopayment extends PaymentModule
             return array();
         }
         return $this->normaliseMerchantTerms($decoded);
+    }
+
+    /**
+     * Whether a 200 body is the merchant record at all. The sibling caches this
+     * fetch feeds overwrite with PERMISSIVE defaults on an absent field - no
+     * minimum, no buyer-country restriction - so a 200 that answers none of the
+     * questions asked (a captive portal, a proxy error page) has to be treated
+     * as a failed fetch rather than as a merchant with no restrictions.
+     *
+     * @param mixed $response
+     * @return bool
+     */
+    private function isTwoMerchantRecordResponse($response)
+    {
+        if (!is_array($response)) {
+            return false;
+        }
+
+        $body = (isset($response['data']) && is_array($response['data'])) ? $response['data'] : $response;
+        $fields = array(
+            'id',
+            'available_terms',
+            'due_in_days',
+            'invoice_distributed_by_merchant',
+            'min_order_amount',
+            'supported_buyer_countries',
+        );
+        foreach ($fields as $field) {
+            if (array_key_exists($field, $body) || array_key_exists($field, $response)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -11340,7 +11372,7 @@ class Twopayment extends PaymentModule
             return false;
         }
         $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
-        if (Tools::isEmpty($api_key)) {
+        if (self::isTwoConfigUnset($api_key)) {
             return false;
         }
         Configuration::updateValue(self::CONFIG_FX_RATES_TS, time());

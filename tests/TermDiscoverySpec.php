@@ -24,8 +24,8 @@ final class TermDiscoverySpec
     }
 
     /**
-     * Payment-options harness feeding the real API-key gate its own verdict
-     * field, rather than overriding the gate and hiding it from the rows.
+     * Payment-options harness. The API-key gate is fed its own verdict field, so
+     * it stays in the assertion path ahead of the term gate.
      */
     private static function moduleWithMerchantRecordResponse(array $response, string $verdict = Twopayment::API_KEY_STATUS_OK): object
     {
