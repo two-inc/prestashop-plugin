@@ -15,6 +15,8 @@ final class CheckoutWithholdReasonSpec
     public static function runAll(): void
     {
         self::testEveryWithholdingBranchNamesItsReasonInTheLog();
+        self::testAWithholdReasonIsLoggedOncePerRequest();
+        self::testTheProviderNameFallsBackToTheProductName();
         self::testTheHealthChecklistNamesWhyTheMethodIsAbsent();
     }
 
@@ -27,13 +29,6 @@ final class CheckoutWithholdReasonSpec
     {
         // [module mutation, log fragment, why].
         $cases = [
-            [
-                static function ($module): void {
-                    $module->active = false;
-                },
-                'the module is not enabled for this shop',
-                'a module switched off for the shop names the switch',
-            ],
             [
                 static function ($module): void {
                     $module->api_key = '';
@@ -73,6 +68,71 @@ final class CheckoutWithholdReasonSpec
                 $description . ': logged ' . self::allLogged()
             );
         }
+    }
+
+    /**
+     * An overlay whose brand file predates provider_full_name must still name
+     * somebody to contact.
+     */
+    private static function testTheProviderNameFallsBackToTheProductName(): void
+    {
+        self::offerableModule();
+        // [brand config, expected name, why].
+        $cases = [
+            [['provider_full_name' => 'Acme Pay Ltd', 'product_name' => 'Acme Pay'], 'Acme Pay Ltd',
+                'the legal name is preferred where the overlay declares one'],
+            [['product_name' => 'Acme Pay'], 'Acme Pay',
+                'an overlay whose brand file predates the key still names somebody'],
+        ];
+
+        foreach ($cases as [$brand, $expected, $description]) {
+            $module = new class ($brand) extends TwopaymentTestHarness {
+                /** @var array<string,mixed> */
+                private $brand;
+
+                public function __construct(array $brand)
+                {
+                    parent::__construct();
+                    $this->brand = $brand;
+                }
+
+                public function getTwoBrandConfig($key)
+                {
+                    return array_key_exists($key, $this->brand) ? $this->brand[$key] : null;
+                }
+
+                public function exposeTwoProviderFullName(): string
+                {
+                    return $this->twoProviderFullName();
+                }
+            };
+
+            TinyAssert::same($expected, $module->exposeTwoProviderFullName(), $description);
+        }
+    }
+
+    /**
+     * PrestaShop asks for payment options several times per payment-step
+     * render; one cause is one line.
+     */
+    private static function testAWithholdReasonIsLoggedOncePerRequest(): void
+    {
+        $module = self::offerableModule();
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '');
+        $module->api_key = '';
+        PrestaShopLogger::reset();
+
+        $module->hookPaymentOptions([]);
+        $module->hookPaymentOptions([]);
+        $module->hookPaymentOptions([]);
+
+        $lines = 0;
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'no API key is saved in the module settings') !== false) {
+                $lines++;
+            }
+        }
+        TinyAssert::same(1, $lines, 'the reason must be logged once per request, not once per evaluation');
     }
 
     /**
@@ -122,7 +182,7 @@ final class CheckoutWithholdReasonSpec
                 static function ($module): void {
                     Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', '');
                 },
-                'your merchant account has not been identified yet.',
+                'your merchant account has not been identified yet. Save General to verify the API key.',
                 'a shop whose key never verified is withheld, and the short name is no form field',
             ],
             [
@@ -143,14 +203,14 @@ final class CheckoutWithholdReasonSpec
                 static function ($module): void {
                     StubStore::$moduleCountries = [];
                 },
-                'no country is enabled for this module under Payment > Payment Restrictions.',
+                'no country is enabled for this module under Payment > Preferences.',
                 "PrestaShop's own restriction screen hides the option for every buyer",
             ],
             [
                 static function ($module): void {
                     StubStore::$moduleCurrencies['twopayment'] = [];
                 },
-                'no currency is enabled for this module under Payment > Payment Restrictions.',
+                'no currency is enabled for this module under Payment > Preferences.',
                 'and the same for its currency allowlist',
             ],
             [
@@ -206,7 +266,14 @@ final class CheckoutWithholdReasonSpec
                     Configuration::updateValue(Twopayment::CONFIG_MERCHANT_RECORD_KEY, 'another-key-hash');
                 },
                 'minimum order value not known until your profile refreshes',
-                'a cold or key-mismatched record means the constraint is unknown, not absent',
+                'a key-mismatched record means the constraint is unknown, not absent',
+            ],
+            [
+                static function ($module): void {
+                    Configuration::deleteByName(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED);
+                },
+                'minimum order value not known until your profile refreshes',
+                'and so does a profile that has never been fetched at all',
             ],
         ];
 
@@ -240,6 +307,9 @@ final class CheckoutWithholdReasonSpec
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', '');
         Configuration::updateValue('PS_CURRENCY_DEFAULT', 826);
+        // A stored merchant record; without one the row reports the floor as
+        // unknown rather than naming it.
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, '1');
         StubStore::$countries = [826 => 'GB'];
 
         $module = new TwopaymentTestHarness();

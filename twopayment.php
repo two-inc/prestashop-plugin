@@ -3507,7 +3507,7 @@ class Twopayment extends PaymentModule
             $reason = $this->l('no API key is saved. Check API key.');
         } elseif (Tools::isEmpty(Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'))) {
             // Server-derived from a successful verification, never a form field.
-            $reason = $this->l('your merchant account has not been identified yet. Save the General settings to verify the API key.');
+            $reason = $this->l('your merchant account has not been identified yet. Save General to verify the API key.');
         }
         if ($reason === null) {
             $status = $this->getTwoApiKeyVerificationStatus();
@@ -3523,20 +3523,20 @@ class Twopayment extends PaymentModule
             if ($countryState === self::BUYER_COUNTRIES_EMPTY) {
                 $reason = sprintf(
                     $this->l('no buyer countries are currently enabled for your account. Contact %s to have them enabled.'),
-                    $this->getTwoBrandConfig('provider_full_name')
+                    $this->twoProviderFullName()
                 );
             } elseif ($countryState === self::BUYER_COUNTRIES_MALFORMED) {
                 $reason = sprintf(
                     $this->l('the buyer countries on your account could not be read. Contact %s.'),
-                    $this->getTwoBrandConfig('provider_full_name')
+                    $this->twoProviderFullName()
                 );
             }
         }
         if ($reason === null && $this->twoNativeCountryRestrictionAllowsNothing()) {
-            $reason = $this->l('no country is enabled for this module under Payment > Payment Restrictions.');
+            $reason = $this->l('no country is enabled for this module under Payment > Preferences.');
         }
         if ($reason === null && !$this->getCurrency()) {
-            $reason = $this->l('no currency is enabled for this module under Payment > Payment Restrictions.');
+            $reason = $this->l('no currency is enabled for this module under Payment > Preferences.');
         }
         if ($reason !== null) {
             return array(
@@ -3549,7 +3549,7 @@ class Twopayment extends PaymentModule
         $shown = $this->l('Shown at checkout');
         // The platform floor is cache-only: an unresolved record means the
         // constraint is unknown, not that there is none.
-        if (!self::isMerchantRecordSlotForCurrentKey()) {
+        if (!$this->hasFetchedMerchantRecord()) {
             return array(
                 'label' => $label,
                 'value' => $shown . ' - ' . $this->l('minimum order value not known until your profile refreshes'),
@@ -3572,6 +3572,19 @@ class Twopayment extends PaymentModule
             );
 
         return array('label' => $label, 'value' => $shown . ' - ' . $value, 'ok' => true);
+    }
+
+    /**
+     * The company name to contact. An overlay whose brand file predates this
+     * key would otherwise render an empty name.
+     *
+     * @return string
+     */
+    protected function twoProviderFullName()
+    {
+        $name = (string) $this->getTwoBrandConfig('provider_full_name');
+
+        return $name !== '' ? $name : (string) $this->getTwoBrandConfig('product_name');
     }
 
     /**
@@ -5289,9 +5302,6 @@ class Twopayment extends PaymentModule
     public function hookPaymentOptions($params)
     {
         if (!$this->active) {
-            $this->logTwoPaymentOptionHidden(
-                'the module is not enabled for this shop'
-            );
             return;
         }
 

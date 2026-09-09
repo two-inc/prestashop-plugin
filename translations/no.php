@@ -545,13 +545,13 @@ $_MODULE['<{twopayment}prestashop>twopayment_b58967dda2076c46dc9db298c57acc86'] 
 $_MODULE['<{twopayment}prestashop>twopayment_aba389b990ffe03bfed6463dcc50bcb7'] = 'den lagrede tilleggsmetoden gjenkjennes ikke. Kontroller Metode for tillegg.';
 $_MODULE['<{twopayment}prestashop>twopayment_234bdc3195c47d2e7dee6df6e27c1d3a'] = 'Vises i kassen';
 $_MODULE['<{twopayment}prestashop>twopayment_63893c2d87676b85e5d093d4c4c6aef3'] = 'modulen er ikke aktivert for denne butikken. Aktiver den i Modulbehandling.';
-$_MODULE['<{twopayment}prestashop>twopayment_2c074060e1efe449eb1cb79cf1859f3b'] = 'merchant-kontoen din er ennå ikke identifisert. Lagre de generelle innstillingene for å verifisere API-nøkkelen.';
 $_MODULE['<{twopayment}prestashop>twopayment_26ff869cc83b6aec7e0e07b9e88f0b1b'] = 'skjult for handlekorger under %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b47df326254341d009809f46d6547bf9'] = 'skjult for handlekorger under %1$s eller %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_79b1ad9464e52fc337e4f72c87658e49'] = 'eksklusiv mva.';
 $_MODULE['<{twopayment}prestashop>twopayment_401daa7d8aed160fae2721966e185e17'] = 'inklusiv mva.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4fe0eb19234f23b3535a03a5801fcae'] = 'ingen kjøperland er aktivert for kontoen din for øyeblikket. Kontakt %s for å få dem aktivert.';
 $_MODULE['<{twopayment}prestashop>twopayment_9ab50399962b7caddac63a16a9ed9fe8'] = 'kjøperlandene på kontoen din kunne ikke leses. Kontakt %s.';
-$_MODULE['<{twopayment}prestashop>twopayment_744ab2d1f9928f2a52f98b79beb6f67d'] = 'ingen land er aktivert for denne modulen under Betaling > Betalingsbegrensninger.';
-$_MODULE['<{twopayment}prestashop>twopayment_b309bb076005fd147c717aa6020d624e'] = 'ingen valuta er aktivert for denne modulen under Betaling > Betalingsbegrensninger.';
 $_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] = 'minimumsbeløp for ordre er ikke kjent før profilen din oppdateres';
+$_MODULE['<{twopayment}prestashop>twopayment_7cbb9ce1159879e80679e80e29e1b006'] = 'merchant-kontoen din er ennå ikke identifisert. Lagre General for å verifisere API-nøkkelen.';
+$_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'ingen land er aktivert for denne modulen under Betaling > Innstillinger.';
+$_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'ingen valuta er aktivert for denne modulen under Betaling > Innstillinger.';
