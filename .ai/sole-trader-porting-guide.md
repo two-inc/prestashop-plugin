@@ -28,7 +28,8 @@ called existing tile-only placement "already correct," once in an unrelated from
 reimplementation that reasoned "the guide specifies how each placement must read, not
 that a placement must be added" and left the chips as a separate persistent tile
 element). Both were wrong for the same reason: the guide talked about *placement*
-— which form or tile the search control lives in — without ever stating the one fact that actually constrains chip markup.
+— which form or tile the search control lives in — without ever stating the one fact
+that actually constrains chip markup.
 
 **What getting this wrong cost, concretely:** woocommerce-plugin PRs #456–#464 were
 built from the placement prose without this section, and the whole batch was then
@@ -62,11 +63,12 @@ claim below as DOM-verified, cited by the actual structure captured live:
   `data-*` carries it.)
 - Consequence for porting: **do not build the chips as an always-visible element
   fixed in the payment tile or address form.** Whatever placement the search control
-  resolves to — delivery form, billing form, or payment tile — the chips render *inside that placement's own search-dropdown panel*,
-  as children of one intermediate wrapper, appear only while it's open, and disappear
-  when it closes — exactly like the search results they sit next to. A platform whose
-  company-search control has no dropdown panel concept at all needs one added; that is
-  in scope for this port, not an acceptable reduction of it.
+  resolves to — delivery form, billing form, or payment tile — the chips render
+  *inside that placement's own search-dropdown panel*, as children of one intermediate
+  wrapper, appear only while it's open, and disappear when it closes — exactly like the
+  search results they sit next to. A platform whose company-search control has no
+  dropdown panel concept at all needs one added; that is in scope for this port, not an
+  acceptable reduction of it.
 - **The chip group fills the row's full width.** Give each chip a half-row flex basis
   rather than letting it size to its own content, which leaves visible slack to the
   right and lets the arrangement fall out of the host theme's column at some widths
@@ -305,9 +307,10 @@ payment's `additional_information` JSON blob. Neither platform's admin order scr
 actually surfaces it, though (matches the corrected PrestaShop state).
 
 On WooCommerce, the empty-org-number-on-PUT bug class — an admin or webhook-time write
-sending an empty org number where a resolved one belongs — is structurally impossible and was pinned by a regression test rather than fixed: the order-edit
-compose path carries no company at all, and the meta save returns early with an order
-note (`713e5a0`, re-pinned in the rebuilt port). Verify the equivalent on any new
+sending an empty org number where a resolved one belongs — is structurally impossible
+and was pinned by a regression test rather than fixed: the order-edit compose path
+carries no company at all, and the meta save returns early with an order note
+(`713e5a0`, re-pinned in the rebuilt port). Verify the equivalent on any new
 platform rather than assuming either answer.
 
 **PrestaShop's own equivalent:** two new columns on the module's own order-keyed
@@ -851,8 +854,9 @@ implement wrongly — read both corrections before implementing either.
    WooCommerce's above.
 
    **OPEN — the two platforms satisfy this rule to different depths, and whether to
-   close the gap is unresolved. Do not invent a resolution for it.** Both now have no passive, email-driven fill, so both satisfy
-   the rule as stated. They are NOT identical beyond that:
+   close the gap is unresolved. Do not invent a resolution for it.** Both now have no
+   passive, email-driven fill, so both satisfy the rule as stated. They are NOT
+   identical beyond that:
 
    - **WooCommerce is stricter.** The chip has exactly one outcome: open the popup.
      There is no lookup between the click and the window.

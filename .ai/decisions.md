@@ -371,12 +371,12 @@ because the fix looks obviously correct in isolation and was applied once alread
   name and hidden pairing still are. That is the existing meaning of that switch, applied here
   unchanged.
 
-**A country change wiping a SEARCH or SOLE-TRADER capture is correct and must keep working** — the
-only mode a country change must not wipe is manual entry. It currently does — `setupCountryChangeListener()`'s handler blanks the company field
-and runs `clearSelectedCompany()`, which drops the hidden pair, the tag, the marked `dni` and the
-session company. So the earlier proposal to restore a sole-trader pair after a country rebuild via
-`republishMirroredSelection()` was **wrong and is not implemented**; it would have defeated the
-intended wipe.
+**A country change wiping a SEARCH or SOLE-TRADER capture is correct and must keep working**, and
+it currently does: `setupCountryChangeListener()`'s handler blanks the company field and runs
+`clearSelectedCompany()`, which drops the hidden pair, the tag, the marked `dni` and the session
+company. The only mode a country change must NOT wipe is manual entry. So the earlier proposal to
+restore a sole-trader pair after a country rebuild via `republishMirroredSelection()` was **wrong
+and is not implemented**; it would have defeated the intended wipe.
 
 **MANUAL-ENTRY mode is the real bug there, and it is NOT fixed in this piece of work.** Investigation
 confirmed that a country change wipes a hand-typed company name too: the country handler blanks the
@@ -563,7 +563,9 @@ description of the code.
 
 Written 2026-08-10 against `origin/staging` @ `0ddad20`.
 
-Two further pieces of the same work are implemented — see prestashop-plugin PR #154.
+Two further pieces of the same work are implemented — see prestashop-plugin PR #154:
+`vat_number` is no longer read as an organisation-number fallback, and the dead
+browser-side company-data storage is deleted.
 **The config-key rename shipped separately in 2.7.6**: the key is now spelled
 `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS` everywhere in live code, in a deliberately simple
 global-tier-only form (see the SUPERSEDED section at the end for what a tier-safe rename
@@ -1300,15 +1302,15 @@ reading, but do not act on it:
 
 ## Addendum — corrections to the premises in `#8`, `#12` and the country-resolver items
 
-Recorded here because three of the items rest on a count or a claim that turned out slightly
-off, and the design above already assumes the corrected version.
+Recorded here because three of the premises below rest on a count or a claim that turned out
+slightly off, and the design above already assumes the corrected version.
 
 1. **The ISO chain is mirrored FOUR times, not three.** The fourth is
    `TwoCheckoutManager.getSelectedCountryIso()` (`views/js/modules/TwoCheckoutManager.js:2605`),
    which delegates to `TwoOrderIntent` when available and otherwise re-implements the chain
    inline. It is easy to miss because it is not named like the other three.
-2. **The divergence between the four resolvers is real and is the right way round.**
-   `TwoCompanySearch.js:3312` reads only `data-iso-code` / `data-iso`;
+2. **The divergence between the four resolvers is real: the company search reads the FEWEST
+   attributes.** `TwoCompanySearch.js:3312` reads only `data-iso-code` / `data-iso`;
    `TwoSoleTrader.js:380`, `TwoOrderIntent.js:584` and `TwoCheckoutManager.js:2614` also read
    `data-country-iso`. So the company search alone can fail to resolve a country on a theme
    that only emits `data-country-iso` — and it is the module that most needs the answer.
@@ -1381,8 +1383,9 @@ rather than by tests, and none of the tests could have found them.
 The rename was originally asked for as `PS_TWO_COMPANY_SEARCH_LOCATION` with a real migration, and
 classified as mechanical/safe. **The premise is right and the classification is wrong.** The rename
 itself is two seds; a *tier-safe migration* is genuinely hard, and review found three different
-variants of silent merchant data loss in it. Every one of those was in the rename; the two other
-pieces of the same work were clean throughout, which is why they shipped first and this did not.
+variants of silent merchant data loss in it. Every one of those was in the rename; dropping the
+`vat_number` organisation-number fallback and deleting the dead browser-side company-data storage
+were clean throughout, which is why they shipped first and this did not.
 
 The confirmation that the rename is purely a location switch **does hold**: `isCompanySearchInAddressArea()`
 resolves to the `'1'`/`'0'` string the checkout JS compares against, `'1'` = address area, `'0'` =
@@ -1782,25 +1785,26 @@ an empty unmarked field holds no answer of theirs.
 
 ## C3 — the payment tile's read is phrased by ROLE, never by primary/secondary position
 
-**Decided.** The original wording treats WooCommerce's billing address as the
-"secondary", but the verified platform fact is that WooCommerce is **billing-FIRST**,
-so billing there IS the primary. The general rule is therefore phrased as:
+**Decided.** Which address is "primary" and which "secondary" differs by platform, so
+neither label can carry the rule. The verified platform fact is that WooCommerce is
+**billing-FIRST** — billing is the address the buyer edits by default, so billing there
+IS the primary. The general rule is therefore phrased as:
 
 > Read the address playing the billing/invoice role. Where that address is not the one
 > the platform has the buyer edit by default, it is synced from the default-edited one
 > by the same content-match mechanism.
 
 That is correct on both platforms. On PrestaShop the billing role is the invoice
-address, which IS the secondary, matching the original wording. On WooCommerce the sync clause simply
-does not apply, because the billing address is the one the buyer edits first.
+address, which IS the secondary, so the sync clause applies. On WooCommerce the sync
+clause simply does not apply, because the billing address is the one the buyer edits
+first.
 
-**OPEN QUESTION (C3):** the payment-tile example describes WooCommerce's billing
-address as the secondary one, which contradicts WooCommerce being billing-first. The
-rule above is written so that it is right either way and does not depend on resolving
-the contradiction — but if the intended model of WooCommerce is billing-second, then the
-WooCommerce port's primary/secondary mapping needs correcting before it is written,
-because the sync direction inverts. Not resolved here, and deliberately not "corrected"
-in the original wording.
+**OPEN QUESTION (C3):** the rule above is deliberately position-independent, so it holds
+whichever address WooCommerce has the buyer edit first, and nothing here depends on
+settling that. But a WooCommerce port written on the assumption that billing is the
+SECONDARY address there inverts the sync direction, so its primary/secondary mapping
+must be checked against the live checkout before any of it is written. Not resolved
+here.
 
 ---
 
@@ -1936,8 +1940,7 @@ declines to overwrite, and the pin only makes it decline more often. The company
 `readonly` in search mode is the search affordance, applies identically to both
 addresses, and the search control mounts on whichever form is visible — so the buyer can
 already search or type a company on the secondary address. **No editability feature was
-invented and none is owed.** The original correction was phrased as though read-only controls
-existed; they do not.
+invented and none is owed.**
 
 ---
 
