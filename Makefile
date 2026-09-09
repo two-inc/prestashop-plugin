@@ -11,10 +11,6 @@ PORT       := 1237
 URL        := http://localhost:$(PORT)/
 
 MODULE_NAME := twopayment
-PHP_CS_FIXER_VERSION := 3.92.0
-# Re-derive this hash from the official GitHub release page/checksums when
-# bumping PHP_CS_FIXER_VERSION — never copy it from elsewhere.
-PHP_CS_FIXER_SHA256  := 7ae9440e7ac8dca47d632cf07719d43bc65c0deef460d95c3cfea81979895f99
 PHPSTAN_VERSION      := 2.2.5
 # Re-derive this hash from the official GitHub release page/checksums when
 # bumping PHPSTAN_VERSION — never copy it from elsewhere.
@@ -46,7 +42,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop carrierless-off bump patch minor major format phpstan bumpver-patch bumpver-minor bumpver-major
+.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop carrierless-off bump patch minor major phpstan bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
@@ -204,13 +200,6 @@ carrierless-off:
 ## Run the tests/integration probes against the running local shop (run make carrierless-shop first)
 test-integration:
 	PS_CONTAINER=$(CONTAINER) dev/ci/run-integration-probes.sh
-
-## Format PHP module source with php-cs-fixer (PSR-12)
-format:
-	docker run --rm -u "$$(id -u):$$(id -g)" -v "$(CURDIR)":/app -w /app php:8.2-cli bash -c "\
-		php -r \"copy('https://github.com/PHP-CS-Fixer/PHP-CS-Fixer/releases/download/v$(PHP_CS_FIXER_VERSION)/php-cs-fixer.phar', '/tmp/php-cs-fixer.phar');\" \
-		&& echo '$(PHP_CS_FIXER_SHA256)  /tmp/php-cs-fixer.phar' | sha256sum -c - \
-		&& php /tmp/php-cs-fixer.phar fix --config=.php-cs-fixer.dist.php"
 
 ## Run phpstan static analysis (same gate CI runs)
 phpstan:
