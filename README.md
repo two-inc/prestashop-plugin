@@ -668,6 +668,18 @@ The module builds order payloads that exactly match PrestaShop invoices:
   - Check API key is valid
   - Verify country selection (if applicable)
 
+### Buyer's Country Preselected Wrong at the Address Step
+- **Symptom**: the invoice address form opens with a country the buyer is not in — and, where
+  that country has states, a required state dropdown they cannot satisfy
+- **Cause**: PrestaShop itself preselects the country from the browser's `Accept-Language`
+  header, ahead of the shop default, when **International → Localization → Detect country from
+  browser language** is enabled. It is enabled by default on a fresh install. The module writes
+  nothing to the country field
+- **Solutions**:
+  - Set **Detect country from browser language** to **No** if you want the shop default to win
+  - Leave it enabled if you do want the browser's language to choose, and accept that buyers
+    whose browser language points elsewhere start on that country
+
 ### Order Intent Not Firing
 - **Symptom**: Order Intent check doesn't run when Two selected
 - **Solutions**:
