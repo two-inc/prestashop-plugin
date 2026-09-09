@@ -668,7 +668,7 @@
  * Absolutely positioned so it floats over the form rather than shoving the
  * address step down every time it opens, but a CHILD of the field wrapper, so
  * DOM order (and therefore tab order) is
- * company-name -> query -> results -> "not on the list" -> next form control.
+ * company-name -> query -> results -> mode chips -> next form control.
  * See buildDropdown() in the companion JS for why that placement is the whole
  * keyboard contract.
  *

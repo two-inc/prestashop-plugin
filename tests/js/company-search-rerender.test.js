@@ -669,7 +669,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
         expect(menu().find('.two-company-not-listed')).toHaveLength(0);
         // jQuery UI's menu puts `tabindex="0"` on its own <ul>, which
         // would make the scroll container a tab stop of its own and land Tab
-        // there instead of on this button.
+        // there instead of on the mode chips.
         expect(menu().attr('tabindex')).toBe('-1');
     });
 
@@ -3038,7 +3038,7 @@ describe('the custom fallback used when jQuery UI is absent', () => {
 
             // The panel's own deferred close, which replaced this path's
             // hand-rolled blurTimer: focus leaving the panel schedules it one
-            // tick out so a Tab from the query field to the button - a
+            // tick out so a Tab from the query field on to a mode chip - a
             // focusout followed by a focusin - does not tear the panel down
             // mid-move.
             panel().trigger('focusout');
@@ -3154,7 +3154,7 @@ describe('the custom fallback used when jQuery UI is absent', () => {
 
         // The close is the PANEL'S now, not this path's own blurTimer: a
         // deferred `focusout`, cancelled by any `focusin` back inside the
-        // panel, so a Tab from the query field to the "not on the list" button
+        // panel, so a Tab from the query field on to a mode chip
         // does not tear it down mid-move.
         // Focus genuinely has to have LEFT: the deferred close re-checks
         // `document.activeElement` and stands down if it is still inside the

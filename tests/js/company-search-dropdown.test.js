@@ -12,7 +12,7 @@
  *   reachable by cursor keys, not by Tab
  *   no visual distinction from inert rows
  *   activation behaviour untestable
- *   Tab from query field to "not on the list"
+ *   Tab from query field to the mode chips
  *
  * jsdom CAVEAT, stated once and relied on throughout: jsdom implements focus,
  * DOM order and event dispatch faithfully, but it does NOT implement the
@@ -392,7 +392,7 @@ describe('"My company is not on the list"', () => {
     test('the results list is not itself a tab stop', () => {
         // jQuery UI's menu widget sets `tabindex="0"` on its own <ul>, which
         // would put the scroll container between the query field and the
-        // button.
+        // mode chips.
         makeInstance();
         openPanel();
         const menu = panelParts().query.autocomplete('widget');
@@ -619,7 +619,7 @@ describe('regressions in the dropdown\'s own rendering and teardown', () => {
         // row arrow-keyed onto, that fired our `select` handler, which closes
         // the panel and returns focus to company-name - so a buyer who arrowed
         // down to read a result and then tabbed had it silently chosen for
-        // them, and focus went backwards instead of on to "not on the list".
+        // them, and focus went backwards instead of on to the mode chips.
         //
         // Asserted through the widget's own keydown path rather than by
         // calling the guard: what matters is that the widget never SEES the

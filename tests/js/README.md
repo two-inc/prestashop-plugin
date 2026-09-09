@@ -225,10 +225,10 @@ form (which it does for something as ordinary as a country change):
   and the assertions here were aimed at the *inversion* that made it work: every other
   non-company row carries `ui-state-disabled`/`aria-disabled` so the widget's menu skips
   it, while that one had to be reachable and selectable. None of that applies any more.
-  It is now a real `<button>` and a sibling of the scroll container, so the properties
+  It is now a real `<button>` outside the scroll container, so the properties
   under test are structural instead: that it is a `<button>` and not an element with a
   click handler bolted on, that it renders *outside* the scrollable results host, that it
-  is the next tab stop after the query field by plain document order, that the cursor keys
+  is among the tab stops immediately after the query field by plain document order, that the cursor keys
   cannot reach it (it is not an item in the widget's menu at all), and that it is coloured
   distinctly from the inert rows above it. Those live in `company-search-dropdown.test.js`,
   below.

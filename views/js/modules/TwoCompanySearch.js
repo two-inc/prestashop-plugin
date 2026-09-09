@@ -218,7 +218,7 @@ class TwoCompanySearch {
         this._companyFieldTabIndex = null;
         this._tabStopHeldOn = null;
         // Deferred close, so focus moving BETWEEN two controls inside the
-        // panel (query field -> "not on the list") does not read as leaving
+        // panel (query field -> a mode chip) does not read as leaving
         // it. See scheduleDropdownClose().
         this._closeTimerId = null;
         // True between a mousedown on the panel and the matching mouseup -
@@ -622,7 +622,7 @@ class TwoCompanySearch {
      * lives inside the same `.two-company-field-wrap` as the company-name
      * input, in this order:
      *
-     *   input[name='company'] -> query field -> results host -> "not on the list"
+     *   input[name='company'] -> query field -> results host -> mode chips
      *
      * so with the panel open Tab runs from the query field on to the mode
      * controls in document order, with no key handling whatsoever: the
@@ -632,8 +632,8 @@ class TwoCompanySearch {
      * (`display: none`) is no tab stop at all, so there is no keyboard trap to
      * escape from.
      *
-     * The manual-entry control is a REAL `<button>` and a SIBLING of the results
-     * host, never a row inside it: outside the scroll container, so it is
+     * The manual-entry control is a REAL `<button>` in the chip row after the
+     * results host, never a row inside it: outside the scroll container, so it is
      * reachable without scrolling past up to 50 results, and outside the list,
      * so the cursor keys cannot reach it.
      */
@@ -730,7 +730,7 @@ class TwoCompanySearch {
             .append(notListed);
 
         // Chips AFTER the results host, not before the query field: the query
-        // field must stay the next tab stop after the company-name field.
+        // field must stay the panel's first tab stop.
         panel.append(searchRow).append(results).append(modeChips);
         // Appended to the wrapper rather than `.after()` the input: the
         // org-number hint is also a child of this wrapper and the panel must
@@ -829,7 +829,7 @@ class TwoCompanySearch {
      * Escape for every other control on the checkout.
      *
      * The close-on-leave is a deferred `focusout`, not a `blur`. Focus moving
-     * from the query field to the "not on the list" button is a `focusout` then
+     * from the query field on to a mode chip is a `focusout` then
      * a `focusin`, so an immediate close would tear the panel down mid-Tab and
      * drop the buyer on `<body>`. Deferring one tick and cancelling on any
      * `focusin` within the panel makes "left the panel" mean what it says.
@@ -3912,7 +3912,7 @@ class TwoCompanySearch {
                 // jQuery UI's menu widget puts `tabindex="0"` on its own
                 // `<ul>`, which makes the RESULTS LIST a tab stop in its own
                 // right - so Tab from the query field lands on the list
-                // container instead of on "My company is not on the list"
+                // container instead of on the first mode chip
                 // (TWO-25326). The list is navigated with the cursor keys from
                 // the query field; it never needs focus of its own.
                 menu.attr('tabindex', '-1');
