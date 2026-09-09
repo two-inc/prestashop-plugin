@@ -252,7 +252,13 @@
             }
 
             function setTwoFeeNotice(text) {
-                var $anchor = $('input[name^="PS_TWO_PAYMENT_TERMS_"]').first().closest('.form-group');
+                var $first = $('input[name^="PS_TWO_PAYMENT_TERMS_"]').first();
+                // A theme or core version that does not wrap the checkbox group
+                // in .form-group still gets the notice, never blank figures.
+                var $anchor = $first.closest('.form-group');
+                if (!$anchor.length) {
+                    $anchor = $first.parent();
+                }
                 if (!$anchor.length) {
                     return;
                 }
