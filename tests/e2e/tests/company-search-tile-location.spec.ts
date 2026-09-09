@@ -141,8 +141,8 @@ test.describe("TWO-25326 company-search location", () => {
     // And it SEARCHES, not merely opens (TWO-25326). On this step PrestaShop
     // renders an address selector rather than the address form, so
     // `select[name='id_country']` does not exist: a browser-side-only country
-    // source resolves nothing and every keystroke declines to search, whose
-    // buyer-visible symptom is this row pointing at a country control that is
+    // source resolved nothing and every keystroke declined to search, whose
+    // buyer-visible symptom was this row pointing at a country control that is
     // not on the page.
     //
     // Asserted as the absence of that row rather than on results, so it needs

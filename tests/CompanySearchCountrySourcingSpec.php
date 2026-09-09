@@ -487,7 +487,7 @@ final class CompanySearchCountrySourcingSpec
      *
      * A loop rather than one case per key, deliberately: a new row added to that
      * dropdown must be added HERE, and a list is the shape that makes the
-     * omission obvious. The manual-entry pair is TWO-25288.
+     * omission obvious.
      */
     private static function testDropdownCopyKeysMatchTheKeysTheJsReads(): void
     {

@@ -626,10 +626,11 @@ class TwoCompanySearch {
      *
      * so with the panel open Tab runs from the query field on to the mode
      * controls in document order, with no key handling whatsoever: the
-     * company-name field and the results host are both held at `tabindex="-1"`
-     * while it is open, and the results are reached with the cursor keys from
-     * the query field instead. A closed panel (`display: none`) is no tab stop
-     * at all, so there is no keyboard trap to escape from.
+     * company-name field is held at `tabindex="-1"` while it is open and the
+     * results host is never a tab stop on either path, so the results are
+     * reached with the cursor keys from the query field instead. A closed panel
+     * (`display: none`) is no tab stop at all, so there is no keyboard trap to
+     * escape from.
      *
      * The manual-entry control is a REAL `<button>` and a SIBLING of the results
      * host, never a row inside it: outside the scroll container, so it is

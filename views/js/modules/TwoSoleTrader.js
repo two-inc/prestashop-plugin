@@ -1800,10 +1800,10 @@ class TwoSoleTrader {
      *   email they entered THERE, which this browser never sees and has no
      *   business re-validating. Requiring it to also equal checkoutEmail() -
      *   the separate email PrestaShop's own personal-information step
-     *   collected for the order - was live-bug TWO-40: a buyer enrolled under
-     *   a real sole-trader email different from the one on the order got a
-     *   real, successful OTP verification for that email, then had this check
-     *   silently disagree with the server and reopen the signup popup,
+     *   collected for the order - was a live bug on TWO-40: a buyer enrolled
+     *   under a real sole-trader email different from the one on the order got
+     *   a real, successful OTP verification for that email, then had this
+     *   check silently disagree with the server and reopen the signup popup,
      *   forever. The two emails identify two different things (who
      *   authenticated vs. who the order is addressed to) and there is no
      *   requirement they match.
@@ -2762,7 +2762,7 @@ class TwoSoleTrader {
             // a real OTP verification in the hosted popup. The resulting
             // buyer lookup must not be re-gated on checkoutEmail() matching -
             self._signupPopupOpened = false;
-            // see getCurrentBuyer()'s JSDoc (live bug TWO-40).
+            // see getCurrentBuyer()'s JSDoc (a live bug on TWO-40).
             self.getCurrentBuyer(true);
         };
         window.addEventListener('message', this._messageHandler);

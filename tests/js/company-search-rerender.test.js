@@ -2784,8 +2784,6 @@ describe('the custom fallback used when jQuery UI is absent', () => {
         });
 
         test('clearing the field shows no row and makes no request, rather than leaving stale results', () => {
-            // The panel stays open on the too-short state rather than
-            // closing (TWO-25326).
             const search = makeInstance();
             type(AT_THRESHOLD_FALLBACK);
             ajax.last().succeed(SEARCH_RESPONSE);
@@ -2807,7 +2805,8 @@ describe('the custom fallback used when jQuery UI is absent', () => {
      * The SAME real `<button>` the jQuery UI path uses, built once by
      * buildDropdown() outside the results host, so no renderer can wipe it;
      * cursor-key navigation is bound to the query field. Still pinned per
-     * state, because the button's VISIBILITY is gated.
+     * state, because the button's VISIBILITY is gated - on the panel being
+     * open, and on the company search living in the address area.
      */
     describe('the manual-entry affordance (TWO-25326)', () => {
         const AT_THRESHOLD = AT_THRESHOLD_FALLBACK;

@@ -2872,10 +2872,10 @@ class Twopayment extends PaymentModule
     protected function getAddressLookupEnabled()
     {
         // Forced off while the company search is not in the address area
-        // (TWO-25326). Derived from the STORED position rather
-        // than through isAddressLookupSettingAvailable(), which also consults
-        // the request: this method is read on the front office, and a resolver
-        // the checkout runs must not be steerable by a query parameter.
+        // (TWO-25326). Derived from the STORED position rather than through
+        // isAddressLookupSettingAvailable(), which also consults the request:
+        // this method is read on the front office, and a resolver the checkout
+        // runs must not be steerable by a query parameter.
         //
         // Gating the READ as well as the save is what keeps the admin form,
         // the stored row and the value handed to the checkout JS from
@@ -3099,12 +3099,11 @@ class Twopayment extends PaymentModule
 
         Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', Tools::getValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'));
         // Server-side half of the "unavailable when the search is not in the
-        // address area" gate (TWO-25326). The admin JS greys
-        // the switch out, and a disabled control posts nothing - but a
-        // hand-crafted or replayed POST can still carry a ticked box, and it
-        // must not take effect. Matched by the same gate in
-        // getTwoCompanyLookupFormValues() so the rendered position never
-        // disagrees with what is stored.
+        // address area" gate (TWO-25326). The admin JS greys the switch out,
+        // and a disabled control posts nothing - but a hand-crafted or
+        // replayed POST can still carry a ticked box, and it must not take
+        // effect. Matched by the same gate in getTwoCompanyLookupFormValues()
+        // so the rendered position never disagrees with what is stored.
         Configuration::updateValue(
             'PS_TWO_ADDRESS_LOOKUP',
             $address_lookup_available ? (int) Tools::getValue('PS_TWO_ADDRESS_LOOKUP', 1) : 0
@@ -5304,8 +5303,9 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-order-intent', $this->getTwoModuleAssetPath('views/js/modules/TwoOrderIntent.js'), array('priority' => 202, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOrderIntent.js')));
         $this->context->controller->registerJavascript('two-sole-trader', $this->getTwoModuleAssetPath('views/js/modules/TwoSoleTrader.js'), array('priority' => 204, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoSoleTrader.js')));
         $this->context->controller->registerJavascript('two-optional-fields', $this->getTwoModuleAssetPath('views/js/modules/TwoOptionalFields.js'), array('priority' => 204, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOptionalFields.js')));
-        // No separate company label: the captured company appears only
-        // inside the intent-message sentence (TWO-25326).
+        // No company-label script is registered here (TWO-25326): the
+        // captured company appears only inside the intent-message sentence,
+        // never as a separate read-only label on the tile.
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', $this->getTwoModuleAssetPath('views/js/modules/TwoCheckoutManager.js'), array('priority' => 205, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCheckoutManager.js')));
         $this->context->controller->registerJavascript('two-script', $this->getTwoModuleAssetPath('views/js/twopayment.js'), array('priority' => 206, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/twopayment.js')));
@@ -5664,8 +5664,8 @@ class Twopayment extends PaymentModule
             'sole_trader_country' => $sole_trader_country,
             'subtitle' => $subtitle,
             'enable_order_intent' => $this->enable_order_intent,
-            // "What is Two" explainer link (TWO-25386) and per-field input
-            // tooltips (TWO-25386): both default ON/OFF respectively via
+            // "What is Two" explainer link and per-field input tooltips
+            // (TWO-25386): both default ON/OFF respectively via
             // isTwoBooleanConfigEnabledByDefault() / plain Configuration::get,
             // matching the tile's pre-existing always-on tooltip and the
             // optional fields' pre-existing no-tooltip rendering.

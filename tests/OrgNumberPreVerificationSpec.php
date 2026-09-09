@@ -156,7 +156,7 @@ final class OrgNumberPreVerificationSpec
     }
 
     /**
-     * Unchanged prompt #1: the address names a company but no field holds an org
+     * Unchanged prompt: the address names a company but no field holds an org
      * number, so there is nothing for Two to resolve. This branch never made an
      * HTTP call and still does not.
      */
@@ -172,7 +172,7 @@ final class OrgNumberPreVerificationSpec
         TinyAssert::same(0, $controller->module->outboundCalls, 'this branch must stay HTTP-free');
     }
 
-    /** Unchanged prompt #2: no company identity of any kind on the address. */
+    /** Unchanged prompt: no company identity of any kind on the address. */
     private static function testNoCompanyDataAtAllStillPromptsForCompanyName(): void
     {
         $controller = self::makeController(['company' => '', 'dni' => '']);

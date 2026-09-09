@@ -1,6 +1,7 @@
 /**
- * TWO-25326: search a company -> intent fires for it (correct); search again,
- * select a DIFFERENT company -> the intent fires for the FIRST one.
+ * The TWO-25326 regression this suite pins as fixed: search a company ->
+ * intent fired for it (correct); search again, select a DIFFERENT company ->
+ * the intent fired for the FIRST one.
  *
  * order-intent-stale-selection.test.js pins a `requestSeq` gate against a slow
  * response overwriting a fast one, but mocks `collectFormData` out entirely -

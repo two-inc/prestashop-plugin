@@ -145,10 +145,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * Minting is unconditional once a country resolves (TWO-40 follow-up):
      * neither the registry's per-country answer nor a merchant buyer-country
      * record has any bearing on whether minting is authorised - that decision
-     * belongs to the Two API these tokens are minted against. A country still has to resolve at all - not an
-     * eligibility check, just what mintTokensRequest()'s caller needs to
-     * report back to the browser - so this is not a token oracle for a
-     * cart with nothing to mint FOR.
+     * belongs to the Two API these tokens are minted against. A country still
+     * has to resolve at all - not an eligibility check, just what
+     * mintTokensRequest()'s caller needs to report back to the browser - so
+     * this is not a token oracle for a cart with nothing to mint FOR.
      *
      * A posted country is preferred over the cart's (TWO-40): mintTokens()
      * itself takes no country at all, its delegation scopes are fixed, so a
@@ -765,10 +765,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     /**
      * Helper method to validate AJAX token.
      *
-     * DEBUG ESCAPE HATCH (TWO-25386), matching the equivalent switch on the
-     * other platform plugins: PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when enabled,
-     * skips this token check entirely on every action on this controller.
-     * Default OFF - matches the pre-existing always-checked behaviour.
+     * DEBUG ESCAPE HATCH (TWO-25386): PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when
+     * enabled, skips this token check entirely on every action on this
+     * controller. Default OFF - matches the pre-existing always-checked
+     * behaviour.
      */
     /**
      * Company-name search, relayed server-side so the firewall token stays out
