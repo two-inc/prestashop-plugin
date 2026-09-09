@@ -104,9 +104,9 @@ afterEach(() => {
 
 describe('single-open invariant', () => {
     test.each([
-        ['delivery', 'opening the invoice popover closes the delivery one'],
-        ['invoice', 'opening the delivery popover closes the invoice one']
-    ])('%s first', (first, description) => {
+        ['delivery'],
+        ['invoice']
+    ])('%s open first, so opening the other one closes it', (first) => {
         // Given one popover open
         const controls = setup();
         const second = OTHER[first];
@@ -117,7 +117,7 @@ describe('single-open invariant', () => {
 
         // Then only the second is up
         expect([isOpen(controls[first]), isOpen(controls[second])])
-            .toEqual([false, true], description);
+            .toEqual([false, true]);
     });
 
     test('re-opening the already-open popover leaves it open', () => {
@@ -146,15 +146,15 @@ describe('single-open invariant', () => {
 
 describe('tab stop of the popover that closes', () => {
     test.each([
-        ['at rest', function () {}, [null, null], 'neither field is a tab stop'],
-        ['delivery open', function (c) { c.delivery.openDropdown(); }, ['-1', null], 'only the open one holds it'],
-        ['invoice takes over', function (c) { c.delivery.openDropdown(); c.invoice.openDropdown(); }, [null, '-1'], 'the closing field is given it back'],
-        ['both closed again', function (c) { c.delivery.openDropdown(); c.invoice.openDropdown(); c.invoice.closeDropdown(false); }, [null, null], 'no field is left at -1']
-    ])('%s', (name, act, expected, description) => {
+        ['at rest, neither field is a tab stop', function () {}, [null, null]],
+        ['delivery open, only that field holds it', function (c) { c.delivery.openDropdown(); }, ['-1', null]],
+        ['invoice taking over gives delivery its own back', function (c) { c.delivery.openDropdown(); c.invoice.openDropdown(); }, [null, '-1']],
+        ['both closed again leaves no field at -1', function (c) { c.delivery.openDropdown(); c.invoice.openDropdown(); c.invoice.closeDropdown(false); }, [null, null]]
+    ])('%s', (name, act, expected) => {
         const controls = setup();
         act(controls);
         expect([tabIndexOf(controls.delivery), tabIndexOf(controls.invoice)])
-            .toEqual(expected, description);
+            .toEqual(expected);
     });
 });
 
