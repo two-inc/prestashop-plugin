@@ -97,6 +97,10 @@ namespace {
         public static array $configuration = [];
         public static array $configurationGroup = [];
         public static array $configurationShop = [];
+        /** Per-language Configuration rows, keyed by id_lang then key. */
+        public static array $configurationLang = [];
+        /** What Language::getLanguages() answers, and which ids count as a language id. */
+        public static array $languages = [];
         /** Shop::isFeatureActive(): the multistore feature on AND more than one shop. */
         public static bool $multistore = false;
         /** The fleet as [id_shop => id_shop_group]; Shop::setContext() must name a member. */
@@ -366,6 +370,8 @@ namespace {
         {
             self::$configurationGroup = [];
             self::$configurationShop = [];
+            self::$configurationLang = [];
+            self::$languages = [];
             self::$multistore = false;
             self::$shops = [1 => 1];
             Shop::setContext(Shop::CONTEXT_SHOP, 1);
@@ -790,9 +796,30 @@ namespace {
             return [(int) $idShopGroup, (int) $idShop];
         }
 
+        private static function isDeclaredLanguage($value): bool
+        {
+            if (!is_numeric($value)) {
+                return false;
+            }
+            foreach (StubStore::$languages as $language) {
+                if ((int) $language['id_lang'] === (int) $value) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         // Core returns false for a key that was never written.
+        // The second argument is core's $id_lang; this module also passes plain
+        // defaults there, so it is read as a language only when it names one of
+        // the languages the spec declared.
         public static function get($key, $default = false, $idShopGroup = null, $idShop = null)
         {
+            if (self::isDeclaredLanguage($default)) {
+                return StubStore::$configurationLang[(int) $default][$key] ?? false;
+            }
+
             list($idShopGroup, $idShop) = self::resolveScope($idShopGroup, $idShop);
 
             if ($idShop && self::hasKey($key, null, null, $idShop)) {
@@ -2055,7 +2082,7 @@ namespace {
     {
         public static function getLanguages($active = false): array
         {
-            return [];
+            return StubStore::$languages;
         }
     }
 
@@ -2602,6 +2629,12 @@ namespace {
             $this->twoApiKeyStatusMemo = $status === null
                 ? null
                 : array('status' => (string) $status, 'code' => $code);
+        }
+
+        /** The checkout tile's call-to-action text, without the offerability gates hookPaymentOptions applies first. */
+        public function exposeTwoPaymentOptionTitle(): string
+        {
+            return (string) $this->getTwoPaymentOption()->getCallToActionText();
         }
 
         /** This harness skips the constructor, which is what runs the self-heal in production. */

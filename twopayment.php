@@ -5060,13 +5060,16 @@ class Twopayment extends PaymentModule
 
     protected function getTwoPaymentOption()
     {
-        $title = Configuration::get('PS_TWO_TITLE', $this->context->language->id);
-        $subtitle = Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id);
+        // Cast and trim rather than Tools::isEmpty(): a language with no row at
+        // all reads as `false`, which core does not count as empty, so the
+        // fallbacks below never fired for it and the tile rendered blank.
+        $title = trim((string) Configuration::get('PS_TWO_TITLE', $this->context->language->id));
+        $subtitle = trim((string) Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id));
 
-        if (Tools::isEmpty($title)) {
+        if ($title === '') {
             $title = sprintf($this->l('Pay with %s'), $this->getTwoBrandConfig('product_name'));
         }
-        if (Tools::isEmpty($subtitle)) {
+        if ($subtitle === '') {
             $subtitle = $this->l('Buy now, pay later - instant credit');
         }
 
