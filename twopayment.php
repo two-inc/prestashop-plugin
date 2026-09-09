@@ -3035,7 +3035,7 @@ class Twopayment extends PaymentModule
     protected function getTwoOrderManagementFormValues()
     {
         $fields_values = array();
-        $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
+        $fields_values['PS_TWO_ENABLE_TAX_SUBTOTALS'] = Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_ENABLE_TAX_SUBTOTALS'));
         // Kept a STRING: an (int) cast would turn the unselected state
         // into 0 and silently pre-select "No tax".
         $fields_values[self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP] = (string) Tools::getValue(
@@ -3412,7 +3412,9 @@ class Twopayment extends PaymentModule
      */
     protected function renderTwoPluginHealthChecklist()
     {
-        $environment = (string) Configuration::get('PS_TWO_ENVIRONMENT', 'staging');
+        // Lowered as every runtime read of this key lowers it, so the row, the host
+        // map and the production warning below all judge the same value (ABN-532).
+        $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
         // Same live verdict the checkout gate uses (TWO-25326) - a health row
         // reporting "Verified" while Two is being withheld is worse than no row.
         $api_verified = $this->isTwoApiKeyVerified();
@@ -3429,8 +3431,12 @@ class Twopayment extends PaymentModule
             ),
             array(
                 'label' => $this->l('Environment'),
-                'value' => strtoupper($environment),
-                'ok' => true,
+                // Anything outside ENVIRONMENT_HOSTS silently resolves to the sandbox, so
+                // reporting it as healthy is the same untruth as inventing one (ABN-532).
+                'value' => $environment === ''
+                    ? $this->l('Not configured')
+                    : htmlspecialchars(strtoupper($environment), ENT_QUOTES, 'UTF-8'),
+                'ok' => array_key_exists($environment, self::ENVIRONMENT_HOSTS),
             ),
             array(
                 'label' => $this->l('SSL verification'),
@@ -9050,7 +9056,9 @@ class Twopayment extends PaymentModule
      */
     private function shouldIncludeTaxSubtotals()
     {
-        return (bool)Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS', 1);
+        // Default-ON: an absent row is never-configured, not off, and has to
+        // agree with the install() seed (ABN-532).
+        return $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_ENABLE_TAX_SUBTOTALS') === '1';
     }
 
     /**
@@ -15942,7 +15950,7 @@ class Twopayment extends PaymentModule
      */
     public function configureSslVerification($ch)
     {
-        $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY', false);
+        $disable_ssl_verify = (bool)Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
 
         if ($disable_ssl_verify) {
             // Only if explicitly configured (corporate networks with custom certificates)
@@ -16671,7 +16679,7 @@ class Twopayment extends PaymentModule
     public function maybeCleanupStaleTwoCheckoutAttempts($force = false)
     {
         $now = time();
-        $last_run = (int)Configuration::get('PS_TWO_ATTEMPT_CLEANUP_LAST_RUN', 0);
+        $last_run = (int)Configuration::get('PS_TWO_ATTEMPT_CLEANUP_LAST_RUN');
         if (!$force && $last_run > 0 && ($now - $last_run) < self::ATTEMPT_CLEANUP_INTERVAL_SECONDS) {
             return;
         }
