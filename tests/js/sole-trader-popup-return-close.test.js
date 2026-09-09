@@ -937,7 +937,9 @@ describe('two captures on one page', () => {
         firstAgain.restorePanelAfterRerender();
         secondAgain.restorePanelAfterRerender();
 
-        expect(firstAgain._dropdownOpen).toBe(true);
+        // The sibling's restore took the single open slot (ABN-510).
+        expect(firstAgain._dropdownOpen).toBe(false);
+        expect(secondAgain._dropdownOpen).toBe(true);
         expect(firstAgain._soleTraderLoading).toBe(false);
         expect(secondAgain._soleTraderLoading).toBe(true);
     });

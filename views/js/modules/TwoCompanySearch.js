@@ -51,6 +51,16 @@ class TwoCompanySearch {
      */
     static _companyCookieWrite = null;
 
+    /**
+     * The one popover that may be open, page-wide. Class-scoped for the same
+     * reason as the cookie mutex above: the invariant spans instances.
+     *
+     * ABN-510: a pointer click on another mount need not deliver a focus event
+     * to the control it hits, so the first popover never sees focus leave it.
+     * Enforced at open time rather than inferred from a focus signal.
+     */
+    static _openInstance = null;
+
     static _REOPEN_WINDOW_MS = 1500;
     // A company registered mid-session stays absent from an already-searched
     // term until its entry expires. Deliberate: buyers search for their own
@@ -759,11 +769,13 @@ class TwoCompanySearch {
         this._closeTimerId = null;
         this._dropdownOpen = false;
         this.releaseCompanyFieldTabStop();
+        this.releaseOpenSlot();
         this._pointerInPanel = false;
         // Before the container reference below is dropped, or the pending
         // release fires against a panel that no longer exists.
         this.releaseResultsHeight();
         $(document).off('mouseup.twoDropdown' + this._instanceNs);
+        $(document).off('mousedown.twoOutside' + this._instanceNs);
         $(window).off('blur.twoDropdown' + this._instanceNs);
         // Release the jQuery UI widget FIRST, while its element is still
         // attached. `_create` binds handlers on `document` that removing the
@@ -1078,6 +1090,30 @@ class TwoCompanySearch {
                 this._pointerInPanel = false;
                 this.releaseResultsHeight();
             });
+
+        // A pointer press outside the panel is a leave, treated exactly as focus
+        // moving outside it is: a real click need not fire a focus event on what
+        // it hits, so the focus-out close alone can leave this panel up (ABN-510).
+        $(document).off('mousedown.twoOutside' + this._instanceNs)
+            .on('mousedown.twoOutside' + this._instanceNs, (event) => {
+                if (this._destroyed || !this._dropdownOpen) {
+                    return;
+                }
+                const panelEl = this._dropdown && this._dropdown.length ? this._dropdown.get(0) : null;
+                if (panelEl && panelEl.contains(event.target)) {
+                    return;
+                }
+                // The field is this popover's own trigger, so it counts as inside.
+                if (this.companyField && this.companyField.length
+                    && this.companyField.get(0) === event.target) {
+                    return;
+                }
+                // The popup blurred the launching chip; the return watch owns this panel until it goes.
+                if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
+                    return;
+                }
+                this.closeDropdown(false);
+            });
     }
 
     /**
@@ -1281,6 +1317,22 @@ class TwoCompanySearch {
             && soleTrader.reclaimSignupPopup());
     }
 
+    /** Close whichever other popover is open, leaving this one the only one up. */
+    claimOpenSlot() {
+        const other = TwoCompanySearch._openInstance;
+        if (other && other !== this) {
+            other.closeDropdown(false);
+        }
+        TwoCompanySearch._openInstance = this;
+    }
+
+    /** Hand the slot back, so the next open has nothing to close. */
+    releaseOpenSlot() {
+        if (TwoCompanySearch._openInstance === this) {
+            TwoCompanySearch._openInstance = null;
+        }
+    }
+
     /**
      * Take the field out of the tab order while the panel is open (TWO-25503).
      * `-1` not removal: closeDropdown()'s focus() still needs it focusable.
@@ -1345,6 +1397,9 @@ class TwoCompanySearch {
         // for the rest of the instance's life.
         this._pointerInPanel = false;
 
+        // Before the tab stop below: the popover being closed must give its own
+        // field's tab stop back before this one takes its.
+        this.claimOpenSlot();
         this._dropdownOpen = true;
         this.holdCompanyFieldTabStop();
         this._dropdown.removeAttr('hidden').show();
@@ -1402,6 +1457,7 @@ class TwoCompanySearch {
         this._dropdownOpen = false;
         // Ahead of everything below: a throw further down would strand the field at `-1`.
         this.releaseCompanyFieldTabStop();
+        this.releaseOpenSlot();
         // A closed panel must stay closed. The re-render path re-arms this
         // immediately after calling here, which is the one case where a
         // rebuild is allowed to reopen; every other close - Escape, a
@@ -5935,6 +5991,9 @@ class TwoCompanySearch {
             // no-op
         }
         this.isInitialized = false;
+        // Unconditional, like the flag below: a teardown that threw before
+        // removeDropdown() would otherwise leave the slot held by a dead instance.
+        this.releaseOpenSlot();
         // Set LAST and unconditionally, outside the try: even if teardown threw
         // half way, this instance must never act on the DOM again. Everything
         // that can be re-entered from an event checks it.
