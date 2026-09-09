@@ -1838,7 +1838,8 @@ class Twopayment extends PaymentModule
             // Default pre-selected term (TWO-25386 #10): an explicit admin
             // choice that takes priority over getDefaultPaymentTerm()'s
             // derived default (API due_in_days, else 30 days, else lowest
-            // offered term) whenever the chosen term is still offered. This is
+            // offered term, else none at all) whenever the chosen term is
+            // still offered. This is
             // the highest-priority item in this batch per the ticket: the
             // surcharge differential-basis calculation
             // (buildTwoBuyerFeeShare -> getDefaultPaymentTerm) reads through
@@ -15598,9 +15599,9 @@ class Twopayment extends PaymentModule
      * on GET /v1/merchant), in net days, or null when it is unset or unresolved.
      *
      * CACHE-ONLY - never blocks on HTTP. The value is primed by the SAME fetch
-     * as the available_terms list, through refreshMerchantRecord(). On a cold
-     * cache this returns null and getDefaultPaymentTerm() falls back to the
-     * historical 30-day default (TWO-24813 / TWO-24859).
+     * as the available_terms list, through refreshMerchantRecord(). A cold
+     * cache returns null here and, with nothing offered either, leaves
+     * getDefaultPaymentTerm() with no default at all (ABN-544).
      *
      * `due_in_days` is NOT guaranteed to be a member of the offered term set -
      * callers must honour it only when it is an available term (see
