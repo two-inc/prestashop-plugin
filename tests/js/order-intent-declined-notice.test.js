@@ -7,7 +7,7 @@
 
 'use strict';
 
-const { loadCompanySearch, loadOrderIntent } = require('./ps-harness');
+const { loadCompanySearch, loadOrderIntent, loadScript, releaseWidgets } = require('./ps-harness');
 
 let TwoOrderIntent;
 let intent;
@@ -212,5 +212,101 @@ describe('processResult()', () => {
         intent.lastCompany = 'Example Ltd';
         const result = intent.processResult({ success: true, approved: false, rawResponse: { approved: false } });
         expect(result.message).toBe('Two is not available for this order by Example Ltd');
+    });
+});
+
+describe('the checkout-manager tile render site', () => {
+    let TwoCheckoutManager;
+    let manager;
+    let $;
+
+    function buildTileWithMessageSection() {
+        document.body.innerHTML = [
+            '<div class="payment-options">',
+            '  <div class="payment-option" data-module-name="twopayment">',
+            "    <input type='radio' name='payment-option' value='twopayment' checked />",
+            '    <div class="payment-option-content">',
+            '      <div class="two-payment-container">',
+            '        <section class="two-payment-info" style="display: none;">',
+            '          <p class="two-subtitle"></p>',
+            '          <p class="two-payment-message"></p>',
+            '        </section>',
+            '      </div>',
+            '    </div>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+    }
+
+    function section() {
+        return document.querySelector('.two-payment-info');
+    }
+
+    beforeEach(() => {
+        const loaded = loadCompanySearch();
+        $ = loaded.$;
+        loadOrderIntent();
+        loadScript('views/js/modules/TwoCheckoutManager.js');
+        TwoCheckoutManager = window.TwoCheckoutManager;
+        global.window.twopayment = { i18n: {}, ajax_token: 'test-token' };
+        buildTileWithMessageSection();
+        manager = new TwoCheckoutManager({});
+    });
+
+    afterEach(() => {
+        releaseWidgets($);
+        delete global.window.TwoCheckoutManager_Instance;
+    });
+
+    // The tile's own render site, separate from TwoOrderIntent's inline notice: the approved
+    // notice has gated in both since TWO-25218, so the declined one must too.
+    const switchCases = [
+        [false, false, 'an explicit false suppresses the tile decline message'],
+        [true, true, 'an explicit true renders it'],
+        [undefined, true, 'an absent key can never mean off'],
+        ['', true, 'an empty string reads as off under truthiness, so it must stay enabled'],
+        [0, true, 'a zero must stay enabled']
+    ];
+
+    test.each(switchCases)('%p -> rendered=%p (%s)', (configured, expectRendered) => {
+        global.window.twopayment.intent_declined_notice_enabled = configured;
+        manager.showOrderIntentDecline('Two is not available for this order');
+
+        expect(section().querySelector('.two-payment-message').textContent)
+            .toBe(expectRendered ? 'Two is not available for this order' : '');
+        expect(section().classList.contains('declined')).toBe(expectRendered);
+    });
+
+    test('a suppressed tile decline hides the section rather than leaving an empty one shown', () => {
+        global.window.twopayment.intent_declined_notice_enabled = false;
+        manager.showOrderIntentDecline('Two is not available for this order');
+        expect(section().classList.contains('show')).toBe(false);
+        expect(section().style.display).toBe('none');
+    });
+
+    test('a suppressed tile decline clears a message left from an earlier render', () => {
+        manager.showOrderIntentDecline('Two is not available for this order');
+        expect(section().querySelector('.two-payment-message').textContent)
+            .toBe('Two is not available for this order');
+
+        global.window.twopayment.intent_declined_notice_enabled = false;
+        manager.showOrderIntentDecline('Two is not available for this order');
+        expect(section().querySelector('.two-payment-message').textContent).toBe('');
+    });
+
+    test('a suppressed tile decline still takes the loading overlay down', () => {
+        global.window.twopayment.intent_declined_notice_enabled = false;
+        const cleared = jest.spyOn(manager, 'clearLoadingState');
+        const hidden = jest.spyOn(manager, 'hideLoadingOverlay');
+        manager.showOrderIntentDecline('Two is not available for this order');
+        expect(cleared).toHaveBeenCalledTimes(1);
+        expect(hidden).toHaveBeenCalledTimes(1);
+    });
+
+    test('suppressing the declined notice leaves the tile approval rendering', () => {
+        global.window.twopayment.intent_declined_notice_enabled = false;
+        manager.showOrderIntentApproval('Your invoice is likely to be accepted');
+        expect(section().querySelector('.two-payment-message').textContent)
+            .toBe('Your invoice is likely to be accepted');
     });
 });

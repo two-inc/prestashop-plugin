@@ -109,6 +109,15 @@ class TwoCheckoutManager {
     }
 
     /**
+     * Is the order-intent DECLINED notice enabled for this brand? (TWO-25218)
+     * Mirror of TwoOrderIntent.declinedNoticeEnabled(), read locally for the same reason.
+     */
+    declinedNoticeEnabled() {
+        const configured = window.twopayment ? window.twopayment.intent_declined_notice_enabled : null;
+        return typeof configured === 'boolean' ? configured : true;
+    }
+
+    /**
      * Copy override for that notice (TWO-25218). Mirror of
      * TwoOrderIntent.approvedNoticeOverride() - null = platform default copy,
      * non-empty = verbatim company-variant template. Empty and whitespace-only
@@ -1303,6 +1312,25 @@ class TwoCheckoutManager {
     }
 
     showOrderIntentDecline(message) {
+        // Notice switched off for this brand (TWO-25218): render no message and create no
+        // container for one. The caller arms disableTwoPayment() either way, and only a real
+        // decline reaches here - showOrderIntentError() takes the transport failures.
+        if (!this.declinedNoticeEnabled()) {
+            const existing = document.querySelector('.two-payment-info') ||
+                document.querySelector('#two-order-intent-messages');
+            if (existing) {
+                const existingMessage = existing.querySelector('.two-payment-message');
+                if (existingMessage) {
+                    existingMessage.textContent = '';
+                }
+                existing.classList.remove('approved', 'declined', 'loading', 'show');
+                existing.style.display = 'none';
+            }
+            this.clearLoadingState();
+            this.hideLoadingOverlay();
+            return;
+        }
+
         const messageContainer = this.getOrCreateMessageContainer();
 
         const messageElement = messageContainer.querySelector('.two-payment-message') || messageContainer;
