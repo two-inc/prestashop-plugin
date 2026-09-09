@@ -54,6 +54,23 @@ function manager(terms) {
     });
 }
 
+describe('the config the checkout manager is built with', () => {
+    // The manager reads its offered set from here, so a default substituted at
+    // this seam is a term offered to a buyer just as surely as one from PHP.
+    test.each([
+        [undefined, [], 'an absent list stays absent'],
+        [[], [], 'an empty list stays empty'],
+        [[45], [45], 'a real list is carried through'],
+    ])('%p', (terms, expected, description) => {
+        loadScript('views/js/twopayment.js');
+
+        const config = window.twoBuildCheckoutManagerConfig({ available_payment_terms: terms });
+
+        expect(config.available_payment_terms).toEqual(expected);
+        expect(description).toBeTruthy();
+    });
+});
+
 describe('the payment-term block against the offered set', () => {
     // [offered set, block revealed, chips drawn, description]
     const cases = [
