@@ -5270,8 +5270,15 @@ final class OrderBuilderSpec
 
         TinyAssert::same(1, $spyCookie->writeCalls);
         // Per-term slot (ABN-546): the chip loop would otherwise overwrite one
-        // shared slot with its last term on every render.
+        // shared slot with its last term on every render, so a second term's
+        // quote must not evict the first.
+        $method->invoke($module, 30, '30|100.00|GB|GBP', [
+            'buyer_fee_share' => '4.56',
+            'total_fee_tax_rate' => '0.20',
+            'currency' => 'GBP',
+        ]);
         TinyAssert::same('7|100.00|GB|GBP', (string) $spyCookie->two_fee_quote_7_key);
+        TinyAssert::same('30|100.00|GB|GBP', (string) $spyCookie->two_fee_quote_30_key);
     }
 
     private static function testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo(): void

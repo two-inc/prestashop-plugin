@@ -73,7 +73,6 @@ final class FxRatesSpec
         self::testCapRoundingToZeroPassesThroughAndKeepsTheOption();
         self::testAbsentCapStillChargesAndOffersTheOption();
         self::testFixedSurchargeRoundingToZeroProceedsWithInfoLog();
-        // ABN-546 - the charged term's quote must resolve.
         self::testChargedTermQuoteDecidesThePaymentOption();
         // The cart-line-sync half of TWO-25269 lives in SurchargeCartLineSpec,
         // which already owns the real cart/product/tax fixture:
@@ -974,7 +973,7 @@ final class FxRatesSpec
 
     /**
      * gateModule's reachable-checkout fixture plus a stubbed pricing wire and
-     * a cart basis, so the charged-term quote gate (ABN-546) is exercised.
+     * a cart basis (ABN-546).
      *
      * @param mixed $feeResponse response array, or a callable given the payload
      */
@@ -1002,7 +1001,7 @@ final class FxRatesSpec
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
-                $this->requests[] = ['endpoint' => $endpoint, 'payload' => $payload];
+                $this->requests[] = ['endpoint' => $endpoint, 'payload' => $payload, 'timeout' => $timeout];
                 if ($endpoint !== '/v1/pricing/order/fee') {
                     return ['http_status' => 500];
                 }
@@ -1028,12 +1027,7 @@ final class FxRatesSpec
         return $module;
     }
 
-    /**
-     * ABN-546. A failed fee quote withholds the payment option at checkout;
-     * the charged term is the selected term, else the merchant default; a
-     * quoted zero, an empty basket, a disabled surcharge and a term charging
-     * nothing are answers rather than failures.
-     */
+    /** ABN-546 - the charged term's quote decides the payment option. */
     private static function testChargedTermQuoteDecidesThePaymentOption(): void
     {
         $failFor = function (int $failingDays) {
@@ -1100,6 +1094,15 @@ final class FxRatesSpec
                 TinyAssert::same(0, count($quotes), 'no quote may be requested at all: ' . $description);
             } else {
                 TinyAssert::true(in_array($quotedDays, $quotes, true), 'the charged term must be the term quoted: ' . $description);
+                foreach ($module->requests as $request) {
+                    if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                        TinyAssert::same(
+                            Twopayment::API_TIMEOUT_FEE_QUOTE_GATE,
+                            $request['timeout'],
+                            'the gate must quote on its own tight timeout: ' . $description
+                        );
+                    }
+                }
             }
 
             if ($control === null) {

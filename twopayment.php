@@ -13092,9 +13092,8 @@ class Twopayment extends PaymentModule
         }
         $days = (int) $this->getSelectedPaymentTerm();
 
-        // A term charging nothing must never withhold: the quote would fail
-        // over a fee that is arithmetically zero, and on a single-term shop
-        // that is a whole store offline. Mirrors the FX loop's own skip.
+        // A term charging nothing must never withhold - on a single-term shop
+        // that is the whole store, over a fee of zero.
         $share = $this->buildTwoBuyerFeeShare($days);
         $charges = $share !== null
             && ((isset($share['percentage']) && (float) $share['percentage'] > 0)
@@ -13103,9 +13102,7 @@ class Twopayment extends PaymentModule
             return true;
         }
 
-        // The same basis the checkout chips quote against: merchandise plus
-        // shipping, with the hidden surcharge line excluded so it never feeds
-        // its own quote.
+        // The hidden surcharge line must never feed its own quote.
         $gross_basis = round((float) $cart->getOrderTotal(true, Cart::BOTH), 2);
         $surchargeCartLine = $this->getTwoSurchargeCartLine($cart);
         if ($surchargeCartLine !== null) {

@@ -102,11 +102,18 @@ ABN-546. The same failure means different things on the two surfaces.
   than offered-and-disabled. A fee quote that does not resolve withholds Two, because
   the alternative is an order created with no surcharge at all — a silent undercharge.
   The reason is logged at error level, once per render.
-- **One term, never all of them**: the selected term, else the first offered. The FX
-  loop in the same predicate stays term-independent; a per-term condition inside it
-  has twice taken whole stores offline over one misconfigured term.
-- **A quoted zero, an empty basket and a disabled surcharge are answers, not
-  failures**, and withhold nothing.
+- **One term, never all of them**: the selected term, else the merchant default. The
+  FX loop in the same predicate stays term-independent; a per-term condition inside it
+  took whole stores offline once already (TWO-25276).
+- **A quoted zero, an empty basket, a disabled surcharge and a term charging nothing
+  are answers, not failures**, and withhold nothing. A term charging nothing is never
+  quoted at all.
+- **The order-create parity gate owns the term the buyer actually orders.** The gate
+  runs at render, and the buyer can switch term inside the rendered tile; an
+  unresolvable quote for the ordered term is a parity failure there and refuses the
+  order, because zero on both sides otherwise reads as agreement.
+- **The gate quotes on its own tight timeout** (`API_TIMEOUT_FEE_QUOTE_GATE`): every
+  payment-options request blocks on it, and null quotes are not cached.
 - **Admin.** The configuration page previews merchant fee RATES from a different
   endpoint and degrades to a notice. `hookPaymentOptions()` never runs in admin, so a
   pricing outage can neither lock the merchant out nor blank that preview.
