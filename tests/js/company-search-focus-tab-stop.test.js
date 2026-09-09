@@ -118,11 +118,8 @@ describe('the open popover holds the company field out of the tab order', () => 
     });
 
     test('a panel rebuilt while the popover was open leaves the field closed and in the order', () => {
-        // A host that discards the wrapper but keeps the field brings
-        // buildDropdown() back to build a fresh, hidden panel. The state that
-        // panel establishes is closed, so the field it belongs to must be back
-        // in the tab order - otherwise it is stranded at -1 with nothing on
-        // screen to put it back.
+        // Given a rebuilt panel, When it comes back hidden, Then the field is
+        // closed and in the order - nothing on screen would put it back otherwise.
         const instance = makeInstance();
         openPanel();
         expect(companyField().attr('tabindex')).toBe('-1');

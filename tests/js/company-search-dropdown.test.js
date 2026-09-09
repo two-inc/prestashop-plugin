@@ -190,10 +190,8 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
         ['Tab', '', 'Tab is the buyer leaving'],
         ['Escape', '', 'Escape is the buyer closing']
     ])('keydown %s leaves the query at %p - %s', (key, expected, why) => {
-        // Every keydown here arrives with the panel ALREADY open, because focus
-        // opened it. In a browser the caret is in the query field by then, so
-        // the company field cannot receive these at all; the assertion is that
-        // nothing is seeded behind the buyer's back if it somehow does.
+        // These arrive with the panel already open, because focus opened it - in a
+        // browser the caret has moved on, so nothing may be seeded unseen if one lands.
         makeInstance();
         const field = companyField();
         field.trigger('focus');
@@ -203,8 +201,7 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
     });
 
     test('a keypress with no focus first still opens it and carries the character', () => {
-        // The mouse route: mousedown preventDefault()s, so a click leaves the
-        // panel open with no focus event, and a keystroke can still arrive here.
+        // The mouse route: mousedown preventDefault()s, so no focus event fires.
         makeInstance();
         const field = companyField();
         field.trigger($.Event('keydown', { key: 'a' }));

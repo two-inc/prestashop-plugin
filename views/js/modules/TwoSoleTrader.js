@@ -125,13 +125,10 @@ class TwoSoleTrader {
         this._popupPollInterval = null;
         // The control whose click launched the flow; openPopup() blurs it (TWO-25658).
         this._launchControl = null;
-        // The Sole trader chip whose activation opened the popup on screen -
-        // the one control focus may arrive on without taking that popup down.
-        // Another CAPTURE's chip is a different control; this capture's own chip
-        // is exempt whichever of its controls started the flow (TWO-25658).
+        // The chip that owns the open popup: the one control focus may arrive on
+        // without taking it down. Ownership is per CAPTURE, not per control (TWO-25658).
         this._launchChip = null;
-        // Named by the launching capture, consumed by openPopup() - and only on
-        // a window that actually opened, so a blocked launch's retry inherits it.
+        // Consumed by openPopup() only on a window that opened, so a blocked retry inherits it.
         this._pendingLaunchChip = null;
         // Guards settleFocusOn() against the relaunch it starts re-entering it.
         this._settlingFocus = false;
@@ -2471,8 +2468,7 @@ class TwoSoleTrader {
             TwoSoleTrader._popupSeq += 1;
             this._popupId = TwoSoleTrader._popupSeq;
             this._signupPopupOpened = true;
-            // Which chip this popup belongs to outlives the click that opened
-            // it; a launch from anywhere else leaves it unowned.
+            // A launch from anywhere but a capture leaves the popup unowned.
             this._launchChip = this._pendingLaunchChip;
             this._pendingLaunchChip = null;
             // Left holding focus it would be re-focused on window return, which reads as the buyer back (TWO-25658).
@@ -2615,10 +2611,8 @@ class TwoSoleTrader {
             return;
         }
         const chip = this.chipOf(target);
-        // A re-render rebuilds the chips, so the recorded node can be detached
-        // while its popover is still the only one on the page. Nothing then
-        // distinguishes the popovers, so the live chip inherits the popup and
-        // is recorded in its place.
+        // A re-render detaches the recorded chip; with one popover on the page
+        // nothing then distinguishes them, so the live chip inherits the popup.
         if (chip && this._launchChip && !this._launchChip.isConnected) {
             this._launchChip = chip;
         }
@@ -2632,9 +2626,8 @@ class TwoSoleTrader {
         document.dispatchEvent(new CustomEvent('two:sole-trader-focus-settled', {
             detail: { target: target, popupClosed: popupClosed }
         }));
-        // A DIFFERENT capture's chip gets a popup of its own; activating it is
-        // what that means, and its click handler is the one place a launch is
-        // spelled out.
+        // A different capture's chip gets a popup of its own, through the one
+        // place a launch is spelled out: that chip's own click handler.
         if (chip && this._launchChip && !ownsPopup && popupClosed
             && typeof chip.click === 'function') {
             this._settlingFocus = true;
