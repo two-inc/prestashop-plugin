@@ -629,19 +629,9 @@ namespace {
         {
             $moduleName = property_exists($this, 'name') ? (string) $this->name : '';
             $currencies = StubStore::$moduleCurrencies[$moduleName] ?? [];
-            if ($idCurrency === null) {
-                return $currencies;
-            }
-
-            $idCurrency = (int) $idCurrency;
-            $filtered = [];
-            foreach ($currencies as $currency) {
-                if ((int) ($currency['id_currency'] ?? 0) === $idCurrency) {
-                    $filtered[] = $currency;
-                }
-            }
-
-            return $filtered;
+            // As core's checkbox mode: the id is ignored and the whole
+            // allowlist comes back, so membership is the caller's test.
+            return $currencies;
         }
     }
     }
@@ -1734,6 +1724,25 @@ namespace {
             }
         }
 
+        /**
+         * As core: the shop's currencies as rows. $active is honoured through
+         * an `active` key on the fixture, defaulting to enabled.
+         *
+         * @return array<int, array<string, mixed>>
+         */
+        public static function getCurrencies($object = false, $active = true, $group_by = false)
+        {
+            $rows = [];
+            foreach (StubStore::$currencies as $id => $props) {
+                if ($active && array_key_exists('active', $props) && !$props['active']) {
+                    continue;
+                }
+                $rows[] = ['id_currency' => (int) $id] + $props;
+            }
+
+            return $rows;
+        }
+
         public static function getIdByIsoCode($isoCode, $idShop = 0)
         {
             foreach (StubStore::$currencies as $id => $props) {
@@ -2317,6 +2326,26 @@ namespace {
             )) {
                 return isset(StubStore::$dbColumns[$m[1] . '.' . $m[2]]) ? '1' : '0';
             }
+            // Whether ANY country is enabled for the module and shop (ABN-518).
+            if (preg_match(
+                '/SELECT COUNT\(\*\) FROM `' . _DB_PREFIX_ . 'module_country`'
+                . ' WHERE `id_module` = (\d+) AND `id_shop` = (\d+)/',
+                $sql,
+                $m
+            )) {
+                if (StubStore::$moduleCountries === null) {
+                    return '1'; // unrestricted - see StubStore::$moduleCountries
+                }
+                $count = 0;
+                foreach (StubStore::$moduleCountries as $row) {
+                    if ((int) ($row['id_module'] ?? 0) === (int) $m[1]
+                        && (int) ($row['id_shop'] ?? 0) === (int) $m[2]
+                    ) {
+                        $count++;
+                    }
+                }
+                return (string) $count;
+            }
             // Native per-module payment restrictions (TWO-25387). Core returns the
             // matched id_country, or false when no row matches.
             if (preg_match(
@@ -2628,6 +2657,12 @@ namespace {
             $this->twoApiKeyStatusMemo = $status === null
                 ? null
                 : array('status' => (string) $status, 'code' => $code);
+        }
+
+        /** The admin "Current configuration health" panel HTML (ABN-518). */
+        public function exposeTwoPluginHealthChecklist(): string
+        {
+            return $this->renderTwoPluginHealthChecklist();
         }
 
         /** The checkout tile's call-to-action text, without the offerability gates hookPaymentOptions applies first. */

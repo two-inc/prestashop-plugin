@@ -22,6 +22,9 @@ return array(
     // own brand name; getTwoBrandConfig() resolves it wherever the plugin
     // used to hardcode the literal word "Two".
     'product_name' => 'Two',
+    // Legal/company name the merchant is told to contact. Mirrors the
+    // WooCommerce plugin's provider_full_name brand key (ABN-518).
+    'provider_full_name' => 'Two',
     // Increments the buyer surcharge line may be rounded to, offered in the
     // admin Rounding Step select. Mirrors the WooCommerce brand
     // available_rounding_steps and Magento's RoundingStep source model; an

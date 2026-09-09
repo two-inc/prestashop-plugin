@@ -3490,6 +3490,281 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Why the payment option is absent from checkout (ABN-518). Only reasons
+     * decidable without a cart are judged; a cart-dependent one is named as a
+     * constraint instead.
+     *
+     * @return array{label:string, value:string, ok:bool}
+     */
+    protected function twoCheckoutVisibilityRow()
+    {
+        $label = $this->l('Payment method at checkout');
+        $not_shown = $this->l('Not shown at checkout');
+        $reason = null;
+
+        if (!$this->active) {
+            $reason = $this->l('the module is not enabled for this shop. Enable it in Module Manager.');
+        } elseif (Tools::isEmpty(Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
+            $reason = $this->l('no API key is saved. Check API key.');
+        } elseif (Tools::isEmpty(Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'))) {
+            // Server-derived from a successful verification, never a form field.
+            $reason = sprintf(
+                $this->l('your merchant account has not been identified yet. Save %s to verify the API key.'),
+                $this->l('General')
+            );
+        }
+        if ($reason === null) {
+            $status = $this->getTwoApiKeyVerificationStatus();
+            if (self::isDefinitiveFailureStatus($status['status'])) {
+                $reason = $this->l('the API key was rejected. Check API key and Environment.');
+            }
+        }
+        if ($reason === null && $this->getTwoSurchargeSettingsOrNull() === null) {
+            $reason = $this->l('the saved surcharge method is not recognised. Check Surcharge method.');
+        }
+        if ($reason === null) {
+            $countryState = $this->getTwoBuyerCountryRestrictionState();
+            if ($countryState === self::BUYER_COUNTRIES_EMPTY) {
+                $reason = sprintf(
+                    $this->l('no buyer countries are currently enabled for your account. Contact %s to have them enabled.'),
+                    $this->twoProviderFullName()
+                );
+            } elseif ($countryState === self::BUYER_COUNTRIES_MALFORMED) {
+                $reason = sprintf(
+                    $this->l('the buyer countries on your account could not be read. Contact %s.'),
+                    $this->twoProviderFullName()
+                );
+            }
+        }
+        if ($reason === null && $this->twoNativeCountryRestrictionAllowsNothing()) {
+            $reason = $this->l('no country is enabled for this module under Payment > Preferences.');
+        }
+        if ($reason === null) {
+            $currencyReason = $this->twoDefaultCurrencyReason();
+            if ($currencyReason !== null) {
+                $reason = $currencyReason;
+            }
+        }
+        if ($reason !== null) {
+            return array(
+                'label' => $label,
+                'value' => $not_shown . ' - ' . $reason,
+                'ok' => false,
+            );
+        }
+
+        $shown = $this->l('Shown at checkout');
+        // The platform floor is cache-only: an unresolved record means the
+        // constraint is unknown, not that there is none.
+        $clauses = array();
+        if (!$this->hasFetchedMerchantRecord()) {
+            $clauses[] = $this->l('minimum order value not known until your profile refreshes');
+        }
+        $floors = $this->bindingTwoMinimumFloors(array(
+            $this->getPlatformMinimumOrder(),
+            $this->getMerchantMinimumOrder(),
+        ));
+        if (count($floors) === 1) {
+            $clauses[] = sprintf($this->l('hidden for baskets below %s'), $this->describeTwoMinimumFloor($floors[0]));
+        } elseif (count($floors) > 1) {
+            $clauses[] = sprintf(
+                $this->l('hidden for baskets below %1$s or %2$s'),
+                $this->describeTwoMinimumFloor($floors[0]),
+                $this->describeTwoMinimumFloor($floors[1])
+            );
+        }
+        $allowed = $this->getMerchantBuyerCountries();
+        if (is_array($allowed) && $allowed) {
+            $clauses[] = sprintf(
+                $this->l('offered only to buyers in %s'),
+                htmlspecialchars(implode(', ', $allowed), ENT_QUOTES, 'UTF-8')
+            );
+        }
+        $refused = $this->twoRefusedNonDefaultCurrencies();
+        if ($refused) {
+            $clauses[] = sprintf(
+                $this->l('hidden for baskets in %s'),
+                htmlspecialchars(implode(', ', $refused), ENT_QUOTES, 'UTF-8')
+            );
+        }
+        $surcharge = $this->getTwoSurchargeSettingsOrNull();
+        if ($surcharge !== null && !empty($surcharge['enabled'])) {
+            $clauses[] = $this->l('hidden for baskets in a currency the buyer surcharge cannot be priced in');
+        }
+        if (!$clauses) {
+            return array('label' => $label, 'value' => $shown, 'ok' => true);
+        }
+
+        return array('label' => $label, 'value' => $shown . ' - ' . implode('; ', $clauses), 'ok' => true);
+    }
+
+    /**
+     * The company name to contact. An overlay whose brand file predates this
+     * key would otherwise render an empty name.
+     *
+     * @return string
+     */
+    protected function twoProviderFullName()
+    {
+        $name = (string) $this->getTwoBrandConfig('provider_full_name');
+
+        return $name !== '' ? $name : (string) $this->getTwoBrandConfig('product_name');
+    }
+
+    /**
+     * Two floors in the same currency on the same basis are one floor - only
+     * the higher binds. Different currencies cannot be reduced without a rate.
+     *
+     * @param array<int, array|null> $candidates
+     * @return array<int, array{amount:float, currency:string, basis:string}>
+     */
+    protected function bindingTwoMinimumFloors($candidates)
+    {
+        $binding = array();
+        foreach (array_filter($candidates) as $floor) {
+            $key = $floor['currency'] . '|' . $floor['basis'];
+            if (!isset($binding[$key]) || (float) $floor['amount'] > (float) $binding[$key]['amount']) {
+                $binding[$key] = $floor;
+            }
+        }
+
+        return array_values($binding);
+    }
+
+    /**
+     * Why the shop's default currency would be refused at checkout, or null
+     * when it would not. Mirrors checkCurrency()'s two gates in its order: the
+     * provider's own ISO list, then the module's PrestaShop assignment.
+     *
+     * @return string|null
+     */
+    protected function twoDefaultCurrencyReason()
+    {
+        $idCurrency = (int) Configuration::get('PS_CURRENCY_DEFAULT');
+        if ($idCurrency <= 0) {
+            return null;
+        }
+        $currency = new Currency($idCurrency);
+        if (!Validate::isLoadedObject($currency)) {
+            return null;
+        }
+        if (trim((string) $currency->iso_code) === '') {
+            return $this->l('the shop default currency has no ISO code.');
+        }
+
+        return $this->twoUsableCurrencyIsos() === array()
+            ? $this->l('no currency is enabled for this module under Payment > Preferences.')
+            : null;
+    }
+
+    /**
+     * ISO codes of the shop's enabled currencies that checkCurrency() would
+     * accept: supported by the provider AND assigned to the module. Empty
+     * means no cart in any currency is offered Two.
+     *
+     * @return string[]
+     */
+    protected function twoUsableCurrencyIsos()
+    {
+        $assigned = array();
+        if (method_exists($this, 'getCurrency')) {
+            // Core's checkbox mode ignores the id and returns the whole
+            // allowlist, so membership is this side's test to make.
+            foreach ((array) $this->getCurrency((int) Configuration::get('PS_CURRENCY_DEFAULT')) as $row) {
+                if (isset($row['id_currency'])) {
+                    $assigned[] = (int) $row['id_currency'];
+                }
+            }
+        }
+
+        $usable = array();
+        foreach ($this->twoEnabledCurrencyRows() as $id => $iso) {
+            if (in_array($iso, self::TWO_SUPPORTED_CURRENCY_ISOS, true) && in_array($id, $assigned, true)) {
+                $usable[] = $iso;
+            }
+        }
+
+        return $usable;
+    }
+
+    /**
+     * The shop's enabled currencies as id => uppercase ISO.
+     *
+     * @return array<int, string>
+     */
+    protected function twoEnabledCurrencyRows()
+    {
+        if (!method_exists('Currency', 'getCurrencies')) {
+            return array();
+        }
+        $rows = array();
+        foreach ((array) Currency::getCurrencies(false, true) as $row) {
+            $id = (int) (isset($row['id_currency']) ? $row['id_currency'] : 0);
+            $iso = Tools::strtoupper(trim((string) (isset($row['iso_code']) ? $row['iso_code'] : '')));
+            if ($id > 0 && $iso !== '') {
+                $rows[$id] = $iso;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * ISO codes of the shop's enabled currencies that checkCurrency() would
+     * refuse. Per-cart, so a constraint rather than a reason: another usable
+     * currency still offers Two.
+     *
+     * @return string[]
+     */
+    protected function twoRefusedNonDefaultCurrencies()
+    {
+        $usable = $this->twoUsableCurrencyIsos();
+        $refused = array();
+        foreach ($this->twoEnabledCurrencyRows() as $iso) {
+            if (!in_array($iso, $usable, true) && !in_array($iso, $refused, true)) {
+                $refused[] = $iso;
+            }
+        }
+
+        return $refused;
+    }
+
+    /**
+     * Whether PrestaShop's own per-module country restriction leaves nothing
+     * enabled for this shop. Fails OPEN on a lookup error, like checkCountry().
+     *
+     * @return bool
+     */
+    protected function twoNativeCountryRestrictionAllowsNothing()
+    {
+        $sql = 'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'module_country`'
+            . ' WHERE `id_module` = ' . (int) $this->id
+            . ' AND `id_shop` = ' . (isset($this->context->shop->id) ? (int) $this->context->shop->id : 0);
+
+        try {
+            $count = Db::getInstance()->getValue($sql);
+        } catch (Exception $e) {
+            return false;
+        }
+
+        return $count !== false && (int) $count === 0;
+    }
+
+    /**
+     * @param array{amount:float, currency:string, basis:string} $floor
+     * @return string
+     */
+    protected function describeTwoMinimumFloor($floor)
+    {
+        return sprintf(
+            '%s %s (%s)',
+            number_format((float) $floor['amount'], 2, '.', ''),
+            htmlspecialchars((string) $floor['currency'], ENT_QUOTES, 'UTF-8'),
+            $floor['basis'] === 'net' ? $this->l('excluding tax') : $this->l('including tax')
+        );
+    }
+
+    /**
      * Render a compact operational health summary for plugin configuration.
      *
      * @return string HTML
@@ -3499,9 +3774,11 @@ class Twopayment extends PaymentModule
         // Lowered as every runtime read of this key lowers it, so the row, the host
         // map and the production warning below all judge the same value (ABN-532).
         $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
-        // Same live verdict the checkout gate uses (TWO-25326) - a health row
-        // reporting "Verified" while Two is being withheld is worse than no row.
+        // Same live verdict the checkout gate uses (TWO-25326).
         $api_verified = $this->isTwoApiKeyVerified();
+        // Only a definitive rejection withholds (ABN-533), so only that earns
+        // "action required"; a transient verdict falls through to the record.
+        $api_key_rejected = self::isDefinitiveFailureStatus($this->getTwoApiKeyVerificationStatus()['status']);
         $ssl_disabled = (bool) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
         $merchant_short_name = (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
 
@@ -3527,6 +3804,7 @@ class Twopayment extends PaymentModule
                 'value' => $ssl_disabled ? $this->l('Disabled') : $this->l('Enabled'),
                 'ok' => !$ssl_disabled,
             ),
+            $this->twoCheckoutVisibilityRow(),
         );
 
         $html = '<div class="panel" style="margin-top:15px;">';
@@ -3549,7 +3827,7 @@ class Twopayment extends PaymentModule
             $html .= '</div>';
         }
 
-        if (!$api_verified) {
+        if ($api_key_rejected) {
             $html .= '<div class="alert alert-warning" style="margin-top:12px;margin-bottom:0;">';
             $html .= '<strong>' . $this->l('Action required:') . '</strong> ';
             $html .= $this->l('API key is not verified. Checkout requests may fail until the General settings are saved with a valid key.');
@@ -5130,13 +5408,35 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /**
+     * One "payment option hidden" line per reason per request (ABN-518).
+     *
+     * @param string $reason
+     * @return void
+     */
+    protected function logTwoPaymentOptionHidden($reason)
+    {
+        if (isset($this->twoWithholdReasonsLogged[$reason])) {
+            return;
+        }
+        $this->twoWithholdReasonsLogged[$reason] = true;
+        PrestaShopLogger::addLog('TwoPayment: Payment option hidden - ' . $reason, 2);
+    }
+
     public function hookPaymentOptions($params)
     {
         if (!$this->active) {
             return;
         }
 
-        if (Tools::isEmpty($this->merchant_short_name) || Tools::isEmpty($this->api_key)) {
+        if (Tools::isEmpty($this->api_key)) {
+            $this->logTwoPaymentOptionHidden('no API key is saved in the module settings');
+            return;
+        }
+
+        if (Tools::isEmpty($this->merchant_short_name)) {
+            // Server-derived from a successful verification, never a form field.
+            $this->logTwoPaymentOptionHidden('the merchant account has not been identified yet');
             return;
         }
 
@@ -5269,6 +5569,10 @@ class Twopayment extends PaymentModule
         // alternative outcome is an order created with NO surcharge at all,
         // a silent undercharge. See isTwoSurchargeQuotableForCart.
         if (!$this->isTwoSurchargeQuotableForCart($cart)) {
+            // Only the unrecognised-method arm is silent; the FX arm logs its own detail.
+            if ($this->getTwoSurchargeSettingsOrNull() === null) {
+                $this->logTwoPaymentOptionHidden('the saved surcharge method is not recognised');
+            }
             return [];
         }
 
@@ -12539,6 +12843,13 @@ class Twopayment extends PaymentModule
      * @var bool
      */
     protected $twoApiKeyWithholdLogged = false;
+
+    /**
+     * Reasons already logged this request, keyed by reason (ABN-518).
+     *
+     * @var array<string, bool>
+     */
+    protected $twoWithholdReasonsLogged = array();
 
     /**
      * Whether this instance has already logged that it is withholding Two over
