@@ -573,13 +573,13 @@ would have required, and why it was not built). The designs below use the new sp
 that rename landed independently of everything here.
 
 **Every `file:line` below is a HINT, verified against `origin/staging` @ `0ddad20` and nothing else.**
-prestashop-plugin PR #154 touches most of the files cited below — it deletes ~55 lines from `TwoCompanySearch.js`, ~72
-from `override/classes/form/CustomerAddressFormatter.php`, ~20 from
+prestashop-plugin PR #154 touches most of the files cited below — it deletes ~55 lines from
+`TwoCompanySearch.js`, ~72 from `override/classes/form/CustomerAddressFormatter.php`, ~20 from
 `controllers/front/orderintent.php` (which carries most of `#12`'s citations) and ~10 from
 `TwoCheckoutManager.js`, and rewrites ~32 lines of `twopayment.php` — so essentially every number here
-shifts once it merges. Re-derive with `git grep -n <symbol> <ref>` against a
-freshly fetched ref before acting on any of them — never from a working tree. Several numbers in the
-first draft of this document were already wrong for exactly that reason.
+shifts once it merges. Re-derive with `git grep -n <symbol> <ref>` against a freshly fetched ref
+before acting on any of them — never from a working tree. Several numbers in the first draft of this
+document were already wrong for exactly that reason.
 
 ---
 
@@ -1302,7 +1302,7 @@ reading, but do not act on it:
 
 ## Addendum — corrections to the premises in `#8`, `#12` and the country-resolver items
 
-Recorded here because three of the premises below rest on a count or a claim that turned out
+Recorded here because the premises below rest on counts or claims that turned out
 slightly off, and the design above already assumes the corrected version.
 
 1. **The ISO chain is mirrored FOUR times, not three.** The fourth is
@@ -1344,12 +1344,12 @@ slightly off, and the design above already assumes the corrected version.
 
 ---
 
-# SUPERSEDED — the company-search location key rename (TWO-40)
+# SUPERSEDED — the tier-safe company-search location key rename (TWO-40)
 
 **Status: the rename SHIPPED in 2.7.6 as `PS_TWO_ENABLE_COMPANY_NAME` -> `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS`,
-in a deliberately SIMPLE global-tier-only form — not the tier-exact design worked out below.** The
+in a deliberately SIMPLE global-tier-only form — not the tier-safe design worked out below.** The
 explicit ruling: with no live merchants on this plugin there is no multistore override to lose, so the
-tier-exact migration is not worth its risk or its complexity. `upgrade/upgrade-2.7.6.php` does a
+tier-safe migration is not worth its risk or its complexity. `upgrade/upgrade-2.7.6.php` does a
 resolving read, one `updateValue()`, and a name-wide `deleteByName()`, and its own header states the
 loss it accepts.
 
@@ -1397,8 +1397,8 @@ which is why the rename was worth doing at all.
 **The asymmetry.** `Configuration::deleteByName($key)` is NAME-WIDE and unconditional — there is no
 per-shop, per-group or per-tier variant. Every writer (`updateValue`, `updateGlobalValue`) and every
 reader (`get`, `getGlobalValue`, `hasKey`) is tier-scoped. So the obvious read-write-delete rename
-reads one tier's value and destroys every other tier's. Nothing else in the module hits this: the other
-every other `Configuration::get()` call in `twopayment.php` only ever READS, so being context-scoped merely
+reads one tier's value and destroys every other tier's. Nothing else in the module hits this: every
+other `Configuration::get()` call in `twopayment.php` only ever READS, so being context-scoped merely
 makes them narrow, not lossy.
 
 **The hidden dimension.** PrestaShop has **three** configuration tiers, not two:
@@ -1546,14 +1546,14 @@ which is exactly what hid this. Wants its own small ticket.
 
 ## Also unverified, flagged rather than chased
 
-`controllers/front/orderintent.php`'s `$address->companyid = $companyId;` assigns a **dynamic property**
-on an `ObjectModel` subclass. PHP 8.2 deprecates that unless the class carries
+`controllers/front/orderintent.php`'s `$address->companyid = $companyId;` assigns a **dynamic
+property** on an `ObjectModel` subclass. PHP 8.2 deprecates that unless the class carries
 `#[AllowDynamicProperties]`, and I could not confirm whether PrestaShop's `ObjectModel` does. Entirely
-pre-existing and untouched by prestashop-plugin PR #154 — but that PR promotes the branch READING this property to
-priority 2 in `extractOrgNumberFromAddress()` and documents it as load-bearing, so if the assignment
-ever starts emitting deprecations (or stops working under a future PHP), the read is the thing that
-silently returns empty. Worth ten minutes against a real PS 8.2+ shop; a typed column or an explicit
-carrier would be the durable fix.
+pre-existing and untouched by prestashop-plugin PR #154 — but that PR promotes the branch READING this
+property to priority 2 in `extractOrgNumberFromAddress()` and documents it as load-bearing, so if the
+assignment ever starts emitting deprecations (or stops working under a future PHP), the read is the
+thing that silently returns empty. Worth ten minutes against a real PS 8.2+ shop; a typed column or an
+explicit carrier would be the durable fix.
 
 ## What was fixed, and what was noted instead
 
@@ -1799,11 +1799,9 @@ address, which IS the secondary, so the sync clause applies. On WooCommerce the 
 clause simply does not apply, because the billing address is the one the buyer edits
 first.
 
-**OPEN QUESTION (C3):** the rule above is deliberately position-independent, so it ports
-as written. The positional mapping does NOT port: because WooCommerce is billing-first, a
-port that carries PrestaShop's "invoice is the secondary" mapping across inverts the sync
-direction, and is wrong there while looking right here. What that port's own mapping
-should be is not decided here — only that it cannot be copied from this one.
+**OPEN QUESTION (C3):** which address a WooCommerce port treats as primary for the sync is
+not decided here. The role-keyed rule above ports as written; the primary/secondary mapping
+does not, and cannot be copied from this one.
 
 ---
 
@@ -2100,7 +2098,8 @@ directions plus the cart-id change that invalidates both.
 
 ## Still open
 
-- **C3's WooCommerce contradiction** (above) — needs a ruling before the WooCommerce port.
+- **C3's WooCommerce mapping** (above) — the port's own primary/secondary mapping needs a
+  ruling before the WooCommerce port.
 - **Rule 4's hard enforcement**, if any is ever wanted. Nothing enforces company on either
   address today; the note above says where it would go and why it must be role-keyed.
 - **#8** remains DEFERRED. No `TwoCountry.js` extraction was made and the duplicated

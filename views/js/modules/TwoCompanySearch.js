@@ -624,10 +624,12 @@ class TwoCompanySearch {
      *
      *   input[name='company'] -> query field -> results host -> "not on the list"
      *
-     * so the browser's own tab order already runs company name, query field,
-     * results, then manual entry with no key handling whatsoever, and a closed
-     * panel (`display: none`) is no tab stop at all, so there is no keyboard
-     * trap to escape from.
+     * so with the panel open Tab runs from the query field on to the mode
+     * controls in document order, with no key handling whatsoever: the
+     * company-name field and the results host are both held at `tabindex="-1"`
+     * while it is open, and the results are reached with the cursor keys from
+     * the query field instead. A closed panel (`display: none`) is no tab stop
+     * at all, so there is no keyboard trap to escape from.
      *
      * The manual-entry control is a REAL `<button>` and a SIBLING of the results
      * host, never a row inside it: outside the scroll container, so it is
@@ -4692,8 +4694,8 @@ class TwoCompanySearch {
      * identical on both paths - this method just supplies the debounce, the
      * request and the row rendering that jQuery UI's widget would otherwise
      * supply. One engine per path, one panel for both: two complete and
-     * divergent dropdown implementations meant every defect on this ticket had
-     * to be fixed - or was missed - twice.
+     * divergent dropdown implementations meant every panel defect had to be
+     * fixed - or was missed - twice.
      */
     setupCustomAutocomplete() {
         if (!this._queryField || !this._queryField.length || !this._resultsList || !this._resultsList.length) {

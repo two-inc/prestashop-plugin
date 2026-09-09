@@ -264,8 +264,9 @@ pairing on the second address.
      (best-effort text→id match, inherently lossy but attempted); otherwise append
      to `city` with a comma (`"Ashford, Kent"`).
 7. **Company/org-number requirement scope:** required ONLY on whichever address
-   plays the billing/invoice ROLE (the same resolution the payment tile uses) — never on a shipping-only
-   address. Reuse the same role-resolution logic; don't build a second one.
+   plays the billing/invoice ROLE (the same resolution the payment tile uses) —
+   never on a shipping-only address. Reuse the same role-resolution logic; don't
+   build a second one.
 
 ## 3. `TWO:`-prefixed identifiers: exactly one special case, and it's cosmetic
 
@@ -789,16 +790,16 @@ implement wrongly — read both corrections before implementing either.
    may be filled in is the buyer interacting directly with the company-name field, and
    the auto-adoption logic is removed.
 
-   WooCommerce `8e2355f` (woocommerce-plugin PR #487) removes the whole mechanism — the prefetch that ran
-   off every checkout email change (`onEmailChanged`), the match branch that adopted a
-   company and ran the credit check off a Two session cookie with no buyer interaction
-   at all (`applyPrefetch`), and the Sole trader chip's own fast path that consulted
-   that result to skip the hosted signup entirely — around 525 net lines out of its
-   checkout JS. Zero occurrences of either function name remain at that commit. **Do
-   not port it, and do not port the rule that told you to complete it.** The Sole
-   trader chip now always opens the hosted signup, as unconditionally as the Registered
-   company chip shows the query field. The ruling is explicitly cross-platform: all
-   plugins behave identically here.
+   WooCommerce `8e2355f` (woocommerce-plugin PR #487) removes the whole mechanism —
+   the prefetch that ran off every checkout email change (`onEmailChanged`), the match
+   branch that adopted a company and ran the credit check off a Two session cookie
+   with no buyer interaction at all (`applyPrefetch`), and the Sole trader chip's own
+   fast path that consulted that result to skip the hosted signup entirely — around
+   525 net lines out of its checkout JS. Zero occurrences of either function name
+   remain at that commit. **Do not port it, and do not port the rule that told you to
+   complete it.** The Sole trader chip now always opens the hosted signup, as
+   unconditionally as the Registered company chip shows the query field. The ruling is
+   explicitly cross-platform: all plugins behave identically here.
 
    Two knock-ons that a port has to do rather than inherit: with no email-scoped
    lookup, tokens are minted **once per page up front** rather than per email change
