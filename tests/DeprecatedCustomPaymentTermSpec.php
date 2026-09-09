@@ -137,10 +137,16 @@ final class DeprecatedCustomPaymentTermSpec
                 $description . ' - the form preselects the keep option'
             );
             Tools::setTestValue(self::KEY, '');
+            $refused = self::harness($offered);
             TinyAssert::same(
                 '',
-                self::harness($offered)->paymentTermsFormValuesForTest()['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'],
+                $refused->paymentTermsFormValuesForTest()['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'],
                 $description . ' - a re-rendered form keeps the Remove the merchant chose'
+            );
+            TinyAssert::same(
+                htmlspecialchars($stored, ENT_QUOTES, 'UTF-8'),
+                $refused->legacyCustomTermInputForTest()['options']['query'][0]['id_option'],
+                $description . ' - and keep is still reachable on that form'
             );
             Tools::resetTestValues();
         }

@@ -2028,7 +2028,7 @@ class Twopayment extends PaymentModule
         foreach ($payment_terms as $term) {
             $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
         }
-        $fields_values['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'] = $this->getTwoLegacyCustomTermOptionValue();
+        $fields_values['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'] = $this->getTwoLegacyCustomTermSelected();
         $fields_values['PS_TWO_DEFAULT_PAYMENT_TERM'] = (string) Tools::getValue(
             'PS_TWO_DEFAULT_PAYMENT_TERM',
             $this->getTwoDefaultPaymentTermFormDefault()
@@ -2197,11 +2197,18 @@ class Twopayment extends PaymentModule
      */
     protected function getTwoLegacyCustomTermOptionValue()
     {
-        $stored = $this->getTwoStoredCustomTerm();
-        // A refused save re-renders the form, so a Remove the merchant already chose stands.
-        $posted = $this->getTwoPostedCustomTerm();
+        return htmlspecialchars($this->getTwoStoredCustomTerm(), ENT_QUOTES, 'UTF-8');
+    }
 
-        return $posted === '' ? '' : htmlspecialchars($stored, ENT_QUOTES, 'UTF-8');
+    /**
+     * Which of the two options the form arrives on. A refused save re-renders the section, so a
+     * Remove the merchant already chose stands rather than reverting to keep.
+     *
+     * @return string
+     */
+    protected function getTwoLegacyCustomTermSelected()
+    {
+        return $this->getTwoPostedCustomTerm() === '' ? '' : $this->getTwoLegacyCustomTermOptionValue();
     }
 
     /**
