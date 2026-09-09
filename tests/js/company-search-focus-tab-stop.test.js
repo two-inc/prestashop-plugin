@@ -77,8 +77,8 @@ describe('the open popover holds the company field out of the tab order', () => 
     });
 
     test('-1, not removed from the order outright: the Escape return still lands', () => {
-        // closeDropdown(true) focuses the field, which a non-focusable field
-        // could not take - and that return is what Escape means.
+        // `-1` still takes the programmatic focus closeDropdown(true) gives it,
+        // which is what Escape means; removal from the order outright would not.
         const instance = makeInstance();
         openPanel();
 

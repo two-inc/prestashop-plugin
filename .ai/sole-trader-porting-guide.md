@@ -454,7 +454,9 @@ is not persisted here", never to a dropped payment record.
     would otherwise race rule (3) on event order.
     - **The launching capture names its own chip on every launch it starts**, chip click and
       replacement button alike, and the popup module records it only for a window that
-      actually opened — so a blocked launch's retry inherits the same owner. Nothing else: no timer,
+      actually opened — so a blocked launch's retry inherits the same owner. The chip
+      carries its capture's identity, so a re-render's rebuilt chip inherits ownership
+      of the popup while a sibling capture's chip never does. Nothing else: no timer,
     no `visibilitychange` (a separate window never takes the tab out of `visible`), no
     `document.hasFocus()` gate. A tab or window switch, or a click on the page background,
     focuses no control and changes nothing; a browser re-firing focus at the previously

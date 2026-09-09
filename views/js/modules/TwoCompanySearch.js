@@ -713,6 +713,9 @@ class TwoCompanySearch {
         // Hidden by default; syncModeChipVisibility() gates it on the current
         // billing country's eligibility.
         const soleTraderEntry = $('<button type="button" class="two-company-mode-chip two-company-sole-trader-entry"></button>')
+            // Which capture this chip belongs to, so a rebuilt chip can be told
+            // from a sibling capture's when the popup module re-owns a popup.
+            .attr('data-two-capture', this._instanceNs)
             .text(this.getSoleTraderEntryText());
 
         const modeChips = $('<div class="two-company-mode-chips"></div>')

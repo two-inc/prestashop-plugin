@@ -829,6 +829,34 @@ describe('two captures on one page', () => {
         expect(global.window.open).toHaveBeenCalledTimes(2);
     });
 
+    test.each([
+        ['the launching capture\'s own rebuilt chip', () => {
+            first._dropdown.remove();
+            first.buildDropdown();
+            return first._soleTraderButton.get(0);
+        }, false, 1, 'the popup is still that capture\'s, so it is left alone'],
+        ['a sibling capture\'s chip', () => {
+            first._dropdown.remove();
+            return second._soleTraderButton.get(0);
+        }, true, 2, 'a different capture, so the popup closes and that chip gets its own']
+    ])('with the recorded chip detached, focus on %s: closed=%s opens=%s - %s',
+        async (which, prepare, closed, opens) => {
+            // Given a re-render that replaced the chip whose click opened the popup,
+            // When focus lands on a chip, Then only the same capture's inherits it.
+            await launchWithPopupOpen(first);
+            second.openDropdown(false);
+            const launched = popup;
+            popup = fakePopup();
+
+            const target = prepare();
+            target.focus();
+            await settle();
+            jest.advanceTimersByTime(10);
+
+            expect({ which: which, closed: launched.closed, opens: global.window.open.mock.calls.length })
+                .toEqual({ which: which, closed: closed, opens: opens });
+        });
+
     test('the sibling\'s own launch re-adopts the enrolment a cancel disowned', async () => {
         await launchWithPopupOpen(first);
         soleTrader.cancelEnrollment(true);

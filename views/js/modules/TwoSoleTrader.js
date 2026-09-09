@@ -2611,9 +2611,10 @@ class TwoSoleTrader {
             return;
         }
         const chip = this.chipOf(target);
-        // A re-render detaches the recorded chip; with one popover on the page
-        // nothing then distinguishes them, so the live chip inherits the popup.
-        if (chip && this._launchChip && !this._launchChip.isConnected) {
+        // A re-render detaches the recorded chip, so the launching capture's
+        // REBUILT chip inherits the popup - a sibling capture's does not.
+        if (chip && this._launchChip && !this._launchChip.isConnected
+            && this._launcher && chip.getAttribute('data-two-capture') === this._launcher) {
             this._launchChip = chip;
         }
         const ownsPopup = !!chip && chip === this._launchChip;
