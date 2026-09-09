@@ -93,6 +93,141 @@ The standard for EVERY module setting, not only the surcharge method.
 Degrading a junk value to a working default is the failure this replaces: it
 prices an order under a configuration nobody chose, and nobody is told.
 
+## An Admin Save Stays Possible; The Buyer Path Fails Closed
+
+**No verdict from the save-time API-key check blocks the General save** (ABN-495).
+A connection failure, a timeout and a 5xx judge nothing about the key, and the form
+re-renders from POST, so a blocked save looks stored while nothing was written and
+leaves the merchant unable to store the replacement key that would fix the outage,
+or even change the vendor name while it lasts. The verdict is reported as a warning
+beside the save confirmation instead.
+
+- **A key Two rejected (401/403) is the one submitted value a save discards** — the
+  stored key is kept and the warning says so.
+- The merchant short name is derived from the verification response, never
+  submitted, so a save that resolved no merchant keeps the stored one.
+- Storing a different key or environment drops the cached merchant record whatever
+  the verdict, so a key saved during an outage cannot pair with the previous
+  merchant's terms, default term or minimum order value once the gate reopens.
+- **A 200 carrying no merchant `id` is not a verified key** — a proxy, a captive
+  portal or a maintenance page answers 200 too, and there is no identity to offer
+  the method under. The buyer gate withholds Two on it, as on every non-OK verdict.
+  A record with an `id` but no short name IS verified; the empty short name
+  withholds Two through its own gate.
+
+## Company Search: This Module's Own Implementation
+
+`views/js/modules/TwoCompanySearch.js` is this module's own panel. The Magento and
+WooCommerce plugins each carry a copy of one framework-free module, and nothing of
+that is vendored here, so a fix to shared panel behaviour on those two platforms is
+not a fix here, and vice versa. Never describe a change as cross-platform without
+having made it in each module that carries the behaviour.
+
+**The unsupported-country gate HIDES the Registered Company chip, never manual
+entry.** Manual entry hands the field over as a plain typeable input that never
+reaches the registry, so hiding manual entry with it would take away the only way a
+buyer in an uncovered country has to name their company at all.
+
+**Focus arriving on the company-name field opens the panel**, with the caret in the
+query field — the same state a click leaves it in, and the same on every platform
+that carries this control. `setupCompanyFieldOpeners()` binds focus, mousedown and
+keydown to one `openDropdown()`.
+
+**The open panel takes the field's tab stop** — `tabindex="-1"` while it is up, and
+on close the field's PRIOR value restored exactly, which is removal when there was
+none (TWO-25503). Without it the focus opener is a keyboard trap: the opener puts
+the caret in the query field, Shift+Tab returns to the field, and the opener pushes
+focus forward again, so the buyer cannot get back past the control (WCAG 2.1.2).
+
+The field is `readonly` in search mode, never `disabled`: a readonly input still
+submits its value, still takes focus and is still a tab stop, and it IS
+PrestaShop's own address field.
+
+## What Focus Landing on the Checkout Does to an Open Signup Popup
+
+Every focus on the checkout is classified once, whether a popup is up or not
+(TWO-25658):
+
+- **The chip that opened the popup on screen leaves it exactly as it is.** Only an
+  activation of that chip moves it, and that chip's own click handler owns it. The
+  exemption is per capture, held as the launching chip itself; a re-render's
+  rebuilt chip inherits it by capture, a sibling capture's chip never does.
+- **Any other control closes an open popup**, and the popover closes itself when
+  focus lands outside it.
+- **A different capture's Sole trader chip gets a popup of its own**, raised
+  through that chip's own click handler so a launch is spelled out in one place.
+
+Only focus this module moves is quiet. Focus moved by the theme, another module or
+the browser — a validation jump, a restored scroll position, a password-manager
+fill — reads as the buyer and takes the popup down. Close only, so the enrolment
+survives and the chip reopens it.
+
+## A Popup Window Is In No Tab Listing
+
+`window.open` returns a window outside a browser extension's tab group, so a tab
+list can never answer "did the popup open" — nor can a hang. The authoritative check
+is the page's own retained handle and its `.closed`, which means wrapping
+`window.open` before the action that should raise one. Judging from a tab list
+yields a confident false "no window opened".
+
+## Keyboard Behaviour Is Not Verifiable In jsdom
+
+jsdom implements no sequential focus navigation: a dispatched `Tab` keydown moves
+focus nowhere, so no `make test-js` suite can observe a focus trap, a wrong tab
+order or a reverse-Tab dead end, however many cases it carries and however green it
+is. Assert the observable proxies — the parts are one contiguous run in document
+order, nothing inside the panel carries a non-negative `tabindex` it should not,
+the handler leaves the `Tab` event undefaulted — and verify the keyboard behaviour
+itself in a real browser. A passing jsdom Tab test is never evidence that a trap is
+absent.
+
+Three more traps in the JS suites:
+
+- **A real chip click fires no `focusin`.** The chip's `mousedown` handler calls
+  `preventDefault()`, which suppresses the native focus, so a rule written only
+  against `focusin` never sees a pointer buyer at all.
+- **jsdom's `getElementById` answers with the first-REGISTERED node, not the
+  tree-first one**, so a fixture carrying a duplicate id silently resolves to the
+  wrong element.
+- **A mutation proves NEW coverage only when re-run against the base ref.** One the
+  existing suite already catches proves the suite is sensitive, not that the case
+  added covers anything.
+
+## The Custom Request-Header Table
+
+Every rule the save enforces — a name in the RFC 7230 token set, reserved names
+matched case-insensitively, printable-ASCII values, no empty value — is re-applied
+where a header is READ, since a stored value can arrive from a hand-edited row or
+an import that no form validated. A refusal names the rule, never who sets the
+header: the reason must be true of every reserved name, not of the one example that
+prompted the question.
+**A value pattern is anchored `\z`, never `$`** — `$` also matches immediately
+before a trailing newline, which is precisely the byte a printable-ASCII rule exists
+to refuse, and a header value ending in one is a response-splitting sink.
+**The header table gets no data patch or migration, deliberately.** The
+single-value setting it replaces never reached a production release on any
+platform, so no merchant ever had one configured; do not add one on the assumption
+that stored values exist.
+
+## A Guard Is Invoked Through `bash`
+
+A script committed mode `100644` and run as `./script.sh` exits 126. On a CI
+dashboard that is indistinguishable from a check that ran and failed, so the guard's
+own absence reads as its verdict. Invoke anything whose failure mode is "did not
+execute" as `bash script.sh`, and have it print what it checked.
+
+## This Is A Public Repository
+
+- No partner or merchant name reaches file contents, a commit body, a branch name or
+  a PR title or body. Gate before pushing: a force-push afterwards does not remove a
+  commit from GitHub's history.
+- In comments, commit messages and PR bodies alike, cite a Linear ticket id and
+  nothing else: a section, question or ruling number belonging to an internal review
+  document means nothing to a reader outside the company, and neither does a person
+  named as the authority for a rule.
+- Describe another plugin's behaviour in your own words; never reproduce its source
+  text, schema fragments or test identifiers here.
+
 ## Change Quality Rules
 
 - Keep diffs targeted; avoid unrelated refactors in payment-critical paths.
