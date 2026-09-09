@@ -538,3 +538,13 @@ $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'Den cachade profilen hör till en butik. Byt till en enskild butik för att uppdatera den.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Varje butik har sin egen uppdaterings-URL. Byt till en enskild butik för att se den.';
 $_MODULE['<{twopayment}prestashop>twopayment_133bfd505abc3c26cf41129256a3c1ec'] = 'Den cachade profilen hämtades för en annan API-nyckel och används därför inte. Den behålls tills en uppdatering med den här nyckeln lyckas.';
+$_MODULE['<{twopayment}prestashop>twopayment_9054c807a76714962fac8773c6598827'] = 'Betalningsmetod i kassan';
+$_MODULE['<{twopayment}prestashop>twopayment_e1d8595c59fb2e2af836eeba55fe6131'] = 'Visas inte i kassan';
+$_MODULE['<{twopayment}prestashop>twopayment_c723f9b76d5a4c16d27723d2f88612bb'] = 'modulen är inte aktiverad för den här butiken. Aktivera den under Moduler.';
+$_MODULE['<{twopayment}prestashop>twopayment_b0cae1eeaf2cfa9431e5ff2f74865d14'] = 'ingen API-nyckel är sparad. Kontrollera API-nyckel.';
+$_MODULE['<{twopayment}prestashop>twopayment_b58967dda2076c46dc9db298c57acc86'] = 'API-nyckeln avvisades. Kontrollera API-nyckel och Miljö.';
+$_MODULE['<{twopayment}prestashop>twopayment_a74f8585cb2ed969c9c43bc108723ca6'] = 'Kan inte kontrolleras - API-nyckeln kunde inte verifieras just nu.';
+$_MODULE['<{twopayment}prestashop>twopayment_aba389b990ffe03bfed6463dcc50bcb7'] = 'den sparade tilläggsmetoden känns inte igen. Kontrollera Tilläggsmetod.';
+$_MODULE['<{twopayment}prestashop>twopayment_17199fc2250430ecb5d01bc74ecb855e'] = 'ditt konto tillåter inga köparländer. Kontakta oss för att aktivera dem.';
+$_MODULE['<{twopayment}prestashop>twopayment_234bdc3195c47d2e7dee6df6e27c1d3a'] = 'Visas i kassan';
+$_MODULE['<{twopayment}prestashop>twopayment_27d2f57f8a7ca07d365f2a78227b709e'] = 'döljs för varukorgar under %1$s %2$s (%3$s)';

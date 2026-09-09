@@ -5795,6 +5795,7 @@ require __DIR__ . '/DefaultShippingTaxCodeSpec.php';
 require __DIR__ . '/EomTermTypeVisibilitySpec.php';
 require __DIR__ . '/IntentDeclinedNoticeSpec.php';
 require __DIR__ . '/DeprecatedCustomPaymentTermSpec.php';
+require __DIR__ . '/CheckoutWithholdReasonSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5856,6 +5857,7 @@ $tests = [
     'EomTermTypeVisibilitySpec::runAll' => [EomTermTypeVisibilitySpec::class, 'runAll'],
     'IntentDeclinedNoticeSpec::runAll' => [IntentDeclinedNoticeSpec::class, 'runAll'],
     'DeprecatedCustomPaymentTermSpec::runAll' => [DeprecatedCustomPaymentTermSpec::class, 'runAll'],
+    'CheckoutWithholdReasonSpec::runAll' => [CheckoutWithholdReasonSpec::class, 'runAll'],
 ];
 
 $failed = 0;

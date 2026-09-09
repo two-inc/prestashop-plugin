@@ -538,3 +538,13 @@ $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'Den mellomlagrede profilen hører til én butikk. Bytt til én enkelt butikk for å oppdatere den.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Hver butikk har sin egen oppdaterings-URL. Bytt til én enkelt butikk for å se den.';
 $_MODULE['<{twopayment}prestashop>twopayment_133bfd505abc3c26cf41129256a3c1ec'] = 'Den mellomlagrede profilen ble hentet for en annen API-nøkkel og er derfor ikke i bruk. Den beholdes til en oppdatering med denne nøkkelen lykkes.';
+$_MODULE['<{twopayment}prestashop>twopayment_9054c807a76714962fac8773c6598827'] = 'Betalingsmåte i kassen';
+$_MODULE['<{twopayment}prestashop>twopayment_e1d8595c59fb2e2af836eeba55fe6131'] = 'Vises ikke i kassen';
+$_MODULE['<{twopayment}prestashop>twopayment_c723f9b76d5a4c16d27723d2f88612bb'] = 'modulen er ikke aktivert for denne butikken. Aktiver den under Moduler.';
+$_MODULE['<{twopayment}prestashop>twopayment_b0cae1eeaf2cfa9431e5ff2f74865d14'] = 'ingen API-nøkkel er lagret. Kontroller API-nøkkel.';
+$_MODULE['<{twopayment}prestashop>twopayment_b58967dda2076c46dc9db298c57acc86'] = 'API-nøkkelen ble avvist. Kontroller API-nøkkel og Miljø.';
+$_MODULE['<{twopayment}prestashop>twopayment_a74f8585cb2ed969c9c43bc108723ca6'] = 'Kan ikke kontrolleres - API-nøkkelen kunne ikke verifiseres akkurat nå.';
+$_MODULE['<{twopayment}prestashop>twopayment_aba389b990ffe03bfed6463dcc50bcb7'] = 'den lagrede tilleggsmetoden gjenkjennes ikke. Kontroller Tilleggsmetode.';
+$_MODULE['<{twopayment}prestashop>twopayment_17199fc2250430ecb5d01bc74ecb855e'] = 'kontoen din tillater ingen kjøperland. Kontakt oss for å få dem aktivert.';
+$_MODULE['<{twopayment}prestashop>twopayment_234bdc3195c47d2e7dee6df6e27c1d3a'] = 'Vises i kassen';
+$_MODULE['<{twopayment}prestashop>twopayment_27d2f57f8a7ca07d365f2a78227b709e'] = 'skjult for handlekorger under %1$s %2$s (%3$s)';

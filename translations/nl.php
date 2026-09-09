@@ -538,3 +538,13 @@ $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'Het gecachete profiel hoort bij één winkel. Schakel naar een enkele winkel om het te vernieuwen.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Elke winkel heeft zijn eigen vernieuwings-URL. Schakel naar een enkele winkel om die te bekijken.';
 $_MODULE['<{twopayment}prestashop>twopayment_133bfd505abc3c26cf41129256a3c1ec'] = 'Het gecachete profiel is opgehaald voor een andere API-sleutel en wordt daarom niet gebruikt. Het blijft bewaard totdat een vernieuwing met deze sleutel lukt.';
+$_MODULE['<{twopayment}prestashop>twopayment_9054c807a76714962fac8773c6598827'] = 'Betaalmethode in de checkout';
+$_MODULE['<{twopayment}prestashop>twopayment_e1d8595c59fb2e2af836eeba55fe6131'] = 'Niet zichtbaar in de checkout';
+$_MODULE['<{twopayment}prestashop>twopayment_c723f9b76d5a4c16d27723d2f88612bb'] = 'de module is niet ingeschakeld voor deze winkel. Schakel hem in bij Modules.';
+$_MODULE['<{twopayment}prestashop>twopayment_b0cae1eeaf2cfa9431e5ff2f74865d14'] = 'er is geen API-sleutel opgeslagen. Controleer API-sleutel.';
+$_MODULE['<{twopayment}prestashop>twopayment_b58967dda2076c46dc9db298c57acc86'] = 'de API-sleutel is geweigerd. Controleer API-sleutel en Omgeving.';
+$_MODULE['<{twopayment}prestashop>twopayment_a74f8585cb2ed969c9c43bc108723ca6'] = 'Kan nu niet worden gecontroleerd - de API-sleutel kon niet worden geverifieerd.';
+$_MODULE['<{twopayment}prestashop>twopayment_aba389b990ffe03bfed6463dcc50bcb7'] = 'de opgeslagen toeslagmethode wordt niet herkend. Controleer Toeslagmethode.';
+$_MODULE['<{twopayment}prestashop>twopayment_17199fc2250430ecb5d01bc74ecb855e'] = 'uw account staat geen enkel land van de koper toe. Neem contact met ons op om ze te laten activeren.';
+$_MODULE['<{twopayment}prestashop>twopayment_234bdc3195c47d2e7dee6df6e27c1d3a'] = 'Zichtbaar in de checkout';
+$_MODULE['<{twopayment}prestashop>twopayment_27d2f57f8a7ca07d365f2a78227b709e'] = 'verborgen voor winkelwagens onder %1$s %2$s (%3$s)';

@@ -2630,6 +2630,12 @@ namespace {
                 : array('status' => (string) $status, 'code' => $code);
         }
 
+        /** The admin "Current configuration health" panel HTML (ABN-518). */
+        public function exposeTwoPluginHealthChecklist(): string
+        {
+            return $this->renderTwoPluginHealthChecklist();
+        }
+
         /** The checkout tile's call-to-action text, without the offerability gates hookPaymentOptions applies first. */
         public function exposeTwoPaymentOptionTitle(): string
         {

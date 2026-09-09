@@ -3493,6 +3493,70 @@ class Twopayment extends PaymentModule
      *
      * @return string HTML
      */
+    /**
+     * Why the payment option is absent from checkout (ABN-518). Only reasons
+     * decidable without a cart are judged; a cart-dependent one is named as a
+     * constraint instead.
+     *
+     * @return array{label:string, value:string, ok:bool}
+     */
+    protected function twoCheckoutVisibilityRow()
+    {
+        $label = $this->l('Payment method at checkout');
+        $not_shown = $this->l('Not shown at checkout');
+        $reason = null;
+
+        if (!$this->active) {
+            $reason = $this->l('the module is not enabled for this shop. Enable it in Modules.');
+        } elseif (Tools::isEmpty(Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
+            $reason = $this->l('no API key is saved. Check API key.');
+        }
+        if ($reason === null) {
+            $status = $this->getTwoApiKeyVerificationStatus();
+            if ($status['status'] === self::API_KEY_STATUS_INVALID) {
+                $reason = $this->l('the API key was rejected. Check API key and Environment.');
+            } elseif ($status['status'] !== self::API_KEY_STATUS_OK) {
+                // ABN-533 will stop transient verdicts withholding at all, so
+                // this row must not report one as the method being hidden.
+                return array(
+                    'label' => $label,
+                    'value' => $this->l('Cannot be checked - the API key could not be verified just now.'),
+                    'ok' => false,
+                );
+            }
+        }
+        if ($reason === null && $this->getTwoSurchargeSettingsOrNull() === null) {
+            $reason = $this->l('the saved surcharge method is not recognised. Check Surcharge method.');
+        }
+        if ($reason === null && $this->getMerchantBuyerCountries() === array()) {
+            $reason = $this->l('your account allows no buyer countries. Contact us to have them enabled.');
+        }
+        if ($reason !== null) {
+            return array(
+                'label' => $label,
+                'value' => $not_shown . ' - ' . $reason,
+                'ok' => false,
+            );
+        }
+
+        $shown = $this->l('Shown at checkout');
+        $minimum = $this->getPlatformMinimumOrder();
+        if ($minimum !== null) {
+            return array(
+                'label' => $label,
+                'value' => $shown . ' - ' . sprintf(
+                    $this->l('hidden for baskets below %1$s %2$s (%3$s)'),
+                    number_format($minimum['amount'], 2, '.', ''),
+                    htmlspecialchars($minimum['currency'], ENT_QUOTES, 'UTF-8'),
+                    htmlspecialchars($minimum['basis'], ENT_QUOTES, 'UTF-8')
+                ),
+                'ok' => true,
+            );
+        }
+
+        return array('label' => $label, 'value' => $shown, 'ok' => true);
+    }
+
     protected function renderTwoPluginHealthChecklist()
     {
         // Lowered as every runtime read of this key lowers it, so the row, the host
@@ -3526,6 +3590,7 @@ class Twopayment extends PaymentModule
                 'value' => $ssl_disabled ? $this->l('Disabled') : $this->l('Enabled'),
                 'ok' => !$ssl_disabled,
             ),
+            $this->twoCheckoutVisibilityRow(),
         );
 
         $html = '<div class="panel" style="margin-top:15px;">';
@@ -5129,13 +5194,34 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /**
+     * One "payment option hidden" line per reason per request (ABN-518).
+     *
+     * @param string $reason
+     * @return void
+     */
+    protected function logTwoPaymentOptionHidden($reason)
+    {
+        if (isset($this->twoWithholdReasonsLogged[$reason])) {
+            return;
+        }
+        $this->twoWithholdReasonsLogged[$reason] = true;
+        PrestaShopLogger::addLog('TwoPayment: Payment option hidden - ' . $reason, 2);
+    }
+
     public function hookPaymentOptions($params)
     {
         if (!$this->active) {
+            $this->logTwoPaymentOptionHidden(
+                'the module is not enabled for this shop'
+            );
             return;
         }
 
         if (Tools::isEmpty($this->merchant_short_name) || Tools::isEmpty($this->api_key)) {
+            $this->logTwoPaymentOptionHidden(
+                'no API key or merchant short name is saved in the module settings'
+            );
             return;
         }
 
@@ -5268,6 +5354,12 @@ class Twopayment extends PaymentModule
         // alternative outcome is an order created with NO surcharge at all,
         // a silent undercharge. See isTwoSurchargeQuotableForCart.
         if (!$this->isTwoSurchargeQuotableForCart($cart)) {
+            // The FX arm logs its own detail; an unrecognised stored method
+            // reaches here with only its own one-off line, which an earlier
+            // request in this process may already have consumed.
+            $this->logTwoPaymentOptionHidden(
+                'the buyer surcharge cannot be priced for cart ' . (int) $cart->id
+            );
             return [];
         }
 
@@ -12524,6 +12616,16 @@ class Twopayment extends PaymentModule
      * @var bool
      */
     protected $twoApiKeyWithholdLogged = false;
+
+    /**
+     * Whether this instance has already logged that it is withholding Two
+     * because the module is inactive, unconfigured, or carries an
+     * unrecognised surcharge method (ABN-518). Same once-per-request reason
+     * as the flag above.
+     *
+     * @var array<string, bool>
+     */
+    protected $twoWithholdReasonsLogged = array();
 
     /**
      * Whether this instance has already logged that it is withholding Two over
