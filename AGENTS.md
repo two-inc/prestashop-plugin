@@ -123,15 +123,30 @@ that is vendored here, so a fix to shared panel behaviour on those two platforms
 not a fix here, and vice versa. Never describe a change as cross-platform without
 having made it in each module that carries the behaviour.
 
-**The unsupported-country gate HIDES the Registered Company chip, never manual
-entry.** Manual entry hands the field over as a plain typeable input that never
-reaches the registry, so hiding manual entry with it would take away the only way a
-buyer in an uncovered country has to name their company at all.
+**The unsupported-country gate withdraws the SEARCH and nothing else.** It hides
+the Registered Company chip and the query row; the panel still opens and manual
+entry and the sole-trader route stay offered, because they are the only way a
+buyer in an uncovered country has to name their company at all (ABN-525). The
+country it reads is the wider company-search coverage, one global list — not the
+Sole Trader chip's own per-country registry lookup, which is a different and
+smaller list.
+
+**The chip row is rendered whenever it offers a mode the buyer is not already
+in**, not merely whenever it holds two chips. A lone chip for the current mode is
+no choice; a lone chip for a different mode is the buyer's whole way out, which is
+exactly the state an uncovered country with no sole-trader route leaves.
+
+**`syncQueryFieldSuppression()` is the single authority on SHOWING the query
+row.** The country gate only ever hides it and delegates back for the restore, so
+the sole-trader condition is stated in one place and that method stays a pure
+function of the selected chip.
 
 **Focus arriving on the company-name field opens the panel**, with the caret in the
-query field — the same state a click leaves it in, and the same on every platform
-that carries this control. `setupCompanyFieldOpeners()` binds focus, mousedown and
-keydown to one `openDropdown()`.
+query field — or on the first chip on screen where the query row is not rendered,
+so no state opens the panel with focus outside it, where neither the
+Escape-to-close nor the close-on-focus-leave handler can see a keystroke.
+`setupCompanyFieldOpeners()` binds focus, mousedown and keydown to one
+`openDropdown()`.
 
 **The open panel takes the field's tab stop** — `tabindex="-1"` while it is up, and
 on close the field's PRIOR value restored exactly, which is removal when there was

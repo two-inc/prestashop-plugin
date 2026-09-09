@@ -1419,18 +1419,18 @@ class TwoCompanySearch {
     /**
      * Where focus goes when the panel opens.
      *
-     * The query field, normally. But in sole-trader mode that field is not
-     * rendered at all (syncQueryFieldSuppression()), and `.focus()` on a
+     * The query field, normally. But sole-trader mode does not render that
+     * field at all (syncQueryFieldSuppression()) and nor does a country company
+     * search does not cover (syncSearchRowCountryGate()), and `.focus()` on a
      * `display:none` element does nothing - which would leave focus on the
      * company-name field, OUTSIDE the panel, where neither the Escape-to-close
-     * nor the close-on-focus-leave handler can see a keystroke. So focus the
-     * selected chip instead. The Registered company chip is the fallback for the
-     * one state where the Sole trader chip is itself hidden (adopted, then the
-     * registry stops offering that country).
+     * nor the close-on-focus-leave handler can see a keystroke. So focus a chip
+     * instead, first one on screen, walked in the order that puts the buyer's
+     * likeliest route first for whichever state suppressed the query row.
      */
     focusPanelEntry() {
-        if (this._chipMode === 'sole_trader') {
-            const chips = [this._soleTraderButton, this._registeredButton];
+        if (this._chipMode === 'sole_trader' || !this.isCurrentCountrySupportedForSearch()) {
+            const chips = [this._soleTraderButton, this._registeredButton, this._notListedButton];
             for (let i = 0; i < chips.length; i++) {
                 const chip = chips[i];
                 if (chip && chip.length && chip.css('display') !== 'none') {
@@ -1650,8 +1650,11 @@ class TwoCompanySearch {
     /**
      * Gate all three mode chips, then the row that holds them (TWO-40 follow-up).
      *
-     * A row offering a single chip offers no choice - the one survivor is
-     * always the mode the buyer is already in - so it is not rendered at all.
+     * The row is rendered whenever it offers a mode the buyer is not already
+     * in. A lone chip for the current mode offers no choice; a lone chip for a
+     * DIFFERENT mode is the buyer's whole way out - in a country company search
+     * does not cover, the surviving "Enter Manually" chip is the only route to
+     * naming a company at all, and hiding it strands the buyer (ABN-525).
      *
      * The row is HIDDEN, never removed: `.two-company-dropdown` is contracted to
      * hold search row, results host and chip row as its three children in that
@@ -1661,6 +1664,7 @@ class TwoCompanySearch {
         this.syncNotListedVisibility();
         this.syncSoleTraderEntryVisibility();
         this.syncRegisteredEntryVisibility();
+        this.syncSearchRowCountryGate();
         if (!this._dropdown || !this._dropdown.length) {
             return;
         }
@@ -1668,13 +1672,42 @@ class TwoCompanySearch {
         if (!row.length) {
             return;
         }
-        const offered = [this._registeredButton, this._soleTraderButton, this._notListedButton]
-            .filter((chip) => chip && chip.length && chip.css('display') !== 'none');
-        if (offered.length > 1) {
+        const actionable = [
+            [this._registeredButton, 'registered'],
+            [this._soleTraderButton, 'sole_trader'],
+            [this._notListedButton, 'manual']
+        ].filter(([chip, mode]) => chip && chip.length && chip.css('display') !== 'none'
+            && mode !== this._chipMode);
+        if (actionable.length) {
             row.removeAttr('hidden').show();
         } else {
             row.hide().attr('hidden', 'hidden');
         }
+    }
+
+    /**
+     * Withdraw the free-text query row in a country company search does not
+     * cover, so the only affordance an uncovered country takes away is the
+     * search itself (ABN-525).
+     *
+     * Only ever HIDES here. syncQueryFieldSuppression() is the single authority
+     * on showing that row, so a supported country delegates back to it rather
+     * than restating its condition - see the note on that method.
+     */
+    syncSearchRowCountryGate() {
+        if (!this._queryField || !this._queryField.length) {
+            return;
+        }
+        if (this.isCurrentCountrySupportedForSearch()) {
+            this.syncQueryFieldSuppression();
+            return;
+        }
+        const searchRow = this._queryField.closest('.two-company-dropdown__search');
+        if (!searchRow.length) {
+            return;
+        }
+        this._queryField.val('');
+        searchRow.hide().attr('hidden', 'hidden');
     }
 
     /**

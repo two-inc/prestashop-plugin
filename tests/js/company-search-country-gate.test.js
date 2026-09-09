@@ -162,3 +162,87 @@ describe('country gate', () => {
         delete global.window.TwoSoleTrader_Instance;
     });
 });
+
+/**
+ * ABN-525: an uncovered country withdraws the SEARCH and nothing else. The
+ * chip row is what carries manual entry, so a country that leaves one chip
+ * standing must still render it.
+ */
+describe('an uncovered country still leaves a route to naming a company', () => {
+    beforeEach(() => {
+        // No sole-trader route either, so "Enter Manually" is the lone chip
+        // and the one the buyer is NOT already in.
+        global.window.TwoSoleTrader_Instance = { isAvailableForCurrentCountry: () => false };
+    });
+
+    afterEach(() => {
+        delete global.window.TwoSoleTrader_Instance;
+    });
+
+    test.each([
+        ['NO', false, true, 'uncovered: search gone, manual entry standing alone'],
+        ['GB', true, true, 'covered: both routes offered']
+    ])('country=%s -> registered shown=%s, manual shown=%s (%s)',
+        async (country, registeredShown, manualShown) => {
+            buildAddressForm({ country: country });
+            makeInstance();
+            await resolveFetch({ success: true, countries: ['GB', 'US'] });
+
+            openPanel();
+
+            expect(shown(panelParts().registered)).toBe(registeredShown);
+            expect(shown(panelParts().notListed)).toBe(manualShown);
+        });
+
+    test.each([
+        ['NO', false, 'uncovered: no query row to type a doomed search into'],
+        ['GB', true, 'covered: the query row is there']
+    ])('country=%s -> search row shown=%s (%s)', async (country, rowShown) => {
+        buildAddressForm({ country: country });
+        makeInstance();
+        await resolveFetch({ success: true, countries: ['GB', 'US'] });
+
+        openPanel();
+
+        expect(shown(panelParts().searchRow)).toBe(rowShown);
+    });
+
+    test('opening with no query row puts focus on a chip, not outside the panel', async () => {
+        buildAddressForm({ country: 'NO' });
+        makeInstance();
+        await resolveFetch({ success: true, countries: ['GB'] });
+
+        openPanel();
+
+        expect(global.document.activeElement).toBe(panelParts().notListed.get(0));
+    });
+
+    test('the row comes back when the country becomes covered under an OPEN panel', async () => {
+        // Given: an open panel in an uncovered country, so the row is gone.
+        buildAddressForm({ country: 'NO' });
+        const instance = makeInstance();
+        await resolveFetch({ success: true, countries: ['GB'] });
+        openPanel();
+        expect(shown(panelParts().searchRow)).toBe(false);
+
+        // When: the country becomes one company search covers, with no reopen.
+        $("select[name='id_country'] option").get(0).setAttribute('data-iso-code', 'GB');
+        instance.syncModeChipVisibility();
+
+        expect(shown(panelParts().searchRow)).toBe(true);
+    });
+
+    test('a term typed before the country changed does not survive the gate', async () => {
+        buildAddressForm({ country: 'GB' });
+        makeInstance();
+        await resolveFetch({ success: true, countries: ['GB'] });
+        openPanel();
+        panelParts().query.val('Alp');
+
+        $("select[name='id_country'] option").get(0).setAttribute('data-iso-code', 'NO');
+        $("select[name='id_country']").trigger('change');
+        openPanel();
+
+        expect(panelParts().query.val()).toBe('');
+    });
+});
