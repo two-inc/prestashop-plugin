@@ -66,6 +66,9 @@ class TwoSoleTrader {
     /** Allocator for `_popupId`, the per-launch identity a capture resumes a flight by (TWO-25658). */
     static _popupSeq = 0;
 
+    /** The Sole trader chip, on whichever capture popover renders it. */
+    static _CHIP_SELECTOR = '.two-company-sole-trader-entry';
+
     /** @param {?Element} el focused without the return watch reading it as the buyer (TWO-25658) */
     static focusQuietly(el) {
         if (!el || typeof el.focus !== 'function') {
@@ -122,6 +125,13 @@ class TwoSoleTrader {
         this._popupPollInterval = null;
         // The control whose click launched the flow; openPopup() blurs it (TWO-25658).
         this._launchControl = null;
+        // The chip that owns the open popup: the one control focus may arrive on
+        // without taking it down. Ownership is per CAPTURE, not per control (TWO-25658).
+        this._launchChip = null;
+        // Consumed by openPopup() only on a window that opened, so a blocked retry inherits it.
+        this._pendingLaunchChip = null;
+        // Guards settleFocusOn() against the relaunch it starts re-entering it.
+        this._settlingFocus = false;
         this._returnHandler = null;
         // Set by startReplacement() ("Select a different sole trader"),
         // consumed by afterTokensReady(): skip getCurrentBuyer()'s
@@ -371,6 +381,7 @@ class TwoSoleTrader {
         this.stopTokenRefreshInterval();
         this._popup = null;
         this._launchControl = null;
+        this._launchChip = null;
         if (this._countryChangeHandler) {
             document.removeEventListener('change', this._countryChangeHandler);
             this._countryChangeHandler = null;
@@ -1043,10 +1054,15 @@ class TwoSoleTrader {
      * popup, from the tokens and autofill answer the mount already fetched -
      * see prefetchBuyer(). Called directly by TwoCompanySearch.js's "I'm a
      * sole trader" row.
+     *
+     * @param {?string} launcher opaque id of the capture asking
+     * @param {?Element} [chip] the asking capture's own Sole trader chip, which
+     *   openPopup() records as the popup's owner (TWO-25658).
      */
-    startEnrollment(launcher) {
+    startEnrollment(launcher, chip) {
         this.enrolling = true;
         this._launcher = launcher || null;
+        this._pendingLaunchChip = this.chipOf(chip || null);
         this._launchControl = document.activeElement;
         // Tokens are not country-specific - only their absence, not a
         // country change since they were minted, calls for a fresh mint.
@@ -1075,10 +1091,16 @@ class TwoSoleTrader {
      *
      * `autoselect=false` on the popup URL is not interpreted server-side
      * yet (handled elsewhere); it is appended unconditionally regardless.
+     *
+     * @param {?string} launcher opaque id of the capture asking
+     * @param {?Element} [chip] that capture's own Sole trader chip, which owns
+     *   the popup this opens: the exemption is per CAPTURE, and this control
+     *   belongs to the same one (TWO-25658).
      */
-    startReplacement(launcher) {
+    startReplacement(launcher, chip) {
         this.enrolling = true;
         this._launcher = launcher || null;
+        this._pendingLaunchChip = this.chipOf(chip || null);
         this._launchControl = document.activeElement;
         this._skipAutofillCheck = true;
         // Tokens are not country-specific - see startEnrollment().
@@ -1155,6 +1177,7 @@ class TwoSoleTrader {
             // notifyEnrollmentSettled()'s popup-open guard.
             this.stopPopupWatch();
             this._popup = null;
+            this._launchChip = null;
         }
         if (!this.enrolling) {
             // Where the teardown above ran it released the popup guard, so
@@ -2445,6 +2468,9 @@ class TwoSoleTrader {
             TwoSoleTrader._popupSeq += 1;
             this._popupId = TwoSoleTrader._popupSeq;
             this._signupPopupOpened = true;
+            // A launch from anywhere but a capture leaves the popup unowned.
+            this._launchChip = this._pendingLaunchChip;
+            this._pendingLaunchChip = null;
             // Left holding focus it would be re-focused on window return, which reads as the buyer back (TWO-25658).
             if (this._launchControl && typeof this._launchControl.blur === 'function') {
                 this._launchControl.blur();
@@ -2481,6 +2507,7 @@ class TwoSoleTrader {
         this._popupPollInterval = window.setInterval(function () {
             if (!self._popup || self._popup.closed) {
                 self._popup = null;
+                self._launchChip = null;
                 self.stopPopupWatch();
                 self.notifyEnrollmentSettled();
                 // openPopup() dropped the held answer this popup falsified;
@@ -2543,9 +2570,11 @@ class TwoSoleTrader {
     }
 
     /**
-     * Doug's rules (TWO-25658), on every focus: the Sole trader chip leaves the popup
-     * exactly as it is; any other control closes it. Only an activation of that chip
-     * moves the popup, and its own click handler owns that.
+     * The rules (TWO-25658), on every focus: the chip that opened the popup on
+     * screen leaves it exactly as it is; any other control closes it, and the
+     * Sole trader chip of a DIFFERENT capture popover gets a popup of its own.
+     * Only an activation of the owning chip moves its popup, and that chip's own
+     * click handler owns it.
      *
      * LIMITATION: only focus THIS plugin moves is quiet (focusQuietly()). A focus moved by
      * the theme, another module or the browser - a validation jump, a restored scroll
@@ -2565,13 +2594,32 @@ class TwoSoleTrader {
         document.addEventListener('focusin', this._returnHandler, true);
     }
 
+    /** @param {?Element} node @returns {?Element} the Sole trader chip at or above `node` */
+    chipOf(node) {
+        if (!node || typeof node.closest !== 'function') {
+            return null;
+        }
+        return node.closest(TwoSoleTrader._CHIP_SELECTOR);
+    }
+
     /** @param {?Element} target the control focus landed on */
     settleFocusOn(target) {
         if (!target || target.nodeType !== 1 || target === document.body) {
             return;
         }
+        if (this._settlingFocus) {
+            return;
+        }
+        const chip = this.chipOf(target);
+        // A re-render detaches the recorded chip, so the launching capture's
+        // REBUILT chip inherits the popup - a sibling capture's does not.
+        if (chip && this._launchChip && !this._launchChip.isConnected
+            && this._launcher && chip.getAttribute('data-two-capture') === this._launcher) {
+            this._launchChip = chip;
+        }
+        const ownsPopup = !!chip && chip === this._launchChip;
         let popupClosed = false;
-        if (!target.closest('.two-company-sole-trader-entry') && this.isPopupOpen()) {
+        if (!ownsPopup && this.isPopupOpen()) {
             this.closeSignupPopup();
             popupClosed = true;
         }
@@ -2579,6 +2627,17 @@ class TwoSoleTrader {
         document.dispatchEvent(new CustomEvent('two:sole-trader-focus-settled', {
             detail: { target: target, popupClosed: popupClosed }
         }));
+        // A different capture's chip gets a popup of its own, through the one
+        // place a launch is spelled out: that chip's own click handler.
+        if (chip && this._launchChip && !ownsPopup && popupClosed
+            && typeof chip.click === 'function') {
+            this._settlingFocus = true;
+            try {
+                chip.click();
+            } finally {
+                this._settlingFocus = false;
+            }
+        }
     }
 
     stopFocusWatch() {
