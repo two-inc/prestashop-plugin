@@ -890,6 +890,11 @@ namespace {
         }
     }
 
+    /** Stands in for the cron controller's die() so a spec can assert on the response. */
+    class StubCronResponded extends Exception
+    {
+    }
+
     class PrestaShopLogger
     {
         /** @var array<int,array{message:string,severity:int}> */

@@ -29,13 +29,16 @@ class Twopayment extends PaymentModule
     const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options (all > 0: getMerchantDueInDays() treats a cached 0 as "unset")
     // EOM (End-of-Month) terms are only offerable for these durations.
     const EOM_PAYMENT_TERMS_OPTIONS = [30, 45, 60];
-    // TTL (seconds) for the cached GET /v1/merchant record - shared by the
-    // available_terms list (TWO-24813) and the due_in_days default (TWO-24859),
-    // which are both sourced from a SINGLE fetch of the same endpoint.
-    const MERCHANT_AVAILABLE_TERMS_TTL = 900; // 15 minutes
-    // On a FAILED merchant-record fetch, retry after this short backoff instead
-    // of waiting the full TTL, so a transient blip does not lock in a stale
-    // term list / wrong default for 15 minutes (TWO-24859 review).
+    // The cached GET /v1/merchant record has NO expiry and is never evicted (ABN-519).
+    // Age at which a read stands in for the scheduled refresh.
+    const MERCHANT_RECORD_STALE_AFTER = 93600; // 26 hours
+    // Floor between stand-ins.
+    const MERCHANT_RECORD_STALE_REFRESH_INTERVAL = 3600;
+    // Wire cap for a stand-in. A read with a record to serve loses nothing to a
+    // timeout; one with nothing to serve fetches on the ordinary render cap,
+    // since it has to be able to succeed.
+    const MERCHANT_RECORD_STALE_TIMEOUT = 2;
+    // Retry floor while no fetch has ever succeeded (TWO-24859).
     const MERCHANT_RECORD_RETRY_BACKOFF = 300; // 5 minutes
     // Dedicated Configuration keys for the cached merchant record (kept OUT
     // of the general-settings save path so a checkout-render refresh can never
@@ -43,6 +46,24 @@ class Twopayment extends PaymentModule
     // The value keys share one timestamp (fetched together, expire together).
     const CONFIG_MERCHANT_AVAILABLE_TERMS = 'PS_TWO_MERCHANT_AVAILABLE_TERMS';
     const CONFIG_MERCHANT_AVAILABLE_TERMS_TS = 'PS_TWO_MERCHANT_AVAILABLE_TERMS_TS';
+    // When a read FIRST stood in for the scheduled refresh. Cleared only by a
+    // scheduled run, so a value still set is the sign the schedule is not
+    // running - which the record's own stamp cannot say, since a stand-in moves it.
+    const CONFIG_MERCHANT_RECORD_STOOD_IN_TS = 'PS_TWO_MERCHANT_RECORD_STOOD_IN_TS';
+    // The once-per-hour floor between stand-ins, rewritten by each one.
+    const CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS = 'PS_TWO_MERCHANT_RECORD_STALE_TS';
+    // Guards the refresh front controller, which the shop's own crontab calls.
+    const CONFIG_CRON_TOKEN = 'PS_TWO_CRON_TOKEN';
+    // Throttles the rejected-request log line on that public URL.
+    const CONFIG_CRON_REJECT_LOG_TS = 'PS_TWO_CRON_REJECT_LOG_TS';
+    const CRON_REJECT_LOG_INTERVAL = 3600;
+    // Floor between ACCEPTED refreshes, so the token cannot drive one outbound GET per request.
+    const CONFIG_CRON_LAST_RUN_TS = 'PS_TWO_CRON_LAST_RUN_TS';
+    const CRON_MIN_REFRESH_INTERVAL = 900;
+    const CRON_STATUS_REFRESHED = 'refreshed';
+    const CRON_STATUS_FAILED = 'failed';
+    const CRON_STATUS_UNCONFIGURED = 'unconfigured';
+    const CRON_STATUS_THROTTLED = 'throttled';
     // Cached GET /v1/merchant `due_in_days` (the merchant's default invoice
     // term). Populated by the SAME fetch as CONFIG_MERCHANT_AVAILABLE_TERMS and
     // gated by the shared CONFIG_MERCHANT_AVAILABLE_TERMS_TS (TWO-24859).
@@ -987,6 +1008,14 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_CHECKOUT_SORT_ORDER');
         Configuration::deleteByName('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK');
         Configuration::deleteByName('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION');
+        Configuration::deleteByName(self::CONFIG_MERCHANT_AVAILABLE_TERMS);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_DUE_IN_DAYS);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS);
+        Configuration::deleteByName(self::CONFIG_CRON_TOKEN);
+        Configuration::deleteByName(self::CONFIG_CRON_REJECT_LOG_TS);
+        Configuration::deleteByName(self::CONFIG_CRON_LAST_RUN_TS);
         return true;
     }
 
@@ -1178,6 +1207,11 @@ class Twopayment extends PaymentModule
                     . '&configure=' . $this->name
                     . '&token=' . Tools::getAdminTokenLite('AdminModules')
                     . '&ajax=1&action=VerifyApiKeyLive',
+                // Dispatched to ajaxProcessRefreshMerchantRecord() by AdminController::postProcess().
+                'two_refresh_merchant_url' => $this->context->link->getAdminLink('AdminModules', false)
+                    . '&configure=' . $this->name
+                    . '&token=' . Tools::getAdminTokenLite('AdminModules')
+                    . '&ajax=1&action=RefreshMerchantRecord',
             )
         );
 
@@ -1285,7 +1319,7 @@ class Twopayment extends PaymentModule
      */
     protected function buildPaymentTermCheckboxQuery()
     {
-        $source = $this->getOfferableTermSource(true);
+        $source = $this->getOfferableTermSource();
         sort($source);
         $query = array();
         foreach ($source as $term) {
@@ -1392,7 +1426,6 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_ENVIRONMENT', $submittedEnv);
 
         if ($identityChanged) {
-            $this->invalidateMerchantAvailableTerms();
             // The rates themselves are merchant-independent, so the
             // last-known-good TABLE stays - it is the gate's only fallback -
             // but a clock still inside its 6h TTL would suppress the warm-up
@@ -1428,6 +1461,13 @@ class Twopayment extends PaymentModule
         // and bumps its clock before the wire call, so repeated saves cannot
         // hammer the endpoint; it also no-ops without an API key.
         $this->refreshTwoFxRates();
+
+        if ($identityChanged) {
+            // Refreshed, never cleared (ABN-519): a shop whose key was cycled
+            // elsewhere and never updated here keeps every cached value the
+            // admin controls are built from, and a failed refetch changes nothing.
+            $this->refreshMerchantRecord();
+        }
 
         $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
     }
@@ -2350,7 +2390,7 @@ class Twopayment extends PaymentModule
         // preference on any unrelated save. Leaving hidden keys untouched
         // preserves that preference for when the backend re-offers the term
         // (TWO-24813).
-        $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
+        $payment_terms = array_map('strval', $this->getOfferableTermSource());
         foreach ($payment_terms as $term) {
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
         }
@@ -2767,6 +2807,33 @@ class Twopayment extends PaymentModule
                         'html_content' => '<a class="btn btn-default" target="_blank" href="'
                             . $this->context->link->getAdminLink('AdminTwoErrorLog', true)
                             . '">' . $this->l('View last 100 error log records') . '</a>',
+                    ),
+                    // 'html' for the same reason as the error-log link above.
+                    array(
+                        'type' => 'html',
+                        'label' => $this->l('Merchant profile'),
+                        'name' => 'PS_TWO_REFRESH_MERCHANT_RECORD',
+                        'desc' => sprintf($this->l('Your offerable payment terms, buyer-surcharge rates, minimum order value and default term are read from %s and cached. They are refreshed on a schedule and whenever the API key or environment is saved; use this to pull a change through now.'), $this->getTwoBrandConfig('product_name')),
+                        'html_content' => ($this->isTwoSingleShopContext()
+                            ? '<button type="button" class="btn btn-default" id="two-refresh-merchant-record">'
+                                . '<i class="icon-refresh"></i> ' . $this->l('Refresh merchant profile') . '</button>'
+                                . ' <span id="two-refresh-merchant-record-result" class="text-muted"></span>'
+                            : '')
+                            . '<div class="help-block">' . htmlspecialchars($this->getTwoMerchantRecordStatusLine(), ENT_QUOTES, 'UTF-8') . '</div>',
+                    ),
+                    // Rendering this mints the token when the shop has none yet, at the
+                    // context's scope - which is why, like the row above, it is single-shop only.
+                    array(
+                        'type' => 'html',
+                        'label' => $this->l('Scheduled refresh URL'),
+                        'name' => 'PS_TWO_CRON_URL',
+                        'desc' => $this->l('Call this once a day from your server\'s crontab to refresh the merchant profile. The token may instead be sent as an X-Two-Cron-Token header or a POST field, which keeps it out of process listings and proxy logs. Keep it secret; anyone holding it can trigger the refresh. On a multistore install, schedule one line per shop, each from that shop\'s own tab. While the shop is in maintenance mode, add the calling server\'s IP to Shop Parameters > Maintenance or this URL is served the maintenance page instead.'),
+                        'html_content' => $this->isTwoSingleShopContext()
+                            ? '<input type="text" class="form-control" readonly value="'
+                                . htmlspecialchars($this->getTwoCronUrl(), ENT_QUOTES, 'UTF-8') . '">'
+                            : '<div class="help-block">'
+                                . htmlspecialchars($this->l('Each shop has its own refresh URL. Switch to a single shop to see it.'), ENT_QUOTES, 'UTF-8')
+                                . '</div>',
                     ),
                 ),
                 'submit' => array(
@@ -4044,13 +4111,11 @@ class Twopayment extends PaymentModule
                             
                             // Invoice Upload: upload the PrestaShop invoice to Two when the
                             // merchant's invoice_distributed_by_merchant flag is set (TWO-25111).
-                            // Prime the merchant-record cache first (TTL-gated, a no-op while
-                            // fresh): fulfilment may be the first merchant-record touch since
-                            // deploy/upgrade, and the gate must not read an unresolved flag and
-                            // silently skip the upload for a one-shot fulfilment transition.
-                            // This path already makes synchronous Two calls, so one more
-                            // capped GET (at most once per TTL) is acceptable here.
-                            $this->getMerchantAvailableTerms(true);
+                            // Read the record first: fulfilment may be the first
+                            // merchant-record touch since deploy, and the gate must not
+                            // read an unresolved flag and silently skip the upload for a
+                            // one-shot fulfilment transition.
+                            $this->refreshMerchantRecordIfDue();
                             $use_own_invoices = $this->isMerchantInvoiceDistributed();
                             PrestaShopLogger::addLog(
                                 'TwoPayment: Invoice upload check - invoice_distributed_by_merchant=' . ($use_own_invoices ? 'YES' : 'NO') . ', Order ID=' . $id_order,
@@ -4763,10 +4828,10 @@ class Twopayment extends PaymentModule
             'company_search_select_different_sole_trader' => $this->l('Select a different sole trader'),
         );
 
-        // Checkout media render is a sanctioned refresh point for the backend
-        // term list (TWO-24813); prime the cache before the cache-only reads
-        // in getAvailablePaymentTerms / getDefaultPaymentTerm below.
-        $this->getMerchantAvailableTerms(true);
+        // Resolve the record before the reads in getAvailablePaymentTerms /
+        // getDefaultPaymentTerm below. Fetches only when there is nothing to
+        // serve or the cron has stopped running (ABN-519).
+        $this->refreshMerchantRecordIfDue();
         // Same sanctioned refresh point keeps the FX table warm (TTL-gated
         // 6h, TWO-25105) so cross-currency conversions on the checkout hot
         // path hit the cache instead of fetching inline.
@@ -5057,12 +5122,9 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        // API-key verification gate (TWO-25326). Withhold Two whenever the
-        // stored key cannot currently be verified, for ANY reason - a rejected
-        // key, a Two service error, or this shop being unable to reach Two at
-        // all. Offering a payment method whose integration is not answering
-        // hands the buyer a dead end at the last step of checkout. Cached, so
-        // this costs a Configuration read per render, not an HTTP call.
+        // The ONLY upstream failure that may withhold Two (TWO-25326, ABN-519).
+        // Withholds for ANY reason the stored key fails to verify, so a revoked
+        // key stops being honoured within the verdict's own cache lifetime.
         $apiKeyStatus = $this->getTwoApiKeyVerificationStatus();
         if ($apiKeyStatus['status'] !== self::API_KEY_STATUS_OK) {
             // Log it: a silently absent payment method is precisely the
@@ -5088,20 +5150,6 @@ class Twopayment extends PaymentModule
         $cart = $this->context->cart;
         if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
             PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
-            return [];
-        }
-
-        // Term-discovery gate (TWO-25503). PAYMENT_TERMS_OPTIONS is a
-        // build-time admin UI preset, never a runtime substitute for terms
-        // Two hasn't actually sanctioned for this merchant.
-        if (empty($this->getMerchantAvailableTerms(false, true))) {
-            if (!$this->twoTermsWithholdLogged) {
-                $this->twoTermsWithholdLogged = true;
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Payment option hidden - merchant offerable payment terms not resolved from API',
-                    2
-                );
-            }
             return [];
         }
 
@@ -10888,125 +10936,19 @@ class Twopayment extends PaymentModule
      * resolved (no verified API key / merchant id yet, or no successful fetch yet)
      * OR the backend explicitly returned an empty list.
      *
-     * Cache-only by default: this is read from cart / payment-POST / order-status
-     * paths that must not stall on HTTP, and where an unresolved list degrades to
-     * PAYMENT_TERMS_OPTIONS rather than deciding anything. A TTL-gated fetch
-     * (15 min, 10s cap) runs when $refresh === true, from the sanctioned refresh
-     * points (the checkout media hook and the admin config render).
+     * The read never blocks on HTTP beyond the two bounded cases in
+     * refreshMerchantRecordIfDue(): no fetch has ever succeeded, or the held
+     * record is stale enough to say the cron is not running. An unresolved list
+     * decides nothing on its own - it withholds nothing from the buyer (ABN-519).
      *
-     * For a caller whose answer is a WITHHOLD decision, an unresolved list is a
-     * cache miss and nothing else on its path refetches - hence
-     * $resolve_if_unresolved, on the same shared clock (ABN-495).
-     * The cached list is overwritten only by a successful response carrying an
-     * `available_terms` array; a fetch failure (or an older backend omitting the
-     * field) serves the last-known list for another TTL rather than blanking the
-     * term set on an API blip.
+     * The cache lives in dedicated Configuration keys, NOT the general settings
+     * blob, so a refresh from a render can never race a concurrent admin save.
      *
-     * The cache lives in two dedicated Configuration keys, NOT the general
-     * settings blob, so a checkout-render refresh can never race a concurrent
-     * admin settings save.
-     *
-     * @param bool $refresh Allow a TTL-gated backend fetch on this call even
-     *                       when the cached list is already populated.
-     * @param bool $resolve_if_unresolved Allow the same fetch when the cached
-     *                       list is unresolved, on a read that would otherwise
-     *                       be cache-only.
      * @return int[] Ascending, unique day counts; empty when unresolved.
      */
-    public function getMerchantAvailableTerms($refresh = false, $resolve_if_unresolved = false)
+    public function getMerchantAvailableTerms()
     {
-        if ($refresh || ($resolve_if_unresolved && self::isMerchantTermCacheUnresolved())) {
-            $checked_on = self::isMerchantRecordSlotForCurrentKey()
-                ? (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS)
-                : 0;
-            if ($checked_on <= 0 || ($checked_on + self::MERCHANT_AVAILABLE_TERMS_TTL) <= time()) {
-                $merchant_id = Configuration::get('PS_TWO_MERCHANT_ID');
-                $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
-                if (!self::isTwoConfigUnset($merchant_id) && !self::isTwoConfigUnset($api_key)) {
-                    if (!self::isMerchantRecordSlotForCurrentKey()) {
-                        // The held record belongs to another key, so serve-stale would serve another
-                        // merchant. Dropped before the call, and claimed for this key so the clock
-                        // below covers concurrent renders as it does any cold cache (ABN-530).
-                        $this->invalidateMerchantAvailableTerms();
-                        Configuration::updateValue(
-                            self::CONFIG_MERCHANT_RECORD_KEY,
-                            self::verificationSlotKey($api_key)
-                        );
-                    }
-                    // Bump the shared clock BEFORE the wire call so a concurrent
-                    // render at expiry serves the stale cache instead of firing a
-                    // second, redundant fetch (anti-stampede - TWO-24859 review).
-                    Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time());
-                    // On a render path even when refreshing, so cap tight.
-                    $response = $this->setTwoPaymentRequest(
-                        '/v1/merchant/' . rawurlencode((string) $merchant_id),
-                        array(),
-                        'GET',
-                        array(),
-                        self::API_TIMEOUT_STATE_CHECK
-                    );
-                    $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
-                    if ($http_status === self::HTTP_STATUS_OK && self::isTwoMerchantRecordResponse($response)) {
-                        // ONE fetch feeds BOTH merchant-record caches: the
-                        // offerable term list (TWO-24813) and the default-term
-                        // seed (due_in_days, TWO-24859). A field absent from an
-                        // otherwise-valid response is a legitimate answer (leave
-                        // the term list untouched; treat an absent default as
-                        // "unset" = 0), NOT a fetch failure to retry.
-                        if (isset($response['available_terms']) && is_array($response['available_terms'])) {
-                            $normalised = $this->normaliseMerchantTerms($response['available_terms']);
-                            Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode($normalised));
-                        }
-                        $due = isset($response['due_in_days']) ? $response['due_in_days'] : null;
-                        $due_days = (is_numeric($due) && (int) $due > 0) ? (int) $due : 0;
-                        Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, $due_days);
-                        // The invoice-upload gate is fed by this same fetch
-                        // (TWO-25111). Unlike the term list, an absent
-                        // field IS an answer here - the backend omitting the
-                        // flag means uploads are not enabled for this
-                        // merchant, so cache 0 rather than serving stale
-                        // (null-safe absent-is-false, per TWO-25106).
-                        Configuration::updateValue(
-                            self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED,
-                            (isset($response['invoice_distributed_by_merchant']) && $response['invoice_distributed_by_merchant'] === true) ? 1 : 0
-                        );
-                        // Third cache fed by the same fetch: the platform
-                        // minimum-order tuple (TWO-24775). Unlike the term
-                        // list, an absent or malformed tuple IS the answer
-                        // ("no minimum configured") - overwrite with '' so
-                        // the no-minimum outcome is cached and the gate does
-                        // not refetch on every checkout render.
-                        $platform_minimum = $this->parseTwoPlatformMinimumOrder($response);
-                        Configuration::updateValue(
-                            self::CONFIG_PLATFORM_MIN_ORDER,
-                            $platform_minimum ? json_encode($platform_minimum) : ''
-                        );
-                        // Overwrite rather than serve stale (TWO-40): a lifted
-                        // restriction must actually lift.
-                        Configuration::updateValue(
-                            self::CONFIG_MERCHANT_BUYER_COUNTRIES,
-                            $this->encodeMerchantBuyerCountries($response)
-                        );
-                        // Written last: every slot above now belongs to this key (ABN-530).
-                        Configuration::updateValue(
-                            self::CONFIG_MERCHANT_RECORD_KEY,
-                            self::verificationSlotKey($api_key)
-                        );
-                        // Success: keep the full-TTL clock set above.
-                    } else {
-                        // Failed fetch (network blip / 5xx / bad body). Roll the
-                        // pre-bumped clock back so retry happens after the short
-                        // backoff, not a whole TTL, while a concurrent burst is
-                        // still absorbed until then. Last-known-good values keep
-                        // being served meanwhile (serve-stale - TWO-24859 review).
-                        Configuration::updateValue(
-                            self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
-                            time() - self::MERCHANT_AVAILABLE_TERMS_TTL + self::MERCHANT_RECORD_RETRY_BACKOFF
-                        );
-                    }
-                }
-            }
-        }
+        $this->refreshMerchantRecordIfDue();
 
         if (!self::isMerchantRecordSlotForCurrentKey()) {
             return array();
@@ -11020,6 +10962,280 @@ class Twopayment extends PaymentModule
             return array();
         }
         return $this->normaliseMerchantTerms($decoded);
+    }
+
+    /**
+     * The two cases in which a READ refreshes the record (ABN-519): nothing has
+     * ever been fetched, so there is nothing to serve; or the held record has
+     * reached MERCHANT_RECORD_STALE_AFTER, which says the scheduled refresh is
+     * not running. Neither case ever clears the cache, and the caller proceeds
+     * with whatever it holds either way.
+     *
+     * Each case has its own floor, written before the wire call, so neither an
+     * outage nor a dead cron becomes a fetch per read.
+     *
+     * @return bool Whether a fetch was attempted.
+     */
+    protected function refreshMerchantRecordIfDue()
+    {
+        // A record fetched for another key is not this shop's to serve (ABN-530),
+        // so its stamp says nothing about what this shop holds.
+        $checked_on = self::isMerchantRecordSlotForCurrentKey()
+            ? (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS)
+            : 0;
+
+        // A stamp of zero beside a fetched-looking row is an install whose record
+        // was dropped by a version that still evicted; there is nothing to serve.
+        if (!$this->hasFetchedMerchantRecord() || $checked_on <= 0) {
+            if ($checked_on > 0 && ($checked_on + self::MERCHANT_RECORD_RETRY_BACKOFF) > time()) {
+                return false;
+            }
+            $this->refreshMerchantRecord();
+
+            return true;
+        }
+
+        if (($checked_on + self::MERCHANT_RECORD_STALE_AFTER) > time()) {
+            return false;
+        }
+        $cooled_on = (int) Configuration::get(self::CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS);
+        if ($cooled_on > 0 && ($cooled_on + self::MERCHANT_RECORD_STALE_REFRESH_INTERVAL) > time()) {
+            return false;
+        }
+        // Written before the fetch, so concurrent renders share one attempt.
+        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS, time());
+        $silent = $this->isTwoScheduledRefreshSilent();
+        if ($silent) {
+            // The FIRST stand-in owns the mark: rewriting it on every later one
+            // would keep it permanently young, and the admin surface reports its age.
+            if ((int) Configuration::get(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS) <= 0) {
+                Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS, time());
+            }
+        }
+        $ran_on = (int) Configuration::get(self::CONFIG_CRON_LAST_RUN_TS);
+        PrestaShopLogger::addLog(
+            'TwoPayment: Merchant record is over ' . self::MERCHANT_RECORD_STALE_AFTER
+                . 's old, refreshing on read. Scheduled refresh last accepted a call: '
+                . ($ran_on > 0 ? date('Y-m-d H:i', $ran_on) : 'never') . '.',
+            2
+        );
+        $this->refreshMerchantRecord(self::MERCHANT_RECORD_STALE_TIMEOUT);
+
+        return true;
+    }
+
+    /**
+     * Whether the scheduled refresh has stopped calling, as opposed to calling
+     * and failing - which is a different fault, and not one to report as a
+     * crontab that is not running.
+     *
+     * @return bool
+     */
+    protected function isTwoScheduledRefreshSilent()
+    {
+        $ran_on = (int) Configuration::get(self::CONFIG_CRON_LAST_RUN_TS);
+
+        return $ran_on <= 0 || (time() - $ran_on) >= self::MERCHANT_RECORD_STALE_AFTER;
+    }
+
+    /**
+     * Whether a fetch has ever SUCCEEDED for this shop: the invoice-distribution
+     * flag reads back '1' or '0' once fetched, and carries nothing before that.
+     *
+     * @return bool
+     */
+    public function hasFetchedMerchantRecord()
+    {
+        return self::isMerchantRecordSlotForCurrentKey()
+            && !self::isTwoConfigUnset(Configuration::get(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED));
+    }
+
+    /**
+     * One fetch of GET /v1/merchant feeding every cache sourced from that record,
+     * on no clock of its own. A FAILED fetch leaves every cached value in place:
+     * the record is never evicted, on any failure path (ABN-519).
+     *
+     * @param int $timeout Wire cap for this fetch.
+     * @return bool Whether the record was replaced.
+     */
+    public function refreshMerchantRecord($timeout = self::API_TIMEOUT_STATE_CHECK)
+    {
+        // Cast on read: an unwritten row is `false`, which Tools::isEmpty() calls non-empty.
+        $merchant_id = (string) Configuration::get('PS_TWO_MERCHANT_ID');
+        $api_key = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        if (self::isTwoConfigUnset($merchant_id) || self::isTwoConfigUnset($api_key)) {
+            return false;
+        }
+
+        if (!self::isMerchantRecordSlotForCurrentKey()) {
+            // The held record belongs to another key, so keeping it would serve another
+            // merchant. Dropped before the call and claimed for this key, so the clock
+            // below covers concurrent reads as it does any cold cache (ABN-530).
+            $this->invalidateMerchantAvailableTerms();
+            Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_KEY, self::verificationSlotKey($api_key));
+        }
+
+        // Clock bumped BEFORE the wire call so a concurrent read shares this
+        // attempt instead of firing a second one (TWO-24859).
+        $previous_checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time());
+        $response = $this->setTwoPaymentRequest(
+            '/v1/merchant/' . rawurlencode($merchant_id),
+            array(),
+            'GET',
+            array(),
+            $timeout
+        );
+        $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        if ($http_status !== self::HTTP_STATUS_OK || !self::isTwoMerchantRecordResponse($response)) {
+            // Nothing cached is touched. The stamp is rolled back so it keeps
+            // describing the record actually held, which is what the staleness
+            // check judges; a record never fetched keeps the bumped stamp, which
+            // is its own retry floor. Last write wins against a concurrent
+            // refresh, as the pre-fetch bump above already does.
+            if ($this->hasFetchedMerchantRecord()) {
+                Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, $previous_checked_on);
+            }
+
+            return false;
+        }
+
+        // ONE fetch feeds every merchant-record cache. A field absent from an
+        // otherwise-valid response is an answer, not a fetch failure.
+        // An absent available_terms leaves the list untouched (TWO-24813).
+        if (isset($response['available_terms']) && is_array($response['available_terms'])) {
+            $normalised = $this->normaliseMerchantTerms($response['available_terms']);
+            Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode($normalised));
+        }
+        // An absent due_in_days is "unset" (TWO-24859).
+        $due = isset($response['due_in_days']) ? $response['due_in_days'] : null;
+        Configuration::updateValue(
+            self::CONFIG_MERCHANT_DUE_IN_DAYS,
+            (is_numeric($due) && (int) $due > 0) ? (int) $due : 0
+        );
+        // An absent flag means uploads are off for this merchant (TWO-25111).
+        // Strings: core skips a numeric write that `==` the stored value, and 0 == '' on PHP 7.
+        Configuration::updateValue(
+            self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED,
+            (isset($response['invoice_distributed_by_merchant']) && $response['invoice_distributed_by_merchant'] === true) ? '1' : '0'
+        );
+        // An absent or malformed tuple IS the answer - no minimum (TWO-24775).
+        $platform_minimum = $this->parseTwoPlatformMinimumOrder($response);
+        Configuration::updateValue(
+            self::CONFIG_PLATFORM_MIN_ORDER,
+            $platform_minimum ? json_encode($platform_minimum) : ''
+        );
+        // Overwrite, never serve stale: a lifted restriction must lift (TWO-40).
+        Configuration::updateValue(
+            self::CONFIG_MERCHANT_BUYER_COUNTRIES,
+            $this->encodeMerchantBuyerCountries($response)
+        );
+        // Written last: every slot above now belongs to this key (ABN-530).
+        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_KEY, self::verificationSlotKey($api_key));
+
+        return true;
+    }
+
+    /**
+     * The refresh URL's shared secret, minted on first read so an existing
+     * install acquires one without an upgrade script.
+     *
+     * @return string
+     */
+    public function getTwoCronToken()
+    {
+        $token = trim((string) Configuration::get(self::CONFIG_CRON_TOKEN));
+        if ($token === '') {
+            $token = bin2hex(random_bytes(20));
+            Configuration::updateValue(self::CONFIG_CRON_TOKEN, $token);
+        }
+
+        return $token;
+    }
+
+    /**
+     * Whether a supplied token matches the stored one.
+     *
+     * @param mixed $candidate
+     * @return bool
+     */
+    public function isTwoCronTokenValid($candidate)
+    {
+        $candidate = trim((string) $candidate);
+        // Read, never getTwoCronToken(): an unauthenticated request must not be able to mint one.
+        $stored = trim((string) Configuration::get(self::CONFIG_CRON_TOKEN));
+
+        return $candidate !== '' && $stored !== '' && hash_equals($stored, $candidate);
+    }
+
+    /**
+     * The token a refresh request presents: query string, POST body or the
+     * X-Two-Cron-Token header, so a crontab can keep the secret out of process
+     * listings and proxy access logs.
+     *
+     * @return string
+     */
+    public function readTwoCronTokenFromRequest()
+    {
+        $posted = trim((string) Tools::getValue('token'));
+        if ($posted !== '') {
+            return $posted;
+        }
+
+        return isset($_SERVER['HTTP_X_TWO_CRON_TOKEN']) ? trim((string) $_SERVER['HTTP_X_TWO_CRON_TOKEN']) : '';
+    }
+
+    /**
+     * Reports a rejected refresh request at most once per interval: the URL is
+     * public, so an unthrottled line per hit is a log flood any scanner can trigger.
+     *
+     * @return bool Whether this rejection was logged.
+     */
+    public function logTwoCronRejection()
+    {
+        $last = (int) Configuration::get(self::CONFIG_CRON_REJECT_LOG_TS);
+        if ($last > 0 && ($last + self::CRON_REJECT_LOG_INTERVAL) > time()) {
+            return false;
+        }
+        Configuration::updateValue(self::CONFIG_CRON_REJECT_LOG_TS, time());
+        PrestaShopLogger::addLog(
+            'TwoPayment: Scheduled refresh rejected - bad or missing token. Further rejections are not'
+                . ' logged for ' . self::CRON_REJECT_LOG_INTERVAL . 's.',
+            2
+        );
+
+        return true;
+    }
+
+    /**
+     * The scheduled refresh (ABN-519): replace the cached merchant record and
+     * keep the FX table warm. Both keep last-known-good on failure.
+     *
+     * @return string One of the CRON_STATUS_* values.
+     */
+    public function runTwoScheduledRefresh()
+    {
+        if (self::isTwoConfigUnset(Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
+            return self::CRON_STATUS_UNCONFIGURED;
+        }
+        $last = (int) Configuration::get(self::CONFIG_CRON_LAST_RUN_TS);
+        if ($last > 0 && ($last + self::CRON_MIN_REFRESH_INTERVAL) > time()) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Scheduled refresh throttled - one accepted refresh per '
+                    . self::CRON_MIN_REFRESH_INTERVAL . 's.',
+                2
+            );
+
+            return self::CRON_STATUS_THROTTLED;
+        }
+        Configuration::updateValue(self::CONFIG_CRON_LAST_RUN_TS, time());
+        // The schedule is running, so no stand-in a read made is a signal any more.
+        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS, 0);
+
+        $refreshed = $this->refreshMerchantRecord();
+        $this->refreshTwoFxRates();
+
+        return $refreshed ? self::CRON_STATUS_REFRESHED : self::CRON_STATUS_FAILED;
     }
 
     /**
@@ -11071,21 +11287,28 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether the cached term list has no answer in it yet. A cached '[]' IS an
-     * answer (the backend offers this merchant nothing) and is not unresolved.
-     *
-     * @return bool
+     * Blank every cached merchant-record value. The ONLY caller is the foreign-record
+     * drop in refreshMerchantRecord(): a record fetched for another key is not this
+     * shop's to keep (ABN-530). Nothing else evicts, on any failure path (ABN-519).
      */
-    private static function isMerchantTermCacheUnresolved()
+    public function invalidateMerchantAvailableTerms()
     {
-        return !self::isMerchantRecordSlotForCurrentKey()
-            || self::isTwoConfigUnset(Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS));
+        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, '');
+        Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, 0);
+        // '' is "no minimum": fail open until the refetch, the API enforces the real one at order create.
+        Configuration::updateValue(self::CONFIG_PLATFORM_MIN_ORDER, '');
+        // '' is "never fetched": hasFetchedMerchantRecord() is false and the upload gate fails closed.
+        Configuration::updateValue(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, '');
+        Configuration::updateValue(self::CONFIG_MERCHANT_BUYER_COUNTRIES, '');
+        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
+        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS, 0);
+        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS, 0);
     }
 
     /**
      * Whether the cached merchant record was fetched for the key this context resolves. A mismatch
-     * reads as a cold cache: every slot degrades to its own unresolved answer and the next
-     * sanctioned refresh point refetches for the key this shop holds (ABN-530).
+     * reads as a cold cache: every slot degrades to its own unresolved answer and the next read
+     * drops the foreign record and refetches for the key this shop holds (ABN-530).
      *
      * @return bool
      */
@@ -11093,8 +11316,8 @@ class Twopayment extends PaymentModule
     {
         $stamp = (string) Configuration::get(self::CONFIG_MERCHANT_RECORD_KEY);
         if ($stamp === '') {
-            // Unstamped: a record cached before this binding existed. Served for one more TTL, the
-            // same serve-stale posture as a failed fetch, rather than withholding Two on upgrade.
+            // Unstamped: a record cached before this binding existed. Served rather than
+            // withholding Two on upgrade.
             return true;
         }
 
@@ -11305,32 +11528,6 @@ class Twopayment extends PaymentModule
         }
 
         return strtoupper(trim($iso));
-    }
-
-    /**
-     * Drop the cached merchant term list. Called when the merchant identity
-     * changes (new API key / merchant id) - serve-stale caching must never
-     * serve the old merchant's terms under a new identity (TWO-24813).
-     */
-    public function invalidateMerchantAvailableTerms()
-    {
-        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS, '');
-        // Clear the sibling default-term cache too: both are sourced from the
-        // same merchant record, so an identity change must drop both together
-        // or the new merchant would inherit the old merchant's default term
-        // (TWO-24859). Shared timestamp reset last, forcing a re-fetch.
-        Configuration::updateValue(self::CONFIG_MERCHANT_DUE_IN_DAYS, 0);
-        // The platform minimum is part of the same merchant record: a new
-        // identity must not be gated by the old merchant's minimum. '' means
-        // "no minimum" - the correct fail-open posture until the re-fetch
-        // (the API still enforces the real minimum at order create).
-        Configuration::updateValue(self::CONFIG_PLATFORM_MIN_ORDER, '');
-        // The invoice-upload gate is sourced from the same merchant record:
-        // an identity change must never leave the OLD merchant's upload
-        // entitlement in force for the new one (TWO-25111). Fail closed.
-        Configuration::updateValue(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 0);
-        Configuration::updateValue(self::CONFIG_MERCHANT_BUYER_COUNTRIES, '');
-        Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
     }
 
     /**
@@ -11991,6 +12188,100 @@ class Twopayment extends PaymentModule
         );
     }
 
+    /**
+     * The tokenised scheduled-refresh URL shown on the Diagnostics tab and
+     * documented in README.md.
+     *
+     * @return string
+     */
+    protected function getTwoCronUrl()
+    {
+        return $this->context->link->getModuleLink(
+            $this->name,
+            'cron',
+            array('token' => $this->getTwoCronToken()),
+            true
+        );
+    }
+
+    /**
+     * Whether the admin context resolves to ONE shop's configuration rows. The
+     * merchant record and the API key it is fetched with are written at the
+     * context's scope, so an all-shops or group context can neither read a
+     * shop's record nor write one it will not shadow.
+     *
+     * @return bool
+     */
+    protected function isTwoSingleShopContext()
+    {
+        return !Shop::isFeatureActive() || Shop::getContext() === Shop::CONTEXT_SHOP;
+    }
+
+    /**
+     * What the Diagnostics tab reports about the cached record: when it was last
+     * refreshed, and whether page loads are having to stand in for the schedule.
+     *
+     * @return string
+     */
+    protected function getTwoMerchantRecordStatusLine()
+    {
+        if (!$this->isTwoSingleShopContext()) {
+            return $this->l('The cached profile belongs to one shop. Switch to a single shop to see it or refresh it.');
+        }
+
+        $fetched_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+        if (!$this->hasFetchedMerchantRecord() || $fetched_on <= 0) {
+            return $this->l('Not yet refreshed on this shop.');
+        }
+
+        $line = sprintf($this->l('Last refreshed %s.'), date('Y-m-d H:i', $fetched_on));
+        $stood_in_on = (int) Configuration::get(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS);
+        if ($stood_in_on > 0) {
+            $line .= ' ' . sprintf(
+                $this->l('Page loads have been refreshing it since %s, so the scheduled refresh below is not running.'),
+                date('Y-m-d H:i', $stood_in_on)
+            );
+        }
+
+        return $line;
+    }
+
+    /**
+     * The Diagnostics "Refresh merchant profile" button. A failed refetch leaves
+     * the cached record in place rather than dropping the shop to nothing.
+     */
+    public function ajaxProcessRefreshMerchantRecord()
+    {
+        if (!$this->isTwoSingleShopContext()) {
+            $this->respondTwoRefreshMerchantRecord(array(
+                'success' => false,
+                'message' => $this->l('The cached profile belongs to one shop. Switch to a single shop to refresh it.'),
+            ));
+
+            return;
+        }
+
+        $refreshed = $this->refreshMerchantRecord();
+        $this->respondTwoRefreshMerchantRecord(array(
+            'success' => $refreshed,
+            'message' => $refreshed
+                ? $this->l('Merchant profile refreshed.')
+                : sprintf($this->l('Could not refresh the merchant profile - the previously cached one is still in use. Check that the API key verifies and that %s is reachable.'), $this->getTwoBrandConfig('product_name')),
+        ));
+    }
+
+    /**
+     * Protected so a spec can capture the response instead of dying on it.
+     *
+     * @param array<string,mixed> $payload
+     * @return void
+     */
+    protected function respondTwoRefreshMerchantRecord(array $payload)
+    {
+        header('Content-Type: application/json');
+        die(json_encode($payload));
+    }
+
     public function ajaxProcessVerifyApiKeyLive()
     {
         $result = $this->buildApiKeyLiveVerificationResult(
@@ -12003,16 +12294,14 @@ class Twopayment extends PaymentModule
 
     /**
      * The offerable term source set (before the admin narrows it): the backend's
-     * `available_terms` when resolved, else the hardcoded option list. Admin
-     * screens only - hookPaymentOptions withholds Two at checkout outright
-     * on an unresolved backend (TWO-25503) rather than reaching this fallback.
+     * `available_terms` when resolved, else the hardcoded option list, which keeps
+     * the admin screens usable while the record is unresolved.
      *
-     * @param bool $refresh Allow a TTL-gated backend fetch.
      * @return int[]
      */
-    private function getOfferableTermSource($refresh = false)
+    private function getOfferableTermSource()
     {
-        $backend = $this->getMerchantAvailableTerms($refresh);
+        $backend = $this->getMerchantAvailableTerms();
         if (!empty($backend)) {
             return $backend;
         }
@@ -12100,9 +12389,6 @@ class Twopayment extends PaymentModule
      * @var bool
      */
     protected $twoCountryWithholdLogged = false;
-
-    /** @var bool Logged the unresolved-terms withhold reason yet (TWO-25503)? */
-    protected $twoTermsWithholdLogged = false;
 
     /** @var bool Logged the buyer-country withhold reason yet (TWO-40)? */
     protected $twoBuyerCountryWithholdLogged = false;
@@ -14688,7 +14974,7 @@ class Twopayment extends PaymentModule
             . '</tr></thead><tbody>';
 
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
-        $source = $this->getOfferableTermSource(false);
+        $source = $this->getOfferableTermSource();
         sort($source);
         foreach ($source as $days) {
             $days = (int) $days;
@@ -14947,7 +15233,7 @@ class Twopayment extends PaymentModule
         // into view, which is where they can act on it.
         $cap_column_visible = in_array($type, array('percentage', 'fixed_and_percentage'), true);
 
-        $rendered_terms = array_map('intval', $this->getOfferableTermSource(false));
+        $rendered_terms = array_map('intval', $this->getOfferableTermSource());
         foreach ($rendered_terms as $days) {
             $days = (int) $days;
             foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
@@ -15078,7 +15364,7 @@ class Twopayment extends PaymentModule
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
 
         // Source set the admin narrows FROM (backend list, else hardcoded).
-        $source = $this->getOfferableTermSource(false);
+        $source = $this->getOfferableTermSource();
 
         if ($term_type === 'EOM') {
             $source = array_values(array_intersect($source, self::EOM_PAYMENT_TERMS_OPTIONS));
@@ -15106,7 +15392,7 @@ class Twopayment extends PaymentModule
         $custom_days = $this->getTwoCustomPaymentTermDays();
         if ($custom_days !== null
             && !in_array($custom_days, $available_terms, true)
-            && in_array($custom_days, $this->getOfferableTermSource(false), true)
+            && in_array($custom_days, $this->getOfferableTermSource(), true)
         ) {
             $available_terms[] = $custom_days;
         }
@@ -15124,12 +15410,9 @@ class Twopayment extends PaymentModule
      * on GET /v1/merchant), in net days, or null when it is unset or unresolved.
      *
      * CACHE-ONLY - never blocks on HTTP. The value is primed by the SAME fetch
-     * as the available_terms list (see getMerchantAvailableTerms): the sanctioned
-     * refresh points (checkout media render, admin config render) call
-     * getMerchantAvailableTerms(true), which populates both caches from one wire
-     * call. On a cold cache this returns null and getDefaultPaymentTerm() falls
-     * back to the historical 30-day default - the same serve-stale degrade
-     * posture the available_terms seam uses (TWO-24813 / TWO-24859).
+     * as the available_terms list, through refreshMerchantRecord(). On a cold
+     * cache this returns null and getDefaultPaymentTerm() falls back to the
+     * historical 30-day default (TWO-24813 / TWO-24859).
      *
      * `due_in_days` is NOT guaranteed to be a member of the offered term set -
      * callers must honour it only when it is an available term (see

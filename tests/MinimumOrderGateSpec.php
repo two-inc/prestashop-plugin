@@ -20,7 +20,6 @@ final class MinimumOrderGateSpec
 
         self::testSharedFetchCachesPlatformMinimum();
         self::testSharedFetchCachesTheNoMinimumOutcome();
-        self::testInvalidateClearsPlatformMinimum();
 
         self::testGateInclusiveSameCurrency();
         self::testGateComparesOnDeclaredBasis();
@@ -156,14 +155,14 @@ final class MinimumOrderGateSpec
         StubStore::$currencies = [1 => ['iso_code' => 'EUR', 'conversion_rate' => 1.0]];
         Configuration::updateValue('PS_CURRENCY_DEFAULT', 1);
 
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
         TinyAssert::same(1, $module->fetchCount);
         TinyAssert::same(
             ['amount' => 400.0, 'currency' => 'NOK', 'basis' => 'gross'],
             $module->getPlatformMinimumOrder()
         );
 
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
         TinyAssert::same(1, $module->fetchCount, 'fresh cache must not refetch');
     }
 
@@ -180,21 +179,13 @@ final class MinimumOrderGateSpec
             json_encode(['amount' => 100.0, 'currency' => 'EUR', 'basis' => 'gross'])
         );
 
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
         TinyAssert::same(1, $module->fetchCount);
         TinyAssert::same(null, $module->getPlatformMinimumOrder());
         TinyAssert::same('', Configuration::get(Twopayment::CONFIG_PLATFORM_MIN_ORDER));
 
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
         TinyAssert::same(1, $module->fetchCount, 'no-minimum outcome must be cached too');
-    }
-
-    private static function testInvalidateClearsPlatformMinimum(): void
-    {
-        $module = self::freshModule();
-        self::cachePlatformMinimum(['amount' => 100.0, 'currency' => 'EUR', 'basis' => 'gross']);
-        $module->invalidateMerchantAvailableTerms();
-        TinyAssert::same(null, $module->getPlatformMinimumOrder(), 'identity change must drop the old merchant\'s minimum');
     }
 
     private static function testGateInclusiveSameCurrency(): void

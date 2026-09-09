@@ -27,7 +27,7 @@ final class ApiKeyVerificationSpec
         self::testNoticeSaysNothingWhileAVerificationIsStillRunning();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
         self::testARejectedKeyIsTheOnlyValueASaveDiscards();
-        self::testAnUnverifiableIdentityChangeStillDropsTheCachedRecord();
+        self::testAnIdentityChangeRefreshesTheRecordAndNeverClearsIt();
         self::testTheWarningIsRenderedAlongsideTheSaveConfirmation();
         self::testVerifiedPanelFollowsTheLiveVerdict();
 
@@ -670,33 +670,38 @@ final class ApiKeyVerificationSpec
     }
 
     /**
-     * The cached merchant record - available terms, default term, platform
-     * minimum - is a single global set of Configuration keys, not one per
-     * merchant. A save that stores a new key or environment without being able
-     * to verify it must still drop them, or the new key pairs with the previous
-     * merchant's terms and minimum the moment the checkout gate reopens
-     * (ABN-495).
+     * The cached merchant record is NEVER cleared by a save (ABN-519). A merchant
+     * with two shops who cycles their key and updates only one must not have the
+     * other quietly forget the terms, fees and minimum its admin controls are
+     * built from; an identity change refreshes the record instead, and a refresh
+     * that cannot reach the API leaves every cached value exactly as it was.
      */
-    private static function testAnUnverifiableIdentityChangeStillDropsTheCachedRecord(): void
+    private static function testAnIdentityChangeRefreshesTheRecordAndNeverClearsIt(): void
     {
-        // [wire outcome, submitted key, submitted environment, record must be
-        // dropped, why]. A rejected key is reverted, so the record still
-        // describes the merchant the shop is running and must survive.
+        // [wire outcome, submitted key, submitted environment, why].
         $cases = array(
-            array(self::transportOutcome(), 'freshly-pasted-key', 'staging', true, 'a changed key'),
-            array(self::transportOutcome(), 'stored-key', 'production', true, 'a changed environment'),
-            array(self::transportOutcome(), 'stored-key', 'staging', false, 'an unchanged key and environment'),
-            array(self::httpOutcome(401), 'freshly-pasted-key', 'staging', false, 'a rejected key the save reverted'),
-            array(self::okOutcome(), 'stored-key', 'staging', true, 'an unchanged key that resolved a different merchant'),
+            array(self::transportOutcome(), 'freshly-pasted-key', 'staging', 'a changed key the save could not verify'),
+            array(self::transportOutcome(), 'stored-key', 'production', 'a changed environment'),
+            array(self::transportOutcome(), 'stored-key', 'staging', 'an unchanged key and environment'),
+            array(self::httpOutcome(401), 'freshly-pasted-key', 'staging', 'a rejected key the save reverted'),
+            array(self::okOutcome(), 'stored-key', 'staging', 'an unchanged key that resolved a different merchant'),
         );
 
-        foreach ($cases as list($outcome, $apiKey, $environment, $dropped, $case)) {
+        $held = array(
+            Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS => json_encode(array(14, 30)),
+            Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS => '30',
+            Twopayment::CONFIG_PLATFORM_MIN_ORDER => '250',
+            Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED => '1',
+        );
+
+        foreach ($cases as list($outcome, $apiKey, $environment, $case)) {
             $module = self::module($outcome);
             Configuration::updateValue('PS_TWO_MERCHANT_ID', 'm-old');
-            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode(array(14, 30)));
-            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS, 30);
-            Configuration::updateValue(Twopayment::CONFIG_PLATFORM_MIN_ORDER, '250');
-            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time());
+            foreach ($held as $key => $value) {
+                Configuration::updateValue($key, $value);
+            }
+            $stamp = time() - 5;
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, $stamp);
             Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
             Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', $apiKey);
             Tools::setTestValue('PS_TWO_ENVIRONMENT', $environment);
@@ -704,19 +709,14 @@ final class ApiKeyVerificationSpec
             TinyAssert::same(0, count($module->validateGeneralFormForTest()), $case . ' must not block the save');
             $module->saveGeneralFormForTest();
 
-            $expected = $dropped
-                ? array('', '0', '', '0')
-                : array(json_encode(array(14, 30)), '30', '250', (string) time());
-            $keys = array(
-                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS,
-                Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS,
-                Twopayment::CONFIG_PLATFORM_MIN_ORDER,
-                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
-            );
-            $verb = $dropped ? ' must drop ' : ' must keep ';
-            foreach ($keys as $index => $key) {
-                TinyAssert::same($expected[$index], (string) Configuration::get($key), $case . $verb . $key);
+            foreach ($held as $key => $value) {
+                TinyAssert::same($value, (string) Configuration::get($key), $case . ' must keep ' . $key);
             }
+            TinyAssert::same(
+                (string) $stamp,
+                (string) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS),
+                $case . ' must leave the success stamp describing the record actually held'
+            );
         }
     }
 

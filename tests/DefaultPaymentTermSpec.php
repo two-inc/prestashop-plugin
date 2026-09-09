@@ -27,9 +27,8 @@ final class DefaultPaymentTermSpec
         self::testDueInDaysIsCacheOnlyNeverFetches();
         self::testDueInDaysNullWhenAbsentFromResponse();
         self::testFreshCacheServedWithoutRefetch();
-        self::testStaleCacheRefetchesBoth();
-        self::testInvalidateClearsBothCaches();
-        self::testFailedFetchRetriesAfterBackoffNotFullTtl();
+        self::testStaleRecordStandsInAndRefetchesBoth();
+        self::testFailedFirstFetchRetriesAfterBackoff();
 
         // The interaction the last review flagged as untested: a due_in_days the
         // backend-narrowed available_terms set no longer offers must be ignored.
@@ -155,7 +154,7 @@ final class DefaultPaymentTermSpec
         $module = self::moduleWithMerchantResponse(self::okResponse([7, 15, 30], 15));
 
         // A single refresh primes BOTH caches from ONE wire call.
-        TinyAssert::same(array(7, 15, 30), $module->getMerchantAvailableTerms(true));
+        TinyAssert::same(array(7, 15, 30), $module->getMerchantAvailableTerms());
         TinyAssert::same(15, $module->getMerchantDueInDays());
         TinyAssert::same(1, $module->fetchCount);
     }
@@ -178,11 +177,11 @@ final class DefaultPaymentTermSpec
         // Valid response, but no due_in_days key: a legitimate "unset" answer.
         $module = self::moduleWithMerchantResponse(self::okResponse([7, 15, 30], null));
 
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
 
         TinyAssert::same(null, $module->getMerchantDueInDays());
         TinyAssert::same(0, (int) Configuration::get(Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS));
-        TinyAssert::same(array(7, 15, 30), $module->getMerchantAvailableTerms(false));
+        TinyAssert::same(array(7, 15, 30), $module->getMerchantAvailableTerms());
     }
 
     private static function testFreshCacheServedWithoutRefetch(): void
@@ -191,72 +190,54 @@ final class DefaultPaymentTermSpec
         self::configureMerchantIdentity();
         $module = self::moduleWithMerchantResponse(self::okResponse([7, 15, 30], 15));
 
-        $module->getMerchantAvailableTerms(true); // prime (fetch 1)
-        // A second refresh within TTL must serve cache, not re-hit the wire.
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms(); // prime (fetch 1)
+        // A second read inside the staleness window serves cache, not the wire.
+        $module->getMerchantAvailableTerms();
 
         TinyAssert::same(1, $module->fetchCount);
         TinyAssert::same(15, $module->getMerchantDueInDays());
     }
 
-    private static function testStaleCacheRefetchesBoth(): void
+    private static function testStaleRecordStandsInAndRefetchesBoth(): void
     {
         StubStore::reset();
         self::configureMerchantIdentity();
-        // Pre-seed a stale cache belonging to an earlier fetch.
+        // A record fetched over the staleness window ago.
         Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode(array(30)));
         Configuration::updateValue(Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS, 30);
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, '0');
         Configuration::updateValue(
             Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
-            time() - Twopayment::MERCHANT_AVAILABLE_TERMS_TTL - 10
+            time() - Twopayment::MERCHANT_RECORD_STALE_AFTER - 10
         );
         $module = self::moduleWithMerchantResponse(self::okResponse([7, 15, 60], 60));
 
-        TinyAssert::same(array(7, 15, 60), $module->getMerchantAvailableTerms(true));
+        TinyAssert::same(array(7, 15, 60), $module->getMerchantAvailableTerms());
         TinyAssert::same(60, $module->getMerchantDueInDays());
         TinyAssert::same(1, $module->fetchCount);
     }
 
-    private static function testInvalidateClearsBothCaches(): void
-    {
-        StubStore::reset();
-        self::configureMerchantIdentity();
-        $module = self::moduleWithMerchantResponse(self::okResponse([7, 15, 30], 15));
-        $module->getMerchantAvailableTerms(true); // prime both
-
-        $module->invalidateMerchantAvailableTerms();
-
-        TinyAssert::same('', Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS));
-        TinyAssert::same(null, $module->getMerchantDueInDays());
-        TinyAssert::same(0, (int) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS));
-        // A re-resolve that fails leaves the accessor empty, having tried.
-        $failing = self::moduleWithMerchantResponse(array('http_status' => 0));
-        TinyAssert::same(array(), $failing->getMerchantAvailableTerms(false, true));
-        TinyAssert::same(1, $failing->fetchCount);
-    }
-
     /**
-     * A failed fetch must not mark the shared cache fresh for the full TTL: the
-     * retry window shrinks to MERCHANT_RECORD_RETRY_BACKOFF, while a concurrent
-     * burst is still absorbed within that window (TWO-24859 review).
+     * A record never fetched retries on the short backoff, and the failure bumps
+     * the clock so a burst of reads shares one attempt (TWO-24859).
      */
-    private static function testFailedFetchRetriesAfterBackoffNotFullTtl(): void
+    private static function testFailedFirstFetchRetriesAfterBackoff(): void
     {
         StubStore::reset();
         self::configureMerchantIdentity();
         // 500 with no body: a failed fetch.
         $module = self::moduleWithMerchantResponse(array('http_status' => 500));
 
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
         TinyAssert::same(1, $module->fetchCount);
 
-        // Remaining freshness after a failure is at most the retry backoff.
-        $checked_on = (int) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
-        $remaining = $checked_on + Twopayment::MERCHANT_AVAILABLE_TERMS_TTL - time();
-        TinyAssert::true($remaining > 0 && $remaining <= Twopayment::MERCHANT_RECORD_RETRY_BACKOFF + 5);
+        // The failure's own retry floor: the next read is due within the backoff.
+        $due_in = (int) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS)
+            + Twopayment::MERCHANT_RECORD_RETRY_BACKOFF - time();
+        TinyAssert::true($due_in > 0 && $due_in <= Twopayment::MERCHANT_RECORD_RETRY_BACKOFF);
 
-        // Within the backoff window a second refresh does not re-hit the API.
-        $module->getMerchantAvailableTerms(true);
+        // Within the backoff window a second read does not re-hit the API.
+        $module->getMerchantAvailableTerms();
         TinyAssert::same(1, $module->fetchCount);
     }
 
@@ -271,7 +252,7 @@ final class DefaultPaymentTermSpec
         self::configureMerchantIdentity();
         // Backend offers [7,15,30] but reports due_in_days = 90 (withdrawn).
         $module = self::moduleWithMerchantResponse(self::okResponse([7, 15, 30], 90));
-        $module->getMerchantAvailableTerms(true); // prime both caches
+        $module->getMerchantAvailableTerms(); // prime both caches
 
         // Merchant ticks 7/15/30 (90 cannot be ticked - backend does not offer it).
         self::enableTerms([7, 15, 30]);

@@ -29,6 +29,7 @@ jobs:
           php -l twopayment.php
           php -l controllers/front/payment.php
           php -l controllers/front/invoice.php
+          php -l controllers/front/cron.php
           php -l controllers/admin/AdminTwopaymentInvoiceController.php
           php -l classes/TwoInvoiceRetrievalService.php
           php -l classes/TwoCheckoutAmountException.php
@@ -52,6 +53,7 @@ jobs:
           php -l tests/UpgradeScriptVersionSpec.php
           php -l tests/OverrideMigrationSpec.php
           php -l tests/ApiKeyVerificationSpec.php
+          php -l tests/MerchantRecordPolicySpec.php
           php -l tests/SoleTraderTokenPreconditionSpec.php
           php -l classes/TwoOverrideMigrator.php
           php -l upgrade/upgrade-2.7.1.php

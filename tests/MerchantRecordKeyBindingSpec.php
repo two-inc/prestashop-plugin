@@ -59,7 +59,7 @@ final class MerchantRecordKeyBindingSpec
     {
         Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $key);
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
     }
 
     /**
@@ -104,6 +104,9 @@ final class MerchantRecordKeyBindingSpec
             TinyAssert::same($resolved, $read($module), 'served for its own key: ' . $description);
 
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-b');
+            // The term read resolves the record for whatever key it finds (ABN-519), so the
+            // wire has to be down for this to be a read of what is cached.
+            $module->response = ['http_status' => 0];
 
             TinyAssert::same($unresolved, $read($module), 'withheld from another key: ' . $description);
         }
@@ -126,10 +129,13 @@ final class MerchantRecordKeyBindingSpec
 
             Shop::setContext(Shop::CONTEXT_SHOP, 2);
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'shop-2-key');
+            // See the note in testAKeySwapUnderTheRecordReadsAsCold().
+            $module->response = ['http_status' => 0];
 
             TinyAssert::same($unresolved, $read($module), 'shop with its own key: ' . $description);
 
             Shop::setContext(Shop::CONTEXT_SHOP, 1);
+            $module->response = self::RECORD;
 
             TinyAssert::same($resolved, $read($module), 'shop inheriting the global key: ' . $description);
         }
@@ -164,9 +170,9 @@ final class MerchantRecordKeyBindingSpec
 
         $module->response = ['http_status' => 0];
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-b');
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
 
-        TinyAssert::same([], $module->getMerchantAvailableTerms(true), 'the previous key\'s terms are gone');
+        TinyAssert::same([], $module->getMerchantAvailableTerms(), 'the previous key\'s terms are gone');
         TinyAssert::same(2, $module->calls, 'the failed retry is not re-fired inside the backoff');
     }
 
@@ -187,7 +193,7 @@ final class MerchantRecordKeyBindingSpec
             self::primeRecordForKey($module, 'key-a');
 
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $key);
-            $module->getMerchantAvailableTerms(true);
+            $module->getMerchantAvailableTerms();
 
             TinyAssert::same($expectedCalls, $module->calls, 'wire calls: ' . $description);
         }

@@ -106,14 +106,33 @@ beside the save confirmation instead.
   stored key is kept and the warning says so.
 - The merchant short name is derived from the verification response, never
   submitted, so a save that resolved no merchant keeps the stored one.
-- Storing a different key or environment drops the cached merchant record whatever
-  the verdict, so a key saved during an outage cannot pair with the previous
-  merchant's terms, default term or minimum order value once the gate reopens.
+- Storing a different key or environment refreshes the cached merchant record and
+  never clears it (ABN-519). A merchant with two shops who cycles their key and
+  updates only one must not have the other forget the terms, fees and minimum its
+  admin controls are built from.
 - **A 200 carrying no merchant `id` is not a verified key** — a proxy, a captive
   portal or a maintenance page answers 200 too, and there is no identity to offer
   the method under. The buyer gate withholds Two on it, as on every non-OK verdict.
   A record with an `id` but no short name IS verified; the empty short name
   withholds Two through its own gate.
+
+## The Merchant Record Never Expires, And Only The Key Check Hides The Tile
+
+ABN-519. The cached record — offerable terms, default term, buyer surcharge, platform
+minimum, buyer countries, invoice-upload flag — has no expiry and is never evicted, on
+any failure path. Only a successful refresh replaces it, and only from an event: the
+API-key/environment save, `controllers/front/cron.php`, the Diagnostics button, or a
+read standing in for a schedule that has stopped.
+
+- **Nothing but the API-key verdict may withhold Two from the buyer.** An unresolvable
+  record, a 500, an empty offer set: none of them hide the tile. The verdict's own
+  five-minute success cache is the heartbeat that propagates a revoked key.
+- **A record past `MERCHANT_RECORD_STALE_AFTER` (26h) says the schedule is not
+  running.** A read then refreshes it itself, at most once an hour and on a 2-second
+  cap, and serves the record it holds either way. Staleness withholds nothing.
+- **No admin control is gated on any of this**, and no failure blocks a save.
+- A shop where no fetch has ever succeeded has nothing to serve, so a read retries on
+  the short backoff until one does.
 
 ## Company Search: This Module's Own Implementation
 

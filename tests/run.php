@@ -174,7 +174,6 @@ final class OrderBuilderSpec
         self::testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale();
         self::testGetMerchantAvailableTermsRespectsExplicitEmptyList();
         self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
-        self::testInvalidateMerchantAvailableTermsClearsCache();
         self::testSaveGeneralFormPreservesHiddenBackendWithdrawnTermPreference();
         self::testStoreTwoFeeQuoteInSessionForcesImmediateCookieWrite();
     }
@@ -4978,8 +4977,9 @@ final class OrderBuilderSpec
     }
 
     /**
-     * ABN-495. Given a cached term list and clock, When the seam is read, Then
-     * only a caller that withholds on an unresolved list reaches the wire.
+     * ABN-519. Given a cached record and its stamp, When the seam is read, Then
+     * only two reads reach the wire: no record has ever been fetched, or the
+     * held one is old enough to say the schedule has stopped.
      */
     private static function testGetMerchantAvailableTermsRefetchDecisionTable(): void
     {
@@ -4987,21 +4987,22 @@ final class OrderBuilderSpec
         $ok = ['http_status' => 200, 'available_terms' => [30, 7]];
         $noField = ['http_status' => 200, 'id' => 'mid'];
         $notARecord = ['http_status' => 200, 'detail' => 'ok'];
+        $fresh = -60;
+        $stale = -(Twopayment::MERCHANT_RECORD_STALE_AFTER + 60);
 
         $cases = [
-            ['[30,60]', 0,    false, false, $ok,      0, [30, 60], 'a resolved list is served without touching the wire'],
-            ['[30,60]', -901, false, true,  $ok,      0, [30, 60], 'an expired but resolved list is not a gap to refetch'],
-            ['',        0,    false, false, $ok,      0, [],       'an unresolved list stays cache-only for a caller that does not withhold on it'],
-            ['',        0,    false, true,  $ok,      1, [7, 30],  'a dropped record is refetched for the caller that withholds on it'],
-            [$unset,    0,    false, true,  $ok,      1, [7, 30],  'a list never written at all is unresolved too, not an answer'],
-            ['',        -100, false, true,  $ok,      0, [],       'the shared clock still rate-limits the unresolved-list refetch'],
-            ['[]',      0,    false, true,  $ok,      0, [],       'an explicitly empty offer set is an answer, not a gap to refetch'],
-            ['',        0,    false, true,  $noField, 1, [],       'a 200 that carries no term list leaves it unresolved'],
-            ['',        0,    false, true,  $notARecord, 1, [],    'a 200 that is not the merchant record at all is a failed fetch'],
-            ['',        0,    true,  false, $ok,      1, [7, 30],  'a sanctioned refresh point still fetches a dropped record'],
+            ['[30,60]', $fresh, true,  $ok,      0, [30, 60], 'a fetched record inside the staleness window never reaches the wire'],
+            ['[30,60]', $stale, true,  $ok,      1, [7, 30],  'a fetched record past the staleness window stands in for the schedule'],
+            ['[30,60]', $stale, true,  $notARecord, 1, [30, 60], 'a stand-in that fails serves the held record anyway'],
+            ['',        0,      false, $ok,      1, [7, 30],  'a record never fetched is fetched on read'],
+            [$unset,    0,      false, $ok,      1, [7, 30],  'a list never written at all is unresolved too, not an answer'],
+            ['',        -100,   false, $ok,      0, [],       'the retry backoff rate-limits the never-fetched read'],
+            ['[]',      $fresh, true,  $ok,      0, [],       'an explicitly empty offer set is an answer, not a gap to refetch'],
+            ['',        0,      false, $noField, 1, [],       'a 200 that carries no term list leaves it unresolved'],
+            ['',        0,      false, $notARecord, 1, [],    'a 200 that is not the merchant record at all is a failed fetch'],
         ];
 
-        foreach ($cases as [$cached, $tsOffset, $refresh, $resolve, $response, $expectedCalls, $expectedTerms, $description]) {
+        foreach ($cases as [$cached, $tsOffset, $fetched, $response, $expectedCalls, $expectedTerms, $description]) {
             self::reset();
             Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
@@ -5013,13 +5014,19 @@ final class OrderBuilderSpec
             } else {
                 Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, $cached);
             }
+            // The invoice-distribution row is what says a fetch has ever succeeded.
+            if ($fetched) {
+                Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, '0');
+            } else {
+                Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, '');
+            }
             Configuration::updateValue(
                 Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
                 $tsOffset === 0 ? 0 : time() + $tsOffset
             );
             $module->responses[] = $response;
 
-            $terms = $module->getMerchantAvailableTerms($refresh, $resolve);
+            $terms = $module->getMerchantAvailableTerms();
 
             TinyAssert::same($expectedCalls, $module->calls, 'wire calls: ' . $description);
             TinyAssert::same($expectedTerms, $terms, 'terms: ' . $description);
@@ -5027,35 +5034,34 @@ final class OrderBuilderSpec
     }
 
     /**
-     * What each response shape leaves on the shared clock. A non-record 200 has
-     * to retry on the short backoff like a transport failure, not sit out a
-     * whole TTL as though it had answered.
+     * Where each response shape leaves the success stamp on a read that had no
+     * record to serve. A failure keeps the bumped stamp, which is that read's
+     * own retry floor; only a success is a success.
      */
     private static function testTheMerchantRecordClockAfterEachResponseShape(): void
     {
-        $backoff = Twopayment::MERCHANT_RECORD_RETRY_BACKOFF - Twopayment::MERCHANT_AVAILABLE_TERMS_TTL;
-
         $cases = [
-            [['http_status' => 200, 'available_terms' => [30]], 0, 'a record carrying the term list is fresh for the full TTL'],
-            [['http_status' => 200, 'id' => 'mid'], 0, 'a record with the term list absent has still answered'],
-            [['http_status' => 200, 'detail' => 'ok'], $backoff, 'a 200 that is not the record retries on the short backoff'],
-            [['http_status' => 0], $backoff, 'a transport failure retries on the short backoff'],
+            [['http_status' => 200, 'available_terms' => [30]], true, 'a record carrying the term list has been fetched'],
+            [['http_status' => 200, 'id' => 'mid'], true, 'a record with the term list absent has still answered'],
+            [['http_status' => 200, 'detail' => 'ok'], false, 'a 200 that is not the record has fetched nothing'],
+            [['http_status' => 0], false, 'a transport failure has fetched nothing'],
         ];
 
-        foreach ($cases as [$response, $expectedOffset, $description]) {
+        foreach ($cases as [$response, $expectedFetched, $description]) {
             self::reset();
             Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
             $module = self::fetchHarness();
             $module->responses[] = $response;
 
-            $module->getMerchantAvailableTerms(true);
+            $module->getMerchantAvailableTerms();
 
             TinyAssert::same(
-                $expectedOffset,
+                0,
                 (int) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS) - time(),
                 'clock: ' . $description
             );
+            TinyAssert::same($expectedFetched, $module->hasFetchedMerchantRecord(), 'fetched: ' . $description);
         }
     }
 
@@ -5080,7 +5086,7 @@ final class OrderBuilderSpec
             $module = self::fetchHarness();
             $module->responses[] = $response;
 
-            $module->getMerchantAvailableTerms(true);
+            $module->getMerchantAvailableTerms();
 
             TinyAssert::same($countries, Configuration::get(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES), 'buyer countries: ' . $description);
             TinyAssert::same($distributed, (int) Configuration::get(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED), 'invoice distribution: ' . $description);
@@ -5089,7 +5095,7 @@ final class OrderBuilderSpec
         }
     }
 
-    /** ABN-495. An unset merchant id or API key is not an identity to fetch with. */
+    /** An unset merchant id or API key is not an identity to fetch with. */
     private static function testGetMerchantAvailableTermsSkipsFetchWithKeysNeverWritten(): void
     {
         self::reset();
@@ -5098,7 +5104,7 @@ final class OrderBuilderSpec
         Configuration::deleteByName(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS);
         $module->responses[] = ['http_status' => 200, 'available_terms' => [30]];
 
-        TinyAssert::same([], $module->getMerchantAvailableTerms(false, true), 'no identity resolves no terms');
+        TinyAssert::same([], $module->getMerchantAvailableTerms(), 'no identity resolves no terms');
         TinyAssert::same(0, $module->calls, 'a never-configured shop must not reach the wire');
     }
 
@@ -5108,36 +5114,38 @@ final class OrderBuilderSpec
         Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
         $module = self::fetchHarness();
-        $expire = static function () {
-            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        $makeStale = static function () {
+            Configuration::updateValue(
+                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+                time() - Twopayment::MERCHANT_RECORD_STALE_AFTER - 1
+            );
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS, 0);
         };
 
-        // First refresh: normalised (ints, dedup, non-positive dropped, non-numeric
+        // First read: normalised (ints, dedup, non-positive dropped, non-numeric
         // dropped rather than intval'd to a phantom 1, sorted).
         $module->responses[] = ['http_status' => 200, 'available_terms' => [60, 30, 30, 0, -5, 90, [7], true, null]];
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
-        TinyAssert::same(1, $module->calls);
-
-        // Within the TTL: served from cache, no request; cache-only reads agree.
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
         TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
         TinyAssert::same(1, $module->calls);
 
-        // Fetch failure after expiry: last-known list served, not blanked.
-        $expire();
+        // Inside the staleness window: served from cache, no request.
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
+        TinyAssert::same(1, $module->calls);
+
+        // Stand-in fetch fails: last-known list served, not blanked.
+        $makeStale();
         $module->responses[] = ['http_status' => 0];
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
         TinyAssert::same(2, $module->calls);
 
-        // ...and the failure still bumped the clock: an immediate re-refresh does
-        // NOT hammer the API (one stall per TTL, not per view).
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        // ...and the stand-in cooldown holds, so a dead schedule is not a fetch per read.
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
         TinyAssert::same(2, $module->calls);
 
-        // Successful response WITHOUT the field (older backend): stale kept.
-        $expire();
+        // Successful response WITHOUT the field (older backend): held list kept.
+        $makeStale();
         $module->responses[] = ['http_status' => 200, 'due_in_days' => 14];
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
     }
 
     private static function testGetMerchantAvailableTermsRespectsExplicitEmptyList(): void
@@ -5149,33 +5157,27 @@ final class OrderBuilderSpec
         // Seed a stale list, then an explicit [] must overwrite it (the backend
         // says nothing is offerable) - distinct from a failure serving stale.
         $module->responses[] = ['http_status' => 200, 'available_terms' => [30, 60]];
-        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms(true));
-        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms());
+        Configuration::updateValue(
+            Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+            time() - Twopayment::MERCHANT_RECORD_STALE_AFTER - 1
+        );
         $module->responses[] = ['http_status' => 200, 'available_terms' => []];
-        TinyAssert::same([], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same([], $module->getMerchantAvailableTerms());
     }
 
     private static function testGetMerchantAvailableTermsSkipsFetchWithoutIdentity(): void
     {
         self::reset();
-        // No merchant id / API key: no fetch even on refresh with an expired TTL
-        // and a queued response.
-        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        // No merchant id / API key: no fetch even with a stale stamp and a queued response.
+        Configuration::updateValue(
+            Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+            time() - Twopayment::MERCHANT_RECORD_STALE_AFTER - 1
+        );
         $module = self::fetchHarness();
         $module->responses[] = ['http_status' => 200, 'available_terms' => [7]];
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
         TinyAssert::same(0, $module->calls);
-    }
-
-    private static function testInvalidateMerchantAvailableTermsClearsCache(): void
-    {
-        self::reset();
-        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30,60]');
-        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 999);
-        $module = new TwopaymentTestHarness();
-        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms());
-        $module->invalidateMerchantAvailableTerms();
-        TinyAssert::same([], $module->getMerchantAvailableTerms());
     }
 
     /**
@@ -5767,8 +5769,8 @@ require __DIR__ . '/ApiKeyVerificationSpec.php';
 require __DIR__ . '/RequiredPhoneFieldSpec.php';
 require __DIR__ . '/AdminControlsSpec.php';
 require __DIR__ . '/PaymentCountryRestrictionSpec.php';
-require __DIR__ . '/TermDiscoverySpec.php';
 require __DIR__ . '/MerchantRecordKeyBindingSpec.php';
+require __DIR__ . '/MerchantRecordPolicySpec.php';
 require __DIR__ . '/BillingCompanyCaptureSpec.php';
 require __DIR__ . '/BuyerCompanyFallbackSpec.php';
 require __DIR__ . '/BuyerCountryGateSpec.php';
@@ -5828,8 +5830,8 @@ $tests = [
     'RequiredPhoneFieldSpec::runAll' => [RequiredPhoneFieldSpec::class, 'runAll'],
     'AdminControlsSpec::runAll' => [AdminControlsSpec::class, 'runAll'],
     'PaymentCountryRestrictionSpec::runAll' => [PaymentCountryRestrictionSpec::class, 'runAll'],
-    'TermDiscoverySpec::runAll' => [TermDiscoverySpec::class, 'runAll'],
     'MerchantRecordKeyBindingSpec::runAll' => [MerchantRecordKeyBindingSpec::class, 'runAll'],
+    'MerchantRecordPolicySpec::runAll' => [MerchantRecordPolicySpec::class, 'runAll'],
     'BillingCompanyCaptureSpec::runAll' => [BillingCompanyCaptureSpec::class, 'runAll'],
     'BuyerCompanyFallbackSpec::runAll' => [BuyerCompanyFallbackSpec::class, 'runAll'],
     'BuyerCountryGateSpec::runAll' => [BuyerCountryGateSpec::class, 'runAll'],
