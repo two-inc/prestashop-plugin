@@ -65,6 +65,9 @@ final class SurchargeSpec
     private static function reset(): void
     {
         StubStore::reset();
+        // The buyer-facing term set is what the fee grid is built over, so the
+        // term these specs configure fees for has to be one the merchant offers.
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . Twopayment::DEFAULT_PAYMENT_TERM_DAYS, 1);
     }
 
     /* ---- TwoSurchargeCalculator (pure) ---- */
@@ -1000,7 +1003,7 @@ final class SurchargeSpec
         // not contain the term, the offerable (rendered) set does.
         TinyAssert::same(
             [Twopayment::DEFAULT_PAYMENT_TERM_DAYS],
-            $module->getAvailablePaymentTerms(),
+            $module->configurableTermSetForTest(),
             'the stored ticked subset must not contain the term under test'
         );
         TinyAssert::true(in_array($unticked, $offerable, true), 'the term under test must be offerable, and so rendered');

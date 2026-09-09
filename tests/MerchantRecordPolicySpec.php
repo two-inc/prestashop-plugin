@@ -242,9 +242,10 @@ final class MerchantRecordPolicySpec
 
     /**
      * Given a verified key, When the merchant record cannot be resolved, Then the
-     * tile is still offered: only the key verdict may withhold it. The record
-     * read runs first in each case, so a failing fetch is what the tile decision
-     * is actually made over.
+     * tile is still offered: only the key verdict may withhold it (ABN-519), and
+     * only its definitive-rejection categories do (ABN-533). The record read runs
+     * first in each case, so a failing fetch is what the tile decision is
+     * actually made over.
      */
     private static function testOnlyTheKeyVerdictHidesTheTile(): void
     {
@@ -259,8 +260,9 @@ final class MerchantRecordPolicySpec
             array($ok, array('http_status' => 200, 'available_terms' => array()), false, true, 'an empty offer set does not hide the tile'),
             array($ok, array('http_status' => 200, 'detail' => 'ok'), false, true, 'a 200 that is not the record does not hide the tile'),
             array(Twopayment::API_KEY_STATUS_INVALID, $good, true, false, 'a rejected key hides the tile'),
-            array(Twopayment::API_KEY_STATUS_UNREACHABLE, $good, true, false, 'an unreachable key check hides the tile'),
-            array(Twopayment::API_KEY_STATUS_SERVICE_ERROR, $good, true, false, 'a key check that 5xxd hides the tile'),
+            array(Twopayment::API_KEY_STATUS_UNREACHABLE, $good, true, true, 'an unreachable key check does not hide the tile'),
+            array(Twopayment::API_KEY_STATUS_SERVICE_ERROR, $good, true, true, 'a key check that 5xxd does not hide the tile'),
+            array(Twopayment::API_KEY_STATUS_ERROR, $good, true, true, 'a key check that answered some other status does not hide the tile'),
             array(Twopayment::API_KEY_STATUS_NOT_CONFIGURED, $good, true, false, 'an unconfigured key hides the tile'),
         );
 

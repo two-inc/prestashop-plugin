@@ -113,12 +113,11 @@ beside the save confirmation instead.
   recoverable by pasting the right key back. A record fetched for another key is
   withheld (ABN-530), not dropped.
 - **A 200 carrying no merchant `id` is not a verified key** — a proxy, a captive
-  portal or a maintenance page answers 200 too, and there is no identity to offer
-  the method under. The buyer gate withholds Two on it, as on every non-OK verdict.
-  A record with an `id` but no short name IS verified; the empty short name
-  withholds Two through its own gate.
+  portal or a maintenance page answers 200 too. It categorises as `error`, which
+  rejects no key, so it withholds nothing (ABN-533). A record with an `id` but no
+  short name IS verified; the empty short name withholds Two through its own gate.
 
-## The Merchant Record Never Expires, And Only The Key Check Hides The Tile
+## The Merchant Record Never Expires, And Only A Rejected Key Hides The Tile
 
 ABN-519. The cached record — offerable terms, default term, buyer surcharge, platform
 minimum, buyer countries, invoice-upload flag — has no expiry and is never evicted, on
@@ -126,9 +125,19 @@ any failure path. Only a successful refresh replaces it, and only from an event:
 API-key/environment save, `controllers/front/cron.php`, the Diagnostics button, or a
 read standing in for a schedule that has stopped.
 
-- **Nothing but the API-key verdict may withhold Two from the buyer.** An unresolvable
-  record, a 500, an empty offer set: none of them hide the tile. The verdict's own
-  five-minute success cache is the heartbeat that propagates a revoked key.
+- **Nothing but the API-key verdict may withhold Two from the buyer, and only its
+  DEFINITIVE rejections do** — `isDefinitiveFailureStatus()`: `invalid_key` and
+  `not_configured` (ABN-533). An unresolvable record, a 500, an empty offer set, an
+  unreachable or erroring key check: none of them hide the tile. That predicate is
+  the one definition of the set; the payment POST's gate and the company-search
+  affordance ask through it too, so nothing re-lists the categories.
+- **An unresolved offer set offers the buyer NO term, never a substitute.**
+  `getAvailablePaymentTerms()` reports what the record reports, or nothing;
+  `getConfigurableTermSet()` is the admin-side question and is the only thing the
+  hardcoded `PAYMENT_TERMS_OPTIONS` preset feeds. Do not compose a term for a buyer
+  from that preset or from `DEFAULT_PAYMENT_TERM_DAYS` — a merchant may not hold it.
+  With no offered term the tile renders with no term block at all, and placement is
+  refused upstream rather than booked against a term nobody granted.
 - **A record past `MERCHANT_RECORD_STALE_AFTER` (26h) says the schedule is not
   running.** A read then refreshes it itself, at most once an hour and on a 2-second
   cap, and serves the record it holds either way. Staleness withholds nothing.

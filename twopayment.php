@@ -2314,7 +2314,7 @@ class Twopayment extends PaymentModule
         $options = array(
             array('id_option' => '', 'name' => $this->l('-- Automatic (recommended) --')),
         );
-        foreach ($this->getAvailablePaymentTerms() as $term) {
+        foreach ($this->getConfigurableTermSet() as $term) {
             $options[] = array('id_option' => (string) (int) $term, 'name' => sprintf($this->l('%d days'), (int) $term));
         }
         return $options;
@@ -2334,7 +2334,7 @@ class Twopayment extends PaymentModule
         if ($stored === '' || !ctype_digit($stored)) {
             return '';
         }
-        return in_array((int) $stored, $this->getAvailablePaymentTerms(), true) ? $stored : '';
+        return in_array((int) $stored, $this->getConfigurableTermSet(), true) ? $stored : '';
     }
 
     protected function validTwoPaymentTermsFormValues()
@@ -2409,7 +2409,7 @@ class Twopayment extends PaymentModule
         $this->foldInTwoLegacyCustomTerm();
 
         // Default pre-selected term (TWO-25386 #10). Read AFTER the term-type,
-        // checkbox and custom-days writes above so getAvailablePaymentTerms()
+        // checkbox and custom-days writes above so getConfigurableTermSet()
         // reflects THIS submission's offered set, not the stale stored one -
         // a merchant unticking the old default and setting a new one in the
         // same save must not have their new default silently rejected against
@@ -2421,7 +2421,7 @@ class Twopayment extends PaymentModule
         $default_term_to_store = '';
         if ($raw_default_term !== '' && ctype_digit($raw_default_term)) {
             $candidate = (int) $raw_default_term;
-            if (in_array($candidate, $this->getAvailablePaymentTerms(), true)) {
+            if (in_array($candidate, $this->getConfigurableTermSet(), true)) {
                 $default_term_to_store = (string) $candidate;
             }
         }
@@ -5127,11 +5127,12 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        // The ONLY upstream failure that may withhold Two (TWO-25326, ABN-519).
-        // Withholds for ANY reason the stored key fails to verify, so a revoked
-        // key stops being honoured within the verdict's own cache lifetime.
+        // The ONLY upstream failure that may withhold Two (TWO-25326, ABN-519),
+        // and only on a DEFINITIVE rejection (ABN-533) - an unreachable or
+        // erroring Two falls through to the cached merchant record instead of
+        // emptying checkout minutes into every incident.
         $apiKeyStatus = $this->getTwoApiKeyVerificationStatus();
-        if ($apiKeyStatus['status'] !== self::API_KEY_STATUS_OK) {
+        if (self::isDefinitiveFailureStatus($apiKeyStatus['status'])) {
             // Log it: a silently absent payment method is precisely the
             // "nobody could tell why" failure this ticket exists to remove.
             // Once per request, not once per evaluation: PrestaShop asks for
@@ -10485,17 +10486,13 @@ class Twopayment extends PaymentModule
      * thing and this is the one question both ask.
      *
      * Warranted means "a captured company can still be used for something",
-     * which on any known verification failure it cannot: Two is withheld from
-     * checkout entirely in that state, so the search has nothing left to feed.
-     * It does NOT mean "the search would work" - that endpoint is called
-     * unauthenticated and works regardless of the key.
+     * which only a definitively rejected key rules out - Two is withheld from
+     * checkout in exactly that state and nowhere else (ABN-533). It does NOT
+     * mean "the search would work": that endpoint is called unauthenticated and
+     * works regardless of the key.
      *
-     * Distinct from isTwoApiKeyDefinitelyUnusable(): an affordance is not an
-     * order, so this side may stand down on ANY known failure rather than only a
-     * definitive one.
-     *
-     * 'verifying' (nothing known yet) counts as warranted: a cold cache is not
-     * evidence of a broken shop, and the caller that most needs this - the
+     * 'verifying' (nothing known yet) counts as warranted for the same reason a
+     * transient failure does, and the caller that most needs this - the
      * address-form override - must not be able to block on an HTTP call, hence
      * cache-only by default. The checkout media hook opts into a live check,
      * because that page is a render and the verdict is what its whole
@@ -10505,9 +10502,9 @@ class Twopayment extends PaymentModule
      */
     public function isTwoCompanySearchAffordanceWarranted($allowLiveCheck = false)
     {
-        $status = $this->getTwoApiKeyVerificationStatus($allowLiveCheck)['status'];
-
-        return $status === self::API_KEY_STATUS_OK || $status === self::API_KEY_STATUS_VERIFYING;
+        return !self::isDefinitiveFailureStatus(
+            $this->getTwoApiKeyVerificationStatus($allowLiveCheck)['status']
+        );
     }
 
     /**
@@ -12311,16 +12308,6 @@ class Twopayment extends PaymentModule
         return array_map('intval', self::PAYMENT_TERMS_OPTIONS);
     }
 
-    /**
-     * Available payment terms offered at checkout (ascending). THE runtime seam:
-     * the backend's offerable set (GET /v1/merchant `available_terms`), narrowed
-     * by the merchant's admin checkbox subset, then constrained by the term type
-     * (EOM only supports 30/45/60). A term the backend has withdrawn drops out
-     * even while the admin box is still ticked (TWO-24813). Cache-only - never
-     * blocks on HTTP; the sanctioned refresh points prime the cache.
-     *
-     * @return int[] Array of available payment term durations (e.g., [30, 45, 60])
-     */
     /* ===================================================================
      * Offset pricing fee (buyer surcharge) — TWO-24752 / TWO-24893.
      *
@@ -14953,7 +14940,7 @@ class Twopayment extends PaymentModule
      * the saved/available subset, so the admin JS (configuration.tpl,
      * updateSurchargeGridRows) can show/hide rows live as term checkboxes are
      * toggled without a save+reload. Initial visibility is computed
-     * server-side with the same gates getAvailablePaymentTerms() applies: the
+     * server-side with the same gates getConfigurableTermSet() applies: the
      * term's checkbox config is truthy AND the term is valid for the current
      * term type (EOM only allows EOM_PAYMENT_TERMS_OPTIONS). Row classes
      * mirror the checkbox type split (two-term-both / two-term-standard).
@@ -15153,7 +15140,7 @@ class Twopayment extends PaymentModule
                 $this->getTwoSurchargeTaxRulesGroupFormDefault()
             ),
         );
-        foreach ($this->getAvailablePaymentTerms() as $days) {
+        foreach ($this->getConfigurableTermSet() as $days) {
             $days = (int) $days;
             foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
                 $name = 'PS_TWO_SURCHARGE_' . $suffix . '_' . $days;
@@ -15217,7 +15204,7 @@ class Twopayment extends PaymentModule
                 }
             }
         }
-        // The RENDERED term set, not getAvailablePaymentTerms(): the grid
+        // The RENDERED term set, not getConfigurableTermSet(): the grid
         // renders (and therefore posts) a row per OFFERABLE term, and the
         // ticked subset is rewritten by saveTwoPaymentTermsFormValues()
         // BEFORE saveTwoSurchargeFormValues() reads it. Validating the stored
@@ -15351,7 +15338,7 @@ class Twopayment extends PaymentModule
             $this->ensureTwoSurchargeProductTaxRulesGroup($productId);
         }
 
-        foreach ($this->getAvailablePaymentTerms() as $days) {
+        foreach ($this->getConfigurableTermSet() as $days) {
             $days = (int) $days;
             foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
                 $name = 'PS_TWO_SURCHARGE_' . $suffix . '_' . $days;
@@ -15361,16 +15348,63 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /**
+     * The payment terms offered at CHECKOUT, ascending. THE runtime seam: the
+     * backend's offerable set (GET /v1/merchant `available_terms`), narrowed by
+     * the merchant's admin checkbox subset and constrained by the term type
+     * (EOM only supports 30/45/60). A term the backend has withdrawn drops out
+     * even while the admin box is still ticked (TWO-24813). Cache-only - never
+     * blocks on HTTP; the sanctioned refresh points prime the cache.
+     *
+     * Empty when the record reports no term, or reports none at all. Do not
+     * substitute a default for that: see getConfigurableTermSet() for the
+     * admin-side set, which is a different question.
+     *
+     * @return int[]
+     */
     public function getAvailablePaymentTerms()
     {
+        // ABN-533: the BUYER is offered what the merchant record actually
+        // reports, or nothing. The preset behind getOfferableTermSource()
+        // exists to keep the admin screens usable while the record is
+        // unresolved; relaying it to a buyer offers terms the merchant may not
+        // hold, and an empty set is the honest answer.
+        $backend = $this->getMerchantAvailableTerms();
+        if (empty($backend)) {
+            return array();
+        }
+
+        return $this->narrowOfferedTerms($backend);
+    }
+
+    /**
+     * The offered set the ADMIN screens configure: the same narrowing over the
+     * preset-backed source, and never empty, because those screens render and
+     * save a row per term and an empty set would silently stop saving them.
+     *
+     * @return int[]
+     */
+    protected function getConfigurableTermSet()
+    {
+        $terms = $this->narrowOfferedTerms($this->getOfferableTermSource());
+
+        return empty($terms) ? array((int) self::DEFAULT_PAYMENT_TERM_DAYS) : $terms;
+    }
+
+    /**
+     * $source narrowed by the term type and the admin's own choices.
+     *
+     * @param int[] $source
+     *
+     * @return int[] Ascending.
+     */
+    private function narrowOfferedTerms(array $source)
+    {
+        $offerable = array_map('intval', $source);
+
         // EOM: offered days are not filtered to the API-eligible set. TWO-25656.
-        $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
-
-        // Source set the admin narrows FROM (backend list, else hardcoded).
-        $source = $this->getOfferableTermSource();
-
-        if ($term_type === 'EOM') {
-            $source = array_values(array_intersect($source, self::EOM_PAYMENT_TERMS_OPTIONS));
+        if (Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM') {
+            $source = array_values(array_intersect($offerable, self::EOM_PAYMENT_TERMS_OPTIONS));
         }
 
         $available_terms = array();
@@ -15385,8 +15419,7 @@ class Twopayment extends PaymentModule
         // payment_terms_custom_days). UNIONED past the EOM/STANDARD split
         // above (neither WC nor Magento have that distinction, and the
         // custom day count is not a preset the merchant is picking FROM), but
-        // NOT past the backend-restricted source: getOfferableTermSource()
-        // exists specifically so a term Two's backend has withdrawn for this
+        // NOT past the source set: a term Two's backend has withdrawn for this
         // merchant drops out even while an admin checkbox is still ticked
         // (TWO-24813), and this custom field must not become a bypass for
         // that same protection - WC/Magento have no equivalent
@@ -15395,16 +15428,13 @@ class Twopayment extends PaymentModule
         $custom_days = $this->getTwoCustomPaymentTermDays();
         if ($custom_days !== null
             && !in_array($custom_days, $available_terms, true)
-            && in_array($custom_days, $this->getOfferableTermSource(), true)
+            && in_array($custom_days, $offerable, true)
         ) {
             $available_terms[] = $custom_days;
         }
 
-        if (empty($available_terms)) {
-            $available_terms = array(self::DEFAULT_PAYMENT_TERM_DAYS);
-        }
-
         sort($available_terms);
+
         return $available_terms;
     }
 

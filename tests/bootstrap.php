@@ -2661,6 +2661,12 @@ namespace {
             return $string;
         }
 
+        /** getConfigurableTermSet() is protected; the specs assert it beside the buyer-facing set. */
+        public function configurableTermSetForTest(): array
+        {
+            return $this->getConfigurableTermSet();
+        }
+
         /** The identity the production write path stamps a merchant record with (ABN-530). */
         public static function recordKeyStampForTest(string $apiKey): string
         {
