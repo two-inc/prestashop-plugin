@@ -3526,11 +3526,25 @@ class Twopayment extends PaymentModule
         if ($reason === null && $this->getTwoSurchargeSettingsOrNull() === null) {
             $reason = $this->l('the saved surcharge method is not recognised. Check Surcharge method.');
         }
-        if ($reason === null && $this->getMerchantBuyerCountries() === array()) {
-            $reason = sprintf(
-                $this->l('no buyer countries are currently enabled for your account. Contact %s to have them enabled.'),
-                $this->getTwoBrandConfig('product_name')
-            );
+        if ($reason === null) {
+            $countryState = $this->getTwoBuyerCountryRestrictionState();
+            if ($countryState === self::BUYER_COUNTRIES_EMPTY) {
+                $reason = sprintf(
+                    $this->l('no buyer countries are currently enabled for your account. Contact %s to have them enabled.'),
+                    $this->getTwoBrandConfig('provider_full_name')
+                );
+            } elseif ($countryState === self::BUYER_COUNTRIES_MALFORMED) {
+                $reason = sprintf(
+                    $this->l('the buyer countries on your account could not be read. Contact %s.'),
+                    $this->getTwoBrandConfig('provider_full_name')
+                );
+            }
+        }
+        if ($reason === null && $this->twoNativeCountryRestrictionAllowsNothing()) {
+            $reason = $this->l('no country is enabled for this module under Payment > Payment Restrictions.');
+        }
+        if ($reason === null && !$this->getCurrency()) {
+            $reason = $this->l('no currency is enabled for this module under Payment > Payment Restrictions.');
         }
         if ($reason !== null) {
             return array(
@@ -3541,15 +3555,22 @@ class Twopayment extends PaymentModule
         }
 
         $shown = $this->l('Shown at checkout');
-        $floors = array_values(array_filter(array(
+        // The platform floor is cache-only: an unresolved record means the
+        // constraint is unknown, not that there is none.
+        if (!self::isMerchantRecordSlotForCurrentKey()) {
+            return array(
+                'label' => $label,
+                'value' => $shown . ' - ' . $this->l('minimum order value not known until your profile refreshes'),
+                'ok' => true,
+            );
+        }
+        $floors = $this->bindingTwoMinimumFloors(array(
             $this->getPlatformMinimumOrder(),
             $this->getMerchantMinimumOrder(),
-        )));
+        ));
         if (!$floors) {
             return array('label' => $label, 'value' => $shown, 'ok' => true);
         }
-        // Both floors bind and can be denominated differently, so neither
-        // reduces to the other without an FX rate.
         $value = count($floors) === 1
             ? sprintf($this->l('hidden for baskets below %s'), $this->describeTwoMinimumFloor($floors[0]))
             : sprintf(
@@ -3559,6 +3580,47 @@ class Twopayment extends PaymentModule
             );
 
         return array('label' => $label, 'value' => $shown . ' - ' . $value, 'ok' => true);
+    }
+
+    /**
+     * Two floors in the same currency on the same basis are one floor - only
+     * the higher binds. Different currencies cannot be reduced without a rate.
+     *
+     * @param array<int, array|null> $candidates
+     * @return array<int, array{amount:float, currency:string, basis:string}>
+     */
+    protected function bindingTwoMinimumFloors($candidates)
+    {
+        $binding = array();
+        foreach (array_filter($candidates) as $floor) {
+            $key = $floor['currency'] . '|' . $floor['basis'];
+            if (!isset($binding[$key]) || (float) $floor['amount'] > (float) $binding[$key]['amount']) {
+                $binding[$key] = $floor;
+            }
+        }
+
+        return array_values($binding);
+    }
+
+    /**
+     * Whether PrestaShop's own per-module country restriction leaves nothing
+     * enabled for this shop. Fails OPEN on a lookup error, like checkCountry().
+     *
+     * @return bool
+     */
+    protected function twoNativeCountryRestrictionAllowsNothing()
+    {
+        $sql = 'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'module_country`'
+            . ' WHERE `id_module` = ' . (int) $this->id
+            . ' AND `id_shop` = ' . (isset($this->context->shop->id) ? (int) $this->context->shop->id : 0);
+
+        try {
+            $count = Db::getInstance()->getValue($sql);
+        } catch (Exception $e) {
+            return false;
+        }
+
+        return $count !== false && (int) $count === 0;
     }
 
     /**
@@ -5241,10 +5303,14 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        if (Tools::isEmpty($this->merchant_short_name) || Tools::isEmpty($this->api_key)) {
-            $this->logTwoPaymentOptionHidden(
-                'no API key or merchant short name is saved in the module settings'
-            );
+        if (Tools::isEmpty($this->api_key)) {
+            $this->logTwoPaymentOptionHidden('no API key is saved in the module settings');
+            return;
+        }
+
+        if (Tools::isEmpty($this->merchant_short_name)) {
+            // Server-derived from a successful verification, never a form field.
+            $this->logTwoPaymentOptionHidden('the merchant account has not been identified yet');
             return;
         }
 

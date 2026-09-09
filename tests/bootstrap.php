@@ -2317,6 +2317,26 @@ namespace {
             )) {
                 return isset(StubStore::$dbColumns[$m[1] . '.' . $m[2]]) ? '1' : '0';
             }
+            // Whether ANY country is enabled for the module and shop (ABN-518).
+            if (preg_match(
+                '/SELECT COUNT\(\*\) FROM `' . _DB_PREFIX_ . 'module_country`'
+                . ' WHERE `id_module` = (\d+) AND `id_shop` = (\d+)/',
+                $sql,
+                $m
+            )) {
+                if (StubStore::$moduleCountries === null) {
+                    return '1'; // unrestricted - see StubStore::$moduleCountries
+                }
+                $count = 0;
+                foreach (StubStore::$moduleCountries as $row) {
+                    if ((int) ($row['id_module'] ?? 0) === (int) $m[1]
+                        && (int) ($row['id_shop'] ?? 0) === (int) $m[2]
+                    ) {
+                        $count++;
+                    }
+                }
+                return (string) $count;
+            }
             // Native per-module payment restrictions (TWO-25387). Core returns the
             // matched id_country, or false when no row matches.
             if (preg_match(

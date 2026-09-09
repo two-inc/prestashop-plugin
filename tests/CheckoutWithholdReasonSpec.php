@@ -38,8 +38,15 @@ final class CheckoutWithholdReasonSpec
                 static function ($module): void {
                     $module->api_key = '';
                 },
-                'no API key or merchant short name is saved',
+                'no API key is saved in the module settings',
                 'an unconfigured module names what is missing',
+            ],
+            [
+                static function ($module): void {
+                    $module->merchant_short_name = '';
+                },
+                'the merchant account has not been identified yet',
+                'a shop whose key never verified is a different cause from a missing key',
             ],
             [
                 static function ($module): void {
@@ -127,6 +134,27 @@ final class CheckoutWithholdReasonSpec
             ],
             [
                 static function ($module): void {
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, 'false');
+                },
+                'the buyer countries on your account could not be read.',
+                'an unreadable list is not a deliberate account restriction',
+            ],
+            [
+                static function ($module): void {
+                    StubStore::$moduleCountries = [];
+                },
+                'no country is enabled for this module under Payment > Payment Restrictions.',
+                "PrestaShop's own restriction screen hides the option for every buyer",
+            ],
+            [
+                static function ($module): void {
+                    StubStore::$moduleCurrencies['twopayment'] = [];
+                },
+                'no currency is enabled for this module under Payment > Payment Restrictions.',
+                'and the same for its currency allowlist',
+            ],
+            [
+                static function ($module): void {
                 },
                 'Shown at checkout',
                 'nothing withholding it reads as shown',
@@ -144,7 +172,7 @@ final class CheckoutWithholdReasonSpec
             [
                 static function ($module): void {
                     Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER, 1000);
-                    Configuration::updateValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS', 'gross');
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER_BASIS, 'gross');
                 },
                 'hidden for baskets below 1000.00 GBP (including tax)',
                 'the merchant own floor binds even with no platform floor',
@@ -156,10 +184,29 @@ final class CheckoutWithholdReasonSpec
                         '{"amount":250,"currency":"EUR","basis":"net"}'
                     );
                     Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER, 1000);
-                    Configuration::updateValue('PS_TWO_MERCHANT_MIN_ORDER_BASIS', 'gross');
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER_BASIS, 'gross');
                 },
                 '250.00 EUR (excluding tax) or 1000.00 GBP (including tax)',
                 'two floors in different currencies cannot be reduced to one, so both are named',
+            ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue(
+                        Twopayment::CONFIG_PLATFORM_MIN_ORDER,
+                        '{"amount":250,"currency":"GBP","basis":"gross"}'
+                    );
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER, 1000);
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_MIN_ORDER_BASIS, 'gross');
+                },
+                'hidden for baskets below 1000.00 GBP (including tax)',
+                'same currency and basis is one floor - naming both would state a bar that never binds',
+            ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_RECORD_KEY, 'another-key-hash');
+                },
+                'minimum order value not known until your profile refreshes',
+                'a cold or key-mismatched record means the constraint is unknown, not absent',
             ],
         ];
 

@@ -547,8 +547,12 @@ $_MODULE['<{twopayment}prestashop>twopayment_aba389b990ffe03bfed6463dcc50bcb7'] 
 $_MODULE['<{twopayment}prestashop>twopayment_234bdc3195c47d2e7dee6df6e27c1d3a'] = 'Zichtbaar in de checkout';
 $_MODULE['<{twopayment}prestashop>twopayment_63893c2d87676b85e5d093d4c4c6aef3'] = 'de module is niet ingeschakeld voor deze winkel. Schakel hem in bij Modulebeheer.';
 $_MODULE['<{twopayment}prestashop>twopayment_2c074060e1efe449eb1cb79cf1859f3b'] = 'uw merchant-account is nog niet geïdentificeerd. Sla de algemene instellingen op om de API-sleutel te verifiëren.';
-$_MODULE['<{twopayment}prestashop>twopayment_d4fe0eb19234f23b3535a03a5801fcae'] = 'er zijn momenteel geen landen van de koper geactiveerd voor uw account. Neem contact op met %s om ze te laten activeren.';
 $_MODULE['<{twopayment}prestashop>twopayment_26ff869cc83b6aec7e0e07b9e88f0b1b'] = 'verborgen voor winkelwagens onder %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b47df326254341d009809f46d6547bf9'] = 'verborgen voor winkelwagens onder %1$s of %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_79b1ad9464e52fc337e4f72c87658e49'] = 'exclusief btw';
 $_MODULE['<{twopayment}prestashop>twopayment_401daa7d8aed160fae2721966e185e17'] = 'inclusief btw';
+$_MODULE['<{twopayment}prestashop>twopayment_d4fe0eb19234f23b3535a03a5801fcae'] = 'er zijn momenteel geen landen van de koper geactiveerd voor uw account. Neem contact op met %s om ze te laten activeren.';
+$_MODULE['<{twopayment}prestashop>twopayment_9ab50399962b7caddac63a16a9ed9fe8'] = 'de landen van de koper op uw account konden niet worden gelezen. Neem contact op met %s.';
+$_MODULE['<{twopayment}prestashop>twopayment_744ab2d1f9928f2a52f98b79beb6f67d'] = 'er is geen land geactiveerd voor deze module onder Betaling > Betalingsbeperkingen.';
+$_MODULE['<{twopayment}prestashop>twopayment_b309bb076005fd147c717aa6020d624e'] = 'er is geen valuta geactiveerd voor deze module onder Betaling > Betalingsbeperkingen.';
+$_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] = 'minimumbestelwaarde nog niet bekend totdat uw profiel is vernieuwd';
