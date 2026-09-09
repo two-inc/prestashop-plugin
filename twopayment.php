@@ -1726,8 +1726,10 @@ class Twopayment extends PaymentModule
      */
     protected function getTwoPaymentTermsForm()
     {
-        $inputs = array(
-            array(
+        $inputs = array();
+
+        if ($this->isTwoEomTermTypeConfigured()) {
+            $inputs[] = array(
                 'type' => 'radio',
                 'label' => $this->l('Payment terms type'),
                 'name' => 'PS_TWO_PAYMENT_TERM_TYPE',
@@ -1745,7 +1747,10 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('End-of-month terms (e.g., EOM + 30 days)')
                     ),
                 ),
-            ),
+            );
+        }
+
+        $inputs = array_merge($inputs, array(
             array(
                 'type' => 'checkbox',
                 'label' => $this->l('Payment terms'),
@@ -1794,7 +1799,7 @@ class Twopayment extends PaymentModule
                     'name' => 'name',
                 ),
             ),
-        );
+        ));
 
         // Offset pricing fee (buyer surcharge) fields — method, basis, line
         // description, per-term grid, rounding, tax treatment/class, in
@@ -2113,6 +2118,17 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Whether the EOM selector renders on the Payment Terms form (TWO-25656): the context's own row is EOM, the
+     * same row the field value and the save use. Exact match, like every other read.
+     *
+     * @return bool
+     */
+    protected function isTwoEomTermTypeConfigured()
+    {
+        return Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM';
+    }
+
+    /**
      * Dropdown options for the default-term select (TWO-25386 #10): the
      * currently offered terms (checkboxes + custom days, term-type
      * constrained), so the admin can only ever choose a term that is actually
@@ -2175,7 +2191,7 @@ class Twopayment extends PaymentModule
 
     protected function saveTwoPaymentTermsFormValues()
     {
-        // Save payment term type (STANDARD or EOM)
+        // Save payment term type (STANDARD or EOM); an absent POST (selector hidden, TWO-25656) leaves it untouched.
         $term_type = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE');
         if ($term_type === 'STANDARD' || $term_type === 'EOM') {
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $term_type);
