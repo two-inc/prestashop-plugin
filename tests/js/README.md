@@ -228,28 +228,15 @@ form (which it does for something as ordinary as a country change):
   It is now a real `<button>` outside the scroll container, so the properties
   under test are structural instead: that it is a `<button>` and not an element with a
   click handler bolted on, that it renders *outside* the scrollable results host, that it
-  is among the tab stops immediately after the query field by plain document order, that the cursor keys
-  cannot reach it (it is not an item in the widget's menu at all), and that it is coloured
-  distinctly from the inert rows above it. Those live in `company-search-dropdown.test.js`,
-  below.
-
-  **The key-event cases are the ones that matter most, and they must be driven
-  through the real widget.** The widget's focus event fires *after* the menu has
-  focused the row, and its return value gates only the write that mirrors a
-  key-navigated item into the input — and it performs that write only for a
-  **key-type** original event. So calling the `focus` option directly, as an
-  earlier version of these tests did, cannot observe the defect at all: it passes
-  whether the guard is there or not. The cases now trigger the widget's own menu
-  focus event with a synthetic keydown original event, in both list shapes,
-  because the normalizer behaves differently in each — alongside real companies
-  the row keeps an empty value (an unguarded write **blanks** the buyer's term),
-  and alongside a message row every value is rewritten from its label (an
-  unguarded write puts the **affordance text** into the field).
+  is among the tab stops immediately after the query field by plain document order, that
+  the cursor keys cannot reach it (it is not an item in the widget's menu at all), and
+  that it is coloured distinctly from the inert rows above it. Those live in
+  `company-search-dropdown.test.js`, below.
 
   Focus restoration is asserted on both paths, on activation and on the way back,
   via `document.activeElement`. This is the one behaviour whose regression is
   invisible to a sighted mouse user and total for a keyboard one, because
-  activating the row removes the focused element from the list.
+  activating it closes the panel the focused control lives in.
 
   Forgetting the selected company is asserted too, and on all three of the places a
   selection writes the organisation number — because two of them were missing and
@@ -277,20 +264,13 @@ form (which it does for something as ordinary as a country change):
   address-save backstop that holds when the browser's fire-and-forget request never
   arrives.
 
-  On the fallback path the row has no widget to lean on, so it carries its own
-  `role="button"`, `tabindex="0"` and Enter/Space handling, and each of those is asserted
-  directly — including that Space is `preventDefault`ed (its default action is to scroll)
-  and that an unrelated key does nothing. Two fallback-only cases matter more than they
-  look: every one of that path's four renderers wipes the list's `innerHTML`, so the footer
-  is asserted separately in the loading, results, zero-result and failure states; and
-  moving focus onto the row blurs the input, whose blur closes the list 150ms later, so one
-  case blurs the input, focuses the row, advances the timers and then activates it by
-  keyboard. Without the cancel that case pins, the affordance would be pointer-only in
-  practice however good its ARIA looked. A third closes the other half of that:
-  the row re-arms the close on its own blur, because the input is otherwise the
-  only node that closes this list and the row is now the first tab stop after the
-  company field whenever the dropdown is open — so tabbing onward would have left
-  the list painted over the address form indefinitely.
+  On the fallback path it is the SAME element, built once by `buildDropdown()` outside
+  the results host, so no renderer of that path can wipe it. Its visibility is gated all
+  the same, so it is still pinned per render state: alongside real results, through the
+  zero-result render with the panel staying open for it, and through the failure render.
+  Being a real `<button>` also means the browser supplies its role, its focus behaviour
+  and its Enter/Space activation, so this path hand-rolls none of them and cannot drift
+  from the jQuery UI path.
 
   **The PHP half of this element cannot be covered here at all.** Two seams are
   invisible to this suite because it stubs both sides of them: the dictionary keys
