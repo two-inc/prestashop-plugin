@@ -756,7 +756,8 @@ namespace {
 
     class Configuration
     {
-        public static function get($key, $default = null)
+        // Core returns false for a key that was never written.
+        public static function get($key, $default = false)
         {
             return array_key_exists($key, StubStore::$configuration) ? StubStore::$configuration[$key] : $default;
         }
@@ -857,15 +858,7 @@ namespace {
 
         public static function isEmpty($value): bool
         {
-            if ($value === null) {
-                return true;
-            }
-
-            if (is_string($value)) {
-                return trim($value) === '';
-            }
-
-            return $value === '';
+            return $value === '' || $value === null;
         }
 
         public static function displayPrice($amount): string

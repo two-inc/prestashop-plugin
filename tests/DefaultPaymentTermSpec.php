@@ -226,9 +226,13 @@ final class DefaultPaymentTermSpec
 
         $module->invalidateMerchantAvailableTerms();
 
-        TinyAssert::same(array(), $module->getMerchantAvailableTerms(false));
+        TinyAssert::same('', Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS));
         TinyAssert::same(null, $module->getMerchantDueInDays());
         TinyAssert::same(0, (int) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS));
+        // A re-resolve that fails leaves the accessor empty, having tried.
+        $failing = self::moduleWithMerchantResponse(array('http_status' => 0));
+        TinyAssert::same(array(), $failing->getMerchantAvailableTerms(false, true));
+        TinyAssert::same(1, $failing->fetchCount);
     }
 
     /**

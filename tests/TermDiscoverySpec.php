@@ -13,6 +13,7 @@ final class TermDiscoverySpec
         self::testColdCacheIsLogged();
         self::testWithholdReasonIsLoggedOncePerRequestNotPerCall();
         self::testInvalidatedCacheWithholdsUntilReResolved();
+        self::testUnresolvedRecordRefetchDecidesTheBuyerOutcome();
     }
 
     private static function module(): TwopaymentTestHarness
@@ -20,6 +21,70 @@ final class TermDiscoverySpec
         StubStore::reset();
 
         return new TwopaymentTestHarness();
+    }
+
+    /**
+     * Payment-options harness. The API-key gate is fed its own verdict field, so
+     * it stays in the assertion path ahead of the term gate.
+     */
+    private static function moduleWithMerchantRecordResponse(array $response, string $verdict = Twopayment::API_KEY_STATUS_OK): object
+    {
+        StubStore::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+
+        $module = new class ($response) extends TwopaymentTestHarness {
+            public int $calls = 0;
+            private array $response;
+
+            public function __construct(array $response)
+            {
+                parent::__construct();
+                $this->response = $response;
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                ++$this->calls;
+                return $this->response;
+            }
+        };
+        $module->primeTwoApiKeyStatus($verdict, 200);
+
+        return $module;
+    }
+
+    /**
+     * ABN-495. Given a record dropped during an outage, When the buyer reaches
+     * the payment step after it clears, Then the render itself refetches.
+     */
+    private static function testUnresolvedRecordRefetchDecidesTheBuyerOutcome(): void
+    {
+        $ok = ['http_status' => 200, 'available_terms' => [30]];
+        $down = ['http_status' => 0];
+
+        $unreachable = Twopayment::API_KEY_STATUS_UNREACHABLE;
+        $verified = Twopayment::API_KEY_STATUS_OK;
+
+        $cases = [
+            ['',       $ok,   $verified,    1, 1, 'a dropped record is refetched on the payment render and the method returns'],
+            ['',       $down, $verified,    1, 0, 'a record that still cannot be fetched keeps the method withheld'],
+            ['[]',     $ok,   $verified,    0, 0, 'an explicitly empty offer set withholds without a refetch'],
+            ['[30]',   $ok,   $verified,    0, 1, 'a resolved record offers the method with no wire call'],
+            ['',       $ok,   $unreachable, 0, 0, 'an unverified key withholds before the term gate spends a request'],
+        ];
+
+        foreach ($cases as [$cached, $response, $verdict, $expectedCalls, $expectedOptions, $description]) {
+            $module = self::moduleWithMerchantRecordResponse($response, $verdict);
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, $cached);
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 0);
+            self::offerableCart($module);
+
+            $options = $module->hookPaymentOptions([]);
+
+            TinyAssert::same($expectedCalls, $module->calls, 'wire calls: ' . $description);
+            TinyAssert::same($expectedOptions, count($options), 'payment options: ' . $description);
+        }
     }
 
     private static function offerableCart(object $module): void

@@ -486,14 +486,28 @@ final class FxRatesSpec
         TinyAssert::same(1, $module->fxFetchCount);
     }
 
+    /** Every shape of "no API key": PrestaShop reads a key never written as false. */
     private static function testMissingApiKeyNeverFetches(): void
     {
-        self::reset();
-        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '');
-        $module = self::fxModule(self::ratesResponse());
+        $cases = [
+            ['', 'a stored empty key'],
+            [null, 'a key never written at all'],
+        ];
 
-        TinyAssert::same(null, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'NOK'));
-        TinyAssert::same(0, $module->fxFetchCount, 'the merchant-key-authenticated endpoint must not be called without a key');
+        foreach ($cases as [$storedKey, $description]) {
+            self::reset();
+            if ($storedKey === null) {
+                Configuration::deleteByName('PS_TWO_MERCHANT_API_KEY');
+            } else {
+                Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $storedKey);
+            }
+            $module = self::fxModule(self::ratesResponse());
+
+            TinyAssert::same(null, $module->convertTwoAmountBetweenCurrencies(10.0, 'EUR', 'NOK'), 'conversion: ' . $description);
+            TinyAssert::same(0, $module->fxFetchCount, 'the key-authenticated endpoint must not be called with ' . $description);
+            TinyAssert::false($module->refreshTwoFxRates(), 'refresh must decline with ' . $description);
+            TinyAssert::same(0, $module->fxFetchCount, 'and the refresh must not have fetched with ' . $description);
+        }
     }
 
     private static function testGateJudgesCrossCurrencyBasketOnEndpointRate(): void

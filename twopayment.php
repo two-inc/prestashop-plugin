@@ -4901,10 +4901,16 @@ class Twopayment extends PaymentModule
             return [];
         }
 
+        $cart = $this->context->cart;
+        if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
+            PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
+            return [];
+        }
+
         // Term-discovery gate (TWO-25503). PAYMENT_TERMS_OPTIONS is a
         // build-time admin UI preset, never a runtime substitute for terms
-        // Two hasn't actually sanctioned for this merchant. Cache-only.
-        if (empty($this->getMerchantAvailableTerms(false))) {
+        // Two hasn't actually sanctioned for this merchant.
+        if (empty($this->getMerchantAvailableTerms(false, true))) {
             if (!$this->twoTermsWithholdLogged) {
                 $this->twoTermsWithholdLogged = true;
                 PrestaShopLogger::addLog(
@@ -4912,12 +4918,6 @@ class Twopayment extends PaymentModule
                     2
                 );
             }
-            return [];
-        }
-
-        $cart = $this->context->cart;
-        if (!Validate::isLoadedObject($cart) || $cart->id_address_invoice == 0) {
-            PrestaShopLogger::addLog('TwoPayment: No valid cart or billing address found for payment options', 2);
             return [];
         }
 
@@ -10699,11 +10699,16 @@ class Twopayment extends PaymentModule
      * resolved (no verified API key / merchant id yet, or no successful fetch yet)
      * OR the backend explicitly returned an empty list.
      *
-     * Cache-only by default: this is read from checkout / cart / admin-render
-     * paths that must not stall on HTTP. A TTL-gated fetch (15 min, 10s request
-     * cap) runs only when $refresh === true, from the two sanctioned refresh
-     * points (the checkout media hook and the admin config render). The cached
-     * list is overwritten only by a successful response carrying an
+     * Cache-only by default: this is read from cart / payment-POST / order-status
+     * paths that must not stall on HTTP, and where an unresolved list degrades to
+     * PAYMENT_TERMS_OPTIONS rather than deciding anything. A TTL-gated fetch
+     * (15 min, 10s cap) runs when $refresh === true, from the sanctioned refresh
+     * points (the checkout media hook and the admin config render).
+     *
+     * For a caller whose answer is a WITHHOLD decision, an unresolved list is a
+     * cache miss and nothing else on its path refetches - hence
+     * $resolve_if_unresolved, on the same shared clock (ABN-495).
+     * The cached list is overwritten only by a successful response carrying an
      * `available_terms` array; a fetch failure (or an older backend omitting the
      * field) serves the last-known list for another TTL rather than blanking the
      * term set on an API blip.
@@ -10712,17 +10717,21 @@ class Twopayment extends PaymentModule
      * settings blob, so a checkout-render refresh can never race a concurrent
      * admin settings save.
      *
-     * @param bool $refresh Allow a TTL-gated backend fetch on this call.
+     * @param bool $refresh Allow a TTL-gated backend fetch on this call even
+     *                       when the cached list is already populated.
+     * @param bool $resolve_if_unresolved Allow the same fetch when the cached
+     *                       list is unresolved, on a read that would otherwise
+     *                       be cache-only.
      * @return int[] Ascending, unique day counts; empty when unresolved.
      */
-    public function getMerchantAvailableTerms($refresh = false)
+    public function getMerchantAvailableTerms($refresh = false, $resolve_if_unresolved = false)
     {
-        if ($refresh) {
+        if ($refresh || ($resolve_if_unresolved && self::isMerchantTermCacheUnresolved())) {
             $checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
             if ($checked_on <= 0 || ($checked_on + self::MERCHANT_AVAILABLE_TERMS_TTL) <= time()) {
                 $merchant_id = Configuration::get('PS_TWO_MERCHANT_ID');
                 $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
-                if (!Tools::isEmpty($merchant_id) && !Tools::isEmpty($api_key)) {
+                if (!self::isTwoConfigUnset($merchant_id) && !self::isTwoConfigUnset($api_key)) {
                     // Bump the shared clock BEFORE the wire call so a concurrent
                     // render at expiry serves the stale cache instead of firing a
                     // second, redundant fetch (anti-stampede - TWO-24859 review).
@@ -10736,7 +10745,7 @@ class Twopayment extends PaymentModule
                         self::API_TIMEOUT_STATE_CHECK
                     );
                     $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
-                    if ($http_status === self::HTTP_STATUS_OK && is_array($response)) {
+                    if ($http_status === self::HTTP_STATUS_OK && self::isTwoMerchantRecordResponse($response)) {
                         // ONE fetch feeds BOTH merchant-record caches: the
                         // offerable term list (TWO-24813) and the default-term
                         // seed (due_in_days, TWO-24859). A field absent from an
@@ -10794,7 +10803,7 @@ class Twopayment extends PaymentModule
         }
 
         $cached = Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS);
-        if (Tools::isEmpty($cached)) {
+        if (self::isTwoConfigUnset($cached)) {
             return array();
         }
         $decoded = json_decode($cached, true);
@@ -10802,6 +10811,65 @@ class Twopayment extends PaymentModule
             return array();
         }
         return $this->normaliseMerchantTerms($decoded);
+    }
+
+    /**
+     * Whether a 200 body is the merchant record at all. The sibling caches this
+     * fetch feeds overwrite with PERMISSIVE defaults on an absent field - no
+     * minimum, no buyer-country restriction - so a 200 that answers none of the
+     * questions asked (a captive portal, a proxy error page) has to be treated
+     * as a failed fetch rather than as a merchant with no restrictions.
+     *
+     * @param mixed $response
+     * @return bool
+     */
+    private static function isTwoMerchantRecordResponse($response)
+    {
+        if (!is_array($response)) {
+            return false;
+        }
+
+        // The flattened root only - a body carrying them somewhere else answers
+        // none of the questions actually asked.
+        $fields = array(
+            'id',
+            'available_terms',
+            'due_in_days',
+            'invoice_distributed_by_merchant',
+            'min_order_amount',
+            'supported_buyer_countries',
+        );
+        foreach ($fields as $field) {
+            if (array_key_exists($field, $response)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * A Configuration value that carries nothing. An unset key reads back as
+     * `false`, which Tools::isEmpty() alone does NOT report as empty - so a key
+     * that was never written slips past a bare isEmpty() guard.
+     *
+     * @param mixed $value
+     * @return bool
+     */
+    private static function isTwoConfigUnset($value)
+    {
+        return $value === false || Tools::isEmpty($value);
+    }
+
+    /**
+     * Whether the cached term list has no answer in it yet. A cached '[]' IS an
+     * answer (the backend offers this merchant nothing) and is not unresolved.
+     *
+     * @return bool
+     */
+    private static function isMerchantTermCacheUnresolved()
+    {
+        return self::isTwoConfigUnset(Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS));
     }
 
     /**
@@ -11305,7 +11373,7 @@ class Twopayment extends PaymentModule
             return false;
         }
         $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
-        if (Tools::isEmpty($api_key)) {
+        if (self::isTwoConfigUnset($api_key)) {
             return false;
         }
         Configuration::updateValue(self::CONFIG_FX_RATES_TS, time());
@@ -11571,7 +11639,7 @@ class Twopayment extends PaymentModule
             return array('success' => false);
         }
         $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
-        if (Tools::isEmpty($api_key)) {
+        if (self::isTwoConfigUnset($api_key)) {
             return array('success' => false);
         }
 
