@@ -58,10 +58,10 @@ describe('the config the checkout manager is built with', () => {
     // The manager reads its offered set from here, so a default substituted at
     // this seam is a term offered to a buyer just as surely as one from PHP.
     test.each([
-        [undefined, [], 'an absent list stays absent'],
-        [[], [], 'an empty list stays empty'],
-        [[45], [45], 'a real list is carried through'],
-    ])('%s: %p', (terms, expected) => {
+        ['an absent list stays absent', undefined, []],
+        ['an empty list stays empty', [], []],
+        ['a real list is carried through', [45], [45]],
+    ])('%s', (description, terms, expected) => {
         loadScript('views/js/twopayment.js');
 
         const config = window.twoBuildCheckoutManagerConfig({ available_payment_terms: terms });
@@ -71,14 +71,14 @@ describe('the config the checkout manager is built with', () => {
 });
 
 describe('the payment-term block against the offered set', () => {
-    // [offered set, block revealed, chips drawn, description]
+    // [description, offered set, block revealed, chips drawn]
     const cases = [
-        [[], false, 0, 'no offered term reveals nothing'],
-        [undefined, false, 0, 'an absent list is not an offer either'],
-        [[30, 60], true, 2, 'a real offered set draws a chip per term'],
+        ['no offered term reveals nothing', [], false, 0],
+        ['an absent list is not an offer either', undefined, false, 0],
+        ['a real offered set draws a chip per term', [30, 60], true, 2],
     ];
 
-    test.each(cases)('%s: %p', (terms, revealed, chips) => {
+    test.each(cases)('%s', (description, terms, revealed, chips) => {
         manager(terms).showPaymentTerms();
 
         const block = document.getElementById('two-payment-terms');
