@@ -10699,11 +10699,14 @@ class Twopayment extends PaymentModule
      * resolved (no verified API key / merchant id yet, or no successful fetch yet)
      * OR the backend explicitly returned an empty list.
      *
-     * Cache-only by default: this is read from checkout / cart / admin-render
-     * paths that must not stall on HTTP. A TTL-gated fetch (15 min, 10s request
-     * cap) runs only when $refresh === true, from the two sanctioned refresh
-     * points (the checkout media hook and the admin config render). The cached
-     * list is overwritten only by a successful response carrying an
+     * Cache-only while the cached list is POPULATED: those reads happen on
+     * checkout / cart / admin-render paths that must not stall on HTTP, and the
+     * TTL-gated fetch (15 min, 10s cap) runs only when $refresh === true, from
+     * the sanctioned refresh points (the checkout media hook and the admin
+     * config render). An UNRESOLVED list withholds the payment method outright,
+     * so it is a cache miss rather than an answer: it makes every read a refresh
+     * point, still rate-limited by the shared clock (ABN-495).
+     * The cached list is overwritten only by a successful response carrying an
      * `available_terms` array; a fetch failure (or an older backend omitting the
      * field) serves the last-known list for another TTL rather than blanking the
      * term set on an API blip.
@@ -10712,12 +10715,13 @@ class Twopayment extends PaymentModule
      * settings blob, so a checkout-render refresh can never race a concurrent
      * admin settings save.
      *
-     * @param bool $refresh Allow a TTL-gated backend fetch on this call.
+     * @param bool $refresh Allow a TTL-gated backend fetch on this call even
+     *                       when the cached list is already populated.
      * @return int[] Ascending, unique day counts; empty when unresolved.
      */
     public function getMerchantAvailableTerms($refresh = false)
     {
-        if ($refresh) {
+        if ($refresh || Tools::isEmpty(Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS))) {
             $checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
             if ($checked_on <= 0 || ($checked_on + self::MERCHANT_AVAILABLE_TERMS_TTL) <= time()) {
                 $merchant_id = Configuration::get('PS_TWO_MERCHANT_ID');

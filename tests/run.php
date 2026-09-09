@@ -167,7 +167,7 @@ final class OrderBuilderSpec
         self::testGetAvailablePaymentTermsFallsBackToHardcodedWhenBackendUnresolved();
         self::testGetAvailablePaymentTermsEomConstrainsToEomSubset();
         self::testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault();
-        self::testGetMerchantAvailableTermsCacheOnlyNeverFetches();
+        self::testGetMerchantAvailableTermsRefetchDecisionTable();
         self::testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale();
         self::testGetMerchantAvailableTermsRespectsExplicitEmptyList();
         self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
@@ -4974,18 +4974,38 @@ final class OrderBuilderSpec
         };
     }
 
-    private static function testGetMerchantAvailableTermsCacheOnlyNeverFetches(): void
+    /**
+     * ABN-495. Given a cached term list and clock, When the seam is read, Then
+     * only an UNRESOLVED list ('') reaches the wire - '[]' is a resolved answer.
+     */
+    private static function testGetMerchantAvailableTermsRefetchDecisionTable(): void
     {
-        self::reset();
-        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
-        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
-        $module = self::fetchHarness();
-        // Harness seeds a resolved cache by default; this test wants cold.
-        $module->primeTwoAvailableTerms([]);
-        // Cache-only read never fetches, even with a cold cache: the seam is
-        // reached from render paths that must not block on HTTP.
-        TinyAssert::same([], $module->getMerchantAvailableTerms());
-        TinyAssert::same(0, $module->calls);
+        $cases = [
+            ['[30,60]', 0,    false, 0, [30, 60], 'a resolved list is served without touching the wire'],
+            ['[30,60]', -901, false, 0, [30, 60], 'an expired resolved list still costs a cache-only read nothing'],
+            ['',        0,    false, 1, [7, 30],   'a dropped record refetches on a plain read instead of staying withheld'],
+            ['',        -100, false, 0, [],        'the shared clock still rate-limits the unresolved-list refetch'],
+            ['[]',      0,    false, 0, [],        'an explicitly empty offer set is an answer, not a gap to refetch'],
+            ['',        0,    true,  1, [7, 30],   'a sanctioned refresh point still fetches a dropped record'],
+        ];
+
+        foreach ($cases as [$cached, $tsOffset, $refresh, $expectedCalls, $expectedTerms, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, $cached);
+            Configuration::updateValue(
+                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+                $tsOffset === 0 ? 0 : time() + $tsOffset
+            );
+            $module = self::fetchHarness();
+            $module->responses[] = ['http_status' => 200, 'available_terms' => [30, 7]];
+
+            $terms = $module->getMerchantAvailableTerms($refresh);
+
+            TinyAssert::same($expectedCalls, $module->calls, 'wire calls: ' . $description);
+            TinyAssert::same($expectedTerms, $terms, 'terms: ' . $description);
+        }
     }
 
     private static function testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale(): void
