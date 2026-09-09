@@ -72,6 +72,10 @@
     var twoRefreshMerchantUrl = '{$two_refresh_merchant_url|escape:'javascript':'UTF-8'}';
     var twoRefreshMerchantBusyText = '{l s='Refreshing…' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoRefreshMerchantFailedText = '{l s='Could not reach the server. Try again.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleText = '{l s='Fees could not be refreshed, so the figures last retrieved are shown.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleDatedText = '{l s='Fees could not be refreshed, so the figures retrieved on %s are shown.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesUnavailableText = '{l s='Fees could not be loaded because the pricing service could not be reached. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesNoApiKeyText = '{l s='Fees cannot be shown until an API key is saved on the General tab.' mod='twopayment'|escape:'javascript':'UTF-8'}';
 </script>
 {literal}
     <script type="text/javascript">
@@ -238,13 +242,33 @@
             updateSurchargeGridRows();
 
             // Inline merchant fee beside each "Available Payment Terms"
-            // checkbox, fetched from the module's admin AJAX endpoint. On
-            // failure the fee spans are blanked silently - the config page
-            // must never break on an API outage.
+            // checkbox, fetched from the module's admin AJAX endpoint. An
+            // empty span reads as "this term carries no fee", so an answer
+            // that cannot be drawn says so in the notice instead (ABN-541).
             var lastFeesKey = null;
 
             function formatTwoFeeAmount(n) {
                 return Number(n).toFixed(2);
+            }
+
+            function setTwoFeeNotice(text) {
+                var $anchor = $('input[name^="PS_TWO_PAYMENT_TERMS_"]').first().closest('.form-group');
+                if (!$anchor.length) {
+                    return;
+                }
+                var $notice = $anchor.find('.two-term-fee-notice');
+                if (!$notice.length) {
+                    if (!text) {
+                        return;
+                    }
+                    $notice = $('<div class="two-term-fee-notice help-block"></div>').appendTo($anchor);
+                }
+                $notice.text(text || '');
+            }
+
+            function showTwoFeesUnavailable(error) {
+                $('.two-term-fee').text('');
+                setTwoFeeNotice(error === 'not_configured' ? twoFeesNoApiKeyText : twoFeesUnavailableText);
             }
 
             function loadTwoMerchantFees() {
@@ -276,9 +300,27 @@
                     dataType: 'json',
                     data: { terms: JSON.stringify(terms) }
                 }).done(function (response) {
+                    var terminal = response && response.error === 'not_configured';
+                    // Anything but a fresh renderable set may be asked again
+                    // for the same terms - the server's own cooldown, not this
+                    // key, is what bounds an outage. An unsaved key is
+                    // terminal, so it keeps the key.
+                    if (!terminal && (!response || !response.success || !response.fees || response.stale)) {
+                        lastFeesKey = null;
+                    }
                     if (!response || !response.success || !response.fees) {
-                        $('.two-term-fee').text('');
+                        showTwoFeesUnavailable(response && response.error);
                         return;
+                    }
+                    if (response.stale) {
+                        var retrieved = String(response.fetched_at_display || '');
+                        setTwoFeeNotice(
+                            retrieved === ''
+                                ? twoFeesStaleText
+                                : twoFeesStaleDatedText.replace('%s', retrieved)
+                        );
+                    } else {
+                        setTwoFeeNotice('');
                     }
                     // Currency must come from the API response - the fee
                     // amounts do too. Without it, any fixed amount would be
@@ -317,7 +359,7 @@
                     // Allow a retry on the same term set after a transient
                     // error.
                     lastFeesKey = null;
-                    $('.two-term-fee').text('');
+                    showTwoFeesUnavailable();
                 });
             }
 
