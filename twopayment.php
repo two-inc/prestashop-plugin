@@ -1031,6 +1031,9 @@ class Twopayment extends PaymentModule
             $this->validTwoGeneralFormValues();
             if (!count($this->errors)) {
                 $this->saveTwoGeneralFormValues();
+                if ($this->apiKeyVerificationWarning !== null) {
+                    $this->output .= $this->displayWarning($this->apiKeyVerificationWarning);
+                }
             } else {
                 foreach ($this->errors as $err) {
                     $this->output .= $this->displayError($err);
@@ -1327,19 +1330,9 @@ class Twopayment extends PaymentModule
             // a bad environment - in which case nothing is stored and this
             // verdict describes a key the shop does not have.
             $this->verifiedApiKeyResult = $verify;
-            // Unless the key AND environment being validated are the stored ones,
-            // in which case the verdict describes the live shop whatever happens
-            // to the rest of the form - and is the only way a FAILING verdict ever
-            // gets published from this page, since a failing key adds an error and
-            // the save never runs (review round 2).
-            //
-            // The environment half is not decoration (review round 3). The check
-            // above ran against the SUBMITTED environment while the slot is keyed
-            // to the STORED one, which the skipped save leaves unchanged - so a
-            // merchant merely switching the dropdown to an environment their key
-            // is not valid for would otherwise publish an 'invalid_key' verdict
-            // against their still-perfectly-good stored configuration, and take
-            // Two off a healthy checkout over a save that never happened.
+            // Published only for the STORED key and environment, which the slot
+            // is keyed to: a verdict about a dropdown the shop has not moved to
+            // yet would take Two off a healthy checkout.
             if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
                 && (string) $env === (string) Configuration::get('PS_TWO_ENVIRONMENT')) {
                 $this->cacheTwoApiKeyVerificationStatus($apiKey, $verify);
@@ -1347,52 +1340,72 @@ class Twopayment extends PaymentModule
             if ($verify['status'] !== self::API_KEY_STATUS_OK) {
                 // Category-specific, so the merchant is not left choosing
                 // between "my key is wrong" and "Two is down" (TWO-25326).
-                $this->errors[] = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
-            } else {
-                $body = isset($verify['body']) && is_array($verify['body']) ? $verify['body'] : array();
-                if (!isset($body['id']) || !isset($body['short_name'])) {
-                    $this->errors[] = sprintf($this->l('Invalid verification response from %s.'), $this->getTwoBrandConfig('product_name'));
-                } else {
-                    $this->verifiedMerchantId = $body['id'];
-                    $this->verifiedMerchantShortName = $body['short_name'];
+                // Never blocking, a rejection included: refusing the save
+                // discards the values submitted beside the key (ABN-495).
+                $this->apiKeyVerificationWarning = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
+                if ($verify['status'] === self::API_KEY_STATUS_INVALID) {
+                    $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key was kept.');
                 }
+            } else {
+                // An 'ok' verdict guarantees an id; a short name is optional,
+                // and an empty one withholds Two at checkout on its own.
+                $body = $verify['body'];
+                $this->verifiedMerchantId = $body['id'];
+                $this->verifiedMerchantShortName = isset($body['short_name']) ? (string) $body['short_name'] : '';
             }
         }
     }
 
     protected function saveTwoGeneralFormValues()
     {
-        // If verification succeeded, use verified short name; else fallback to form (kept for safety)
-        $shortNameToSave = $this->verifiedMerchantShortName ? $this->verifiedMerchantShortName : trim(Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME'));
+        $submittedApiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
+        $submittedEnv = Tools::getValue('PS_TWO_ENVIRONMENT');
+        // The one submitted value a save may not commit: it would take Two off
+        // a checkout the stored key still serves.
+        $rejected = is_array($this->verifiedApiKeyResult)
+            && $this->verifiedApiKeyResult['status'] === self::API_KEY_STATUS_INVALID;
+        $apiKeyToSave = $rejected ? (string) Configuration::get('PS_TWO_MERCHANT_API_KEY') : $submittedApiKey;
+        // Keyed on what is stored, not what was submitted: a reverted key
+        // leaves the shop on the identity the cached record describes
+        // (TWO-24813 / ABN-495).
+        $identityChanged = $apiKeyToSave !== (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
+            || (string) $submittedEnv !== (string) Configuration::get('PS_TWO_ENVIRONMENT')
+            // An unchanged key can still resolve a different merchant.
+            || ($this->verifiedMerchantId
+                && (string) Configuration::get('PS_TWO_MERCHANT_ID') !== (string) $this->verifiedMerchantId);
+
+        // Server-derived, never a form input: wiping it would withhold Two on
+        // hookPaymentOptions()' empty-short-name guard until the next
+        // successful verification.
+        $shortNameToSave = $this->verifiedMerchantShortName
+            ? $this->verifiedMerchantShortName
+            : (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
-        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')));
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKeyToSave);
         Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', Tools::getValue('PS_TWO_ENVIRONMENT'));
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', $submittedEnv);
+
+        if ($identityChanged) {
+            $this->invalidateMerchantAvailableTerms();
+            // The rates themselves are merchant-independent, so the
+            // last-known-good TABLE stays - it is the gate's only fallback -
+            // but a clock still inside its 6h TTL would suppress the warm-up
+            // fetch below for up to six hours (TWO-25184).
+            Configuration::updateValue(self::CONFIG_FX_RATES_TS, 0);
+        }
+
         // The verdict from the live check the validation above just made, now
         // that the key it describes is the stored one (TWO-25326). This is the
         // freshest that key will ever have had, so it becomes what the checkout
         // gates read: a merchant who has just fixed a broken key sees Two
-        // return to checkout at once instead of waiting out the TTL.
-        if (is_array($this->verifiedApiKeyResult)) {
-            $this->cacheTwoApiKeyVerificationStatus(
-                trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY')),
-                $this->verifiedApiKeyResult
-            );
+        // return to checkout at once instead of waiting out the TTL. Skipped
+        // when a rejected key was reverted, since the verdict then describes a
+        // key this shop does not have.
+        if (is_array($this->verifiedApiKeyResult) && $apiKeyToSave === $submittedApiKey) {
+            $this->cacheTwoApiKeyVerificationStatus($apiKeyToSave, $this->verifiedApiKeyResult);
         }
 
         if ($this->verifiedMerchantId) {
-            if ((string) Configuration::get('PS_TWO_MERCHANT_ID') !== (string) $this->verifiedMerchantId) {
-                // Merchant identity changed: drop the cached term list so
-                // serve-stale never bridges the old merchant's terms (TWO-24813).
-                $this->invalidateMerchantAvailableTerms();
-                // Same for the FX refresh clock (TWO-25184): the rates
-                // themselves are merchant-independent, so the last-known-good
-                // TABLE stays (it is the gate's only fallback), but the new
-                // identity may be a different environment - and a clock still
-                // inside its 6h TTL would suppress the warm-up fetch that
-                // follows this save for up to six hours.
-                Configuration::updateValue(self::CONFIG_FX_RATES_TS, 0);
-            }
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
         } else {
@@ -10024,12 +10037,9 @@ class Twopayment extends PaymentModule
         }
 
         $decoded = json_decode((string) $response, true);
-        if (!is_array($decoded)) {
-            // A 200 whose body is not the merchant record is not a verified
-            // key: something is answering on the endpoint's behalf (a captive
-            // portal, a proxy error page). 'error' rather than 'invalid_key' -
-            // the key was never judged.
-            PrestaShopLogger::addLog('TwoPayment: API key verification returned an unreadable body on HTTP 200', 2);
+        if (!is_array($decoded) || !isset($decoded['id'])) {
+            // A 200 that is not the merchant record - a captive portal, a proxy error page, a truncated body - judged no key, so 'error' rather than 'invalid_key'.
+            PrestaShopLogger::addLog('TwoPayment: API key verification returned no merchant record on HTTP 200', 2);
             return array('status' => self::API_KEY_STATUS_ERROR, 'code' => $httpCode, 'body' => null);
         }
 
@@ -11758,6 +11768,14 @@ class Twopayment extends PaymentModule
      * @var null|array{status:string,code:int|null,body:array|null}
      */
     protected $verifiedApiKeyResult = null;
+
+    /**
+     * Non-blocking wording for a general-form verification that did not come
+     * back OK (ABN-495). Null when there is none.
+     *
+     * @var string|null
+     */
+    protected $apiKeyVerificationWarning = null;
 
     /**
      * Whether this instance has already logged that it is withholding Two over
@@ -15198,13 +15216,14 @@ class Twopayment extends PaymentModule
      */
     public static function isValidTwoHeaderName($name)
     {
-        return (bool) preg_match('/^[A-Za-z0-9!#$%&\'*+.^_`|~-]+$/', (string) $name);
+        return (bool) preg_match('/^[A-Za-z0-9!#$%&\'*+.^_`|~-]+\z/', (string) $name);
     }
 
     /**
      * Printable ASCII only: excludes CR/LF (request splitting), NUL and other
      * control characters (log injection), and non-ASCII bytes (encoding
-     * ambiguity between the store, curl and the firewall).
+     * ambiguity between the store, curl and the firewall). Anchored with \z
+     * because $ also matches before a trailing newline.
      *
      * @param string $value
      *
@@ -15212,7 +15231,7 @@ class Twopayment extends PaymentModule
      */
     public static function isValidTwoHeaderValue($value)
     {
-        return (bool) preg_match('/^[\x20-\x7E]+$/', (string) $value);
+        return (bool) preg_match('/^[\x20-\x7E]+\z/', (string) $value);
     }
 
     /**

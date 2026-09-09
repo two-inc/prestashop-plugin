@@ -171,32 +171,43 @@ describe('§1 the dropdown is a real control, not an in-field autocomplete', () 
         expect(wrapper.style.getPropertyValue('--two-company-input-height')).not.toBe('');
     });
 
-    test('typing a character while the field has focus opens it too', () => {
+    test('focus arriving on the field opens it, in registered mode, caret in the query field', () => {
+        // TWO-25503: a Tab arrival behaves exactly as a click does.
+        makeInstance();
+        companyField().trigger('focus');
+
+        const { panel, query } = panelParts();
+        expect(shown(panel)).toBe(true);
+        expect(query.val()).toBe('');
+        expect(document.activeElement).toBe(query.get(0));
+        expect(
+            panel.find('.two-company-registered-entry').hasClass('two-company-mode-chip--selected')
+        ).toBe(true);
+    });
+
+    test.each([
+        ['a', '', 'a printable key on an already-open panel is not re-forwarded'],
+        ['Tab', '', 'Tab is the buyer leaving'],
+        ['Escape', '', 'Escape is the buyer closing']
+    ])('keydown %s leaves the query at %p - %s', (key, expected, why) => {
+        // These arrive with the panel already open, because focus opened it - in a
+        // browser the caret has moved on, so nothing may be seeded unseen if one lands.
         makeInstance();
         const field = companyField();
         field.trigger('focus');
-        expect(shown(panelParts().panel)).toBe(false);
+        field.trigger($.Event('keydown', { key: key }));
 
-        const event = $.Event('keydown', { key: 'a' });
-        field.trigger(event);
+        expect({ why: why, query: panelParts().query.val() }).toEqual({ why: why, query: expected });
+    });
+
+    test('a keypress with no focus first still opens it and carries the character', () => {
+        // The mouse route: mousedown preventDefault()s, so no focus event fires.
+        makeInstance();
+        const field = companyField();
+        field.trigger($.Event('keydown', { key: 'a' }));
 
         expect(shown(panelParts().panel)).toBe(true);
-        // The keystroke that opened it is carried into the query field rather
-        // than swallowed.
         expect(panelParts().query.val()).toBe('a');
-    });
-
-    test('merely moving focus into the field does NOT open it', () => {
-        makeInstance();
-        companyField().trigger('focus');
-        expect(shown(panelParts().panel)).toBe(false);
-    });
-
-    test('Tab while the field has focus does not open it either', () => {
-        makeInstance();
-        companyField().trigger('focus');
-        companyField().trigger($.Event('keydown', { key: 'Tab' }));
-        expect(shown(panelParts().panel)).toBe(false);
     });
 
     test('the panel contains a real query input and focus lands in it', () => {
@@ -787,7 +798,12 @@ describe('§3 the return-to-search link', () => {
 });
 
 describe('§4 keyboard navigation', () => {
-    test('the query field is the next tab stop after the company-name field', () => {
+    test('the open panel holds the company field out of the tab order, query field first', () => {
+        // TWO-25503: the field's focus opener puts the caret in the query
+        // field, so a tab stop on the field would catch shift+Tab coming back
+        // out and push it forward again - WCAG 2.1.2. The traversal itself is
+        // browser-verified: jsdom implements no sequential focus navigation, so
+        // a Tab KeyboardEvent moves focus nowhere in either direction.
         makeInstance();
         openPanel();
         const wrapper = companyField().parent();
@@ -798,10 +814,9 @@ describe('§4 keyboard navigation', () => {
                     && shown(this);
             })
             .get();
-        const field = companyField().get(0);
-        const query = panelParts().query.get(0);
-        expect(focusable.indexOf(field)).toBe(0);
-        expect(focusable.indexOf(query)).toBe(1);
+        expect(companyField().attr('tabindex')).toBe('-1');
+        expect(focusable.indexOf(companyField().get(0))).toBe(-1);
+        expect(focusable.indexOf(panelParts().query.get(0))).toBe(0);
     });
 
     test('tabbing out of the panel closes it and does NOT drag focus back', () => {

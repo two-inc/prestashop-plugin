@@ -839,7 +839,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $lookupId = trim((string) Tools::getValue('lookup_id'));
         // Path segment, so anything outside the registry id charset is refused
         // rather than escaped into the URL.
-        if ($lookupId === '' || !preg_match('/^[A-Za-z0-9._:-]+$/', $lookupId)) {
+        if ($lookupId === '' || !preg_match('/^[A-Za-z0-9._:-]+\z/', $lookupId)) {
             $this->relayTwoApiResponse(array('http_status' => 400, 'data' => array(
                 'error_code' => 'INVALID_REQUEST',
             )));
@@ -904,7 +904,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
 
         // Validate token format (should be alphanumeric)
-        if (!preg_match('/^[a-zA-Z0-9]+$/', $token)) {
+        if (!preg_match('/^[a-zA-Z0-9]+\z/', $token)) {
             return false;
         }
 
