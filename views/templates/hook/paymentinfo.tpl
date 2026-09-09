@@ -94,7 +94,7 @@
         </div>
     </div>
 
-    {* Company search, payment-tile location (TWO-25326 §7.1). The
+    {* Company search, payment-tile location (TWO-25326). The
        "Enable company search in address entry" switch
        (PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS) picks WHERE the one shared control
        (TwoCompanySearch.js, never a second implementation) renders: address

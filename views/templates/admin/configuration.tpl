@@ -108,7 +108,7 @@
             });
             
             // Address lookup is only meaningful while the company search is in
-            // the address area (TWO-25326 §7.1 follow-up): with the search in
+            // the address area (TWO-25326 follow-up): with the search in
             // the payment tile there is no address-area lookup left to govern,
             // so the switch is unchecked and disabled rather than left
             // independently settable.

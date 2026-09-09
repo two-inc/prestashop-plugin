@@ -235,7 +235,7 @@ final class CompanySearchCountrySourcingSpec
     /**
      * The cart's billing-address country must be injected by the SAME hook,
      * behind the SAME early-return gate, as the search script that reads it -
-     * TWO-25326 §7.1 follow-up.
+     * TWO-25326 follow-up.
      *
      * Same reasoning as the countries map above, and for a sharper reason:
      * this is the ONLY country source available to the company search once the
@@ -244,8 +244,7 @@ final class CompanySearchCountrySourcingSpec
      * getCurrentCountry() could otherwise read - only while the buyer is
      * editing an address; on the payment step it renders an address SELECTOR
      * instead. Drop this key, or move it out from behind this gate, and the
-     * tile-mounted search silently stops searching on every keystroke, which
-     * is exactly the state Doug found live.
+     * tile-mounted search silently stops searching on every keystroke.
      */
     private static function testSearchCountryIsInjectedByTheMediaHook(): void
     {

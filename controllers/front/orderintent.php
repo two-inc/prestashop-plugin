@@ -142,11 +142,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * (TWO-24755). The merchant API key stays server-side; tokens are scoped
      * and short-lived by the Two API.
      *
-     * Minting is unconditional once a country resolves (TWO-40 follow-up,
-     * Doug: neither the registry's per-country answer nor a merchant
-     * buyer-country record has any bearing on whether minting is
-     * authorised - that decision belongs to the Two API these tokens are
-     * minted against). A country still has to resolve at all - not an
+     * Minting is unconditional once a country resolves (TWO-40 follow-up):
+     * neither the registry's per-country answer nor a merchant buyer-country
+     * record has any bearing on whether minting is authorised - that decision
+     * belongs to the Two API these tokens are minted against. A country still has to resolve at all - not an
      * eligibility check, just what mintTokensRequest()'s caller needs to
      * report back to the browser - so this is not a token oracle for a
      * cart with nothing to mint FOR.

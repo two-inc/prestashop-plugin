@@ -293,7 +293,7 @@ final class AssetCacheBustingSpec
         // Binding id -> expected path closes that gap.
         $expectedFrontPathsById = array(
             'two-css' => 'views/css/two.css',
-            // TWO-25326 §12: shared company-number display rule, registered
+            // TWO-25326: shared company-number display rule, registered
             // ahead of both modules that render a number.
             'two-company-number' => 'views/js/modules/TwoCompanyNumber.js',
             'two-company-search' => 'views/js/modules/TwoCompanySearch.js',

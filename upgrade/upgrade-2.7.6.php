@@ -5,7 +5,7 @@
  * Carries the company-search location setting across the rename
  * `PS_TWO_ENABLE_COMPANY_NAME` -> `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS`
  * (TWO-40, item #1). The old name said "enable company name", which has not
- * been what the switch does since TWO-25326 §7.1 - it decides WHERE the one
+ * been what the switch does since TWO-25326 - it decides WHERE the one
  * company-search control renders (address entry vs payment tile), never
  * whether it exists.
  *
@@ -57,7 +57,7 @@
  * silently reverts to the new key's default instead of the position its
  * merchant chose.
  *
- * That loss is ACCEPTED, on Doug's explicit ruling: this module has no live
+ * That loss is ACCEPTED: this module has no live
  * merchants, so no such override exists in the wild, and the tier-exact
  * migration this would otherwise need was attempted three times and produced
  * three distinct variants of silent merchant data loss. `.ai/decisions.md`
@@ -87,8 +87,8 @@
  * seeded programmatically - as the e2e suite's tile-location spec does - not
  * ones that clicked it in the back office.
  *
- * There is deliberately NO read shim for the old key. Doug's ruling: "not a
- * permanent alias". Running the upgrade once after a file-swap deploy is
+ * There is deliberately NO read shim for the old key - it is not a permanent
+ * alias. Running the upgrade once after a file-swap deploy is
  * therefore a real release step, not a formality - and the ONLY things that
  * run it are the back-office Module Manager -> Upgrade action and
  * `dev/ci/upgrade-module.sh`. Opening the module's own CONFIGURATION page does
