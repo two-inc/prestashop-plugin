@@ -118,16 +118,15 @@ beside the save confirmation instead.
 ## Company Search: This Module's Own Implementation
 
 `views/js/modules/TwoCompanySearch.js` is this module's own panel. The Magento and
-WooCommerce plugins each carry a copy of one framework-free module — copies that
-have drifted from each other — and nothing of that is vendored here, so a fix to
-shared panel behaviour on those two platforms is not a fix here, and vice versa. Never describe a change as cross-platform without
+WooCommerce plugins each carry a copy of one framework-free module, and nothing of
+that is vendored here, so a fix to shared panel behaviour on those two platforms is
+not a fix here, and vice versa. Never describe a change as cross-platform without
 having made it in each module that carries the behaviour.
 
 **The unsupported-country gate HIDES the Registered Company chip, never manual
 entry.** Manual entry hands the field over as a plain typeable input that never
-reaches the registry, so disabling it there blocks a mode that was never going to
-search and leaves a buyer in an uncovered country with no way to name their company
-at all.
+reaches the registry, so hiding manual entry with it would take away the only way a
+buyer in an uncovered country has to name their company at all.
 
 **Focus arriving on the company-name field opens the panel**, with the caret in the
 query field — the same state a click leaves it in, and the same on every platform
@@ -198,10 +197,10 @@ Three more traps in the JS suites:
 
 Every rule the save enforces — a name in the RFC 7230 token set, reserved names
 matched case-insensitively, printable-ASCII values, no empty value — is re-applied
-where a header is READ, since
-a stored value can arrive from a hand-edited row or an import that no form
-validated. A refusal names the rule, never who sets the header: the reason must be
-true of every reserved name, not of the one example that prompted the question.
+where a header is READ, since a stored value can arrive from a hand-edited row or
+an import that no form validated. A refusal names the rule, never who sets the
+header: the reason must be true of every reserved name, not of the one example that
+prompted the question.
 **A value pattern is anchored `\z`, never `$`** — `$` also matches immediately
 before a trailing newline, which is precisely the byte a printable-ASCII rule exists
 to refuse, and a header value ending in one is a response-splitting sink.
