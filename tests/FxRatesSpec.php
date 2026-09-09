@@ -1029,12 +1029,10 @@ final class FxRatesSpec
     }
 
     /**
-     * ABN-546. A buyer fee quote that does not resolve withholds the payment
-     * option at CHECKOUT, because the alternative is an order created with no
-     * surcharge at all. Only the term the checkout would be charged for is
-     * judged - the selected one, else the first offered - so one broken term
-     * cannot take the store offline, and a quoted zero, an empty basket and a
-     * disabled surcharge are answers rather than failures.
+     * ABN-546. A failed fee quote withholds the payment option at checkout;
+     * the charged term is the selected term, else the merchant default; a
+     * quoted zero, an empty basket, a disabled surcharge and a term charging
+     * nothing are answers rather than failures.
      */
     private static function testChargedTermQuoteDecidesThePaymentOption(): void
     {
@@ -1046,36 +1044,50 @@ final class FxRatesSpec
                 return ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'EUR'];
             };
         };
+        $failed = ['http_status' => 503];
         $quoted = ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'EUR'];
+        $zeroQuote = ['http_status' => 200, 'buyer_fee_share' => '0.00', 'currency' => 'EUR'];
 
         $cases = [
-            ['percentage', 100.0, 30, ['http_status' => 503], 0, true, 30, 'a pricing call that fails withholds the option'],
-            ['percentage', 100.0, 30, ['http_status' => 200, 'currency' => 'EUR'], 0, true, 30, 'a 200 carrying no buyer fee share withholds the option'],
-            ['percentage', 100.0, 30, ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'SEK'], 0, true, 30, 'a quote in the wrong currency withholds the option'],
-            ['percentage', 100.0, 30, ['http_status' => 200, 'buyer_fee_share' => '0.00', 'currency' => 'EUR'], 1, false, 30, 'a quote of zero is a real answer and withholds nothing'],
-            ['zero_row', 100.0, 30, ['http_status' => 200, 'buyer_fee_share' => '0.00', 'currency' => 'EUR'], 1, false, 30, 'a charged term with no surcharge configured withholds nothing'],
-            ['percentage', 0.0, 30, ['http_status' => 503], 1, false, null, 'an empty basket never quotes and never withholds'],
-            ['none', 100.0, 30, ['http_status' => 503], 1, false, null, 'a disabled surcharge never quotes and never withholds'],
-            ['percentage', 100.0, 30, $failFor(60), 1, false, 30, 'a failing term that is not the charged term withholds nothing'],
-            ['percentage', 100.0, 60, $failFor(60), 0, true, 60, 'the selected term is the one judged'],
-            ['percentage', 100.0, null, $quoted, 1, false, 30, 'with no term selected the first offered term is judged'],
+            ['percentage', '1.5', 100.0, 30, $failed, 0, true, 30, null, 'a pricing call that fails withholds the option'],
+            ['percentage', '1.5', 100.0, 30, ['http_status' => 200, 'currency' => 'EUR'], 0, true, 30, null, 'a 200 carrying no buyer fee share withholds the option'],
+            ['percentage', '1.5', 100.0, 30, ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'SEK'], 0, true, 30, null, 'a quote in the wrong currency withholds the option'],
+            ['percentage', '1.5', 100.0, 30, $zeroQuote, 1, false, 30, null, 'a quote of zero is a real answer and withholds nothing'],
+            ['percentage', '0', 100.0, 30, $failed, 1, false, null, ['pct' => '1.5'], 'a charged term that charges nothing is never quoted'],
+            ['percentage', '1.5', 0.0, 30, $failed, 1, false, null, ['gross' => 100.0], 'an empty basket is never quoted'],
+            ['none', '1.5', 100.0, 30, $failed, 1, false, null, ['type' => 'percentage'], 'a disabled surcharge is never quoted'],
+            ['percentage', '1.5', 100.0, 30, $failFor(60), 1, false, 30, null, 'a failing term that is not the charged term withholds nothing'],
+            ['percentage', '1.5', 100.0, 60, $failFor(60), 0, true, 60, null, 'the selected term is the one judged'],
+            ['percentage', '1.5', 100.0, null, $failFor(30), 0, true, 30, null, 'with no term selected the merchant default term is judged'],
         ];
 
-        foreach ($cases as $case) {
-            list($type, $gross, $cookieTerm, $feeResponse, $expectedOptions, $expectLog, $quotedDays, $description) = $case;
-
+        $run = function (string $type, string $pct, float $gross, ?int $cookieTerm, $feeResponse): object {
             self::reset();
             self::tableWithoutUsd();
-            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $type === 'none' ? 'none' : 'percentage');
-            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $type === 'zero_row' ? '0' : '1.5');
-            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '1.5');
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $type);
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', $pct);
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
             if ($cookieTerm !== null) {
                 Context::getContext()->cookie->two_payment_term = (string) $cookieTerm;
             }
+            return self::feeGateModule($gross, $feeResponse);
+        };
+        $quotedTerms = function (object $module): array {
+            $terms = [];
+            foreach ($module->requests as $request) {
+                if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                    $terms[] = (int) $request['payload']['order_terms']['duration_days'];
+                }
+            }
+            return $terms;
+        };
 
-            $module = self::feeGateModule($gross, $feeResponse);
+        foreach ($cases as $case) {
+            list($type, $pct, $gross, $cookieTerm, $feeResponse, $expectedOptions, $expectLog, $quotedDays, $control, $description) = $case;
+
+            $module = $run($type, $pct, $gross, $cookieTerm, $feeResponse);
             TinyAssert::same($expectedOptions, count($module->hookPaymentOptions([])), $description);
             TinyAssert::same(
                 $expectLog,
@@ -1083,17 +1095,29 @@ final class FxRatesSpec
                 'the withhold must be logged at error level exactly when it happens: ' . $description
             );
 
-            $quotes = [];
-            foreach ($module->requests as $request) {
-                if ($request['endpoint'] === '/v1/pricing/order/fee') {
-                    $quotes[] = (int) $request['payload']['order_terms']['duration_days'];
-                }
-            }
+            $quotes = $quotedTerms($module);
             if ($quotedDays === null) {
                 TinyAssert::same(0, count($quotes), 'no quote may be requested at all: ' . $description);
+            } else {
+                TinyAssert::true(in_array($quotedDays, $quotes, true), 'the charged term must be the term quoted: ' . $description);
+            }
+
+            if ($control === null) {
                 continue;
             }
-            TinyAssert::true(in_array($quotedDays, $quotes, true), 'the charged term must be the term quoted: ' . $description);
+            // Control on the same fixture with only the skipping condition
+            // lifted: it must quote and withhold, so the row above passes
+            // because of that condition and not because the fixture cannot
+            // reach the gate at all.
+            $controlModule = $run(
+                $control['type'] ?? $type,
+                $control['pct'] ?? $pct,
+                $control['gross'] ?? $gross,
+                $cookieTerm,
+                $feeResponse
+            );
+            TinyAssert::same(0, count($controlModule->hookPaymentOptions([])), 'control must withhold: ' . $description);
+            TinyAssert::same([30], $quotedTerms($controlModule), 'control must quote the charged term: ' . $description);
         }
     }
 

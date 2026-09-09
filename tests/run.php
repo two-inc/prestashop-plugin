@@ -5262,14 +5262,16 @@ final class OrderBuilderSpec
         // storeTwoFeeQuoteInSession() is private; invoke via reflection rather
         // than widening its visibility just for the test.
         $method = new ReflectionMethod(Twopayment::class, 'storeTwoFeeQuoteInSession');
-        $method->invoke($module, '7|100.00|GB|GBP', [
+        $method->invoke($module, 7, '7|100.00|GB|GBP', [
             'buyer_fee_share' => '1.23',
             'total_fee_tax_rate' => '0.20',
             'currency' => 'GBP',
         ]);
 
         TinyAssert::same(1, $spyCookie->writeCalls);
-        TinyAssert::same('7|100.00|GB|GBP', (string) $spyCookie->two_fee_quote_key);
+        // Per-term slot (ABN-546): the chip loop would otherwise overwrite one
+        // shared slot with its last term on every render.
+        TinyAssert::same('7|100.00|GB|GBP', (string) $spyCookie->two_fee_quote_7_key);
     }
 
     private static function testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo(): void
