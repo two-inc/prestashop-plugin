@@ -13,8 +13,11 @@ declare(strict_types=1);
  *  - Response normalised to {success, currency, fees: {"<days>":
  *    {percentage, fixed}}}.
  *  - Fail-soft: missing API key, empty term list, non-200, or malformed body
- *    ALL return {success: false} - never throws, so the admin page never
- *    breaks on an API outage.
+ *    never throw, so the admin page never breaks on an API outage.
+ *  - Serve-stale (ABN-541): a successful set is stored per identity and
+ *    stamped with fetched_at; a failed fetch serves it back with
+ *    stale => true, and a 60s cooldown suppresses the wire call meanwhile.
+ *    {success: false} only when nothing was ever stored for that identity.
  */
 final class MerchantFeeRatesSpec
 {
@@ -28,6 +31,9 @@ final class MerchantFeeRatesSpec
         self::testMalformedBodyFails();
         self::testMalformedRateRowsAreSkipped();
         self::testAbsentCurrencyNormalisesToEmptyString();
+        self::testLastKnownGoodLifecycle();
+        self::testTerminalFailuresNeverReachTheWire();
+        self::testStoredSetIsIdentityScoped();
     }
 
     /**
@@ -158,6 +164,10 @@ final class MerchantFeeRatesSpec
         self::configureMerchantIdentity();
 
         foreach ([0, 401, 500] as $status) {
+            // Per iteration: a previous failure leaves a cooldown that would
+            // suppress this one's wire call.
+            StubStore::reset();
+            self::configureMerchantIdentity();
             $module = self::moduleWithRatesResponse(['http_status' => $status, 'rates' => []]);
             TinyAssert::false($module->fetchTwoMerchantFeeRates([30])['success'], 'HTTP ' . $status . ' must fail soft');
             TinyAssert::same(1, $module->fetchCount);
@@ -176,6 +186,8 @@ final class MerchantFeeRatesSpec
             null,
         ];
         foreach ($malformed as $response) {
+            StubStore::reset();
+            self::configureMerchantIdentity();
             $module = self::moduleWithRatesResponse($response);
             TinyAssert::false($module->fetchTwoMerchantFeeRates([30])['success'], 'malformed body must fail soft');
         }
@@ -219,5 +231,180 @@ final class MerchantFeeRatesSpec
 
         TinyAssert::true($result['success']);
         TinyAssert::same('', $result['currency'], 'absent currency must normalise to empty string, not be invented');
+    }
+
+    /**
+     * Harness whose wire answer is swapped between calls, so one identity can
+     * be driven through a failure/recovery sequence.
+     */
+    private static function scriptedModule(): object
+    {
+        return new class extends TwopaymentTestHarness {
+            public int $fetchCount = 0;
+            public $response = null;
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                $this->fetchCount++;
+                return $this->response;
+            }
+        };
+    }
+
+    /** @return string[] */
+    private static function cooldownKeys(): array
+    {
+        $keys = [];
+        foreach (array_keys(StubStore::$configuration) as $key) {
+            if (strpos((string) $key, Twopayment::CONFIG_FEE_RATES_COOLDOWN_PREFIX) === 0) {
+                $keys[] = (string) $key;
+            }
+        }
+        return $keys;
+    }
+
+    /** Moves every live cooldown past its window, so the next call goes to the wire. */
+    private static function expireCooldowns(): void
+    {
+        foreach (self::cooldownKeys() as $key) {
+            Configuration::updateValue($key, time() - Twopayment::FEE_RATES_FAILURE_COOLDOWN - 1);
+        }
+    }
+
+    private static function secondOkResponse(): array
+    {
+        return [
+            'http_status' => 200,
+            'currency' => 'NOK',
+            'rates' => [
+                ['net_terms' => 15, 'percentage_fee' => '3.00', 'fixed_fee' => '0.50'],
+                ['net_terms' => 30, 'percentage_fee' => '4.00', 'fixed_fee' => '0.75'],
+            ],
+        ];
+    }
+
+    private static function testLastKnownGoodLifecycle(): void
+    {
+        StubStore::reset();
+        self::configureMerchantIdentity();
+        Configuration::updateValue('PS_COUNTRY_DEFAULT', 47);
+
+        $firstFees = [
+            '15' => ['percentage' => 1.5, 'fixed' => 0.0],
+            '30' => ['percentage' => 2.51, 'fixed' => 0.1],
+        ];
+        $secondFees = [
+            '15' => ['percentage' => 3.0, 'fixed' => 0.5],
+            '30' => ['percentage' => 4.0, 'fixed' => 0.75],
+        ];
+        $failure = ['http_status' => 500];
+
+        $steps = [
+            // response, expire cooldown first, expected fetch delta, expected
+            // success, expected stale (null = key absent), expected fees
+            // (null = key absent), expected error (null = key absent), desc
+            [$failure, false, 1, false, null, null, Twopayment::FEE_RATES_ERROR_UPSTREAM, 'first failure with nothing stored answers the error category, no fees'],
+            [$failure, false, 0, false, null, null, Twopayment::FEE_RATES_ERROR_UPSTREAM, 'the failure cooldown suppresses the very next upstream call'],
+            [self::okResponse(), true, 1, true, false, $firstFees, null, 'a success after the cooldown expires is fresh, not stale'],
+            [$failure, false, 1, true, true, $firstFees, null, 'a failure with a stored set serves those same figures, labelled stale'],
+            [self::secondOkResponse(), true, 1, true, false, $secondFees, null, 'a later success replaces the stored set and is fresh again'],
+            [$failure, false, 1, true, true, $secondFees, null, 'the replaced set is what a subsequent failure serves'],
+        ];
+
+        $module = self::scriptedModule();
+        $previousFetchCount = 0;
+        foreach ($steps as $step) {
+            list($response, $expire, $fetchDelta, $success, $stale, $fees, $error, $desc) = $step;
+            if ($expire) {
+                self::expireCooldowns();
+            }
+            $module->response = $response;
+            $result = $module->fetchTwoMerchantFeeRates([15, 30]);
+
+            TinyAssert::same($fetchDelta, $module->fetchCount - $previousFetchCount, 'wire calls: ' . $desc);
+            $previousFetchCount = $module->fetchCount;
+            TinyAssert::same($success, $result['success'], 'success: ' . $desc);
+            TinyAssert::same($stale, isset($result['stale']) ? $result['stale'] : null, 'stale flag: ' . $desc);
+            TinyAssert::same($fees, isset($result['fees']) ? $result['fees'] : null, 'figures: ' . $desc);
+            TinyAssert::same($error, isset($result['error']) ? $result['error'] : null, 'error category: ' . $desc);
+            if ($success) {
+                TinyAssert::true(
+                    isset($result['fetched_at']) && (int) $result['fetched_at'] > 0,
+                    'fetched_at stamp: ' . $desc
+                );
+            }
+            if ($success && $stale === false) {
+                TinyAssert::same([], self::cooldownKeys(), 'a fresh set clears the cooldown: ' . $desc);
+            }
+        }
+    }
+
+    private static function testTerminalFailuresNeverReachTheWire(): void
+    {
+        $cases = [
+            // api key, terms, expected error, desc
+            ['', [30], Twopayment::API_KEY_STATUS_NOT_CONFIGURED, 'no API key stored is its own terminal category'],
+            ['test-api-key', [], Twopayment::FEE_RATES_ERROR_NO_TERMS, 'no requested terms is answerable without asking upstream'],
+            ['test-api-key', ['abc', -5, 0, null], Twopayment::FEE_RATES_ERROR_NO_TERMS, 'terms that all normalise away read as no terms'],
+        ];
+
+        foreach ($cases as $case) {
+            list($apiKey, $terms, $error, $desc) = $case;
+            StubStore::reset();
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', 'm-123');
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKey);
+
+            $module = self::moduleWithRatesResponse(self::okResponse());
+            $result = $module->fetchTwoMerchantFeeRates($terms);
+
+            TinyAssert::false($result['success'], 'success: ' . $desc);
+            TinyAssert::same($error, $result['error'], 'error category: ' . $desc);
+            TinyAssert::same(0, $module->fetchCount, 'no wire call: ' . $desc);
+            TinyAssert::same([], self::cooldownKeys(), 'no cooldown set: ' . $desc);
+        }
+    }
+
+    /**
+     * The stored set answers for one identity only. Every input the rates call
+     * carries changes the answer, so a set stored under one must never be
+     * served under another.
+     */
+    private static function testStoredSetIsIdentityScoped(): void
+    {
+        $storedFees = [
+            '15' => ['percentage' => 1.5, 'fixed' => 0.0],
+            '30' => ['percentage' => 2.51, 'fixed' => 0.1],
+        ];
+        // terms, default-country id, whether the stored figures may be served, desc
+        $cases = [
+            [[15, 30], 47, true, 'the identity the set was stored under is served it'],
+            [[15, 30, 60], 47, false, 'a wider term set is not served the stored set'],
+            [[30], 47, false, 'a narrower term set is not served the stored set'],
+            [[15, 30], 34, false, 'a different buyer country is not served the stored set'],
+        ];
+
+        foreach ($cases as $case) {
+            list($terms, $countryId, $served, $desc) = $case;
+
+            StubStore::reset();
+            self::configureMerchantIdentity();
+            // Store the set under terms [15, 30] and country id 47 (ISO NO).
+            Configuration::updateValue('PS_COUNTRY_DEFAULT', 47);
+            $module = self::scriptedModule();
+            $module->response = self::okResponse();
+            TinyAssert::same($storedFees, $module->fetchTwoMerchantFeeRates([15, 30])['fees'], 'stored figures: ' . $desc);
+
+            Configuration::updateValue('PS_COUNTRY_DEFAULT', $countryId);
+            $module->response = ['http_status' => 500];
+            $result = $module->fetchTwoMerchantFeeRates($terms);
+
+            if ($served) {
+                TinyAssert::same($storedFees, $result['fees'], 'figures: ' . $desc);
+                TinyAssert::true($result['stale'], 'stale flag: ' . $desc);
+            } else {
+                TinyAssert::false($result['success'], 'success: ' . $desc);
+                TinyAssert::same(false, isset($result['fees']), 'no borrowed figures: ' . $desc);
+            }
+        }
     }
 }

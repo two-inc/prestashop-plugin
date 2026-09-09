@@ -529,6 +529,10 @@ $_MODULE['<{twopayment}prestashop>twopayment_02fba029778633dc93f02b8b19bef06b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_94d02e855271d883489bea55a0ae9b2a'] = 'Kon het merchantprofiel niet vernieuwen - het eerder gecachete profiel is nog in gebruik. Controleer of de API-sleutel verifieert en of %s bereikbaar is.';
 $_MODULE['<{twopayment}prestashop>configuration_5c123dffc87233456030f3762f15c3f2'] = 'Vernieuwen…';
 $_MODULE['<{twopayment}prestashop>configuration_0a3ec356996cae21088be407cab8ec8c'] = 'Kon de server niet bereiken. Probeer het opnieuw.';
+$_MODULE['<{twopayment}prestashop>configuration_50176febc840de876892956d58f9f60b'] = 'De kosten konden niet worden vernieuwd, dus de laatst opgehaalde bedragen worden weergegeven.';
+$_MODULE['<{twopayment}prestashop>configuration_9ab5e860e0e28be037094acd09e148f2'] = 'De kosten konden niet worden vernieuwd, dus de bedragen die op %s zijn opgehaald worden weergegeven.';
+$_MODULE['<{twopayment}prestashop>configuration_06df3dcf3281499cc51356b8ea10c05b'] = 'De kosten konden niet worden geladen omdat de prijsservice niet bereikbaar was. De bedragen naast elke termijn ontbreken, ze zijn niet nul.';
+$_MODULE['<{twopayment}prestashop>configuration_ee619aca6b3894beb307b1b40c63d27d'] = 'Kosten kunnen niet worden weergegeven totdat er een API-sleutel is opgeslagen op het tabblad Algemeen.';
 $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] = 'Het gecachete profiel hoort bij één winkel. Schakel naar een enkele winkel om het te bekijken of te vernieuwen.';
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'Het gecachete profiel hoort bij één winkel. Schakel naar een enkele winkel om het te vernieuwen.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Elke winkel heeft zijn eigen vernieuwings-URL. Schakel naar een enkele winkel om die te bekijken.';

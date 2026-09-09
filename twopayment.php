@@ -127,6 +127,17 @@ class Twopayment extends PaymentModule
     // merchant-record cache).
     const FX_RATES_RETRY_BACKOFF = 300; // 5 minutes
 
+    // Last-known-good merchant fee rates behind the admin inline fee display
+    // (ABN-541). Both keys take an identity hash suffix; the stored set never
+    // expires, only a successful fetch replaces it.
+    const CONFIG_FEE_RATES_PREFIX = 'PS_TWO_FEE_RATES_';
+    const CONFIG_FEE_RATES_COOLDOWN_PREFIX = 'PS_TWO_FEE_COOLDOWN_';
+    // While cooling no wire call is made at all, so an outage costs one call a
+    // minute rather than one per config-page render.
+    const FEE_RATES_FAILURE_COOLDOWN = 60;
+    const FEE_RATES_ERROR_UPSTREAM = 'upstream';
+    const FEE_RATES_ERROR_NO_TERMS = 'no_terms';
+
     // Cached, categorised outcome of GET /v1/merchant/verify_api_key for the
     // STORED key (TWO-25326): JSON {status, code, key_hash, claim}.
     // Shop scoping is Configuration's own, exactly as for the FX table and the
@@ -1312,10 +1323,9 @@ class Twopayment extends PaymentModule
      * wrongly appended a buyer-surcharge rate preview here and was reverted).
      * The span is populated live by admin AJAX against
      * POST /pricing/v1/merchant/rates (fetchTwoMerchantFeeRates /
-     * ajaxProcessFetchMerchantFeeRates), mirroring magento-plugin's
-     * Controller/Adminhtml/Config/Fees.php + payment-terms-config.js: fees
-     * are never pre-fetched synchronously on page render, and on API failure
-     * the span silently stays empty so the admin page never breaks. The raw
+     * ajaxProcessFetchMerchantFeeRates): fees are never pre-fetched
+     * synchronously on page render, and a failure serves the last-known-good
+     * figures under a notice saying they are not current (ABN-541). The raw
      * HTML is safe here: the core HelperForm checkbox template emits the
      * label name unescaped ({$value[$input.values.name]}).
      *
@@ -12049,39 +12059,87 @@ class Twopayment extends PaymentModule
      * Fetch the merchant fee (what Two charges the merchant, NOT the buyer
      * surcharge) per net-term via POST /pricing/v1/merchant/rates, for the
      * inline fee display beside each "Available Payment Terms" checkbox on
-     * the admin config page. Mirrors magento-plugin's
-     * Controller/Adminhtml/Config/Fees.php.
+     * the admin config page.
      *
-     * Fail-soft contract (identical to Magento's): ANY failure - missing API
-     * key, empty term list, connection error, non-200, malformed body -
-     * returns array('success' => false) and the admin page renders without
-     * fees. This method must never throw and never block long (tight
-     * timeout): it sits behind an AJAX call on a config-page render path.
+     * Serve-stale contract (ABN-541): a successful fetch is stored as the
+     * last-known-good set and stamped with `fetched_at`; a failed one serves
+     * that stored set with `stale => true` so the screen can say the figures
+     * are not current, and only answers `success => false` when nothing was
+     * ever stored for this identity. `error` carries the category the screen
+     * explains: 'not_configured' is terminal (nothing changes until a key is
+     * saved), the rest are transient. Never throws and never blocks long
+     * (tight timeout): it sits behind an AJAX call on a config-page render
+     * path.
      *
      * The buyer_country_code is a best-effort stand-in (store default
-     * country): there is no cart/buyer context on a config page. Magento
-     * uses its store's default country the same way.
+     * country): there is no cart/buyer context on a config page.
      *
      * @param array $days Requested term day-counts (raw, will be normalised).
-     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>}
+     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>,stale?:bool,fetched_at?:int,error?:string}
      */
     public function fetchTwoMerchantFeeRates($days)
     {
         $net_terms = $this->normaliseMerchantTerms($days);
         if (empty($net_terms)) {
-            return array('success' => false);
+            return array('success' => false, 'error' => self::FEE_RATES_ERROR_NO_TERMS);
         }
         $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
         if (self::isTwoConfigUnset($api_key)) {
-            return array('success' => false);
+            return array('success' => false, 'error' => self::API_KEY_STATUS_NOT_CONFIGURED);
+        }
+        $buyer_country = $this->getTwoAdminBuyerCountryCode();
+        $slot = $this->twoMerchantFeeRatesSlot($net_terms, $buyer_country, (string) $api_key);
+        $cooldown_key = self::CONFIG_FEE_RATES_COOLDOWN_PREFIX . $slot;
+        $cooling_since = (int) Configuration::get($cooldown_key);
+        $cooling = $cooling_since > 0 && ($cooling_since + self::FEE_RATES_FAILURE_COOLDOWN) > time();
+
+        $fresh = $cooling
+            ? array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM)
+            : $this->fetchTwoMerchantFeeRatesLive($net_terms, $buyer_country);
+
+        if ($fresh['success']) {
+            $fresh['fetched_at'] = time();
+            $fresh['stale'] = false;
+            Configuration::updateValue(self::CONFIG_FEE_RATES_PREFIX . $slot, json_encode($fresh));
+            Configuration::deleteByName($cooldown_key);
+            return $fresh;
         }
 
+        if (!$cooling) {
+            Configuration::updateValue($cooldown_key, time());
+        }
+        $stored = $this->getTwoStoredMerchantFeeRates($slot);
+        if (!$cooling) {
+            // Cooling renders take this path too, and would fill the log.
+            PrestaShopLogger::addLog(
+                $stored === null
+                    ? 'TwoPayment: merchant fee rates fetch failed - no figures held for this shop'
+                    : 'TwoPayment: merchant fee rates fetch failed - serving last-known-good figures',
+                2
+            );
+        }
+        if ($stored === null) {
+            return $fresh;
+        }
+        $stored['stale'] = true;
+        return $stored;
+    }
+
+    /**
+     * One live rates call, normalised. Any failure - connection error,
+     * non-200, malformed body - is a failed fetch.
+     *
+     * @param int[] $net_terms Already normalised: unique, sorted, positive.
+     * @param string $buyer_country
+     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>,error?:string}
+     */
+    private function fetchTwoMerchantFeeRatesLive($net_terms, $buyer_country)
+    {
         $response = $this->setTwoPaymentRequest(
             '/pricing/v1/merchant/rates',
             array(
-                'buyer_country_code' => $this->getTwoAdminBuyerCountryCode(),
-                // No admin recourse-pricing config exists (Magento parity:
-                // its Fees controller hardcodes false too).
+                'buyer_country_code' => $buyer_country,
+                // No admin recourse-pricing config exists.
                 'recourse_pricing' => false,
                 'net_terms' => $net_terms,
             ),
@@ -12093,7 +12151,7 @@ class Twopayment extends PaymentModule
 
         $http_status = (is_array($response) && isset($response['http_status'])) ? (int) $response['http_status'] : 0;
         if ($http_status !== self::HTTP_STATUS_OK || !isset($response['rates']) || !is_array($response['rates'])) {
-            return array('success' => false);
+            return array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM);
         }
 
         $fees = array();
@@ -12120,6 +12178,81 @@ class Twopayment extends PaymentModule
             'currency' => isset($response['currency']) ? (string) $response['currency'] : '',
             'fees' => $fees,
         );
+    }
+
+    /**
+     * Identity hash the stored fee set is keyed on: environment, API key,
+     * buyer country and the requested term set each change the answer, so a
+     * set stored under one must never be served for another.
+     *
+     * @param int[] $net_terms Already normalised, so the hash is stable.
+     * @param string $buyer_country
+     * @param string $api_key
+     * @return string
+     */
+    private function twoMerchantFeeRatesSlot($net_terms, $buyer_country, $api_key)
+    {
+        return substr(hash('sha256', implode("\0", array(
+            (string) Configuration::get('PS_TWO_ENVIRONMENT'),
+            $api_key,
+            $buyer_country,
+            implode(',', $net_terms),
+        ))), 0, 32);
+    }
+
+    /**
+     * The stored fee set for an identity slot, or null when none was ever
+     * stored. Re-validated on read: Configuration is shared mutable state.
+     *
+     * @param string $slot
+     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>,fetched_at?:int}|null
+     */
+    private function getTwoStoredMerchantFeeRates($slot)
+    {
+        $raw = Configuration::get(self::CONFIG_FEE_RATES_PREFIX . $slot);
+        if (Tools::isEmpty($raw)) {
+            return null;
+        }
+        $decoded = json_decode((string) $raw, true);
+        if (!is_array($decoded) || empty($decoded['success'])
+            || !isset($decoded['fees']) || !is_array($decoded['fees']) || empty($decoded['fees'])) {
+            return null;
+        }
+        $fees = array();
+        foreach ($decoded['fees'] as $term => $fee) {
+            if (!is_array($fee) || !isset($fee['percentage'], $fee['fixed'])
+                || !is_numeric($fee['percentage']) || !is_numeric($fee['fixed'])) {
+                return null;
+            }
+            // JSON drops a zero fraction, so a stored 0.0 decodes as int.
+            $fees[(string) $term] = array(
+                'percentage' => (float) $fee['percentage'],
+                'fixed' => (float) $fee['fixed'],
+            );
+        }
+        $decoded['fees'] = $fees;
+        return $decoded;
+    }
+
+    /**
+     * When a stale fee set was retrieved, in the admin's own date format
+     * (PrestaShop resolves context->language from the employee on an admin
+     * request, so this follows the reader's locale rather than the shop's).
+     *
+     * @param int $fetched_at
+     * @return string
+     */
+    private function getTwoFeeRatesRetrievedDisplay($fetched_at)
+    {
+        $fetched_at = (int) $fetched_at;
+        if ($fetched_at <= 0) {
+            return '';
+        }
+        $language = isset($this->context->language) ? $this->context->language : null;
+        $format = ($language !== null && !empty($language->date_format_full))
+            ? (string) $language->date_format_full
+            : 'Y-m-d H:i:s';
+        return date($format, $fetched_at);
     }
 
     /**
@@ -12151,14 +12284,17 @@ class Twopayment extends PaymentModule
      * admin token is validated by the controller before postProcess runs.
      *
      * Reads a JSON-encoded `terms` array from the request and echoes the
-     * normalised fee payload. Always responds 200 with {"success":false} on
-     * failure - the JS blanks the fee spans silently (Magento parity).
+     * normalised fee payload. Always responds 200; a payload carrying
+     * `stale` or `success => false` is what the screen turns into a notice.
      */
     public function ajaxProcessFetchMerchantFeeRates()
     {
         $raw = Tools::getValue('terms', '');
         $decoded = is_string($raw) ? json_decode($raw, true) : $raw;
         $result = $this->fetchTwoMerchantFeeRates(is_array($decoded) ? $decoded : array());
+        if (!empty($result['stale']) && isset($result['fetched_at'])) {
+            $result['fetched_at_display'] = $this->getTwoFeeRatesRetrievedDisplay($result['fetched_at']);
+        }
         header('Content-Type: application/json');
         die(json_encode($result));
     }
