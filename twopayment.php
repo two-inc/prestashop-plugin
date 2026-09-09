@@ -2113,7 +2113,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The stored custom payment term as submitted, trimmed.
+     * The stored custom payment term, trimmed.
      *
      * @return string
      */
@@ -2138,8 +2138,19 @@ class Twopayment extends PaymentModule
             return null;
         }
         $offered = $this->getMerchantAvailableTerms(false);
+        if ($offered === array() || !in_array($days, $offered, true)) {
+            return null;
+        }
 
-        return ($offered !== array() && in_array($days, $offered, true)) ? $days : null;
+        // The checkbox set is term-type constrained but the custom term is not, so folding a term
+        // End-of-Month does not carry onto its checkbox would withdraw what checkout offers today.
+        if (Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM'
+            && !in_array($days, self::EOM_PAYMENT_TERMS_OPTIONS, true)
+        ) {
+            return null;
+        }
+
+        return $days;
     }
 
     /**
@@ -2157,6 +2168,10 @@ class Twopayment extends PaymentModule
         }
         $days = TwoStoredTerm::days($stored);
 
+        // The core HelperForm templates emit option values, option labels and the field hint
+        // unescaped; the browser posts the decoded value back, so keep still round-trips.
+        $escaped = htmlspecialchars($stored, ENT_QUOTES, 'UTF-8');
+
         return array(
             'type' => 'select',
             'label' => $this->l('Custom payment terms (days)'),
@@ -2165,8 +2180,8 @@ class Twopayment extends PaymentModule
             'options' => array(
                 'query' => array(
                     array(
-                        'id_option' => $stored,
-                        'name' => $days === null ? $stored : sprintf($this->l('%d days'), $days),
+                        'id_option' => $escaped,
+                        'name' => $days === null ? $escaped : sprintf($this->l('%d days'), $days),
                     ),
                     array('id_option' => '', 'name' => $this->l('Remove')),
                 ),
@@ -2186,7 +2201,7 @@ class Twopayment extends PaymentModule
     protected function getTwoLegacyCustomTermHint($stored)
     {
         $days = TwoStoredTerm::days($stored);
-        $shown = $days === null ? $stored : (string) $days;
+        $shown = $days === null ? htmlspecialchars($stored, ENT_QUOTES, 'UTF-8') : (string) $days;
 
         if (Configuration::get('PS_TWO_PAYMENT_TERM_TYPE') === 'EOM') {
             return sprintf($this->l('Legacy setting. This offers a custom term of %s days after the end of the month. It is no longer supported and cannot be edited. Choose Remove to withdraw it, or use the payment terms above to change what you offer.'), $shown);
@@ -2260,8 +2275,11 @@ class Twopayment extends PaymentModule
         $posted_custom = Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', null);
         $effective_custom = $posted_custom === null ? $stored_custom : trim((string) $posted_custom);
 
-        // A usable custom term satisfies the mandatory selection, as on the other platforms.
-        if (empty($selected_terms) && TwoStoredTerm::days($effective_custom) === null) {
+        // A custom term satisfies the mandatory selection, as on the other platforms - but only
+        // one checkout would actually offer, else the shop falls back to a term nobody chose.
+        if (empty($selected_terms)
+            && !in_array(TwoStoredTerm::days($effective_custom), $this->getOfferableTermSource(false), true)
+        ) {
             $this->errors[] = $this->l('You must select at least one payment term.');
         }
 
@@ -2269,7 +2287,10 @@ class Twopayment extends PaymentModule
             if ($effective_custom !== '' && $effective_custom !== $stored_custom) {
                 $this->errors[] = $this->l('Custom payment terms (days) can only be removed, not changed.');
             } elseif (TwoStoredTerm::isUnusable($effective_custom)) {
-                $this->errors[] = sprintf($this->l('Custom payment terms (days) holds "%s", which is not a usable number of days. Choose Remove on that field to clear it.'), $effective_custom);
+                $this->errors[] = sprintf(
+                    $this->l('Custom payment terms (days) holds "%s", which is not a usable number of days. Choose Remove on that field to clear it.'),
+                    htmlspecialchars($effective_custom, ENT_QUOTES, 'UTF-8')
+                );
             }
         }
 

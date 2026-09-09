@@ -31,9 +31,7 @@ class TwoStoredTerm
     }
 
     /**
-     * The term the value denotes, or null where it denotes none - a run of digits
-     * over zero, so leading zeros normalise to the same term and everything else
-     * denotes nothing.
+     * The term the value denotes, or null where it denotes none.
      *
      * @param mixed $configured
      * @return int|null

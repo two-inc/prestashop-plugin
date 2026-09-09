@@ -90,6 +90,7 @@ final class DeprecatedCustomPaymentTermSpec
             array('30', array(15, 30), null, 'a term offered as standard - no row, the save folds it in'),
             array('45', array(15, 30), '45 days', 'a term no standard checkbox offers - keep or remove'),
             array('abc', array(15, 30), 'abc', 'an unusable value - shown verbatim so it can be corrected'),
+            array('<b>x', array(15, 30), '&lt;b&gt;x', 'a value carrying markup - escaped in the option and in the hint'),
             array('30', array(), '30 days', 'an unresolvable offered set folds nothing, so the row stands'),
         );
         foreach ($cases as list($stored, $offered, $keep_label, $description)) {
@@ -107,13 +108,21 @@ final class DeprecatedCustomPaymentTermSpec
             TinyAssert::same(self::KEY, $input['name'], $description . ' - the field name is unchanged');
             $query = $input['options']['query'];
             TinyAssert::count(2, $query, $description . ' - exactly keep and remove');
-            TinyAssert::same($stored, $query[0]['id_option'], $description . ' - keep posts the stored value back');
+            TinyAssert::same(
+                htmlspecialchars($stored, ENT_QUOTES, 'UTF-8'),
+                $query[0]['id_option'],
+                $description . ' - keep posts the stored value back, escaped for the template'
+            );
             TinyAssert::same($keep_label, $query[0]['name'], $description . ' - the keep option names the term');
             TinyAssert::same('', $query[1]['id_option'], $description . ' - remove posts an empty value');
             TinyAssert::same('Remove', $query[1]['name'], $description . ' - remove is offered');
             TinyAssert::true(
                 strpos($input['desc'], 'Legacy setting.') === 0,
                 $description . ' - the help text says the setting is legacy'
+            );
+            TinyAssert::true(
+                strpos($input['desc'] . $query[0]['name'] . $query[0]['id_option'], '<b>') === false,
+                $description . ' - the stored value never reaches the page as markup'
             );
         }
     }
@@ -176,7 +185,7 @@ final class DeprecatedCustomPaymentTermSpec
             TinyAssert::same($stored_after, Configuration::get(self::KEY), $description . ' - the stored term afterwards');
             TinyAssert::same(
                 $ticked_after,
-                Configuration::hasKey('PS_TWO_PAYMENT_TERMS_15'),
+                (int) Configuration::get('PS_TWO_PAYMENT_TERMS_15') === 1,
                 $description . ' - whether the ticked terms in the same post landed'
             );
         }
@@ -189,24 +198,60 @@ final class DeprecatedCustomPaymentTermSpec
      */
     private static function testFoldsInOnlyAgainstAResolvedOfferedSet(): void
     {
-        // [stored, offered, ticked in the post, refusal, stored after, term ticked by the fold-in, announced, description]
+        // [stored, offered, term type, ticked in the post, refusal, stored after, term the fold-in ticked, announced, description]
         $cases = array(
-            array('30', array(15, 30), array(), '', '', 30, true, 'a term the record offers folds onto its checkbox, announced'),
-            array('30', array(), array(), '', '30', null, false, 'an unresolvable offered set leaves the stored term standing'),
-            array('30', array(15, 60), array(), '', '30', null, false, 'a record that does not offer the term leaves it standing'),
+            array('30', array(15, 30), 'STANDARD', array(), '', '', 30, true, 'a term the record offers folds onto its checkbox, announced'),
+            array('30', array(15, 30), 'STANDARD', array(30), '', '', 30, true, 'the fold-in stands whether or not the same post ticked that term'),
+            array('30', array(), 'STANDARD', array(), '', '30', null, false, 'an unresolvable offered set leaves the stored term standing'),
+            array('30', array(15, 60), 'STANDARD', array(15), '', '30', null, false, 'a record that does not offer the term leaves it standing'),
+            array(
+                '90',
+                array(15, 90),
+                'EOM',
+                array(),
+                '',
+                '90',
+                null,
+                false,
+                'a term end-of-month checkboxes cannot carry is left standing, not folded away',
+            ),
+            array(
+                '90',
+                array(15, 90),
+                'STANDARD',
+                array(),
+                '',
+                '',
+                90,
+                true,
+                'the same term folds in under standard terms, where its checkbox does carry it',
+            ),
             array(
                 '45',
-                array(15, 60),
+                array(),
+                'STANDARD',
                 array(),
                 '',
                 '45',
                 null,
                 false,
-                'a usable custom term alone satisfies the mandatory selection',
+                'a custom term checkout still offers satisfies the mandatory selection alone',
+            ),
+            array(
+                '45',
+                array(15, 60),
+                'STANDARD',
+                array(),
+                'at least one payment term',
+                '45',
+                null,
+                false,
+                'a custom term checkout would not offer does not satisfy the mandatory selection',
             ),
             array(
                 '30.0',
                 array(15, 60),
+                'STANDARD',
                 array(),
                 'at least one payment term',
                 '30.0',
@@ -215,9 +260,10 @@ final class DeprecatedCustomPaymentTermSpec
                 'an unusable custom term does not satisfy the mandatory selection',
             ),
         );
-        foreach ($cases as list($stored, $offered, $ticked, $refusal, $stored_after, $folded, $announced, $description)) {
+        foreach ($cases as list($stored, $offered, $type, $ticked, $refusal, $stored_after, $folded, $announced, $description)) {
             StubStore::reset();
             Tools::resetTestValues();
+            Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $type);
             Configuration::updateValue(self::KEY, $stored);
             foreach ($ticked as $term) {
                 Tools::setTestValue('PS_TWO_PAYMENT_TERMS_' . $term, 1);
