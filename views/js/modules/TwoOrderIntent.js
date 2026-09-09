@@ -93,9 +93,9 @@ class TwoOrderIntent {
     }
 
     /**
-     * TWO-25326. The single place the company name and number are folded
-     * into the sentence, so every caller renders identical wording. Omits the
-     * parenthesised number when none is known ("Example Ltd", never
+     * The single place the company name and number are folded into the
+     * sentence (TWO-25326), so every caller renders identical wording. Omits
+     * the parenthesised number when none is known ("Example Ltd", never
      * "Example Ltd ()").
      *
      * A brand override (`intent_approved_notice` / `intent_declined_notice`, TWO-25218)

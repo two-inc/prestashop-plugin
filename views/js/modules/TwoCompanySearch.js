@@ -6094,7 +6094,8 @@ class TwoCompanySearch {
      *
      * Deliberately composed from the writers a real search selection already uses,
      * rather than a second set of its own. Three previous attempts at this
-     * write-back were withdrawn (`.ai/decisions.md`, 2026-08-10) and every one
+     * write-back were withdrawn (`.ai/decisions.md`, "Sole-Trader Enrolment Does
+     * Not Write Back Into The Address Form") and every one
      * failed the same way: a hand-rolled write the rest of this class did not
      * recognise as its own. So the number goes in through
      * markOrganizationFieldSelected(), which sets the hidden `companyid` AND its

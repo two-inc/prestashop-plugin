@@ -11,7 +11,7 @@
  * jsdom computes no real layout (offsetWidth/getBoundingClientRect are 0
  * regardless of CSS), so these tests pin the DOM structure and computed-style
  * values the width fix depends on; the actual pixel result was verified live
- * against https://prestashop-dev.staging.two.inc instead.
+ * against a staging shop instead.
  */
 
 'use strict';

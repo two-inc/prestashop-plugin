@@ -5011,9 +5011,9 @@ class Twopayment extends PaymentModule
             // matched by the cross-platform test script - do not paraphrase.
             'invoice_likely_accepted_for' => sprintf($this->l('This order by %%s (%%s) is likely to be accepted by %s'), $this->getTwoBrandConfig('product_name')),
             'invoice_cannot_be_approved_for' => sprintf($this->l('%s is not available for this order by %%s (%%s)'), $this->getTwoBrandConfig('product_name')),
-            // Name-only wording: manual entry captures a name and no number,
-            // so the pair legitimately arrives without one and must not render
-            // as "Example Ltd ()".
+            // The no-number variants: used when no displayable number exists -
+            // none captured, or an internal identifier the display rule
+            // withholds - so the sentence never renders as "Example Ltd ()".
             'invoice_likely_accepted_for_no_number' => sprintf($this->l('This order by %%s is likely to be accepted by %s'), $this->getTwoBrandConfig('product_name')),
             'invoice_cannot_be_approved_for_no_number' => sprintf($this->l('%s is not available for this order by %%s'), $this->getTwoBrandConfig('product_name')),
             'invoice_likely_accepted' => sprintf($this->l('Your invoice with %s is likely to be accepted, subject to additional checks.'), $this->getTwoBrandConfig('product_name')),
@@ -5303,9 +5303,6 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-order-intent', $this->getTwoModuleAssetPath('views/js/modules/TwoOrderIntent.js'), array('priority' => 202, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOrderIntent.js')));
         $this->context->controller->registerJavascript('two-sole-trader', $this->getTwoModuleAssetPath('views/js/modules/TwoSoleTrader.js'), array('priority' => 204, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoSoleTrader.js')));
         $this->context->controller->registerJavascript('two-optional-fields', $this->getTwoModuleAssetPath('views/js/modules/TwoOptionalFields.js'), array('priority' => 204, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOptionalFields.js')));
-        // No company-label script is registered here (TWO-25326): the
-        // captured company appears only inside the intent-message sentence,
-        // never as a separate read-only label on the tile.
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', $this->getTwoModuleAssetPath('views/js/modules/TwoCheckoutManager.js'), array('priority' => 205, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCheckoutManager.js')));
         $this->context->controller->registerJavascript('two-script', $this->getTwoModuleAssetPath('views/js/twopayment.js'), array('priority' => 206, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/twopayment.js')));
@@ -18913,19 +18910,18 @@ class Twopayment extends PaymentModule
             return trim($address->companyid);
         }
 
-        // vat_number is NOT a source here, deliberately (TWO-40, 2026-08-10
-        // ruling). A VAT number and an organisation number are different
-        // identifiers, issued by different registers, and the fact that they
-        // coincide in some countries is a coincidence rather than a rule -
-        // relaying one as the other means asking Two to credit-check a number
-        // that does not identify the buyer's company. The write side already
-        // refused to touch vat_number for the mirror-image reason (a non-empty
-        // vat_number on a foreign address makes core apply a B2B reverse charge,
-        // silently zeroing VAT for a buyer who is not VAT-registered); the read
-        // side now agrees with it. Do not re-add this as a fallback: an
-        // unresolvable org number must surface as empty and let Two's own
-        // resolution fail loudly, not be papered over with a number of a
-        // different kind.
+        // vat_number is NOT a source here, deliberately (TWO-40). A VAT number
+        // and an organisation number are different identifiers, issued by
+        // different registers, and the fact that they coincide in some
+        // countries is a coincidence rather than a rule - relaying one as the
+        // other means asking Two to credit-check a number that does not
+        // identify the buyer's company. The write side already refused to touch
+        // vat_number for the mirror-image reason (a non-empty vat_number on a
+        // foreign address makes core apply a B2B reverse charge, silently
+        // zeroing VAT for a buyer who is not VAT-registered); the read side
+        // agrees with it. Do not re-add this as a fallback: an unresolvable org
+        // number must surface as empty and let Two's own resolution fail
+        // loudly, not be papered over with a number of a different kind.
 
         return '';
     }

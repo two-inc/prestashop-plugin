@@ -2267,8 +2267,8 @@ class TwoCheckoutManager {
     }
     
     /**
-     * TWO-25326: the admin setting decides WHERE the
-     * one shared control mounts, never whether it exists. When the tile mount
+     * TWO-25326: the admin setting decides WHERE the one shared control
+     * mounts, never whether it exists. When the tile mount
      * point (`#two_tile_company`, rendered by paymentinfo.tpl only when the
      * setting is on) is present, TwoCompanySearch attaches to THAT field
      * instead of the address form's `input[name='company']` - same class,

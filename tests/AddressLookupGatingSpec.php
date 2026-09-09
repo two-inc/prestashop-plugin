@@ -224,14 +224,13 @@ final class AddressLookupGatingSpec
     }
 
     /**
-     * Bug report (TWO-25326, 2026-08-04): re-enabling company search must
-     * also switch auto-fill ON, not merely stop greying it out - an
-     * enabled-but-unchecked control reads as "on" to the merchant but posts
-     * '0' on save. Pinned as its own test, separate from
-     * testAdminJsGreysTheControlOut(), because the auto-check must fire ONLY
-     * on the user's own toggle (`isUserToggle === true`), never on the
-     * initial page-load render - a page load must still respect whatever
-     * position PS_TWO_ADDRESS_LOOKUP is actually stored in.
+     * Re-enabling company search must also switch auto-fill ON (TWO-25326),
+     * not merely stop greying it out - an enabled-but-unchecked control reads
+     * as "on" to the merchant but posts '0' on save. Pinned as its own test,
+     * separate from testAdminJsGreysTheControlOut(), because the auto-check
+     * must fire ONLY on the user's own toggle (`isUserToggle === true`), never
+     * on the initial page-load render - a page load must still respect
+     * whatever position PS_TWO_ADDRESS_LOOKUP is actually stored in.
      */
     private static function testAdminJsAutoChecksOnEnable(): void
     {

@@ -332,19 +332,17 @@ describe('an internal (`TWO:`) identifier: uniform everywhere except the visible
 
 describe('the address-lookup toggle', () => {
     /**
-     * TWO-40 follow-up (live bug, 2026-08-12): the
-     * address-lookup switch (PS_TWO_ADDRESS_LOOKUP) governs whether an
-     * ORDINARY company-SEARCH selection writes into the address step, and
-     * `Twopayment::getAddressLookupEnabled()` forces it to '0' outright once
-     * company search has relocated out of the address area and into the
-     * payment tile - which TWO-40 made the ONLY place the sole-trader entry
-     * point lives. Gating the sole-trader completion's address write on this
-     * same switch meant every shop running the current design had it
-     * permanently off, and the buyer's registered address silently never
-     * reached the form. This test used to assert exactly that no-write
-     * outcome as correct; it now asserts the fix - the switch has nothing to
-     * say about a signup completion, so address, the visible identification
-     * field and everything else all write regardless of its value.
+     * TWO-40 follow-up: the address-lookup switch (PS_TWO_ADDRESS_LOOKUP)
+     * governs whether an ORDINARY company-SEARCH selection writes into the
+     * address step, and `Twopayment::getAddressLookupEnabled()` forces it to
+     * '0' outright once company search has relocated out of the address area
+     * and into the payment tile - which TWO-40 made the ONLY place the
+     * sole-trader entry point lives. Gating the sole-trader completion's
+     * address write on this same switch meant every shop running the current
+     * design had it permanently off, and the buyer's registered address
+     * silently never reached the form. The switch has nothing to say about a
+     * signup completion, so address, the visible identification field and
+     * everything else all write regardless of its value.
      */
     test('OFF: address and the visible identification field still write - this switch has nothing to say about a signup completion', () => {
         buildAddressesStep({ editing: 'delivery', countryId: ES_OPTION });
@@ -667,11 +665,9 @@ describe('soleTraderPairReport(): three outcomes for the identification field, n
     });
 
     /**
-     * TWO-40 follow-up (live bug, 2026-08-12): the
-     * address-lookup switch does not gate the sole-trader completion (see
-     * the identical note on the "the address-lookup toggle" describe block
-     * above) - so a real register number reaches `dni` and is reported
-     * exactly as it would with the switch on.
+     * TWO-40 follow-up: the address-lookup switch does not gate the
+     * sole-trader completion - so a real register number reaches `dni` and is
+     * reported exactly as it would with the switch on.
      */
     test('LANDED even with the switch OFF: this switch has nothing to say about a signup completion', () => {
         buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
@@ -690,9 +686,9 @@ describe('soleTraderPairReport(): three outcomes for the identification field, n
     });
 
     /**
-     * TWO-40 follow-up (live bug, 2026-08-12): with the gate
-     * bypassed, `writeOrganizationToAddressIdentifiers(number, false, ...)` is
-     * reached with `onlyIfEmpty` false - an existing value in the buyer's own
+     * TWO-40 follow-up: with the gate bypassed,
+     * `writeOrganizationToAddressIdentifiers(number, false, ...)` is reached
+     * with `onlyIfEmpty` false - an existing value in the buyer's own
      * identification field is a signup completion overwriting it
      * unconditionally, same as every other field this method touches, not a
      * value the gate declines to replace.
@@ -979,9 +975,8 @@ describe('region routing: the state select where there is one, the city where th
     });
 
     /**
-     * TWO-40 follow-up (live bug, 2026-08-12): see the
-     * identical note on the "the address-lookup toggle" describe block above
-     * - the switch does not gate a signup completion, region included.
+     * TWO-40 follow-up: the address-lookup switch does not gate a signup
+     * completion, region included.
      */
     test('the address-lookup switch being off does not suppress the region - this switch has nothing to say about a signup completion', () => {
         buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
@@ -1394,9 +1389,9 @@ describe('applyBuyer(): a completed enrolment populates the FORM, end to end', (
     });
 
     /**
-     * TWO-40 follow-up (live bug, 2026-08-12): an order-intent
-     * check fired off a completed sole-trader enrolment before the buyer had
-     * reached the payment step. TwoCompanySearch.onCompanySelected() calls the
+     * TWO-40 follow-up: an order-intent check fired off a completed
+     * sole-trader enrolment before the buyer had reached the payment step.
+     * TwoCompanySearch.onCompanySelected() calls the
      * manager's markTileCompanySelected() the instant a search RESULT is
      * picked - TwoCheckoutManager.canAutoTriggerOrderIntent() reads that flag,
      * in tile mode, as "the buyer has made their choice" before a generic

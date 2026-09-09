@@ -935,7 +935,6 @@ describe('the company number after selection', () => {
     });
 
     test('it takes NO space in the form until a company is selected', () => {
-        // Space is reserved only while the company number is visible.
         makeInstance();
         const wrapper = companyField().parent();
         expect(window.getComputedStyle(wrapper.get(0)).paddingBottom).not.toBe('18px');

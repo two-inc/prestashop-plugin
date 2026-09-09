@@ -2150,7 +2150,9 @@ class TwoSoleTrader {
                     // cart-scoped mirror-write record - and all three live in
                     // TwoCompanySearch. Three earlier attempts at this write-back
                     // were withdrawn for hand-rolling it here instead
-                    // (`.ai/decisions.md`, 2026-08-10); see adoptSoleTraderBuyer().
+                    // (`.ai/decisions.md`, "Sole-Trader Enrolment Writes Its
+                    // Identity And Address Into The Form"); see
+                    // adoptSoleTraderBuyer().
                     self.adoptEnrolledIdentity(buyer);
                     // TWO-25326: publish the enrolled sole trader as the
                     // confirmed selection, exactly as a search selection does.
@@ -2762,7 +2764,8 @@ class TwoSoleTrader {
             // a real OTP verification in the hosted popup. The resulting
             // buyer lookup must not be re-gated on checkoutEmail() matching -
             self._signupPopupOpened = false;
-            // see getCurrentBuyer()'s JSDoc (a live bug on TWO-40).
+            // see getCurrentBuyer()'s JSDoc for what the two emails identify
+            // and why they need not match (TWO-40).
             self.getCurrentBuyer(true);
         };
         window.addEventListener('message', this._messageHandler);

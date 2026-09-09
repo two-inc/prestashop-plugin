@@ -1531,7 +1531,7 @@ The `PS_TWO_ENABLE_TAX_SUBTOTALS` pair is harmless in practice only because `ins
 The `'development'` pair is the more interesting one: an unseeded environment reads as `false` rather
 than development, and nothing seeds it on an upgrade path predating the key.
 
-(TWO-25455, 2026-08-14: the `'development'` literal quoted above is now stale — the "Development"
+(TWO-25455: the `'development'` literal quoted above is now stale — the "Development"
 `PS_TWO_ENVIRONMENT` option was removed as decorative/inert, and both call sites' second argument
 changed to `'staging'`. The underlying `Configuration::get($key, $fallback)` argument-2 bug this section
 describes is untouched and still real; only the specific default value quoted here has moved.)

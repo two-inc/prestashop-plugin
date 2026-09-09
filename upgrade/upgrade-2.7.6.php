@@ -4,10 +4,9 @@
  *
  * Carries the company-search location setting across the rename
  * `PS_TWO_ENABLE_COMPANY_NAME` -> `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS`
- * (TWO-40). The old name said "enable company name", which has not
- * been what the switch does since TWO-25326 - it decides WHERE the one
- * company-search control renders (address entry vs payment tile), never
- * whether it exists.
+ * (TWO-40). The old name said "enable company name", which has not been what
+ * the switch does since TWO-25326 - it decides WHERE the one company-search
+ * control renders (address entry vs payment tile), never whether it exists.
  *
  * WHAT IT DOES
  *
@@ -58,13 +57,13 @@
  * merchant chose.
  *
  * That loss is ACCEPTED: this module has no live merchants, so no such
- * override exists in the wild, and the tier-exact
- * migration this would otherwise need was attempted three times and produced
- * three distinct variants of silent merchant data loss. `.ai/decisions.md`
- * records what a SAFE rename requires - direct tier-by-tier `ps_configuration`
- * SQL rather than any tier-inferring API, plus multistore CI coverage and a
- * shop dimension in the offline `Configuration` test double. If this plugin
- * ever has multistore merchants, that is the work; do not assume this script
+ * override exists in the wild, and the tier-safe migration this would
+ * otherwise need was attempted three times and produced three distinct
+ * variants of silent merchant data loss. `.ai/decisions.md` records what a
+ * SAFE rename requires - direct tier-by-tier `ps_configuration` SQL rather
+ * than any tier-inferring API, plus multistore CI coverage and a shop
+ * dimension in the offline `Configuration` test double. If this plugin ever
+ * has multistore merchants, that is the work; do not assume this script
  * covers it.
  *
  * THE FILE-SWAP WINDOW, which this script cannot close
@@ -89,10 +88,10 @@
  *
  * There is deliberately NO read shim for the old key - it is not a permanent
  * alias. Running the upgrade once after a file-swap deploy is therefore a real
- * release step, not a formality - and the ONLY things that
- * run it are the back-office Module Manager -> Upgrade action and
- * `dev/ci/upgrade-module.sh`. Opening the module's own CONFIGURATION page does
- * NOT run any upgrade script; no PrestaShop code path executes
+ * release step, not a formality - and the ONLY things that run it are the
+ * back-office Module Manager -> Upgrade action and
+ * `dev/ci/upgrade-module.sh`. Opening the module's own CONFIGURATION page
+ * does NOT run any upgrade script; no PrestaShop code path executes
  * `upgrade/*.php` from there.
  *
  * WHY A NEW VERSION RATHER THAN AN EDIT TO AN EXISTING SCRIPT
