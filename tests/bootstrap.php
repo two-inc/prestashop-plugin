@@ -796,13 +796,11 @@ namespace {
             return [(int) $idShopGroup, (int) $idShop];
         }
 
-        private static function isDeclaredLanguage($value): bool
+        /** Core's rule: the KEY decides, so a key with a row under any language is per-language. */
+        private static function isLangKey($key): bool
         {
-            if (!is_numeric($value)) {
-                return false;
-            }
-            foreach (StubStore::$languages as $language) {
-                if ((int) $language['id_lang'] === (int) $value) {
+            foreach (StubStore::$configurationLang as $rows) {
+                if (array_key_exists($key, $rows)) {
                     return true;
                 }
             }
@@ -810,14 +808,12 @@ namespace {
             return false;
         }
 
-        // Core returns false for a key that was never written.
-        // The second argument is core's $id_lang; this module also passes plain
-        // defaults there, so it is read as a language only when it names one of
-        // the languages the spec declared.
-        public static function get($key, $default = false, $idShopGroup = null, $idShop = null)
+        // Core returns false for a key that was never written. Core's parameter
+        // order: arg 2 is the language id, the fallback is arg 5 (ABN-532).
+        public static function get($key, $idLang = null, $idShopGroup = null, $idShop = null, $default = false)
         {
-            if (self::isDeclaredLanguage($default)) {
-                return StubStore::$configurationLang[(int) $default][$key] ?? false;
+            if (self::isLangKey($key)) {
+                return StubStore::$configurationLang[(int) $idLang][$key] ?? false;
             }
 
             list($idShopGroup, $idShop) = self::resolveScope($idShopGroup, $idShop);
@@ -849,7 +845,7 @@ namespace {
             }
 
             list($idShopGroup, $idShop) = self::resolveScope($idShopGroup, $idShop);
-            $stored = self::get($key, false, $idShopGroup, $idShop);
+            $stored = self::get($key, null, $idShopGroup, $idShop);
             if ((!is_numeric($value) && $value === $stored) || (is_numeric($value) && $value == $stored && self::hasKey($key))) {
                 return true;
             }

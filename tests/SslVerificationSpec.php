@@ -18,15 +18,19 @@ final class SslVerificationSpec
     private static function testToggleDeterminesBypassAcrossEnvironments(): void
     {
         $cases = [
-            ['production', true, 'toggle ON in production applies the bypass'],
-            ['production', false, 'toggle OFF in production never bypasses'],
-            ['development', true, 'toggle ON in development applies the bypass'],
-            ['development', false, 'toggle OFF in development never bypasses'],
+            ['production', 1, true, 'toggle ON in production applies the bypass'],
+            ['production', 0, false, 'toggle OFF in production never bypasses'],
+            ['development', 1, true, 'toggle ON in development applies the bypass'],
+            ['development', 0, false, 'toggle OFF in development never bypasses'],
+            ['production', null, false, 'a shop with no row at all verifies, it does not bypass'],
         ];
 
-        foreach ($cases as [$environment, $toggleOn, $description]) {
+        foreach ($cases as [$environment, $stored, $toggleOn, $description]) {
+            StubStore::reset();
             StubStore::$configuration['PS_TWO_ENVIRONMENT'] = $environment;
-            StubStore::$configuration['PS_TWO_DISABLE_SSL_VERIFY'] = $toggleOn ? 1 : 0;
+            if ($stored !== null) {
+                StubStore::$configuration['PS_TWO_DISABLE_SSL_VERIFY'] = $stored;
+            }
             PrestaShopLogger::reset();
 
             $module = new TwopaymentTestHarness();
