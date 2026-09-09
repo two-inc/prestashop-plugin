@@ -542,8 +542,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_9054c807a76714962fac8773c6598827'] 
 $_MODULE['<{twopayment}prestashop>twopayment_e1d8595c59fb2e2af836eeba55fe6131'] = 'Vises ikke i kassen';
 $_MODULE['<{twopayment}prestashop>twopayment_b0cae1eeaf2cfa9431e5ff2f74865d14'] = 'ingen API-nøkkel er lagret. Kontroller API-nøkkel.';
 $_MODULE['<{twopayment}prestashop>twopayment_b58967dda2076c46dc9db298c57acc86'] = 'API-nøkkelen ble avvist. Kontroller API-nøkkel og Miljø.';
-$_MODULE['<{twopayment}prestashop>twopayment_a74f8585cb2ed969c9c43bc108723ca6'] = 'Kan ikke kontrolleres - API-nøkkelen kunne ikke verifiseres akkurat nå.';
-$_MODULE['<{twopayment}prestashop>twopayment_aba389b990ffe03bfed6463dcc50bcb7'] = 'den lagrede tilleggsmetoden gjenkjennes ikke. Kontroller Tilleggsmetode.';
+$_MODULE['<{twopayment}prestashop>twopayment_aba389b990ffe03bfed6463dcc50bcb7'] = 'den lagrede tilleggsmetoden gjenkjennes ikke. Kontroller Metode for tillegg.';
 $_MODULE['<{twopayment}prestashop>twopayment_234bdc3195c47d2e7dee6df6e27c1d3a'] = 'Vises i kassen';
 $_MODULE['<{twopayment}prestashop>twopayment_63893c2d87676b85e5d093d4c4c6aef3'] = 'modulen er ikke aktivert for denne butikken. Aktiver den i Modulbehandling.';
 $_MODULE['<{twopayment}prestashop>twopayment_2c074060e1efe449eb1cb79cf1859f3b'] = 'merchant-kontoen din er ennå ikke identifisert. Lagre de generelle innstillingene for å verifisere API-nøkkelen.';

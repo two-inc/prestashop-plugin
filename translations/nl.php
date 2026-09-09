@@ -542,7 +542,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_9054c807a76714962fac8773c6598827'] 
 $_MODULE['<{twopayment}prestashop>twopayment_e1d8595c59fb2e2af836eeba55fe6131'] = 'Niet zichtbaar in de checkout';
 $_MODULE['<{twopayment}prestashop>twopayment_b0cae1eeaf2cfa9431e5ff2f74865d14'] = 'er is geen API-sleutel opgeslagen. Controleer API-sleutel.';
 $_MODULE['<{twopayment}prestashop>twopayment_b58967dda2076c46dc9db298c57acc86'] = 'de API-sleutel is geweigerd. Controleer API-sleutel en Omgeving.';
-$_MODULE['<{twopayment}prestashop>twopayment_a74f8585cb2ed969c9c43bc108723ca6'] = 'Kan nu niet worden gecontroleerd - de API-sleutel kon niet worden geverifieerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_aba389b990ffe03bfed6463dcc50bcb7'] = 'de opgeslagen toeslagmethode wordt niet herkend. Controleer Toeslagmethode.';
 $_MODULE['<{twopayment}prestashop>twopayment_234bdc3195c47d2e7dee6df6e27c1d3a'] = 'Zichtbaar in de checkout';
 $_MODULE['<{twopayment}prestashop>twopayment_63893c2d87676b85e5d093d4c4c6aef3'] = 'de module is niet ingeschakeld voor deze winkel. Schakel hem in bij Modulebeheer.';
