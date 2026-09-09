@@ -2372,9 +2372,8 @@ class TwoSoleTrader {
 
             return null;
         }
-        // Round trip already handed off to a popup that is still open
-        // (adversarial review finding, Han + Vader independently) - opening a
-        // SECOND window here would orphan the first one, untracked:
+        // Round trip already handed off to a popup that is still open -
+        // opening a SECOND window here would orphan the first one, untracked:
         // `this._popup` would move to the new popup and the poll would never
         // learn the first window even existed, so a buyer who closes THAT one
         // instead of the new one would leave the spinner stuck forever. Focus

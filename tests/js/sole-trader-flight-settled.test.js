@@ -97,8 +97,8 @@ test('a successful autofill (buyer match) fires the settle event', async () => {
 });
 
 /**
- * Adversarial review finding (Yoda): other tests don't exercise the settle
- * guard while a popup is still open. This one does - a real OTP round trip
+ * Other tests don't exercise the settle guard while a popup is still
+ * open. This one does - a real OTP round trip
  * resolves while the popup the buyer authenticated in is still open.
  */
 test('a genuine OTP completion settles the buyer lookup but withholds the spinner until the still-open popup actually closes', async () => {
@@ -575,7 +575,7 @@ test('a popup blocked outright (window.open() returns null) never starts a poll 
 });
 
 /**
- * Adversarial review finding (Han): a second openPopup() while the first
+ * A second openPopup() while the first
  * popup from the same attempt is still open used to open a second window
  * and silently retarget `_popup`, orphaning the first - closing the
  * original left the spinner stuck forever. Must refuse and refocus instead.
@@ -1018,7 +1018,7 @@ test('a synchronous throw building the buyer-lookup request does not permanently
     stubFetch({});
     const instance = build();
 
-    // this.tokens is null - the exact throw shape Vader flagged.
+    // this.tokens is null - the throw shape this guards against.
     expect(instance.tokens).toBeNull();
 
     expect(() => instance.getCurrentBuyer()).not.toThrow();

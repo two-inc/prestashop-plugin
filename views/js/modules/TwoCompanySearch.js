@@ -3515,8 +3515,8 @@ class TwoCompanySearch {
                 );
                 // Bound directly via jQuery, not through the widget -
                 // `autocomplete('destroy')` above only unwinds bindings the
-                // widget itself made (review finding, Han: harmless today
-                // only because a detached node can never receive a native
+                // widget itself made (harmless today only because a
+                // detached node can never receive a native
                 // focus/mousedown event again, an invariant this method does
                 // not otherwise rely on and the next DOM-recycling path could
                 // break silently).
@@ -3813,8 +3813,8 @@ class TwoCompanySearch {
                 }
             });
 
-            // Marker class for the CSS width clamp (TWO-30.x.10 element 1,
-            // Han review finding): `.ui-autocomplete` is jQuery UI's own
+            // Marker class for the CSS width clamp (TWO-30.x.10 element 1):
+            // `.ui-autocomplete` is jQuery UI's own
             // un-namespaced default class, shared by any OTHER jQuery UI
             // autocomplete that might be live on the same page (a native
             // PrestaShop lookup, another module). `addClass` is idempotent, so
@@ -4323,8 +4323,7 @@ class TwoCompanySearch {
      * trader is already adopted (Doug's ruling: the two must behave
      * identically, not one being a no-op).
      *
-     * Re-entrancy guard (adversarial review finding, TWO-40 follow-up -
-     * Han/Vader independently caught this): `TwoSoleTrader.startReplacement()`
+     * Re-entrancy guard (TWO-40): `TwoSoleTrader.startReplacement()`
      * opens the popup SYNCHRONOUSLY with no guard of its own (unlike
      * getCurrentBuyer()'s `isFetchingBuyer`) - without this, a double-click
      * reliably opened two signup popups from one gesture.

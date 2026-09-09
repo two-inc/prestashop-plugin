@@ -460,7 +460,7 @@ describe('the cache is namespaced per checkout environment, not shared across th
     });
 });
 
-describe('the persisted cache never outranks a settled, container-present answer (adversarial review, "Han" finding)', () => {
+describe('the persisted cache never outranks a settled, container-present answer', () => {
     test('a fresh server-rendered adoption wins over a DISAGREEING persisted-cache entry', async () => {
         const { buildPaymentTileWithSoleTraderAnswer } = require('./ps-harness');
         // The persisted cache says "no" for GB...
@@ -490,12 +490,12 @@ describe('the persisted cache never outranks a settled, container-present answer
     });
 });
 
-describe('a superseded in-flight request is not resurrected by a concurrent cache write (adversarial review, "Han" finding)', () => {
+describe('a superseded in-flight request is not resurrected by a concurrent cache write', () => {
     test("an outstanding request's answer, once superseded, never reaches the persisted cache either", async () => {
         // Mirrors sole-trader-server-rendered-toggle.test.js's in-memory
-        // version of this invariant, but checks the PERSISTED cache too -
-        // the brief specifically asked whether a concurrent cache write
-        // could resurrect a request that lost the in-memory race.
+        // version of this invariant, but checks the PERSISTED cache too: a
+        // concurrent cache write must not resurrect a request that lost the
+        // in-memory race.
         let settle;
         global.window.fetch = (url) => {
             if (url.indexOf('soleTraderAvailability') === -1) {
