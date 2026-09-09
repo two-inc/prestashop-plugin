@@ -10755,6 +10755,16 @@ class Twopayment extends PaymentModule
                 $merchant_id = Configuration::get('PS_TWO_MERCHANT_ID');
                 $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
                 if (!self::isTwoConfigUnset($merchant_id) && !self::isTwoConfigUnset($api_key)) {
+                    if (!self::isMerchantRecordSlotForCurrentKey()) {
+                        // The held record belongs to another key, so serve-stale would serve another
+                        // merchant. Dropped before the call, and claimed for this key so the clock
+                        // below covers concurrent renders as it does any cold cache (ABN-530).
+                        $this->invalidateMerchantAvailableTerms();
+                        Configuration::updateValue(
+                            self::CONFIG_MERCHANT_RECORD_KEY,
+                            self::verificationSlotKey($api_key)
+                        );
+                    }
                     // Bump the shared clock BEFORE the wire call so a concurrent
                     // render at expiry serves the stale cache instead of firing a
                     // second, redundant fetch (anti-stampede - TWO-24859 review).
