@@ -1799,12 +1799,11 @@ address, which IS the secondary, so the sync clause applies. On WooCommerce the 
 clause simply does not apply, because the billing address is the one the buyer edits
 first.
 
-**OPEN QUESTION (C3):** the rule above is deliberately position-independent, so it holds
-whichever address WooCommerce has the buyer edit first, and nothing here depends on
-settling that. But a WooCommerce port written on the assumption that billing is the
-SECONDARY address there inverts the sync direction, so its primary/secondary mapping
-must be checked against the live checkout before any of it is written. Not resolved
-here.
+**OPEN QUESTION (C3):** the rule above is deliberately position-independent, so it ports
+as written. The positional mapping does NOT port: because WooCommerce is billing-first, a
+port that carries PrestaShop's "invoice is the secondary" mapping across inverts the sync
+direction, and is wrong there while looking right here. What that port's own mapping
+should be is not decided here — only that it cannot be copied from this one.
 
 ---
 
