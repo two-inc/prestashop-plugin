@@ -253,8 +253,8 @@
 
             function setTwoFeeNotice(text) {
                 var $first = $('input[name^="PS_TWO_PAYMENT_TERMS_"]').first();
-                // A theme or core version that does not wrap the checkbox group
-                // in .form-group still gets the notice, never blank figures.
+                // The notice needs somewhere to go on a core version that does
+                // not wrap the checkbox group in .form-group.
                 var $anchor = $first.closest('.form-group');
                 if (!$anchor.length) {
                     $anchor = $first.parent();
