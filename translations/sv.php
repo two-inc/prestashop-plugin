@@ -201,6 +201,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_4e48eb7b84e6418738c6548b3c826d94'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'Kunde inte bygga nyttolasten för order intent';
 $_MODULE['<{twopayment}prestashop>twopayment_e8eab90af94027d0c5ae97667a307a3e'] = 'Villkor för månadsskifte (EOM):';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = 'Den här API-nyckeln avvisades av %1$s. Den kan vara ogiltig eller ha upphört att gälla - kontrollera nyckeln i din %1$s-portal.';
+$_MODULE['<{twopayment}prestashop>twopayment_935a9723572dd90aed81e13b2d4fdd2e'] = 'Den tidigare sparade nyckeln behölls.';
 $_MODULE['<{twopayment}prestashop>twopayment_539de410a9a131c0e925dc8e248a29d2'] = 'Betalning förfaller vid månadsskiftet plus X dagar från leveransdatumet. Exempel: om du levererar en order den 15 januari med villkoret EOM+30 förfaller betalningen den 28 februari (slutet av januari + 30 dagar). Detta är vanligt vid B2B-fakturering.';
 $_MODULE['<{twopayment}prestashop>twopayment_fb3ff8dd49a6e7ecf023f6941320801c'] = 'Kunde inte behandla din order med %s-betalning. Välj en annan betalningsmetod eller kontakta butiken.';
 $_MODULE['<{twopayment}prestashop>twopayment_57bd2a90727f3223958f7fd9bc6442f0'] = 'Viktiga krav';
@@ -321,7 +322,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a7ae6fbd75c4968e5b9c92b908fe824e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_ab63d3168928b8331551047a81e5dd32'] = 'Välj ditt land ovan för att söka efter ditt företag.';
 $_MODULE['<{twopayment}prestashop>twopayment_6ebe8c3878e997b8c76f41aa5db69404'] = 'Grund för tilläggsberäkning';
 $_MODULE['<{twopayment}prestashop>twopayment_ad390087f94a9a17adaf0b81ad83b2e7'] = 'från månadsskiftet';
-$_MODULE['<{twopayment}prestashop>twopayment_15d430d1904e4424f0b8a0e37750060e'] = 'Ogiltigt verifieringssvar från %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b1021ae56c3544e96ea36a7d80e48145'] = 'Kunderna måste ange sitt företagsnamn i fakturaadressen';
 $_MODULE['<{twopayment}prestashop>twopayment_6c00ecbc1163f6b8f6f8f9892b1380b5'] = 'Det uppstod ett problem vid behandlingen av din %s-betalningsförfrågan. Försök igen eller välj en annan betalningsmetod.';
 $_MODULE['<{twopayment}prestashop>twopayment_b2676a7777337b3c9d44551409210ae7'] = 'Avgift för betalningsvillkor';

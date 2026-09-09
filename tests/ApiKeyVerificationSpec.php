@@ -15,7 +15,9 @@ final class ApiKeyVerificationSpec
         self::testTransportFailureIsUnreachableNotAnInvalidKey();
         self::testOtherNonOkCodesAreGenericErrors();
         self::testUnreadableBodyOnHttp200IsNotAVerifiedKey();
+        self::testARecordlessHttp200IsNotAVerifiedKey();
         self::testVerifiedKeyReturnsTheMerchantRecord();
+        self::testARecordWithNoShortNameStillVerifies();
         self::testMissingKeyIsNotConfigured();
 
         // Merchant-facing surface.
@@ -24,11 +26,15 @@ final class ApiKeyVerificationSpec
         self::testNoticeIsSilentWhenVerifiedOrUnconfigured();
         self::testNoticeSaysNothingWhileAVerificationIsStillRunning();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
+        self::testARejectedKeyIsTheOnlyValueASaveDiscards();
+        self::testAnUnverifiableIdentityChangeStillDropsTheCachedRecord();
+        self::testTheWarningIsRenderedAlongsideTheSaveConfirmation();
         self::testVerifiedPanelFollowsTheLiveVerdict();
 
         // Checkout gate.
         self::testEveryFailureCategoryWithholdsThePaymentOption();
         self::testVerifiedKeyKeepsThePaymentOption();
+        self::testARecordlessHttp200WithholdsThePaymentOption();
         self::testWithholdingThePaymentOptionIsLogged();
         self::testWithholdReasonIsLoggedOncePerRequestNotPerCall();
         self::testPaymentSubmissionIsRefusedWhenTheKeyDoesNotVerify();
@@ -139,6 +145,7 @@ final class ApiKeyVerificationSpec
             public function validateGeneralFormForTest(): array
             {
                 $this->errors = array();
+                $this->apiKeyVerificationWarning = null;
                 $this->validTwoGeneralFormValues();
                 return $this->errors;
             }
@@ -146,6 +153,11 @@ final class ApiKeyVerificationSpec
             public function saveGeneralFormForTest(): void
             {
                 $this->saveTwoGeneralFormValues();
+            }
+
+            public function generalFormWarningForTest(): ?string
+            {
+                return $this->apiKeyVerificationWarning;
             }
 
             public function verifiedPanelFlagForTest(): int
@@ -187,6 +199,12 @@ final class ApiKeyVerificationSpec
     private static function httpOutcome(int $code, string $body = 'the raw upstream body'): array
     {
         return array('response' => $body, 'code' => $code, 'error' => '');
+    }
+
+    /** A 200 the endpoint answered, carrying no merchant record. */
+    private static function recordlessOutcome(): array
+    {
+        return array('response' => json_encode(array('detail' => 'ok')), 'code' => 200, 'error' => '');
     }
 
     private static function transportOutcome(): array
@@ -369,6 +387,20 @@ final class ApiKeyVerificationSpec
         TinyAssert::notSame(Twopayment::API_KEY_STATUS_OK, $result['status']);
     }
 
+    /**
+     * A 200 carrying no id or short_name confirmed nothing, so it is not a
+     * verified key - the buyer gate must withhold Two on it (ABN-495).
+     */
+    private static function testARecordlessHttp200IsNotAVerifiedKey(): void
+    {
+        $module = self::module(self::recordlessOutcome());
+        $result = $module->verifyForTest('stored-key');
+
+        TinyAssert::same(Twopayment::API_KEY_STATUS_ERROR, $result['status']);
+        TinyAssert::same(200, $result['code']);
+        TinyAssert::notSame(Twopayment::API_KEY_STATUS_OK, $result['status']);
+    }
+
     private static function testVerifiedKeyReturnsTheMerchantRecord(): void
     {
         $module = self::module(self::okOutcome());
@@ -378,6 +410,25 @@ final class ApiKeyVerificationSpec
         TinyAssert::same(200, $result['code']);
         TinyAssert::same('m-123', $result['body']['id']);
         TinyAssert::same('acme', $result['body']['short_name']);
+    }
+
+    /**
+     * The record that resolves a merchant is its id; a short name is optional
+     * on the wire and an empty one withholds Two through hookPaymentOptions()'s
+     * own guard. Requiring it here instead reported a resolvable merchant as an
+     * error, and disagreed with the other platforms (ABN-495).
+     */
+    private static function testARecordWithNoShortNameStillVerifies(): void
+    {
+        $module = self::module(array(
+            'response' => json_encode(array('id' => 'm-123')),
+            'code' => 200,
+            'error' => '',
+        ));
+        $result = $module->verifyForTest('stored-key');
+
+        TinyAssert::same(Twopayment::API_KEY_STATUS_OK, $result['status']);
+        TinyAssert::same('m-123', $result['body']['id']);
     }
 
     /**
@@ -490,17 +541,15 @@ final class ApiKeyVerificationSpec
 
         $errors = $module->validateGeneralFormForTest();
 
-        TinyAssert::same(1, count($errors), 'an unreachable API must be reported once');
+        TinyAssert::same(0, count($errors), 'an unreachable API must not block the save');
         TinyAssert::same(
             $module->getTwoApiKeyFailureMessage(Twopayment::API_KEY_STATUS_UNREACHABLE),
-            $errors[0],
+            $module->generalFormWarningForTest(),
             'the save must report the category, not a generic "check your API key"'
         );
 
         // The submitted key here IS the stored one, so the verdict is published
-        // immediately - the only way a FAILING verdict is ever published from
-        // this page, since a failing key adds an error and PrestaShop then skips
-        // the save entirely.
+        // by the validation itself rather than waiting for the save.
         // Asserted on the STORED slot and the call count: reading the status back
         // would answer 'unreachable' either way, since a cache miss just re-runs
         // the same stubbed wire call.
@@ -542,6 +591,152 @@ final class ApiKeyVerificationSpec
         $fixed->saveGeneralFormForTest();
         TinyAssert::same(Twopayment::API_KEY_STATUS_OK, $fixed->getTwoApiKeyVerificationStatus()['status']);
         TinyAssert::same(1, $fixed->verifyCalls, 'the save must reuse its own check, not verify twice');
+    }
+
+    /**
+     * The general save never blocks on the verification (ABN-495). The form
+     * re-renders from POST, so a blocked save looks like a stored one while
+     * leaving the merchant unable to store the key - or even the vendor name -
+     * that would fix it. A key Two rejected is the one submitted value the save
+     * discards: the stored key stays, everything beside it is written.
+     */
+    private static function testARejectedKeyIsTheOnlyValueASaveDiscards(): void
+    {
+        $timeoutOutcome = array('response' => false, 'code' => 0, 'error' => 'Operation timed out');
+        $idOnlyOutcome = array('response' => json_encode(array('id' => 'm-123')), 'code' => 200, 'error' => '');
+        // [wire outcome, key that must end up stored, short name that must end
+        // up stored, wording the warning must carry (null = no warning), why].
+        // The short name is server-derived, not a form input, so a save that
+        // resolved no merchant must leave the stored one alone.
+        $cases = array(
+            array(self::transportOutcome(), 'freshly-pasted-key', 'old-merchant', 'could not reach', 'a connection failure'),
+            array($timeoutOutcome, 'freshly-pasted-key', 'old-merchant', 'could not reach', 'a timeout'),
+            array(self::httpOutcome(500), 'freshly-pasted-key', 'old-merchant', 'could not verify the API key right now', 'a 500 from the API'),
+            array(self::httpOutcome(401), 'stored-key', 'old-merchant', 'previously saved key was kept', 'a 401 rejection'),
+            array(self::httpOutcome(403), 'stored-key', 'old-merchant', 'previously saved key was kept', 'a 403 rejection'),
+            array(self::okOutcome(), 'freshly-pasted-key', 'acme', null, 'a verified key'),
+            array($idOnlyOutcome, 'freshly-pasted-key', 'old-merchant', null, 'a record with no short name'),
+            array(self::recordlessOutcome(), 'freshly-pasted-key', 'old-merchant', 'unexpected response', 'a 200 carrying no merchant record'),
+        );
+
+        foreach ($cases as list($outcome, $expectedKey, $expectedShortName, $warning, $case)) {
+            $verified = $warning === null;
+            $module = self::module($outcome);
+            Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', 'old-merchant');
+            Configuration::updateValue('PS_TWO_VENDOR_NAME', 'Old Vendor');
+            // Only the three inputs the General form actually posts.
+            Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'freshly-pasted-key');
+            Tools::setTestValue('PS_TWO_VENDOR_NAME', 'New Vendor');
+            Tools::setTestValue('PS_TWO_ENVIRONMENT', 'production');
+
+            // getContent()'s general branch: validate, then save only if clean.
+            TinyAssert::same(
+                0,
+                count($module->validateGeneralFormForTest()),
+                $case . ' must not block the save'
+            );
+            $module->saveGeneralFormForTest();
+
+            $expected = array(
+                'PS_TWO_MERCHANT_SHORT_NAME' => $expectedShortName,
+                'PS_TWO_MERCHANT_API_KEY' => $expectedKey,
+                'PS_TWO_VENDOR_NAME' => 'New Vendor',
+                'PS_TWO_ENVIRONMENT' => 'production',
+            );
+            foreach ($expected as $key => $value) {
+                TinyAssert::same($value, (string) Configuration::get($key), $case . ' must store ' . $value . ' in ' . $key);
+            }
+            $reported = $module->generalFormWarningForTest();
+            if ($warning === null) {
+                TinyAssert::same(null, $reported, $case . ' must leave no warning');
+            } else {
+                TinyAssert::true(
+                    $reported !== null && strpos($reported, $warning) !== false,
+                    $case . ' must warn with the category, not a generic "check your API key"'
+                );
+            }
+            TinyAssert::same(
+                $verified ? '1' : '0',
+                (string) Configuration::get('PS_TWO_API_KEY_VERIFIED'),
+                $case . ' must record whether the key it stored is verified'
+            );
+            $published = json_decode((string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS), true);
+            TinyAssert::same(
+                $verified,
+                is_array($published) && $published['status'] === Twopayment::API_KEY_STATUS_OK,
+                $case . ' must publish a verdict the checkout gate can trust'
+            );
+        }
+    }
+
+    /**
+     * The cached merchant record - available terms, default term, platform
+     * minimum - is a single global set of Configuration keys, not one per
+     * merchant. A save that stores a new key or environment without being able
+     * to verify it must still drop them, or the new key pairs with the previous
+     * merchant's terms and minimum the moment the checkout gate reopens
+     * (ABN-495).
+     */
+    private static function testAnUnverifiableIdentityChangeStillDropsTheCachedRecord(): void
+    {
+        // [wire outcome, submitted key, submitted environment, record must be
+        // dropped, why]. A rejected key is reverted, so the record still
+        // describes the merchant the shop is running and must survive.
+        $cases = array(
+            array(self::transportOutcome(), 'freshly-pasted-key', 'staging', true, 'a changed key'),
+            array(self::transportOutcome(), 'stored-key', 'production', true, 'a changed environment'),
+            array(self::transportOutcome(), 'stored-key', 'staging', false, 'an unchanged key and environment'),
+            array(self::httpOutcome(401), 'freshly-pasted-key', 'staging', false, 'a rejected key the save reverted'),
+            array(self::okOutcome(), 'stored-key', 'staging', true, 'an unchanged key that resolved a different merchant'),
+        );
+
+        foreach ($cases as list($outcome, $apiKey, $environment, $dropped, $case)) {
+            $module = self::module($outcome);
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', 'm-old');
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, json_encode(array(14, 30)));
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS, 30);
+            Configuration::updateValue(Twopayment::CONFIG_PLATFORM_MIN_ORDER, '250');
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time());
+            Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
+            Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', $apiKey);
+            Tools::setTestValue('PS_TWO_ENVIRONMENT', $environment);
+
+            TinyAssert::same(0, count($module->validateGeneralFormForTest()), $case . ' must not block the save');
+            $module->saveGeneralFormForTest();
+
+            $expected = $dropped
+                ? array('', '0', '', '0')
+                : array(json_encode(array(14, 30)), '30', '250', (string) time());
+            $keys = array(
+                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS,
+                Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS,
+                Twopayment::CONFIG_PLATFORM_MIN_ORDER,
+                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+            );
+            $verb = $dropped ? ' must drop ' : ' must keep ';
+            foreach ($keys as $index => $key) {
+                TinyAssert::same($expected[$index], (string) Configuration::get($key), $case . $verb . $key);
+            }
+        }
+    }
+
+    /**
+     * Asserted against the source: getContent() cannot be reached without a
+     * HelperForm, and this is the one-line wiring that turns the held warning
+     * into something the merchant sees (ABN-495).
+     */
+    private static function testTheWarningIsRenderedAlongsideTheSaveConfirmation(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        $expected = "                \$this->saveTwoGeneralFormValues();\n"
+            . "                if (\$this->apiKeyVerificationWarning !== null) {\n"
+            . "                    \$this->output .= \$this->displayWarning(\$this->apiKeyVerificationWarning);\n"
+            . "                }";
+
+        TinyAssert::true(
+            strpos($source, $expected) !== false,
+            'getContent() must render the verification warning after the general save'
+        );
     }
 
     /**
@@ -617,6 +812,34 @@ final class ApiKeyVerificationSpec
         self::offerableCart($module);
 
         TinyAssert::same(1, count($module->hookPaymentOptions([])), 'a verified key must still be offered Two');
+    }
+
+    /**
+     * The fail-closed half of ABN-495, asserted through the gate's own live
+     * check rather than a primed verdict: a 200 with no merchant record used to
+     * categorise as 'ok', so Two was offered with no merchant identity stored.
+     */
+    private static function testARecordlessHttp200WithholdsThePaymentOption(): void
+    {
+        $module = self::module(self::recordlessOutcome());
+        self::offerableCart($module);
+
+        TinyAssert::same(
+            0,
+            count($module->hookPaymentOptions([])),
+            'a 200 carrying no merchant record must withhold the payment option'
+        );
+
+        // The same cart with a real record, so the assertion above is the
+        // verdict talking and not some other guard on this path.
+        $verified = self::module(self::okOutcome());
+        self::offerableCart($verified);
+
+        TinyAssert::same(
+            1,
+            count($verified->hookPaymentOptions([])),
+            'and a 200 that does carry one must still be offered Two'
+        );
     }
 
     private static function testWithholdingThePaymentOptionIsLogged(): void
@@ -1288,11 +1511,10 @@ final class ApiKeyVerificationSpec
 
     /**
      * Switching only the ENVIRONMENT dropdown to one this key is not valid for
-     * must not publish anything against the shop's stored configuration. The
-     * check runs against the submitted environment while the slot is
-     * keyed to the stored one, and a failing key makes PrestaShop skip the save -
-     * so publishing here took Two off a healthy checkout over a save that never
-     * happened.
+     * must not publish anything against the configuration the shop is still
+     * running: the check runs against the SUBMITTED environment while the slot
+     * is keyed to the STORED one, so publishing here would take Two off a
+     * healthy checkout over an environment the shop has not moved to yet.
      */
     private static function testSwitchingEnvironmentAloneNeverPublishesAVerdict(): void
     {
@@ -1304,7 +1526,11 @@ final class ApiKeyVerificationSpec
 
         $errors = $module->validateGeneralFormForTest();
 
-        TinyAssert::same(1, count($errors), 'the merchant is still told the key was rejected there');
+        TinyAssert::same(0, count($errors), 'the save is not blocked');
+        TinyAssert::true(
+            strpos((string) $module->generalFormWarningForTest(), 'rejected') !== false,
+            'the merchant is still told the key was rejected there'
+        );
         TinyAssert::same(
             '',
             (string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS),
