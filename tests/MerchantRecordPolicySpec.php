@@ -18,6 +18,7 @@ final class MerchantRecordPolicySpec
         self::testARecordWithNoSuccessStampHasNothingToServe();
         self::testARecordStampedForAnotherKeyIsNothingToServe();
         self::testAKeyChangeDuringAnOutageIsRecoverableByRevertingTheKey();
+        self::testASuccessfulRefreshClearsTheForeignFloor();
         self::testAFailingScheduleIsNotReportedAsAScheduleThatNeverRan();
         self::testTheDiagnosticsRowsFollowTheContextTheRecordLivesIn();
     }
@@ -524,6 +525,37 @@ final class MerchantRecordPolicySpec
             $module->getMerchantAvailableTerms(),
             'reverting the key restores what the shop was serving'
         );
+
+        // The line the merchant reads while that is the situation.
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-typo');
+        TinyAssert::same(
+            'The cached profile was fetched for a different API key, so it is not in use.'
+                . ' It is kept until a refresh under this key succeeds.',
+            $module->merchantRecordStatusLineForTest(),
+            'the Diagnostics line names the foreign-record case'
+        );
+    }
+
+    /**
+     * A second key change inside the backoff must still refetch: the floor belongs to
+     * the change that wrote it, and a successful refresh clears it.
+     */
+    private static function testASuccessfulRefreshClearsTheForeignFloor(): void
+    {
+        $module = self::harness(array(
+            array('http_status' => 200, 'available_terms' => array(30)),
+            array('http_status' => 200, 'available_terms' => array(60)),
+        ));
+        self::seedHeldRecord(10);
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_RECORD_KEY, TwopaymentTestHarness::recordKeyStampForTest('key-a'));
+
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-b');
+        TinyAssert::same(array(30), $module->getMerchantAvailableTerms(), 'the first key change refetches');
+
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-c');
+
+        TinyAssert::same(array(60), $module->getMerchantAvailableTerms(), 'so does a second one moments later');
+        TinyAssert::same(2, $module->calls, 'each key change gets its own refetch');
     }
 
     /**

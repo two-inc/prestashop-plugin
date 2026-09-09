@@ -532,3 +532,4 @@ $_MODULE['<{twopayment}prestashop>configuration_0a3ec356996cae21088be407cab8ec8c
 $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] = 'Het gecachete profiel hoort bij één winkel. Schakel naar een enkele winkel om het te bekijken of te vernieuwen.';
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'Het gecachete profiel hoort bij één winkel. Schakel naar een enkele winkel om het te vernieuwen.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Elke winkel heeft zijn eigen vernieuwings-URL. Schakel naar een enkele winkel om die te bekijken.';
+$_MODULE['<{twopayment}prestashop>twopayment_133bfd505abc3c26cf41129256a3c1ec'] = 'Het gecachete profiel is opgehaald voor een andere API-sleutel en wordt daarom niet gebruikt. Het blijft bewaard totdat een vernieuwing met deze sleutel lukt.';

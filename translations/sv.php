@@ -532,3 +532,4 @@ $_MODULE['<{twopayment}prestashop>configuration_0a3ec356996cae21088be407cab8ec8c
 $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] = 'Den cachade profilen hör till en butik. Byt till en enskild butik för att se eller uppdatera den.';
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'Den cachade profilen hör till en butik. Byt till en enskild butik för att uppdatera den.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Varje butik har sin egen uppdaterings-URL. Byt till en enskild butik för att se den.';
+$_MODULE['<{twopayment}prestashop>twopayment_133bfd505abc3c26cf41129256a3c1ec'] = 'Den cachade profilen hämtades för en annan API-nyckel och används därför inte. Den behålls tills en uppdatering med den här nyckeln lyckas.';

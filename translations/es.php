@@ -452,3 +452,4 @@ $_MODULE['<{twopayment}prestashop>configuration_0a3ec356996cae21088be407cab8ec8c
 $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] = 'El perfil en caché pertenece a una sola tienda. Cambie a una tienda concreta para verlo o actualizarlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'El perfil en caché pertenece a una sola tienda. Cambie a una tienda concreta para actualizarlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Cada tienda tiene su propia URL de actualización. Cambie a una tienda concreta para verla.';
+$_MODULE['<{twopayment}prestashop>twopayment_133bfd505abc3c26cf41129256a3c1ec'] = 'El perfil en caché se obtuvo para otra clave de API, por lo que no se usa. Se conserva hasta que una actualización con esta clave tenga éxito.';

@@ -532,3 +532,4 @@ $_MODULE['<{twopayment}prestashop>configuration_0a3ec356996cae21088be407cab8ec8c
 $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] = 'Den mellomlagrede profilen hører til én butikk. Bytt til én enkelt butikk for å se eller oppdatere den.';
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'Den mellomlagrede profilen hører til én butikk. Bytt til én enkelt butikk for å oppdatere den.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Hver butikk har sin egen oppdaterings-URL. Bytt til én enkelt butikk for å se den.';
+$_MODULE['<{twopayment}prestashop>twopayment_133bfd505abc3c26cf41129256a3c1ec'] = 'Den mellomlagrede profilen ble hentet for en annen API-nøkkel og er derfor ikke i bruk. Den beholdes til en oppdatering med denne nøkkelen lykkes.';

@@ -12229,6 +12229,9 @@ class Twopayment extends PaymentModule
         }
 
         $fetched_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+        if (!self::isMerchantRecordSlotForCurrentKey()) {
+            return $this->l('The cached profile was fetched for a different API key, so it is not in use. It is kept until a refresh under this key succeeds.');
+        }
         if (!$this->hasFetchedMerchantRecord() || $fetched_on <= 0) {
             return $this->l('Not yet refreshed on this shop.');
         }
