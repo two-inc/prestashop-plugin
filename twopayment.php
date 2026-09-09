@@ -2071,7 +2071,7 @@ class Twopayment extends PaymentModule
         // a term the record offers off the preset list otherwise renders unticked and the next
         // save writes it away. Resolved the same way the checkbox query resolves it, so one
         // render cannot see two lists across the TTL-gated fetch.
-        $payment_terms = array_map('strval', $this->getOfferableTermSource(true));
+        $payment_terms = array_map('strval', $this->getOfferableTermSource());
         foreach ($payment_terms as $term) {
             $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
         }
@@ -2340,7 +2340,7 @@ class Twopayment extends PaymentModule
     {
         // The rendered set, as the save loop writes from: a term the record offers off the
         // hardcoded list has a checkbox, so ticking it has to count as a selection.
-        $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
+        $payment_terms = array_map('strval', $this->getOfferableTermSource());
         $selected_terms = array();
         foreach ($payment_terms as $term) {
             if (Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term)) {
@@ -2358,7 +2358,7 @@ class Twopayment extends PaymentModule
         // A custom term satisfies the mandatory selection, as on the other platforms - but only
         // one checkout would actually offer, else the shop falls back to a term nobody chose.
         if (empty($selected_terms)
-            && !in_array(TwoStoredTerm::days($effective_custom), $this->getOfferableTermSource(false), true)
+            && !in_array(TwoStoredTerm::days($effective_custom), $this->getOfferableTermSource(), true)
         ) {
             $this->errors[] = $this->l('You must select at least one payment term.');
         }
