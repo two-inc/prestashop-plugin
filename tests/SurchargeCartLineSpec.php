@@ -452,36 +452,58 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * ABN-546: the gate and the line builder share one predicate, so a term
-     * that prices nothing is skipped by both. Without that, the gate offered
-     * Two and the builder then refused the order over a fee of zero - after
-     * the buyer had approved, which cancels the Two order and shows a generic
-     * cart error.
+     * ABN-546: the gate and the line builder share one predicate, so every
+     * shape that prices nothing is skipped by BOTH. Without that, the gate
+     * offered Two and the builder then refused the order over a fee of zero -
+     * after the buyer had approved, which cancels the Two order and shows a
+     * generic cart error.
      */
     private static function testOrderCreateCompletesForANonChargingTermDuringAnOutage(): void
     {
-        $module = self::makeModule();
-        // The ordered term prices nothing at all.
-        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '0');
-        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '0');
-        $cart = self::makeCart();
-        Context::getContext()->cookie->two_payment_term = 30;
-        $module->forcedFeeResponse = ['http_status' => 503];
+        $cases = [
+            ['percentage', '0', '0', '', false, 'a term with no percentage and no fixed amount'],
+            ['percentage', '0', '0', '10', false, 'a cap with no percentage behind it'],
+            ['percentage', '1.5', '0', '', true, 'the ordered term is its own reference in fee-difference mode'],
+        ];
 
-        $payload = $module->getTwoNewOrderData('merchant-attempt-8104', $cart, [
-            'merchant_confirmation_url' => 'https://shop.local/confirm',
-            'merchant_cancel_order_url' => 'https://shop.local/cancel',
-            'merchant_edit_order_url' => '',
-            'merchant_order_verification_failed_url' => '',
-            'merchant_invoice_url' => '',
-            'merchant_shipping_document_url' => '',
-        ]);
+        foreach ($cases as $case) {
+            list($type, $pct, $fixed, $cap, $differential, $description) = $case;
 
-        $feeLines = array_values(array_filter($payload['line_items'], static function ($item) {
-            return isset($item['type']) && $item['type'] === 'SERVICE';
-        }));
-        TinyAssert::count(0, $feeLines, 'a term pricing nothing contributes no fee line');
-        TinyAssert::count(0, $module->feeRequests, 'and is never quoted, so an outage cannot refuse it');
+            $module = self::makeModule();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $type);
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', $fixed);
+            Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', $cap);
+            Configuration::updateValue('PS_TWO_SURCHARGE_DIFFERENTIAL', $differential ? 1 : 0);
+            $cart = self::makeCart();
+            // The ordered term is the merchant default, which is what makes it
+            // its own reference in fee-difference mode.
+            Context::getContext()->cookie->two_payment_term = 30;
+            TinyAssert::same(30, (int) $module->getDefaultPaymentTerm(), 'fixture premise: ordered term is the default: ' . $description);
+            $module->forcedFeeResponse = ['http_status' => 503];
+
+            $threw = null;
+            $payload = null;
+            try {
+                $payload = $module->getTwoNewOrderData('merchant-attempt-8104', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $threw = $e->getMessage();
+            }
+
+            TinyAssert::same(null, $threw, 'order create must complete during an outage: ' . $description);
+            $feeLines = array_values(array_filter($payload['line_items'], static function ($item) {
+                return isset($item['type']) && $item['type'] === 'SERVICE';
+            }));
+            TinyAssert::count(0, $feeLines, 'no fee line for a term pricing nothing: ' . $description);
+            TinyAssert::count(0, $module->feeRequests, 'and never quoted, so an outage cannot refuse it: ' . $description);
+        }
     }
 
     /**
