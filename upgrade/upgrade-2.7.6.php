@@ -57,8 +57,8 @@
  * silently reverts to the new key's default instead of the position its
  * merchant chose.
  *
- * That loss is ACCEPTED: this module has no live
- * merchants, so no such override exists in the wild, and the tier-exact
+ * That loss is ACCEPTED: this module has no live merchants, so no such
+ * override exists in the wild, and the tier-exact
  * migration this would otherwise need was attempted three times and produced
  * three distinct variants of silent merchant data loss. `.ai/decisions.md`
  * records what a SAFE rename requires - direct tier-by-tier `ps_configuration`
@@ -88,8 +88,8 @@
  * ones that clicked it in the back office.
  *
  * There is deliberately NO read shim for the old key - it is not a permanent
- * alias. Running the upgrade once after a file-swap deploy is
- * therefore a real release step, not a formality - and the ONLY things that
+ * alias. Running the upgrade once after a file-swap deploy is therefore a real
+ * release step, not a formality - and the ONLY things that
  * run it are the back-office Module Manager -> Upgrade action and
  * `dev/ci/upgrade-module.sh`. Opening the module's own CONFIGURATION page does
  * NOT run any upgrade script; no PrestaShop code path executes

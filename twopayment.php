@@ -2933,8 +2933,6 @@ class Twopayment extends PaymentModule
      * lookup left to govern (TWO-25326). In that state it is not merely
      * inert, it is forced off: greyed out in the admin form by the config
      * page's JS, rendered as "No", and refused on save however it was posted.
-     * The other plugins disable and untick their own address-lookup setting on
-     * the same condition.
      *
      * Reads the SUBMITTED company-search position where there is one, falling
      * back to the stored one, so the same POST that turns the search into a
@@ -5008,16 +5006,15 @@ class Twopayment extends PaymentModule
             'invalid_response_from_server' => $this->l('Invalid response from server'),
             'choose_payment_terms' => $this->l('Choose the Buy Now, Pay Later option that works best for you'),
             'payment_period_starts' => $this->l('Your payment period starts when your order is fulfilled'),
-            // TWO-25326: the tile is text-only when the address-area
-            // control is active - no
-            // separate company name/number label, just these two sentences
-            // with the company folded straight in. Exact wording, matched
-            // by the cross-platform test script - do not paraphrase.
+            // TWO-25326: the tile is text-only when the address-area control
+            // is active - no separate company name/number label, just these two
+            // sentences with the company folded straight in. Exact wording,
+            // matched by the cross-platform test script - do not paraphrase.
             'invoice_likely_accepted_for' => sprintf($this->l('This order by %%s (%%s) is likely to be accepted by %s'), $this->getTwoBrandConfig('product_name')),
             'invoice_cannot_be_approved_for' => sprintf($this->l('%s is not available for this order by %%s (%%s)'), $this->getTwoBrandConfig('product_name')),
-            // Name-only fallback: a company captured without an organisation
-            // number (the capture path requires one, but kept so a stray
-            // no-number case never renders "Example Ltd ()").
+            // Name-only wording: manual entry captures a name and no number,
+            // so the pair legitimately arrives without one and must not render
+            // as "Example Ltd ()".
             'invoice_likely_accepted_for_no_number' => sprintf($this->l('This order by %%s is likely to be accepted by %s'), $this->getTwoBrandConfig('product_name')),
             'invoice_cannot_be_approved_for_no_number' => sprintf($this->l('%s is not available for this order by %%s'), $this->getTwoBrandConfig('product_name')),
             'invoice_likely_accepted' => sprintf($this->l('Your invoice with %s is likely to be accepted, subject to additional checks.'), $this->getTwoBrandConfig('product_name')),
@@ -13817,9 +13814,8 @@ class Twopayment extends PaymentModule
      * Using one resolution for both the PS cart line and the Two payload is
      * what makes the prestashop-plugin PR #64 parity gate unable to trip on
      * destination-based rates. Empirically verified on PS 8.2.6 core: no
-     * matching rule for the
-     * destination -> 0 (zero-rating for free), combined multi-rate rules sum
-     * (6%+2% -> 8), group id 0 -> 0 everywhere.
+     * matching rule for the destination -> 0 (zero-rating for free), combined
+     * multi-rate rules sum (6%+2% -> 8), group id 0 -> 0 everywhere.
      *
      * @param Cart $cart
      * @return float

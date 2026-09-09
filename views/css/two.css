@@ -5,25 +5,12 @@
  */
 
 /*
- * The in-field company-search spinner is GONE (TWO-25326 §1).
- *
- * It used to live on `input[name='company']`, because that input was the
- * search box. It is not any more: the search happens in the panel's own query
- * field, and §1 requires the spinner "within and at the right hand end of the
- * query field" - which is `.two-company-dropdown__spinner`, further down this
- * file.
- *
- * The rules that were here are removed rather than left in place, and the
- * `padding-right: 32px` in particular is a §7 fix, not tidying: it was applied
- * UNCONDITIONALLY to the company-name field to stop the field's text reflowing
- * as the spinner came and went. With the spinner moved, that padding is 32px
- * of dead space making the company-name field visibly different from every
- * other input on the address form - which is exactly what §7's "field sizing
- * and spacing is consistent across the entire address form" forbids.
- *
- * `.two-company-search-input` is still added to the field by
- * setupAutocomplete() as a marker other code keys off; it simply carries no
- * appearance of its own now.
+ * `.two-company-search-input` is a marker class only - setupAutocomplete()
+ * adds it to the company-name field for other code to key off, and it carries
+ * no appearance of its own. The search spinner belongs to the panel's own
+ * query field (`.two-company-dropdown__spinner`), and the company-name field
+ * has to size and space exactly like every other input on the address form
+ * (TWO-25326).
  */
 
 /* Remove custom styling that modifies core radio/checkbox visuals for consistency */
@@ -602,9 +589,8 @@
  * positioned against this box, so the panel tracks the input rather than
  * whatever happens to be the nearest positioned ancestor in the theme.
  *
- * It carries NO padding of its own. It used to reserve `padding-bottom` for
- * the org-number label, which could not work and is documented at
- * `.two-company-id-hint` below (TWO-25326 §5/§7).
+ * It carries NO padding of its own: the org-number label below sits in normal
+ * flow and takes its own height (see `.two-company-id-hint`).
  */
 .two-company-field-wrap {
     display: block;
@@ -612,21 +598,15 @@
 }
 
 /*
- * The sole-trader in-flight spinner (TWO-40 follow-up, Doug): shown over the
- * company-NAME field for the whole round trip, from the click that starts it
- * until the name and number have actually been written.
- *
- * It used to be the dropdown row's own spinner, which cannot work now that
- * selecting the Sole trader chip hides that row immediately, and which the
- * "Select a different sole trader" flow could not use at all - it opens no
- * panel. Same 16px loader as `.two-company-dropdown__spinner`, same
- * right-hand lane, one field further out.
+ * The sole-trader in-flight spinner (TWO-40): over the company-NAME field for
+ * the whole round trip, because selecting the Sole trader chip hides the
+ * dropdown row immediately and the "Select a different sole trader" flow opens
+ * no panel at all.
  *
  * Height comes from `--two-company-input-height`, not from the wrapper: the
  * wrapper also carries the org-number hint and the "select a different sole
- * trader" button below the input, so `100%` here would centre the spinner
- * somewhere under the field. Same variable, and the same reason, as the
- * dropdown panel's own `top` below - ensureFieldWrapper() keeps it current.
+ * trader" button below the input, so `100%` would centre the spinner somewhere
+ * under the field. ensureFieldWrapper() keeps it current.
  */
 .two-company-name-spinner {
     display: none;
@@ -653,29 +633,21 @@
 }
 
 /*
- * Selected company's organisation number, shown as a plain label BELOW the
- * company-name field once a search result is chosen (TWO-25326 §5).
+ * Selected company's organisation number, a plain label BELOW the company-name
+ * field once a search result is chosen (TWO-25326).
  *
- * NORMAL FLOW, not absolutely positioned - and that is the fix for the
- * collision Doug found live, not a restyle. The previous rule pinned this to
- * `top: 100%` of the wrapper and tried to reserve room for it with a
- * `padding-bottom` on the wrapper itself. That could not work: for an
- * absolutely positioned child, `top: 100%` resolves against the containing
- * block's PADDING box, so the reserved padding pushed the hint further down
- * instead of making room above it, and it landed on top of the VAT-number
- * field below. An in-flow block cannot overlap anything by construction, and
- * it takes exactly its own height - no shared clearance constant to keep in
- * step with the font size, which is what drifted last time.
+ * NORMAL FLOW, not absolutely positioned: `top: 100%` on an absolute child
+ * resolves against the containing block's PADDING box, so reserving room with
+ * a wrapper `padding-bottom` pushed the hint down onto the VAT-number field
+ * instead of clearing space above it. An in-flow block cannot overlap by
+ * construction and needs no clearance constant tracking the font size.
  *
- * `display: none` while empty (set by the companion JS clearing its text is
- * not enough - an empty inline box still occupies a line box), so an
- * unselected field gets no extra height at all. That is §7's "field sizing
- * and spacing is consistent across the entire address form, allowing for
- * additional space only when items such as the company number are visible".
+ * `display: none` while empty - an empty inline box still occupies a line box,
+ * and an unselected field must take no more space than any other input on the
+ * address form.
  *
- * Right-aligned to the field's own right edge, which `.two-company-field-wrap`
- * guarantees matches the input exactly. `text-align: end` rather than `right`
- * so it follows the writing direction.
+ * `text-align: end` rather than `right` so it follows the writing direction;
+ * the right edge matches the input because `.two-company-field-wrap` does.
  */
 .two-company-id-hint {
     display: none;
@@ -691,30 +663,27 @@
 }
 
 /*
- * The anchored dropdown panel (TWO-25326 §1).
+ * The anchored dropdown panel (TWO-25326).
  *
  * Absolutely positioned so it floats over the form rather than shoving the
- * rest of the address step down every time it opens, but a CHILD of the field
- * wrapper, so DOM order (and therefore tab order) is
+ * address step down every time it opens, but a CHILD of the field wrapper, so
+ * DOM order (and therefore tab order) is
  * company-name -> query -> results -> "not on the list" -> next form control.
  * See buildDropdown() in the companion JS for why that placement is the whole
  * keyboard contract.
  *
- * The 8px gap and the shadow are what make it read as a separate floating
- * control rather than a continuation of the input - §1 requires visible
- * separation from the field, and a zero-pixel seam is exactly the "it's just
- * an in-field autocomplete" complaint.
+ * The 8px gap and the shadow give the visible separation from the field that
+ * makes this read as a floating control rather than an in-field autocomplete.
  */
 .two-company-dropdown {
     position: absolute;
     /*
-     * Anchored to the INPUT's own height, not to `100%` of the wrapper.
-     * The wrapper also holds the in-flow org-number label and, in manual
-     * mode, the return-to-search link - so `100%` grows once a company is
-     * selected, and reopening the panel would drop it 8px + the label's
-     * height below the field instead of the 8px §1 asks for. The custom
-     * property is refreshed by ensureFieldWrapper() alongside the wrapper's
-     * width; the `100%` fallback is what a pre-measurement first paint gets.
+     * Anchored to the INPUT's own height, not `100%` of the wrapper: the
+     * wrapper also holds the org-number label and, in manual mode, the
+     * return-to-search link, so `100%` grows once a company is selected and
+     * the panel would reopen further than 8px below the field.
+     * ensureFieldWrapper() refreshes the custom property; the `100%` fallback
+     * is what a pre-measurement first paint gets.
      */
     top: calc(var(--two-company-input-height, 100%) + 8px);
     left: 0;
@@ -781,14 +750,13 @@
 }
 
 /*
- * §1: "a spoke spinner GIF is displayed within and at the right hand end of
- * the query field while a search query is in progress".
+ * Search-in-progress spinner, inside the query field at its right-hand end.
  *
  * A real element rather than a background-image on the input, so its position
- * does not depend on whatever padding a theme has given text inputs.
- * `ui-autocomplete-loading` is applied by jQuery UI on the live path;
- * `two-company-search-loading` is applied by hand on the fallback path. Both
- * land on the query field, so one rule covers both.
+ * does not depend on whatever padding a theme has given text inputs. jQuery UI
+ * applies `ui-autocomplete-loading` on the live path and the fallback path
+ * applies `two-company-search-loading`; both land on the query field, so one
+ * rule covers both.
  */
 .two-company-dropdown__spinner {
     display: none;
@@ -810,7 +778,7 @@
 
 /*
  * The scroll container. The results list scrolls; the "not on the list"
- * button below is its SIBLING and therefore never scrolls out of view (§2).
+ * button below is its SIBLING and therefore never scrolls out of view.
  */
 .two-company-dropdown__results {
     max-height: 240px;
@@ -852,18 +820,6 @@
     background: transparent !important;
 }
 
-/*
- * §2: "My company is not on the list".
- *
- * A real <button>, rendered OUTSIDE the scrollable results container - a
- * sibling of `.two-company-dropdown__results`, not a row inside its list. It
- * is therefore visible without scrolling past up to 50 results, it is the
- * next tab stop after the query field by plain DOM order, and the cursor keys
- * cannot reach it because they only ever move within the widget's own list.
- *
- * Link-blue, matching WC's `#search_company_btn`, so it is visually
- * distinguishable from the inert result rows above it (§2).
- */
 /*
  * Result rows.
  *
@@ -1672,13 +1628,12 @@
 .two-company-search-back,
 .two-company-select-different-sole-trader {
     /*
-     * §3: right-aligned under the company-name field. A block with
-     * `width: fit-content` and an auto inline-start margin, rather than a
-     * full-width block with `text-align: end` - the latter would make the
-     * whole row clickable, well beyond the visible text.
-     * `margin-left` first as the fallback for engines without logical
-     * properties; `margin-inline-start` wins where it is understood and is
-     * what makes this correct under RTL.
+     * Right-aligned under the company-name field. `width: fit-content` plus
+     * an auto inline-start margin, not a full-width block with
+     * `text-align: end` - that would make the whole row clickable, well
+     * beyond the visible text. `margin-left` is the fallback for engines
+     * without logical properties; `margin-inline-start` is what makes this
+     * correct under RTL.
      */
     display: block;
     width: -moz-fit-content;
@@ -1686,10 +1641,8 @@
     margin-left: auto;
     margin-inline-start: auto;
     /*
-     * §7: no unwanted space between this control and the next field on the
-     * form. `margin-top` only - a bottom margin here is what produced the gap
-     * Doug found live, because the wrapper's own removed `padding-bottom`
-     * was stacking underneath it.
+     * `margin-top` only: a bottom margin here stacks under the wrapper and
+     * leaves unwanted space before the next field on the form.
      */
     margin-top: 6px;
     margin-bottom: 0;
@@ -1698,7 +1651,6 @@
     background: none;
     font: inherit;
     color: #1976d2;
-    /* Doug does not want this underlined. */
     text-decoration: none;
     cursor: pointer;
 }
@@ -1744,25 +1696,19 @@
 }
 
 /*
- * Company search, payment-tile location (TWO-25326 §7.1, 2026-08-03 ruling).
- *
- * Replaces the read-only captured-company label (TWO-25288, then TWO-25326
- * §7) that used to render here - §7.3 supersedes that label entirely, folding
- * name/number into the intent-message sentence instead. This wraps the same
- * TwoCompanySearch.js control the address area uses, just mounted here when
- * the admin setting is "Payment tile".
+ * Company search mounted in the payment tile (TWO-25326) - the same
+ * TwoCompanySearch.js control the address area uses, rendered here when the
+ * admin setting is "Payment tile". The selected name and number reach the
+ * buyer through the intent-message sentence, not a label of their own.
  */
 .two-tile-company-search {
     margin-top: 12px;
     /*
-     * The SAME horizontal inset as `.two-optional-fields` below (TWO-25326
-     * §7.1 follow-up). Both blocks are direct children of
-     * `.two-payment-container`, and both their inputs are `width: 100%` of
-     * whatever box contains them - so with no padding here this control
-     * rendered 32px wider than every other field in the tile, flush with the
-     * tile's own edges while the optional fields sat inset. Doug found it
-     * live. The two values have to stay in step; they are the same inset, not
-     * a coincidence.
+     * The SAME horizontal inset as `.two-optional-fields` below (TWO-25326).
+     * Both are direct children of `.two-payment-container` with `width: 100%`
+     * inputs, so without this padding the control renders 32px wider than
+     * every other field in the tile, flush with the tile's own edges while
+     * the optional fields sit inset. The two values have to stay in step.
      */
     padding-left: 16px;
     padding-right: 16px;
@@ -1786,8 +1732,8 @@
 
 /*
  * ADMIN config page: a setting that is unavailable because another setting
- * turned it off (TWO-25326 §7.1 follow-up - the address-lookup switch, which
- * means nothing once the company search has moved into the payment tile).
+ * turned it off (TWO-25326) - the address-lookup switch means nothing once
+ * the company search has moved into the payment tile.
  *
  * Applied by views/templates/admin/configuration.tpl to the whole
  * `.form-group`, so the label and the help text fade with the control. The
