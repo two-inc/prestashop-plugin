@@ -3514,8 +3514,8 @@ class Twopayment extends PaymentModule
             if ($status['status'] === self::API_KEY_STATUS_INVALID) {
                 $reason = $this->l('the API key was rejected. Check API key and Environment.');
             } elseif ($status['status'] !== self::API_KEY_STATUS_OK) {
-                // ABN-533 will stop transient verdicts withholding at all, so
-                // this row must not report one as the method being hidden.
+                // ABN-533: only invalid_key and not_configured withhold, so a
+                // transient verdict is never reported as the method being hidden.
                 return array(
                     'label' => $label,
                     'value' => $this->l('Cannot be checked - the API key could not be verified just now.'),
