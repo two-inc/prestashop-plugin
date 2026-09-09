@@ -821,7 +821,7 @@ describe('keyboard navigation', () => {
         openPanel();
         // The browser has already moved focus to the next form control; the
         // panel finds out via focusout. Pulling focus back here is the keyboard
-        // trap this ticket forbids, and is the WC defect recorded on it.
+        // trap TWO-25326 forbids.
         const next = $("input[name='dni']").get(0);
         next.focus();
         panelParts().panel.trigger('focusout');

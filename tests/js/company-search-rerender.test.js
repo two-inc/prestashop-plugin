@@ -669,8 +669,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
         expect(menu().find('.two-company-not-listed')).toHaveLength(0);
         // jQuery UI's menu puts `tabindex="0"` on its own <ul>, which
         // would make the scroll container a tab stop of its own and land Tab
-        // there instead of on this button. That is the Hyva defect logged on
-        // this ticket.
+        // there instead of on this button.
         expect(menu().attr('tabindex')).toBe('-1');
     });
 
@@ -2505,10 +2504,10 @@ describe('the in-field spinner GIF', () => {
         // show nothing.
         expect(spinner()).toHaveLength(1);
         expect(styleOf(spinner().get(0)).display).toBe('none');
-        // The spinner's lane is reserved on the QUERY field, where the
-        // spinner is. The same padding on the company-name field would be 32px
-        // of dead space, making it visibly unlike every other input on the
-        // address form.
+        // The spinner's lane is 30px of padding on the QUERY field, where the
+        // spinner is. The company-name field gets no such padding - there it
+        // would be dead space, making that field visibly unlike every other
+        // input on the address form.
         expect(styleOf(liveField().get(0)).paddingRight).not.toBe('32px');
         expect(styleOf(searchInput().get(0)).paddingRight).toBe('30px');
     });

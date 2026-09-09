@@ -1,11 +1,11 @@
 /**
- * TWO-40 follow-up: three defects that between them kept the "Sole trader" chip
- * from rendering for a billing country the registry DOES support sole traders for
- * (GB).
+ * TWO-40 follow-up: three requirements that between them decide whether the
+ * "Sole trader" chip renders for a billing country the registry DOES support
+ * sole traders for (GB).
  *
  * Unlike company-search-sole-trader-entry.test.js, which stubs
  * `TwoSoleTrader_Instance`, these run the REAL TwoSoleTrader beside the real
- * search control: the defects are in the seam between the two, which a stub on
+ * search control: all three live in the seam between the two, which a stub on
  * either side would hide.
  *
  *  1. `{success: false}` (a stale ajax token) must not flatten into

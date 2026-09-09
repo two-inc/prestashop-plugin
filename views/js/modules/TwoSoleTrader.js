@@ -862,10 +862,10 @@ class TwoSoleTrader {
      * (TWO-40 follow-up: neither the registry's per-country answer nor a
      * merchant buyer-country record bears on whether minting is authorised -
      * that decision belongs to the Two API these tokens are minted against,
-     * not to a client-side guess). This is also what arms
-     * the background refresh (see startTokenRefreshInterval()), so the
-     * buyer's first "I'm a sole trader" click has only the autofill lookup
-     * between it and the signup popup.
+     * not to a client-side guess). This is also what arms the background
+     * refresh (see startTokenRefreshInterval()), so the buyer's first "I'm a
+     * sole trader" click has only the autofill lookup between it and the
+     * signup popup.
      *
      * Not gated on isAvailableForCurrentCountry() - that answer still drives
      * the chip's OWN visibility (a separate, legitimately country-dependent
@@ -1793,19 +1793,20 @@ class TwoSoleTrader {
      * Autofill from the buyer's current Two sole-trader business.
      *
      * @param {boolean} [trustedIdentity] True only when this call follows a
-     *   real OTP round trip in the hosted signup popup (bindPopupMessageListener()'s
-     *   'ACCEPTED' handler, and any resume that rides that same call - see
-     *   resumeIfStillEnrolling()). In that case `buyer` IS the buyer: the
-     *   popup just authenticated them, by whatever email they entered
-     *   THERE, which this browser never sees and has no business
-     *   re-validating. Requiring it to also equal checkoutEmail() - the
-     *   separate email PrestaShop's own personal-information step collected
-     *   for the order - was live-bug TWO-40: a buyer enrolled under a real sole-trader email different from the one on
-     *   the order got a real, successful OTP verification for that email,
-     *   then had this check silently disagree with the server and reopen
-     *   the signup popup, forever. The two emails identify two different
-     *   things (who authenticated vs. who the order is addressed to) and
-     *   there is no requirement they match.
+     *   real OTP round trip in the hosted signup popup
+     *   (bindPopupMessageListener()'s 'ACCEPTED' handler, and any resume that
+     *   rides that same call - see resumeIfStillEnrolling()). In that case
+     *   `buyer` IS the buyer: the popup just authenticated them, by whatever
+     *   email they entered THERE, which this browser never sees and has no
+     *   business re-validating. Requiring it to also equal checkoutEmail() -
+     *   the separate email PrestaShop's own personal-information step
+     *   collected for the order - was live-bug TWO-40: a buyer enrolled under
+     *   a real sole-trader email different from the one on the order got a
+     *   real, successful OTP verification for that email, then had this check
+     *   silently disagree with the server and reopen the signup popup,
+     *   forever. The two emails identify two different things (who
+     *   authenticated vs. who the order is addressed to) and there is no
+     *   requirement they match.
      *
      *   Without `trustedIdentity` (the passive paths - startEnrollment()'s
      *   initial call, fetchTokens()'s resume branches, and an UNTRUSTED

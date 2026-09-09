@@ -919,9 +919,9 @@ class TwoCompanySearch {
                 if (soleTrader && typeof soleTrader.startEnrollment === 'function') {
                     // Keep the panel OPEN and show the company-name field's
                     // spinner for the actual duration of this click's autofill
-                    // round trip (TWO-40). See
-                    // beginSoleTraderLoading()/endSoleTraderLoading() for the
-                    // event contract with TwoSoleTrader.js.
+                    // round trip (TWO-40).
+                    // See beginSoleTraderLoading()/endSoleTraderLoading() for
+                    // the event contract with TwoSoleTrader.js.
                     this.beginSoleTraderLoading();
                     try {
                         // startEnrollment() is foreign-module code: a synchronous
@@ -2162,11 +2162,11 @@ class TwoCompanySearch {
             return false;
         }
         // AN INTERNAL (`TWO:`-PREFIXED) IDENTIFIER IS NEVER WRITTEN INTO THE VISIBLE
-        // `dni` FIELD (TWO-40). This is the ONE place `TWO:`
-        // is treated specially in the write path; everything else about such a number
-        // - the hidden `companyid`, its `data-two-company-name` pairing tag, the
-        // session record, the mirror and the routing - stays byte-identical to any
-        // other. Three reasons, in order of severity:
+        // `dni` FIELD (TWO-40). This is the ONE place `TWO:` is treated specially in
+        // the write path; everything else about such a number - the hidden
+        // `companyid`, its `data-two-company-name` pairing tag, the session record,
+        // the mirror and the routing - stays byte-identical to any other. Three
+        // reasons, in order of severity:
         //
         //  1. CORE REFUSES TO SAVE IT. `Address` declares `dni` with
         //     `validate => isDniLite, size => 16`, and `Validate::isDniLite()` is
@@ -2717,10 +2717,10 @@ class TwoCompanySearch {
      * ADDRESS-WIDE, not per-field: any address field the buyer has entered pins
      * the address, and the test for "entered" is a content match. So ONE field
      * that no longer holds what the plugin put there pins the WHOLE secondary
-     * address and no field is synced - the mirror only ever
-     * writes into a PRISTINE secondary address, and once the buyer touches
-     * anything in it, it stays frozen for the rest of the cart unless the
-     * contents come back to matching.
+     * address and no field is synced - the mirror only ever writes into a
+     * PRISTINE secondary address, and once the buyer touches anything in it, it
+     * stays frozen for the rest of the cart unless the contents come back to
+     * matching.
      *
      * @param {Element} root the secondary address form's scope
      * @returns {boolean}
@@ -3272,12 +3272,12 @@ class TwoCompanySearch {
         memory.organization = placed ? pending : '';
         // A refusal LEAVES THE DEBT OWING rather than settling it, and that is
         // deliberate. The dominant refusal is an internal (`TWO:`) identifier, which
-        // never enters `dni` (TWO-40) - so `organizationPending` is the
-        // only surviving record of the number, and republishMirroredSelection() reads
-        // it to restore the hidden `companyid` pair after the NEXT rebuild too.
-        // Clearing it here would work exactly once and then lose the pair. Retrying
-        // is cheap and idempotent: markOrganizationFieldSelected() above is the part
-        // that has to run on every mount anyway.
+        // never enters `dni` (TWO-40) - so `organizationPending` is the only
+        // surviving record of the number, and republishMirroredSelection() reads it
+        // to restore the hidden `companyid` pair after the NEXT rebuild too. Clearing
+        // it here would work exactly once and then lose the pair. Retrying is cheap
+        // and idempotent: markOrganizationFieldSelected() above is the part that has
+        // to run on every mount anyway.
         if (placed) {
             memory.organizationPending = '';
         }
@@ -3696,15 +3696,14 @@ class TwoCompanySearch {
         //
         // TWO-25326: the widget is bound to the PANEL'S QUERY FIELD, not to
         // `input[name='company']` as it was through prestashop-plugin PR #131.
-        // That single change is what turns an in-field autocomplete into a
-        // real dropdown control:
-        // the company-name field stops being the search box, so it can be left
-        // untouched until a result is picked, and every keystroke, the 300ms
-        // debounce, the loading class the spinner is painted from, and the
-        // cursor-key navigation all belong to a control that lives inside the
-        // panel. `appendTo` keeps the widget's own `<ul>` inside the panel too,
-        // which is what stops it being appended to `<body>` and breaking Tab
-        // (a defect recorded on this ticket).
+        // That single change is what turns an in-field autocomplete into a real
+        // dropdown control: the company-name field stops being the search box,
+        // so it can be left untouched until a result is picked, and every
+        // keystroke, the 300ms debounce, the loading class the spinner is
+        // painted from, and the cursor-key navigation all belong to a control
+        // that lives inside the panel. `appendTo` keeps the widget's own `<ul>`
+        // inside the panel too, which is what stops it being appended to
+        // `<body>` and breaking Tab (a defect recorded on this ticket).
         if ($.ui && $.ui.autocomplete && typeof $.fn.autocomplete === 'function') {
             this._queryField.autocomplete({
                 appendTo: this._resultsList,
@@ -5609,9 +5608,9 @@ class TwoCompanySearch {
         // paths into the fill land here.
         //
         // `bypassAddressLookupGate` (TWO-40 follow-up):
-        // autoFillSoleTraderAddress() passes `true`. This
-        // gate's OWN semantics are "did a company-SEARCH selection write into
-        // the address step" (PS_TWO_ADDRESS_LOOKUP) - and
+        // autoFillSoleTraderAddress() passes `true`. This gate's OWN
+        // semantics are "did a company-SEARCH selection write into the
+        // address step" (PS_TWO_ADDRESS_LOOKUP) - and
         // `Twopayment::getAddressLookupEnabled()` forces it to '0' outright
         // once company search has relocated out of the address area and into
         // the payment tile, which is exactly where TWO-40 put the sole-trader
@@ -5764,11 +5763,10 @@ class TwoCompanySearch {
 
                 // The ONLY time a country change does not wipe company details
                 // is manual entry mode (TWO-40 follow-up). A hand-typed name
-                // has no
-                // search result behind it to invalidate, so there is nothing
-                // here for the new country to disagree with - the autocomplete
-                // config still needs to catch up, since a later "back to
-                // search" exit must search the new country.
+                // has no search result behind it to invalidate, so there is
+                // nothing here for the new country to disagree with - the
+                // autocomplete config still needs to catch up, since a later
+                // "back to search" exit must search the new country.
                 if (this._manualEntry) {
                     this.setupAutocomplete();
                     return;
@@ -6107,16 +6105,16 @@ class TwoCompanySearch {
      * A `TWO:`-prefixed organisation number goes into the hidden `companyid` and
      * its `data-two-company-name` pairing tag like ANY OTHER, and is NOT written
      * into the visible identification (`dni`) field (TWO-40). That one field is
-     * the only asymmetry - storage, pairing, the
-     * mirror, the session record and the routing are all uniform. It is not a
-     * sole-trader concept either: registered companies in some countries carry a
-     * `TWO:` identifier too, so the rule is keyed on the value and never on how
-     * it was captured. The reasoning for skipping `dni` (core's isDniLite
-     * validator rejects the value, our own reader rejects it too, and the field
-     * belongs to the buyer) lives on writeOrganizationToAddressIdentifiers().
-     * Withholding the PAIRING and the NAME as well produces a mismatched
-     * name/number pair in the invoice form and breaks the "name and number travel
-     * together" invariant; this is deliberately not that.
+     * the only asymmetry - storage, pairing, the mirror, the session record and
+     * the routing are all uniform. It is not a sole-trader concept either:
+     * registered companies in some countries carry a `TWO:` identifier too, so
+     * the rule is keyed on the value and never on how it was captured. The
+     * reasoning for skipping `dni` (core's isDniLite validator rejects the value,
+     * our own reader rejects it too, and the field belongs to the buyer) lives on
+     * writeOrganizationToAddressIdentifiers(). Withholding the PAIRING and the
+     * NAME as well produces a mismatched name/number pair in the invoice form and
+     * breaks the "name and number travel together" invariant; this is
+     * deliberately not that.
      *
      * One value in the response is deliberately not written:
      *
@@ -6268,15 +6266,15 @@ class TwoCompanySearch {
             }
 
             // Visible identification field. Bypasses the address-lookup switch
-            // (TWO-40 follow-up) for the same reason
-            // autoFillSoleTraderAddress() below does: that switch is
-            // forced off outright once company search lives in the payment tile
-            // - the ONLY place TWO-40 puts the sole-trader entry point - so
-            // leaving this gated left it permanently dead on every shop running
-            // the current design. Still declines an internal (`TWO:`) identifier
-            // - the common case for a sole trader - and answers `false` either
-            // way; nothing here records the write, so there is nothing to keep
-            // in step. The pairing above is what carries the selection.
+            // (TWO-40 follow-up) for the same reason autoFillSoleTraderAddress()
+            // below does: that switch is forced off outright once company search
+            // lives in the payment tile - the ONLY place TWO-40 puts the
+            // sole-trader entry point - so leaving this gated left it
+            // permanently dead on every shop running the current design. Still
+            // declines an internal (`TWO:`) identifier - the common case for a
+            // sole trader - and answers `false` either way; nothing here records
+            // the write, so there is nothing to keep in step. The pairing above
+            // is what carries the selection.
             this.writeOrganizationToAddressIdentifiers(number, false, secondaryRoot || undefined, true);
         }
 
@@ -6336,12 +6334,12 @@ class TwoCompanySearch {
      * no billing address - it is null in the completions captured so far, and a
      * null must never be allowed to blank anything.
      *
-     * EVERY field of the response lands somewhere. `street`,
-     * `building`, `apartment`, `postal_code`, `city` and the response's own
-     * `phone_number` are handled here; `region` is applied by autoFillRegion() after
-     * this returns, because on a form with no state field it appends to the CITY this
-     * fill has just written. The phone therefore rides with the address: a response
-     * carrying neither address returns early and fills no phone either.
+     * EVERY field of the response lands somewhere. `street`, `building`, `apartment`,
+     * `postal_code`, `city` and the response's own `phone_number` are handled here;
+     * `region` is applied by autoFillRegion() after this returns, because on a form
+     * with no state field it appends to the CITY this fill has just written. The
+     * phone therefore rides with the address: a response carrying neither address
+     * returns early and fills no phone either.
      *
      * `address2` and `state` were added to MIRRORED_ADDRESS_FIELDS and to
      * `Twopayment::MIRROR_WRITE_SESSION_KEYS` so these writes stay ATTRIBUTABLE

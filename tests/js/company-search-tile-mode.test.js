@@ -1,7 +1,9 @@
 /**
  * TWO-25326: the company-search control as it is mounted in the payment tile,
  * which is where it lands when "Enable company search in address entry" is
- * set to "No".
+ * set to "No". Three things it must get right there: search the API as the
+ * buyer types, match the width of the tile's other fields, and drop the "go
+ * back to your billing address" prompt, the search being right there.
  *
  * Every test builds the tile WITHOUT an address form: PrestaShop only renders
  * `select[name='id_country']` on the address step, not the payment step, so a

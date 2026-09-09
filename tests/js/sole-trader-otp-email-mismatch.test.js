@@ -4,10 +4,11 @@
  * a real OTP verification there for a DIFFERENT, genuinely-registered email -
  * their sole-trader account need not share an inbox with whatever they typed into
  * PrestaShop's own personal-information step. Re-validating `buyer.email` against
- * `checkoutEmail()` after that round trip rejects an otherwise-successful response
- * and reopens the popup the buyer has just finished with, on every retry: the same
- * email-match heuristic cannot serve both an unauthenticated cookie probe, where
- * it is the only signal, and a call the server has already authenticated.
+ * `checkoutEmail()` after that round trip rejected an otherwise-successful
+ * response and reopened the popup the buyer had just finished with, on every
+ * retry (TWO-40): the same email-match heuristic cannot serve both an
+ * unauthenticated cookie probe, where it is the only signal, and a call the
+ * server has already authenticated.
  *
  * bindPopupMessageListener()'s 'ACCEPTED' handler therefore calls
  * getCurrentBuyer(true) - `trustedIdentity` - which applies any buyer the endpoint

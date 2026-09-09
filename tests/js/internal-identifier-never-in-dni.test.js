@@ -1,8 +1,11 @@
 /**
- * TWO-40: an internal (`TWO:`-prefixed) organisation
- * number MUST NEVER be written into the visible `dni` ("Identification
- * number") address field. Everything else about such a number stays
- * byte-identical to any other.
+ * TWO-40: an internal (`TWO:`-prefixed) organisation number MUST NEVER be
+ * written into the visible `dni` ("Identification number") address field.
+ * Everything else about such a number stays byte-identical to any other.
+ *
+ * Replaces `internal-identifier-visibility.test.js`, which pinned the opposite
+ * (write into `dni`, then hide the field with CSS) - every spec here is the
+ * inverse of one that stood there.
  *
  * Why the write is wrong, verified against real PrestaShop core:
  *
@@ -20,7 +23,9 @@
  * CSS rule of this plugin's reaches.
  *
  * The pairing and the name are still written as for any other number - the
- * uniformity specs below are as load-bearing as the skip ones. Not a
+ * uniformity specs below are as load-bearing as the skip ones. Withholding the
+ * identifier altogether, the approach recorded in `.ai/decisions.md`, withheld
+ * those too and broke the "name and number travel together" invariant. Not a
  * sole-trader rule either: registered companies can legitimately carry a
  * `TWO:` identifier, so every assertion here is keyed on the VALUE, never on
  * how it was captured.

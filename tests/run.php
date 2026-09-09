@@ -1040,7 +1040,9 @@ final class OrderBuilderSpec
         // address, so the relay must emit 7%. The stub resolves rates by
         // country id, so this pins only that the row field loses to
         // TaxManagerFactory — real sub-national (state/zip) zone resolution
-        // can only be proven against a live PrestaShop tax engine.
+        // can only be proven against a live PrestaShop tax engine, and is
+        // still owed a live staging order to a Canary Islands or Ceuta
+        // address.
         StubStore::$cartProducts[17] = [[
             'id_product' => 502,
             'link_rewrite' => 'igic-product',
