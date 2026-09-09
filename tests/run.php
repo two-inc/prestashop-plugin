@@ -168,6 +168,7 @@ final class OrderBuilderSpec
         self::testGetAvailablePaymentTermsEomConstrainsToEomSubset();
         self::testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault();
         self::testGetMerchantAvailableTermsRefetchDecisionTable();
+        self::testGetMerchantAvailableTermsSkipsFetchWithKeysNeverWritten();
         self::testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale();
         self::testGetMerchantAvailableTermsRespectsExplicitEmptyList();
         self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
@@ -4897,7 +4898,7 @@ final class OrderBuilderSpec
                 parent::__construct();
                 $this->backend = $backend;
             }
-            public function getMerchantAvailableTerms($refresh = false)
+            public function getMerchantAvailableTerms($refresh = false, $resolve_if_unresolved = false)
             {
                 return $this->backend;
             }
@@ -4976,36 +4977,62 @@ final class OrderBuilderSpec
 
     /**
      * ABN-495. Given a cached term list and clock, When the seam is read, Then
-     * only an UNRESOLVED list ('') reaches the wire - '[]' is a resolved answer.
+     * only a caller that withholds on an unresolved list reaches the wire.
      */
     private static function testGetMerchantAvailableTermsRefetchDecisionTable(): void
     {
+        $unset = null; // never written: PrestaShop reads an absent key back as false
+        $ok = ['http_status' => 200, 'available_terms' => [30, 7]];
+        $noField = ['http_status' => 200];
+
         $cases = [
-            ['[30,60]', 0,    false, 0, [30, 60], 'a resolved list is served without touching the wire'],
-            ['[30,60]', -901, false, 0, [30, 60], 'an expired resolved list still costs a cache-only read nothing'],
-            ['',        0,    false, 1, [7, 30],   'a dropped record refetches on a plain read instead of staying withheld'],
-            ['',        -100, false, 0, [],        'the shared clock still rate-limits the unresolved-list refetch'],
-            ['[]',      0,    false, 0, [],        'an explicitly empty offer set is an answer, not a gap to refetch'],
-            ['',        0,    true,  1, [7, 30],   'a sanctioned refresh point still fetches a dropped record'],
+            ['[30,60]', 0,    false, false, $ok,      0, [30, 60], 'a resolved list is served without touching the wire'],
+            ['[30,60]', -901, false, false, $ok,      0, [30, 60], 'an expired resolved list still costs a cache-only read nothing'],
+            ['',        0,    false, false, $ok,      0, [],       'an unresolved list stays cache-only for a caller that does not withhold on it'],
+            ['',        0,    false, true,  $ok,      1, [7, 30],  'a dropped record is refetched for the caller that withholds on it'],
+            [$unset,    0,    false, true,  $ok,      1, [7, 30],  'a list never written at all is unresolved too, not an answer'],
+            ['',        -100, false, true,  $ok,      0, [],       'the shared clock still rate-limits the unresolved-list refetch'],
+            ['[]',      0,    false, true,  $ok,      0, [],       'an explicitly empty offer set is an answer, not a gap to refetch'],
+            ['',        0,    false, true,  $noField, 1, [],       'a 200 that carries no term list leaves it unresolved'],
+            ['',        0,    true,  false, $ok,      1, [7, 30],  'a sanctioned refresh point still fetches a dropped record'],
         ];
 
-        foreach ($cases as [$cached, $tsOffset, $refresh, $expectedCalls, $expectedTerms, $description]) {
+        foreach ($cases as [$cached, $tsOffset, $refresh, $resolve, $response, $expectedCalls, $expectedTerms, $description]) {
             self::reset();
             Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
-            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, $cached);
+            // After the harness, whose constructor seeds a resolved list only
+            // when the key is absent.
+            $module = self::fetchHarness();
+            if ($cached === null) {
+                Configuration::deleteByName(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS);
+            } else {
+                Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, $cached);
+            }
             Configuration::updateValue(
                 Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
                 $tsOffset === 0 ? 0 : time() + $tsOffset
             );
-            $module = self::fetchHarness();
-            $module->responses[] = ['http_status' => 200, 'available_terms' => [30, 7]];
+            $module->responses[] = $response;
 
-            $terms = $module->getMerchantAvailableTerms($refresh);
+            $terms = $module->getMerchantAvailableTerms($refresh, $resolve);
 
             TinyAssert::same($expectedCalls, $module->calls, 'wire calls: ' . $description);
             TinyAssert::same($expectedTerms, $terms, 'terms: ' . $description);
         }
+    }
+
+    /** ABN-495. An unset merchant id or API key is not an identity to fetch with. */
+    private static function testGetMerchantAvailableTermsSkipsFetchWithKeysNeverWritten(): void
+    {
+        self::reset();
+        // Neither identity key ever written, so both read back as false.
+        $module = self::fetchHarness();
+        Configuration::deleteByName(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS);
+        $module->responses[] = ['http_status' => 200, 'available_terms' => [30]];
+
+        TinyAssert::same([], $module->getMerchantAvailableTerms(false, true), 'no identity resolves no terms');
+        TinyAssert::same(0, $module->calls, 'a never-configured shop must not reach the wire');
     }
 
     private static function testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale(): void
@@ -5102,7 +5129,7 @@ final class OrderBuilderSpec
 
         // Backend has since narrowed the offerable set to [30]; 60 is hidden.
         $module = new class extends TwopaymentTestHarness {
-            public function getMerchantAvailableTerms($refresh = false)
+            public function getMerchantAvailableTerms($refresh = false, $resolve_if_unresolved = false)
             {
                 return [30];
             }
