@@ -42,7 +42,7 @@ Lint each PHP file you edited:
 php -l path/to/file.php
 ```
 
-`make help` lists the rest (local stack, formatter, version bump).
+`make help` lists the rest (local stack, version bump).
 
 ## i18n Requirements
 
