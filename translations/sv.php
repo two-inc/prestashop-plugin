@@ -533,6 +533,7 @@ $_MODULE['<{twopayment}prestashop>configuration_50176febc840de876892956d58f9f60b
 $_MODULE['<{twopayment}prestashop>configuration_9ab5e860e0e28be037094acd09e148f2'] = 'Avgifterna kunde inte uppdateras, så beloppen som hämtades %s visas.';
 $_MODULE['<{twopayment}prestashop>configuration_06df3dcf3281499cc51356b8ea10c05b'] = 'Avgifterna kunde inte läsas in eftersom pristjänsten inte kunde nås. Beloppen vid varje betalningsvillkor saknas, de är inte noll.';
 $_MODULE['<{twopayment}prestashop>configuration_ee619aca6b3894beb307b1b40c63d27d'] = 'Avgifter kan inte visas förrän en API-nyckel har sparats på fliken Allmänt.';
+$_MODULE['<{twopayment}prestashop>configuration_537cf2676b0429c81d86a016bc4da9f1'] = 'inget belopp';
 $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] = 'Den cachade profilen hör till en butik. Byt till en enskild butik för att se eller uppdatera den.';
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'Den cachade profilen hör till en butik. Byt till en enskild butik för att uppdatera den.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Varje butik har sin egen uppdaterings-URL. Byt till en enskild butik för att se den.';

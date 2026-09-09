@@ -12126,8 +12126,9 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * One live rates call, normalised. Any failure - connection error,
-     * non-200, malformed body - is a failed fetch.
+     * One live rates call, normalised. A failed fetch is any of: a connection
+     * error, a non-200, a malformed body, an answer that priced no term at
+     * all, or one carrying no currency to read the amounts in.
      *
      * @param int[] $net_terms Already normalised: unique, sorted, positive.
      * @param string $buyer_country
@@ -12170,12 +12171,17 @@ class Twopayment extends PaymentModule
             );
         }
 
+        // Nothing priced, and amounts with no currency to read them in, both
+        // draw as "this term carries no fee", and storing either would
+        // displace figures that were once real (ABN-540).
+        $currency = isset($response['currency']) ? trim((string) $response['currency']) : '';
+        if (empty($fees) || $currency === '') {
+            return array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM);
+        }
+
         return array(
             'success' => true,
-            // Currency MUST come from the response - the fee amounts do too.
-            // The JS appends it as a code suffix; an empty value makes the JS
-            // drop the fixed component rather than guess its currency.
-            'currency' => isset($response['currency']) ? (string) $response['currency'] : '',
+            'currency' => $currency,
             'fees' => $fees,
         );
     }
@@ -12216,6 +12222,11 @@ class Twopayment extends PaymentModule
         $decoded = json_decode((string) $raw, true);
         if (!is_array($decoded) || empty($decoded['success'])
             || !isset($decoded['fees']) || !is_array($decoded['fees']) || empty($decoded['fees'])) {
+            return null;
+        }
+        // A set stored by a version that accepted a currency-less answer holds
+        // amounts nobody can read (ABN-540).
+        if (!isset($decoded['currency']) || trim((string) $decoded['currency']) === '') {
             return null;
         }
         $fees = array();
