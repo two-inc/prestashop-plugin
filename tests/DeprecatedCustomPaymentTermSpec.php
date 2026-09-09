@@ -16,6 +16,7 @@ final class DeprecatedCustomPaymentTermSpec
         self::testStoredTermNormalisation();
         self::testFieldRendersKeepOrRemove();
         self::testAnyRenderedCheckboxCountsAsASelection();
+        self::testARenderedCheckboxKeepsItsStoredTick();
         self::testSaveStates();
         self::testFoldsInOnlyAgainstAResolvedOfferedSet();
     }
@@ -170,6 +171,40 @@ final class DeprecatedCustomPaymentTermSpec
             $errors = self::harness($offered)->validatePaymentTermsForTest();
 
             TinyAssert::same($accepted, $errors === array(), $description);
+        }
+    }
+
+    /**
+     * A term the record offers off the module's preset list has a checkbox like any other, so a
+     * stored tick renders ticked and survives the next save of the section.
+     */
+    private static function testARenderedCheckboxKeepsItsStoredTick(): void
+    {
+        $cases = array(
+            array(120, 1, '1', 'a stored tick on a non-preset offered term renders ticked'),
+            array(120, 0, '0', 'an unticked non-preset offered term renders unticked'),
+            array(15, 1, '1', 'a stored tick on a preset term renders ticked'),
+        );
+        foreach ($cases as list($term, $stored, $expected, $description)) {
+            StubStore::reset();
+            Tools::resetTestValues();
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, $stored);
+            $module = self::harness(array(15, 120));
+
+            TinyAssert::same(
+                $expected,
+                (string) $module->paymentTermsFormValuesForTest()['PS_TWO_PAYMENT_TERMS_' . $term],
+                $description
+            );
+
+            // The same tick has to survive a save of the section it is rendered in.
+            Tools::setTestValue('PS_TWO_PAYMENT_TERMS_' . $term, $stored);
+            $module->savePaymentTermsForTest();
+            TinyAssert::same(
+                $expected,
+                (string) Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term),
+                $description . ' - and survives the next save'
+            );
         }
     }
 

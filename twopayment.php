@@ -2023,8 +2023,10 @@ class Twopayment extends PaymentModule
         // Payment term type (STANDARD or EOM)
         $fields_values['PS_TWO_PAYMENT_TERM_TYPE'] = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE', Configuration::get('PS_TWO_PAYMENT_TERM_TYPE'));
 
-        // Payment terms checkboxes
-        $payment_terms = array_map('strval', self::PAYMENT_TERMS_OPTIONS);
+        // Payment terms checkboxes, over the rendered set as validation and the save loop read it:
+        // a term the record offers off the preset list otherwise renders unticked and the next
+        // save writes it away.
+        $payment_terms = array_map('strval', $this->getOfferableTermSource(false));
         foreach ($payment_terms as $term) {
             $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
         }
