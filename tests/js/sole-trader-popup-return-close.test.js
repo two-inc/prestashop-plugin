@@ -830,17 +830,19 @@ describe('two captures on one page', () => {
     });
 
     test.each([
-        ['the launching capture\'s own rebuilt chip', () => {
-            first._dropdown.remove();
-            first.buildDropdown();
-            return first._soleTraderButton.get(0);
-        }, false, 1, 'the popup is still that capture\'s, so it is left alone'],
-        ['a sibling capture\'s chip', () => {
-            first._dropdown.remove();
-            return second._soleTraderButton.get(0);
-        }, true, 2, 'a different capture, so the popup closes and that chip gets its own']
+        ['the launching capture\'s own rebuilt chip', false, 1,
+            'the popup is still that capture\'s, so it is left alone', () => {
+                first._dropdown.remove();
+                first.buildDropdown();
+                return first._soleTraderButton.get(0);
+            }],
+        ['a sibling capture\'s chip', true, 2,
+            'a different capture, so the popup closes and that chip gets its own', () => {
+                first._dropdown.remove();
+                return second._soleTraderButton.get(0);
+            }]
     ])('with the recorded chip detached, focus on %s: closed=%s opens=%s - %s',
-        async (which, prepare, closed, opens) => {
+        async (which, closed, opens, why, prepare) => {
             // Given a re-render that replaced the chip whose click opened the popup,
             // When focus lands on a chip, Then only the same capture's inherits it.
             await launchWithPopupOpen(first);
