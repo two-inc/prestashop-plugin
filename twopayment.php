@@ -69,6 +69,10 @@ class Twopayment extends PaymentModule
     // present but empty, 'false' = present but not a list, an array of alpha-2
     // codes = allowlist.
     const CONFIG_MERCHANT_BUYER_COUNTRIES = 'PS_TWO_MERCHANT_BUYER_COUNTRIES';
+    // Which key the five cached values above were fetched for. Configuration resolves shop -> shop
+    // group -> global, so without it a shop holding its own key row reads a wider tier's record,
+    // fetched for another merchant (ABN-530).
+    const CONFIG_MERCHANT_RECORD_KEY = 'PS_TWO_MERCHANT_RECORD_KEY';
     // Only ABSENT is unrestricted; the other three permit no buyer country.
     const BUYER_COUNTRIES_ABSENT = 'absent';
     const BUYER_COUNTRIES_EMPTY = 'empty';
@@ -952,6 +956,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_DEBUG_MODE');
         Configuration::deleteByName(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED);
         Configuration::deleteByName(self::CONFIG_MERCHANT_BUYER_COUNTRIES);
+        Configuration::deleteByName(self::CONFIG_MERCHANT_RECORD_KEY);
         // Retired admin toggle (TWO-25111) - shops upgraded from <=2.5.0 may
         // still carry the row; the upgrade script deletes it, this covers
         // uninstall-without-upgrade.
@@ -10743,11 +10748,23 @@ class Twopayment extends PaymentModule
     public function getMerchantAvailableTerms($refresh = false, $resolve_if_unresolved = false)
     {
         if ($refresh || ($resolve_if_unresolved && self::isMerchantTermCacheUnresolved())) {
-            $checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+            $checked_on = self::isMerchantRecordSlotForCurrentKey()
+                ? (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS)
+                : 0;
             if ($checked_on <= 0 || ($checked_on + self::MERCHANT_AVAILABLE_TERMS_TTL) <= time()) {
                 $merchant_id = Configuration::get('PS_TWO_MERCHANT_ID');
                 $api_key = Configuration::get('PS_TWO_MERCHANT_API_KEY');
                 if (!self::isTwoConfigUnset($merchant_id) && !self::isTwoConfigUnset($api_key)) {
+                    if (!self::isMerchantRecordSlotForCurrentKey()) {
+                        // The held record belongs to another key, so serve-stale would serve another
+                        // merchant. Dropped before the call, and claimed for this key so the clock
+                        // below covers concurrent renders as it does any cold cache (ABN-530).
+                        $this->invalidateMerchantAvailableTerms();
+                        Configuration::updateValue(
+                            self::CONFIG_MERCHANT_RECORD_KEY,
+                            self::verificationSlotKey($api_key)
+                        );
+                    }
                     // Bump the shared clock BEFORE the wire call so a concurrent
                     // render at expiry serves the stale cache instead of firing a
                     // second, redundant fetch (anti-stampede - TWO-24859 review).
@@ -10802,6 +10819,11 @@ class Twopayment extends PaymentModule
                             self::CONFIG_MERCHANT_BUYER_COUNTRIES,
                             $this->encodeMerchantBuyerCountries($response)
                         );
+                        // Written last: every slot above now belongs to this key (ABN-530).
+                        Configuration::updateValue(
+                            self::CONFIG_MERCHANT_RECORD_KEY,
+                            self::verificationSlotKey($api_key)
+                        );
                         // Success: keep the full-TTL clock set above.
                     } else {
                         // Failed fetch (network blip / 5xx / bad body). Roll the
@@ -10818,6 +10840,9 @@ class Twopayment extends PaymentModule
             }
         }
 
+        if (!self::isMerchantRecordSlotForCurrentKey()) {
+            return array();
+        }
         $cached = Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS);
         if (self::isTwoConfigUnset($cached)) {
             return array();
@@ -10885,7 +10910,27 @@ class Twopayment extends PaymentModule
      */
     private static function isMerchantTermCacheUnresolved()
     {
-        return self::isTwoConfigUnset(Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS));
+        return !self::isMerchantRecordSlotForCurrentKey()
+            || self::isTwoConfigUnset(Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS));
+    }
+
+    /**
+     * Whether the cached merchant record was fetched for the key this context resolves. A mismatch
+     * reads as a cold cache: every slot degrades to its own unresolved answer and the next
+     * sanctioned refresh point refetches for the key this shop holds (ABN-530).
+     *
+     * @return bool
+     */
+    private static function isMerchantRecordSlotForCurrentKey()
+    {
+        $stamp = (string) Configuration::get(self::CONFIG_MERCHANT_RECORD_KEY);
+        if ($stamp === '') {
+            // Unstamped: a record cached before this binding existed. Served for one more TTL, the
+            // same serve-stale posture as a failed fetch, rather than withholding Two on upgrade.
+            return true;
+        }
+
+        return $stamp === self::verificationSlotKey((string) Configuration::get('PS_TWO_MERCHANT_API_KEY'));
     }
 
     /**
@@ -10976,6 +11021,9 @@ class Twopayment extends PaymentModule
      */
     private function decodeMerchantBuyerCountries()
     {
+        if (!self::isMerchantRecordSlotForCurrentKey()) {
+            return array('state' => self::BUYER_COUNTRIES_ABSENT, 'allowed' => array());
+        }
         $cached = Configuration::get(self::CONFIG_MERCHANT_BUYER_COUNTRIES);
         if (Tools::isEmpty($cached)) {
             return array('state' => self::BUYER_COUNTRIES_ABSENT, 'allowed' => array());
@@ -11135,7 +11183,8 @@ class Twopayment extends PaymentModule
      */
     public function isMerchantInvoiceDistributed()
     {
-        return (bool) Configuration::get(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED);
+        return self::isMerchantRecordSlotForCurrentKey()
+            && (bool) Configuration::get(self::CONFIG_MERCHANT_INVOICE_DISTRIBUTED);
     }
 
     /**
@@ -11189,6 +11238,9 @@ class Twopayment extends PaymentModule
      */
     public function getPlatformMinimumOrder()
     {
+        if (!self::isMerchantRecordSlotForCurrentKey()) {
+            return null;
+        }
         $cached = Configuration::get(self::CONFIG_PLATFORM_MIN_ORDER);
         if (Tools::isEmpty($cached)) {
             return null;
@@ -14919,6 +14971,9 @@ class Twopayment extends PaymentModule
      */
     public function getMerchantDueInDays()
     {
+        if (!self::isMerchantRecordSlotForCurrentKey()) {
+            return null;
+        }
         $cached = (int) Configuration::get(self::CONFIG_MERCHANT_DUE_IN_DAYS);
         return $cached > 0 ? $cached : null;
     }
