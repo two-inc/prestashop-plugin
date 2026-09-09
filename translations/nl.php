@@ -558,3 +558,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_65a3ef692e6a51f50564d0b7bf51c9b9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] = 'verborgen voor winkelwagens in een valuta waarin de toeslag voor de koper niet kan worden berekend';
 $_MODULE['<{twopayment}prestashop>twopayment_c3d38f77a364bef3afec146aece7a3b3'] = 'alleen aangeboden aan kopers in %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b80ff7399a5d689042195dd3d773816a'] = '%s is geen valuta die deze betaalmethode ondersteunt.';
+$_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] = 'verborgen voor winkelwagens in %s';
+$_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'de standaardvaluta van de winkel heeft geen ISO-code.';

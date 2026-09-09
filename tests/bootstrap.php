@@ -1724,6 +1724,25 @@ namespace {
             }
         }
 
+        /**
+         * As core: the shop's currencies as rows. $active is honoured through
+         * an `active` key on the fixture, defaulting to enabled.
+         *
+         * @return array<int, array<string, mixed>>
+         */
+        public static function getCurrencies($object = false, $active = true, $group_by = false)
+        {
+            $rows = [];
+            foreach (StubStore::$currencies as $id => $props) {
+                if ($active && array_key_exists('active', $props) && !$props['active']) {
+                    continue;
+                }
+                $rows[] = ['id_currency' => (int) $id] + $props;
+            }
+
+            return $rows;
+        }
+
         public static function getIdByIsoCode($isoCode, $idShop = 0)
         {
             foreach (StubStore::$currencies as $id => $props) {

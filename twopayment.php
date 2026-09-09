@@ -3576,6 +3576,13 @@ class Twopayment extends PaymentModule
         if (is_array($allowed) && $allowed) {
             $clauses[] = sprintf($this->l('offered only to buyers in %s'), implode(', ', $allowed));
         }
+        $refused = $this->twoRefusedNonDefaultCurrencies();
+        if ($refused) {
+            $clauses[] = sprintf(
+                $this->l('hidden for baskets in %s'),
+                implode(', ', $refused)
+            );
+        }
         $surcharge = $this->getTwoSurchargeSettingsOrNull();
         if ($surcharge !== null && !empty($surcharge['enabled'])) {
             $clauses[] = $this->l('hidden for baskets in a currency the buyer surcharge cannot be priced in');
@@ -3638,7 +3645,10 @@ class Twopayment extends PaymentModule
             return null;
         }
         $iso = Tools::strtoupper(trim((string) $currency->iso_code));
-        if ($iso === '' || !in_array($iso, self::TWO_SUPPORTED_CURRENCY_ISOS, true)) {
+        if ($iso === '') {
+            return $this->l('the shop default currency has no ISO code.');
+        }
+        if (!in_array($iso, self::TWO_SUPPORTED_CURRENCY_ISOS, true)) {
             return sprintf(
                 $this->l('%s is not a currency this payment method supports.'),
                 htmlspecialchars($iso, ENT_QUOTES, 'UTF-8')
@@ -3657,6 +3667,48 @@ class Twopayment extends PaymentModule
         }
 
         return $this->l('no currency is enabled for this module under Payment > Preferences.');
+    }
+
+    /**
+     * ISO codes of the shop's other enabled currencies that checkCurrency()
+     * would refuse - unsupported by the provider, or not assigned to the
+     * module. The shop default has its own reason, so it is excluded here.
+     *
+     * @return string[]
+     */
+    protected function twoRefusedNonDefaultCurrencies()
+    {
+        if (!method_exists('Currency', 'getCurrencies')) {
+            return array();
+        }
+        $idDefault = (int) Configuration::get('PS_CURRENCY_DEFAULT');
+        $assigned = array();
+        if (method_exists($this, 'getCurrency')) {
+            foreach ((array) $this->getCurrency($idDefault) as $row) {
+                if (isset($row['id_currency'])) {
+                    $assigned[] = (int) $row['id_currency'];
+                }
+            }
+        }
+
+        $refused = array();
+        foreach ((array) Currency::getCurrencies(false, true) as $row) {
+            $id = (int) (isset($row['id_currency']) ? $row['id_currency'] : 0);
+            if ($id <= 0 || $id === $idDefault) {
+                continue;
+            }
+            $iso = Tools::strtoupper(trim((string) (isset($row['iso_code']) ? $row['iso_code'] : '')));
+            if ($iso === '') {
+                continue;
+            }
+            if (!in_array($iso, self::TWO_SUPPORTED_CURRENCY_ISOS, true)
+                || !in_array($id, $assigned, true)
+            ) {
+                $refused[] = $iso;
+            }
+        }
+
+        return $refused;
     }
 
     /**

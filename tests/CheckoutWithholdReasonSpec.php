@@ -254,6 +254,23 @@ final class CheckoutWithholdReasonSpec
             ],
             [
                 static function ($module): void {
+                    // A second enabled currency the provider does not support:
+                    // every cart in it is refused, which is per-cart and so a
+                    // constraint rather than a reason.
+                    StubStore::$currencies[978] = ['iso_code' => 'PLN', 'loaded' => true];
+                },
+                'hidden for baskets in PLN',
+                'a non-default enabled currency that would be refused is named',
+            ],
+            [
+                static function ($module): void {
+                    StubStore::$currencies[826] = ['iso_code' => '', 'loaded' => true];
+                },
+                'the shop default currency has no ISO code.',
+                'a blank ISO gets its own wording rather than an empty placeholder',
+            ],
+            [
+                static function ($module): void {
                     StubStore::$currencies[826] = ['iso_code' => 'PLN', 'loaded' => true];
                 },
                 'PLN is not a currency this payment method supports.',
