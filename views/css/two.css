@@ -1477,10 +1477,9 @@
  * WC/Magento's select2/selectWoo - not the auto-widening box jQuery UI
  * produces on its own. jQuery UI's `_resizeMenu` sizes this element to
  * whichever is WIDER: the field, or the longest rendered label. With up to 50
- * results plus the manual-entry row that reliably outgrows the field (625px
- * against a 281px field, live). `max-width` here is what actually contains
- * it: the CSS width-resolution algorithm clamps a used width to `max-width`
- * regardless of what inline
+ * results it reliably outgrows the field (625px against a 281px field, live).
+ * `max-width` here is what actually contains it: the CSS width-resolution
+ * algorithm clamps a used width to `max-width` regardless of what inline
  * `width` jQuery UI sets on this same element, so no `!important` is needed
  * to win against it. The variable is kept current by
  * TwoCompanySearch.constrainAutocompleteMenuWidth(), refreshed on every
@@ -1602,19 +1601,6 @@
     margin: 0 !important;
 }
 
-/*
- * The manual-entry row (TWO-25288) - the INVERSE of a message row.
- *
- * It is the one non-company row in the dropdown that is actionable, so it must
- * read as clickable: pointer cursor, body text, and no part of the muted
- * treatment above. Separated from the rows it follows by a rule, because it is
- * an escape from the list rather than another entry in it.
- *
- * The focus ring is not decoration. On the fallback render path this row is the
- * only keyboard-reachable thing in the dropdown, and a `tabindex` with no
- * visible focus state is worse than no keyboard support at all - the buyer
- * cannot tell where they are.
- */
 /*
  * The way back out of manual entry. A real <button>, so every one of the
  * browser's button defaults has to be undone to make it read as a link.

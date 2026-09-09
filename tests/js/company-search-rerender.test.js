@@ -858,8 +858,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
         // Same invariant, one row over: the manual-entry row left the list, but
         // the "No matches found" row that replaced it is decoration owned by
         // the render in exactly the same way. Caching it would put a second
-        // copy in the list on the next cache hit, which is the defect this
-        // test has always been about.
+        // copy in the list on the next cache hit.
         const instance = makeInstance();
 
         search(AT_THRESHOLD);

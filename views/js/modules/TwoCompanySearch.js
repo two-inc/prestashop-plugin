@@ -3708,9 +3708,8 @@ class TwoCompanySearch {
                 source: (request, response) => {
                     // jQuery UI's own `_resizeMenu` sizes the dropdown to
                     // whichever is WIDER, the field or the longest rendered label
-                    // - with up to 50 results plus the manual-entry row, that
-                    // reliably outgrows the field by a large margin (625px
-                    // against a 281px field, live). Refreshed on every keystroke,
+                    // - with up to 50 results that reliably outgrows the field
+                    // by a large margin (625px against a 281px field, live). Refreshed on every keystroke,
                     // before jQuery UI has a chance to (re)compute its own inline
                     // width, so the CSS rule below - `max-width: var(...)` - is
                     // already correct by the time this request's response paints.
