@@ -134,8 +134,8 @@ class Twopayment extends PaymentModule
     // claim re-stamps the slot's clock, so without a cap on the age of the
     // VERDICT itself, a shop whose verification never completes - a fatal, a
     // killed worker - could re-carry and re-freshen the same ancient 'ok'
-    // indefinitely (review round 3). Past this, a claim carries nothing and the
-    // gates close until a call actually finishes.
+    // indefinitely. Past this, a claim carries nothing and the gates close until
+    // a call actually finishes.
     const API_KEY_STATUS_CARRY_MAX_AGE = 900;
 
     // Verification outcome categories (TWO-25326). Held apart because the
@@ -4528,11 +4528,10 @@ class Twopayment extends PaymentModule
             // sentence claims cannot drift from the number the search
             // enforces.
             'company_search_query_placeholder' => $this->l('Enter %d or more characters'),
-            // The query field's accessible NAME, deliberately a different
-            // string from the placeholder above (adversarial review finding,
-            // TWO-40 follow-up round 2). `aria-label` is set once and never
-            // re-synced, so naming the field after the length-requirement hint
-            // left a screen reader still announcing "Enter N or more
+            // The query field's accessible NAME, deliberately a different string
+            // from the placeholder above (TWO-40). `aria-label` is set once and
+            // never re-synced, so naming the field after the length-requirement
+            // hint left a screen reader still announcing "Enter N or more
             // characters" as what the field IS long after the buyer has typed
             // enough - see getQueryAriaLabelText() in TwoCompanySearch.js.
             'company_search_query_label' => $this->l('Search for a company'),
@@ -4626,30 +4625,28 @@ class Twopayment extends PaymentModule
                 //
                 // NOT because the search needs the key: it is relayed through
                 // this module's own controller (ajaxProcessCompanySearch()),
-                // which spends the merchant's key server-side regardless, so
-                // it would keep working. Round-6 review corrected the reasoning here - the
-                // behaviour matches the sibling plugins either way, and the
-                // cost of the gate is a search + address auto-fill a buyer
-                // could otherwise still have used.
+                // which spends the merchant's key server-side regardless, so it
+                // would keep working. The behaviour matches the sibling plugins
+                // either way, and the cost of the gate is a search + address
+                // auto-fill a buyer could otherwise still have used.
                 //
-                // The SAME predicate the address-form override asks (review round
-                // 5), because the JS control and the server-rendered placeholder
-                // are two halves of one affordance and this flag is that
-                // affordance's only reader. Asking "verified?" here while the
-                // override asks "warranted?" left them disagreeing on exactly one
-                // state - a claim in flight with nothing to carry - which is the
-                // state where a shop with a back-office translation of the core
+                // The SAME predicate the address-form override asks, because the
+                // JS control and the server-rendered placeholder are two halves
+                // of one affordance and this flag is that affordance's only
+                // reader. Asking "verified?" here while the override asks
+                // "warranted?" left them disagreeing on exactly one state - a
+                // claim in flight with nothing to carry - which is the state
+                // where a shop with a back-office translation of the core
                 // placeholder kept the hint on a field with no search behind it.
                 //
-                // A live check ONLY on the real checkout page (review round 4).
-                // This hook also runs on the module's own front controllers, and
-                // one of those is the payment POST - where the verification gate
-                // deliberately refuses to make an HTTP call, because a stall
-                // there is a stall in the buyer's submit. Letting the media hook
-                // make it on the same request handed back exactly the stall the
-                // gate had just declined to take. Those pages render no
-                // company-search control anyway, so a cache-only answer costs
-                // them nothing.
+                // A live check ONLY on the real checkout page. This hook also
+                // runs on the module's own front controllers, and one of those
+                // is the payment POST - where the verification gate deliberately
+                // refuses to make an HTTP call, because a stall there is a stall
+                // in the buyer's submit. Letting the media hook make it on the
+                // same request handed back exactly the stall the gate had just
+                // declined to take. Those pages render no company-search control
+                // anyway, so a cache-only answer costs them nothing.
                 'api_key_verified' => $this->isTwoCompanySearchAffordanceWarranted($is_checkout_page),
                 // Separate from company_name_search: that (now) gates only
                 // WHERE the search widget renders, this gates only what a
@@ -5052,16 +5049,16 @@ class Twopayment extends PaymentModule
         $optional_fields = $this->getOptionalCheckoutFieldsForDisplay();
 
         // Sole-trader AVAILABILITY, resolved HERE rather than in the browser
-        // (TWO-25326 bug 9, round 3; TWO-40 removed the chip UI this used to
-        // drive). TwoSoleTrader.js used to build Business / Sole trader chips
-        // only after its own availability round trip, so they were absent from
-        // every first paint of the payment step and appeared a few hundred
-        // milliseconds later - a visible flicker on any page load. There is no
-        // toggle to flicker any more (TWO-40 folded sole-trader enrolment into
-        // the company search control), but the same server-resolved answer is
-        // still what TwoSoleTrader.js adopts as its settled availability cache,
-        // so the search control's "I'm a sole trader" row can appear on first
-        // paint with no round trip of its own either.
+        // (TWO-25326; TWO-40 removed the chip UI this used to drive).
+        // TwoSoleTrader.js used to build Business / Sole trader chips only after
+        // its own availability round trip, so they were absent from every first
+        // paint of the payment step and appeared a few hundred milliseconds
+        // later - a visible flicker on any page load. There is no toggle to
+        // flicker any more (TWO-40 folded sole-trader enrolment into the company
+        // search control), but the same server-resolved answer is still what
+        // TwoSoleTrader.js adopts as its settled availability cache, so the
+        // search control's "I'm a sole trader" row can appear on first paint
+        // with no round trip of its own either.
         //
         // Same source of truth as the endpoint that JS was calling
         // (TwoSoleTrader::isAvailable -> the registry's supported-company-types
@@ -5069,25 +5066,25 @@ class Twopayment extends PaymentModule
         // have been told. Cost is bounded: that answer is memoised per request
         // and cached in the context cookie for the endpoint's own max-age, and
         // it REPLACES the per-page-load AJAX call rather than adding to it.
-        // THREE-state, not two (round 3 review). A registry timeout and a genuine
-        // business-only country are both `false` to isAvailable() - right for a
-        // capability gate, wrong here, because the browser adopts this answer as
-        // settled and never re-asks, so flattening a blip into "no" would launder
-        // it into a cached "no" for the rest of the page's life. "Unresolved"
+        // THREE-state, not two. A registry timeout and a genuine business-only
+        // country are both `false` to isAvailable() - right for a capability
+        // gate, wrong here, because the browser adopts this answer as settled
+        // and never re-asks, so flattening a blip into "no" would launder it
+        // into a cached "no" for the rest of the page's life. "Unresolved"
         // renders as NO answer and the client's own retrying request path stays
         // live.
         //
-        // CACHE-ONLY, and never a live call (round 3 review, finding 2). This runs
-        // inside a shopper's checkout render, and a payment-option change reloads
-        // that page - so resolving live meant every payment-step render on a shop
-        // that cannot reach the registry paid the request timeout again (the
-        // per-request failure marker bounds it per request, not per session, since
-        // only a success is cached). The browser's availability request resolves an
-        // unknown answer off the render path and the endpoint answering it writes
-        // the cookie, so at most the FIRST payment-step render of a session shows
-        // no toggle and every render after it - including all the surcharge-driven
-        // reloads that made the flicker visible - is served from cache. Same shape
-        // as this module's other checkout-render reads.
+        // CACHE-ONLY, and never a live call. This runs inside a shopper's
+        // checkout render, and a payment-option change reloads that page - so
+        // resolving live meant every payment-step render on a shop that cannot
+        // reach the registry paid the request timeout again (the per-request
+        // failure marker bounds it per request, not per session, since only a
+        // success is cached). The browser's availability request resolves an
+        // unknown answer off the render path and the endpoint answering it
+        // writes the cookie, so at most the FIRST payment-step render of a
+        // session shows no toggle and every render after it - including all the
+        // surcharge-driven reloads that made the flicker visible - is served
+        // from cache. Same shape as this module's other checkout-render reads.
         $sole_trader_country = $this->getCheckoutBillingCountryIso();
         $sole_trader_resolved = $sole_trader_country === ''
             ? false

@@ -727,8 +727,8 @@ function buildPaymentTile() {
 }
 
 /**
- * The same tile, with the SERVER-side sole-trader answer resolved (TWO-25326
- * bug 9, round 3; TWO-40 removed the chip UI this answer used to draw).
+ * The same tile, with the SERVER-side sole-trader answer resolved (TWO-25326;
+ * TWO-40 removed the chip UI this answer used to draw).
  *
  * buildPaymentTile() leaves every `{if}` block stripped, which reproduces a
  * render where Smarty gave no answer - the fallback path where TwoSoleTrader
@@ -927,7 +927,7 @@ function resultTexts() {
  * @returns {Function} the TwoSoleTrader class
  */
 function loadSoleTrader() {
-    // TWO-25326 §12, review round 2: applyBuyer()'s status display now calls
+    // TWO-25326 §12: applyBuyer()'s status display now calls
     // window.TwoCompanyNumber.forDisplay() unguarded, exactly as the real page
     // does (twopayment.php loads it at a lower priority than every module that
     // renders a number, TwoSoleTrader included) - so it must be in place

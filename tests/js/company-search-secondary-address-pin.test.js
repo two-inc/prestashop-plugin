@@ -298,8 +298,8 @@ describe('the pin is triggered by ANY address field, address-wide', () => {
      * placeholder, so a state holding a real value is the buyer's own saved answer,
      * and it pins the address exactly as a saved city would.
      *
-     * An earlier round gave `state` the country's baseline by symmetry. That let the
-     * registered region overwrite a state the buyer had saved.
+     * Giving `state` the country's baseline by symmetry would let the registered
+     * region overwrite a state the buyer had saved.
      */
     test('a state holding a real value pins the address, even straight from the server', () => {
         buildAddressesStep({ editing: 'invoice' });
@@ -639,7 +639,7 @@ describe('the country is compared as an ISO code', () => {
 });
 
 /**
- * TWO-40, round 1 of the content-match rework.
+ * TWO-40.
  *
  * The pin gates the POPULATE and nothing else. Of the three repair operations,
  * RE-MARK writes no value at all and RE-PUBLISH is gated on the mirror's own marked
@@ -763,7 +763,7 @@ describe('scope: the pin only applies where there is a secondary address', () =>
     });
 
     /**
-     * TWO-40, round 1 of the content-match rework.
+     * TWO-40.
      *
      * "No secondary address on screen" and "the invoice form IS on screen but the
      * scope resolution failed closed" are different states, and the fill used to

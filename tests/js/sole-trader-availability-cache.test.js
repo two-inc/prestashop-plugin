@@ -1,23 +1,24 @@
 /**
- * TWO-40 follow-up: two bugs, one fix each.
+ * TWO-40 follow-up: two defects, one fix each.
  *
- * Bug 1 (live on staging, Doug's report): the "I'm a sole trader" row never
- * appeared on the address-editor page, even for a registry-supported country
- * (GB). Root cause - refreshAvailability() early-returned whenever
+ * Defect 1 (live on staging, Doug's report): the "I'm a sole trader" row
+ * never appeared on the address-editor page, even for a registry-supported
+ * country (GB). Root cause - refreshAvailability() early-returned whenever
  * `.two-sole-trader` was absent from the page, BEFORE it ever resolved the
  * billing country or fired the fetch. That container only ever exists on the
  * payment step (rendered by paymentinfo.tpl); nothing renders it on the
- * address-editor page at all. So availability never resolved for ANY
- * country on any page other than the payment step, however eligible the
- * country was. See TwoSoleTrader.js's refreshAvailability() for the fix and
- * its full reasoning.
+ * address-editor page at all. So availability never resolved for ANY country
+ * on any page other than the payment step, however eligible the country was.
+ * See TwoSoleTrader.js's refreshAvailability() for the fix and its full
+ * reasoning.
  *
- * Bug 2 (Doug's own request): even with bug 1 fixed, every fresh page load
- * re-fires the availability round trip before the chip can appear, because
- * `availabilityByCountry` is in-memory only and resets on every navigation.
- * A localStorage cache, keyed per ISO country and namespaced per checkout
- * environment (see availabilityStorageKey()'s doc), with a 24h TTL, lets a
- * later page paint from cache with no round trip at all.
+ * Defect 2 (Doug's own request): even with the container gap above fixed,
+ * every fresh page load re-fires the availability round trip before the chip
+ * can appear, because `availabilityByCountry` is in-memory only and resets on
+ * every navigation. A localStorage cache, keyed per ISO country and
+ * namespaced per checkout environment (see availabilityStorageKey()'s doc),
+ * with a 24h TTL, lets a later page paint from cache with no round trip at
+ * all.
  */
 
 'use strict';
@@ -266,9 +267,9 @@ describe('a stale (>24h) cache entry is not used', () => {
     });
 
     test('a FUTURE `ts` (skewed clock, or planted by another script) is rejected, not treated as fresher-than-fresh', async () => {
-        // Adversarial review finding: `Date.now() - parsed.ts` going negative
-        // must not read as "not yet expired" - that would pin this answer
-        // for the country indefinitely, however long it actually sat there.
+        // `Date.now() - parsed.ts` going negative must not read as "not yet
+        // expired" - that would pin this answer for the country indefinitely,
+        // however long it actually sat there.
         seedCache('GB', true, -60 * 1000); // ts is 1 minute in the FUTURE
         buildCountry('GB');
         TwoSoleTrader = loadSoleTrader();
@@ -413,13 +414,12 @@ describe('a server-rendered adoption also persists to the cache', () => {
         instance.destroy();
     });
 
-    test('a matching re-adoption does NOT rewrite the cache entry (adversarial review, "Han" finding, round 2)', async () => {
-        // Round 1 fixed adoptServerRenderedToggle() writing to localStorage on
-        // EVERY container swap, even an unchanged answer - the file's own
-        // comments say PrestaShop swaps `.two-sole-trader` "constantly" while
-        // a checkout step settles, undebounced. Round 2 review noted nothing
-        // actually pinned that skip: this proves a same-value re-adoption
-        // leaves the stored `ts` untouched rather than rewriting it.
+    test('a matching re-adoption does NOT rewrite the cache entry', async () => {
+        // adoptServerRenderedToggle() must skip the localStorage write on an
+        // unchanged answer - the file's own comments say PrestaShop swaps
+        // `.two-sole-trader` "constantly" while a checkout step settles,
+        // undebounced. This proves a same-value re-adoption leaves the stored
+        // `ts` untouched rather than rewriting it.
         const { buildPaymentTileWithSoleTraderAnswer } = require('./ps-harness');
         buildPaymentTileWithSoleTraderAnswer('1', 'GB');
         buildCountry('GB');
@@ -461,7 +461,7 @@ describe('the cache is namespaced per checkout environment, not shared across th
     });
 });
 
-describe('the persisted cache never outranks a settled, container-present answer (adversarial review, "Han" finding)', () => {
+describe('the persisted cache never outranks a settled, container-present answer', () => {
     test('a fresh server-rendered adoption wins over a DISAGREEING persisted-cache entry', async () => {
         const { buildPaymentTileWithSoleTraderAnswer } = require('./ps-harness');
         // The persisted cache says "no" for GB...
@@ -491,12 +491,12 @@ describe('the persisted cache never outranks a settled, container-present answer
     });
 });
 
-describe('a superseded in-flight request is not resurrected by a concurrent cache write (adversarial review, "Han" finding)', () => {
+describe('a superseded in-flight request is not resurrected by a concurrent cache write', () => {
     test("an outstanding request's answer, once superseded, never reaches the persisted cache either", async () => {
         // Mirrors sole-trader-server-rendered-toggle.test.js's in-memory
-        // version of this invariant, but checks the PERSISTED cache too -
-        // the brief specifically asked whether a concurrent cache write
-        // could resurrect a request that lost the in-memory race.
+        // version of this invariant, but checks the PERSISTED cache too: a
+        // concurrent cache write must not resurrect a request that lost the
+        // in-memory race.
         let settle;
         global.window.fetch = (url) => {
             if (url.indexOf('soleTraderAvailability') === -1) {

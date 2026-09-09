@@ -213,7 +213,7 @@ describe('the scope every field lookup is confined to', () => {
 });
 
 /**
- * TWO-40, adversarial review round 5, B6.
+ * TWO-40.
  *
  * The scope resolution's candidate list used to end in `form`, so a theme whose
  * markup does not carry core's block ids resolved to the step's OUTER form - the
@@ -260,11 +260,11 @@ describe('the scope fails closed rather than widening', () => {
         expect($("input[name='companyid']").val()).toBe('');
     });
 
-    // Round 6. The guard above recognised address blocks by their ids only, so the
-    // very case it was written for got through: drop core's ids, keep the rest of
-    // its markup, and the step wrapper - which core emits itself - looks blockless
-    // while the other address is still inside it. Probed at HEAD before the fix: the
-    // root resolved to `js-address-form` with the delivery radio inside the scope.
+    // Recognising address blocks by their ids ALONE lets the very case the guard
+    // exists for through: drop core's ids, keep the rest of its markup, and the
+    // step wrapper - which core emits itself - looks blockless while the other
+    // address is still inside it, resolving the root to `js-address-form` with the
+    // delivery radio inside the scope.
     test('resolves nothing when the other block kept core\'s classes but lost its ids', () => {
         buildAddressesStep({
             editing: 'invoice',
@@ -754,7 +754,7 @@ describe('the rebuild that separates the number from the name', () => {
 });
 
 /**
- * TWO-40, adversarial review round 5, B1.
+ * TWO-40.
  *
  * The mirror used to write the identification field directly and never touch the
  * hidden `companyid` input or its `data-two-company-name` pairing tag. Those two
@@ -954,13 +954,13 @@ describe('the gate reports whether the number actually reached a field', () => {
      * the next render read the empty field as buyer tampering and pin the whole
      * secondary address.
      *
-     * A round that wrote the value there was tried and reversed. Core declares `dni`
-     * with `isDniLite` (`/^[0-9A-Za-z-.]{1,16}$/U`) at size 16, which
+     * Writing the value there refuses the save. Core declares `dni` with
+     * `isDniLite` (`/^[0-9A-Za-z-.]{1,16}$/U`) at size 16, which
      * `TWO:ST123456789012` fails twice - the colon is not in the class and it is 18
-     * characters - so core REFUSED TO SAVE THE ADDRESS, with the error landing on a
-     * field that round was hiding. It was also unreadable: this plugin's own
-     * extractOrgNumberFromAddress() validates `dni` against `/^[A-Z0-9\-]{5,20}$/i`,
-     * which rejects the colon too.
+     * characters - so core REFUSES TO SAVE THE ADDRESS, with the error landing on a
+     * field that would then be hidden. It is also unreadable: this plugin's own
+     * extractOrgNumberFromAddress() validates `dni` against
+     * `/^[A-Z0-9\-]{5,20}$/i`, which rejects the colon too.
      *
      * The inverse of the test that used to stand here: re-introducing the write fails
      * this.

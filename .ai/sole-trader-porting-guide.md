@@ -141,7 +141,7 @@ already presents it this way and is what WooCommerce was aligned onto: confirmed
   watermark in it.** The buyer clicked past a company field already reading "Enter
   company name to search" to get here, so a query field repeating that says nothing;
   PrestaShop deliberately spends the slot on the length rule instead.
-- **`aria-label` must NOT mirror that placeholder** (PrestaShop, adversarial review).
+- **`aria-label` must NOT mirror that placeholder** (PrestaShop).
   `aria-label` is the field's accessible NAME, set once; the placeholder is a hint that
   stops being true the moment the field has enough characters. Naming the field after
   it left a screen-reader user tabbing back in — after a full query, or after picking a
@@ -401,19 +401,18 @@ is not persisted here", never to a dropped payment record.
   the dropdown's query field. Wire it to the real async duration (resolve on an
   actual "flight settled" event fired from every terminal branch of the async call
   graph — success, failure, retry-exhausted, abandoned), never a fixed timeout.
-  Adversarial review on this exact feature found real races on every iteration
+  Review of this exact feature found real races on every attempt
   (stuck-forever spinners on two different abandon/retry paths, a missing
   re-entrancy guard causing double signup popups, a guard released too early) —
-  budget for multiple review rounds, don't expect to get this right in one pass.
-  - **The NAME field, not the query field, and this was arrived at the long way
-    round.** Earlier rounds put it in the query input, which §1 does settle as
-    where an in-field spinner on ordinary company search belongs. It cannot be
-    where the sole-trader one belongs, for two independent reasons: selecting the
-    Sole trader chip hides that whole row immediately (§11 rule 2), so the spinner
-    has nowhere to paint and an earlier round had to un-hide the row for the flight
-    — which reintroduced the very bug rule 2 exists to fix; and the "select a
-    different sole trader" flow opens no dropdown at all, so it had no query field
-    to use and showed no spinner whatsoever. The name field is on screen in both
+  budget for several iterations, don't expect to get this right in one pass.
+  - **The NAME field, not the query field.** §1 does settle the query input as
+    where an in-field spinner on ordinary company search belongs, but it cannot
+    be where the sole-trader one belongs, for two independent reasons: selecting
+    the Sole trader chip hides that whole row immediately (§11 rule 2), so the
+    spinner has nowhere to paint and un-hiding the row for the flight
+    reintroduces the very bug rule 2 exists to fix; and the "select a different
+    sole trader" flow opens no dropdown at all, so it has no query field to use
+    and would show no spinner whatsoever. The name field is on screen in both
     flows and is where the value being fetched is going to land. PrestaShop
     `doug/two40-soletrader-spinner-rehome`.
   - **"Settled" means the popup CLOSED, not that `window.open()` returned**
@@ -704,18 +703,19 @@ the wrong build (`2b99c2b`).
   visual/timing-sensitive. A "fixed" chip-selection PR shipped with its own
   regression test passing while the fix did nothing in a real browser (§5's paint-
   timing entry) — caught only by live re-testing after merge.
-- **A round of adversarial review whose only findings are artifacts of the PREVIOUS
-  round's own fix is oscillating, not clean** — don't merge on it, run another round
-  against the latest fix specifically. If you are re-tuning the same predicate for a
-  fourth time, the design is wrong, not the predicate (§14 is the worked example, and
-  the popup-stacking guard that had to be reverted outright — `989a765` — is what
-  happens if you keep going).
-- **Defects that no single round can see.** Two rounds can each be correct and clean
-  and still compose into a live bug: PrestaShop's reopen-in-sole-trader-mode round and
-  its blank-the-term-on-the-way-in round together left result rows painted and
-  clickable for a term the field no longer held (`0f1f937`), and three WooCommerce
-  rounds composed into an adoption pointing at a destroyed picker (`3620d5b`). Run a
-  final review of the WHOLE branch against the merged behaviour, not only round-on-round.
+- **A review pass whose only findings are artifacts of the previous pass's own fix
+  is oscillating, not clean** — don't merge on it, review again against the latest
+  fix specifically. If you are re-tuning the same predicate repeatedly, the design
+  is wrong, not the predicate (§14 is the worked example, and the popup-stacking
+  guard that had to be reverted outright — `989a765` — is what happens if you keep
+  going).
+- **Defects no single change can show.** Two changes can each be correct and clean
+  and still compose into a live bug: PrestaShop's reopen-in-sole-trader-mode fix and
+  its blank-the-term-on-the-way-in fix together left result rows painted and
+  clickable for a term the field no longer held (`0f1f937`), and three separate
+  WooCommerce fixes composed into an adoption pointing at a destroyed picker
+  (`3620d5b`). Review the WHOLE branch against the merged behaviour, never each
+  change in isolation.
 - **Renaming a user-visible string can break translation lookup, not just wording.**
   PrestaShop keys catalogue entries by the md5 of the source string, so the
   sentence-case chip rename silently orphaned both translations and reddened the
@@ -755,9 +755,9 @@ the wrong build (`2b99c2b`).
 
 All three rules below are Doug's, from live testing on 2026-08-19/21. They are one
 design, not three fixes: **once a sole trader is adopted, that is the state of the
-control**, and every surface has to agree with it. Rules 2 and 3 were each shipped
-twice, because the first round of each was an incomplete reading of the rule rather
-than a wrong implementation of it — read both corrections before implementing either.
+control**, and every surface has to agree with it. Rules 2 and 3 each carry a
+correction below, because each is easy to read incompletely rather than to
+implement wrongly — read both corrections before implementing either.
 
 1. **A company is only ever filled in by the buyer's own interaction with the company
    field — and any path that DOES fill it is a FULL adoption.**
@@ -862,9 +862,9 @@ than a wrong implementation of it — read both corrections before implementing 
 2. **Reopening the dropdown once adopted offers no free-text query.** The Sole trader
    chip shows as selected (§0), and the query input is **not rendered at all**.
 
-   **`readonly` is NOT an acceptable reading of this rule — it was an incomplete
-   implementation of it, on BOTH platforms.** The first round on PrestaShop
-   (`1c1b3d7`) and on WooCommerce (`48edd08`) each made the field readonly and left it
+   **`readonly` is NOT an acceptable reading of this rule — it is an incomplete
+   implementation of it, on BOTH platforms.** PrestaShop (`1c1b3d7`) and
+   WooCommerce (`48edd08`) each made the field readonly and left it
    on screen; Doug's correction on re-test was verbatim: "the field should not be
    *visible*. I did not tell you it was editable, I told you it was visible." A search
    box that is painted but inert reads as a search box that has broken, which is worse
@@ -887,10 +887,10 @@ than a wrong implementation of it — read both corrections before implementing 
      take effect on the click that selects the chip, synchronously, with no reopen
      required — so drive it from wherever chip selection is rendered, not from the
      panel's open handler, or it will look correct in every test that closes and
-     reopens and be wrong for the buyer who never closes anything. An earlier round
-     added a second condition — stand the hide down while a sole-trader flight is in
-     progress, because the in-flight spinner then lived in this very field — and
-     that condition WAS the bug: the chip click hid the row and un-hid it in the
+     reopens and be wrong for the buyer who never closes anything. Do NOT add a
+     second condition standing the hide down while a sole-trader flight is in
+     progress, tempting as it is when the in-flight spinner lives in this very
+     field: that condition IS the bug — the chip click hid the row and un-hid it in the
      same gesture, so a row the buyer had been told would go stayed up for the whole
      round trip. The spinner belongs on the company-name field instead (§7); with it
      gone, no second condition is needed and none should be added back.
@@ -919,8 +919,8 @@ than a wrong implementation of it — read both corrections before implementing 
    There is exactly ONE way to change company from that state: the explicit "select a
    different" affordance. That is deliberately two entry points into one call — the
    standalone link, and re-clicking the Sole trader chip — and re-clicking the chip
-   must route through the IDENTICAL relaunch call the link uses. Not a no-op (an
-   earlier round on both platforms made it one; Doug reversed that explicitly), and
+   must route through the IDENTICAL relaunch call the link uses. Not a no-op (both
+   platforms made it one and Doug reversed that explicitly), and
    not a fresh enrolment either, which would re-mint tokens for an identity already
    adopted, and — on any platform whose enrolment path still consults a silent lookup,
    i.e. PrestaShop — can re-adopt the very same match with no popup at all, the
@@ -1039,8 +1039,8 @@ affordance.
   mode never destroyed anything (a click there just re-triggers the widget library's
   own open handler), and a `reopenSearch()` mode-switch-and-rebuild dance existed only
   to paper over the difference.
-- Shipped as two PRs because the area had 6+ documented oscillating review rounds
-  behind it: #485 (`0b93055`) stops the destroy — the widget just closes and stays
+- Shipped as two PRs because the area had a history of oscillating fixes behind it
+  (§13, §14): #485 (`0b93055`) stops the destroy — the widget just closes and stays
   alive; then #486 (`004814f`) seeds the widget's own underlying `<select>` with a
   synthetic `<option>` for the adopted identity and selects it, reusing the exact
   mechanism the page-load restore already used, so the widget renders the adoption as
@@ -1062,7 +1062,7 @@ affordance.
 
 Two sequential Sole trader clicks stacked two hosted signup popups; the in-gesture
 re-entrancy guard only covers re-entry within one gesture. Getting from there to a
-correct design took four review rounds and one outright revert, and the shape of that
+correct design took several iterations and one outright revert, and the shape of that
 failure is the lesson:
 
 - A guard keyed on "any outstanding flight" refused legitimate clicks whenever a stale
@@ -1103,7 +1103,7 @@ Rules that generalise:
 - Scope every outcome to the record that produced it, never to global adoption state
   (`5cfcbd1`): a prefetch match landing under a still-open first-time popup set the
   adopted flag while that popup was undecided.
-- If you are writing round N+1 of a predicate over a list of popup records, stop and
+- If you are re-tuning a predicate over a list of popup records again, stop and
   change the design. That is what this section is.
 
 **Once there is exactly one popup, decide from where focus LANDS, never from the panel's
@@ -1141,8 +1141,8 @@ Rules that generalise:
 - **Never decide from a focus-out or a page-focus gate.** A focus-out cannot tell a
   return to checkout from the popup taking focus, and `document.hasFocus()` on a deferred
   close is a timing accident. The `focusin` TARGET is the answer.
-- **Mutation-test this class of fix; the tests lie otherwise.** Three of the first
-  round's tests passed with the line they existed to pin deleted: two because letting
+- **Mutation-test this class of fix; the tests lie otherwise.** Three of the
+  original tests passed with the line they existed to pin deleted: two because letting
   the deferred close run lets "Enter manually" satisfy the assertion through the old
   accidental route, one because leaving focus on a control inside the panel means the
   earlier `activeElement` guard returns before the code under test. Assert the handler's
@@ -1206,9 +1206,9 @@ anything local to either symptom.
   rendered the adopted-sole-trader affordance inside manual-entry mode. The credit check
   then ran on the identity they had just walked away from — §5's write-back state machine,
   reached through a gesture rather than a race. Escape has the same hole for the same
-  reason (the panel close never cancels either). The chip now abandons; note the earlier
-  round's reasoning that the reopen's own cancel covered it was wrong, because that cancel
-  happens *before* the buyer can start a new flight from the reopened panel.
+  reason (the panel close never cancels either). The chip now abandons; the reopen's
+  own cancel does NOT cover this, because that cancel happens *before* the buyer can
+  start a new flight from the reopened panel.
 - **A silent auto-restore must not inherit a buyer gesture's side effects.**
   `restorePanelAfterRerender()` reopens a panel the platform tore down, and its doc already
   said it "restores only what the buyer already had" — but it reached that by calling the
@@ -1227,10 +1227,10 @@ anything local to either symptom.
   now takes a flag that disowns the WRITE only (`cancelEnrollment(keepPopupTracked)`) and
   leaves the poll and the handle alone; the settle event's popup-open guard needs no change
   and instead becomes the mechanism, holding the spinner until the buyer's own popup closes.
-- **A surviving popup has to be RE-ADOPTABLE, not just re-findable** (round 2 adversarial
-  review of the fix above). Disowning the write bumps the generation the popup's own
-  completion message is checked against, so keeping the handle alive is only half an
-  answer: the buyer finishes signing up, the message is dropped on that check, and they get
+- **A surviving popup has to be RE-ADOPTABLE, not just re-findable.** Disowning the write
+  bumps the generation the popup's own completion message is checked against, so keeping the
+  handle alive is only half an answer: the buyer finishes signing up, the message is dropped
+  on that check, and they get
   an empty company field, no error, and — once the raise arms a spinner — something on
   screen actively claiming progress. Raising a tracked popup is therefore the same explicit
   resume as starting one, and re-stamps the token generation. Miss this and the two entry
@@ -1306,11 +1306,11 @@ a document.
   closes the popup.
 - **The refocus cannot DECIDE, only SCHEDULE.** The window `focus` is dispatched BEFORE the
   `mousedown` of the click that caused it, so no flag a chip handler sets can be read in
-  time — an earlier round documented that as a reason no chip guard was needed at all, and
-  it was wrong. Instead: arm a short timer (150ms, one native input event's worth of
-  dispatch, with generous margin for a loaded main thread) and let a **capture-phase
-  `mousedown` on `document`** resolve which of the three gestures it was. Capture, and on
-  the document rather than the chips, because the chips are rebuilt on every dropdown open.
+  time. That is not a reason to skip the chip guard. Instead: arm a short timer (150ms,
+  one native input event's worth of dispatch, with generous margin for a loaded main
+  thread) and let a **capture-phase `mousedown` on `document`** resolve which of the
+  three gestures it was. Capture, and on the document rather than the chips, because the
+  chips are rebuilt on every dropdown open.
 - **Coalesce onto the FIRST focus; never reschedule onto a later one.** Window-targeted
   `focus` events arrive in bursts for reasons that are not the buyer's gesture — blurring an
   element fires one, so the picker closing its own dropdown produces a stream — and
@@ -1361,7 +1361,7 @@ place, and let that place be the success handler: it covers every mint that can 
 a first token pair, including a click-driven one on a page where the eager mint was
 declined, so any second arming site is redundant by construction.
 
-Everything below was found by adversarial review, not by testing:
+Everything below was found by reading the code, not by testing:
 
 - **Skip a tick while a signup popup opened against the OLD tokens is still open** —
   and re-check that inside the response handler, not only at tick start: a popup opened
@@ -1411,9 +1411,8 @@ the company-number label's visibility depending on the selected payment method.
   same-mode call zeroed a live re-signup counter mid-flight: the prefetch called
   "enter sole-trader mode" unconditionally whenever a flight resolved with a match,
   including while already in it — reachable by editing the email field (never locked,
-  unlike the captured fields) while a "select a different" popup is open (`f8c035e`,
-  round 6, after rounds 4 and 5 fixed the same bug via a different path). **That
-  reproduction path is gone with the prefetch itself** (§11 rule 1, `8e2355f`); the rule
+  unlike the captured fields) while a "select a different" popup is open (`f8c035e`).
+  **That reproduction path is gone with the prefetch itself** (§11 rule 1, `8e2355f`); the rule
   stands on its own, because any caller that sets a mode it is already in can do the
   same thing.
 - **If platform core can delete the company field outright, register a floor for it.**

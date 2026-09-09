@@ -1,9 +1,9 @@
 /**
- * TWO-40 round 4: pins TwoSoleTrader.js's notifyEnrollmentSettled(), which
- * dispatches 'two:sole-trader-flight-settled' from every terminal branch of
- * startEnrollment()'s call graph. Each test drives one branch and asserts
- * the event fires - a fixed timeout in TwoCompanySearch.js would pass all
- * of these without ever wiring the real signal.
+ * TWO-40: pins TwoSoleTrader.js's notifyEnrollmentSettled(), which dispatches
+ * 'two:sole-trader-flight-settled' from every terminal branch of
+ * startEnrollment()'s call graph. Each test drives one branch and asserts the
+ * event fires - a fixed timeout in TwoCompanySearch.js would pass all of these
+ * without ever wiring the real signal.
  */
 
 'use strict';
@@ -97,9 +97,9 @@ test('a successful autofill (buyer match) fires the settle event', async () => {
 });
 
 /**
- * Adversarial review finding (Yoda): other tests don't exercise the settle
- * guard while a popup is still open. This one does - a real OTP round trip
- * resolves while the popup the buyer authenticated in is still open.
+ * Other tests don't exercise the settle guard while a popup is still open.
+ * This one does - a real OTP round trip resolves while the popup the buyer
+ * authenticated in is still open.
  */
 test('a genuine OTP completion settles the buyer lookup but withholds the spinner until the still-open popup actually closes', async () => {
     buildPaymentTile();
@@ -259,10 +259,10 @@ test.each([
 });
 
 /**
- * openPopup()'s never-open-over-a-live-window guard gates on the window
- * being live, not on the raise succeeding (round 2 finding). A throwing
- * focus() must still return the existing handle, or a second popup opens
- * and orphans the first untracked (guide §14).
+ * openPopup()'s never-open-over-a-live-window guard gates on the window being
+ * live, not on the raise succeeding. A throwing focus() must still return the
+ * existing handle, or a second popup opens and orphans the first untracked
+ * (guide §14).
  */
 test('openPopup() returns the live popup even when raising it throws, rather than opening a second', () => {
     buildPaymentTile();
@@ -575,10 +575,10 @@ test('a popup blocked outright (window.open() returns null) never starts a poll 
 });
 
 /**
- * Adversarial review finding (Han): a second openPopup() while the first
- * popup from the same attempt is still open used to open a second window
- * and silently retarget `_popup`, orphaning the first - closing the
- * original left the spinner stuck forever. Must refuse and refocus instead.
+ * A second openPopup() while the first popup from the same attempt is still
+ * open used to open a second window and silently retarget `_popup`, orphaning
+ * the first - closing the original left the spinner stuck forever. Must refuse
+ * and refocus instead.
  */
 test('calling openPopup() again while a popup is already open refocuses it instead of opening a second window', () => {
     buildAddressForm();
@@ -697,10 +697,10 @@ test('a blocked popup still fires the settle event exactly once (not twice, desp
 });
 
 /**
- * TWO-40 round 5, adversarial review finding (Leia): cancelEnrollment()
- * only bumped the generation counter and hid the prompt - it never told
- * TwoCompanySearch.js's spinner/listener the flight was over. apply() calls
- * it directly off a billing-country change while enrolling, a real path.
+ * TWO-40: cancelEnrollment() only bumped the generation counter and hid the
+ * prompt - it never told TwoCompanySearch.js's spinner/listener the flight was
+ * over. apply() calls it directly off a billing-country change while
+ * enrolling, a real path.
  */
 test('cancelEnrollment() fires the settle event when it actually cancels an in-progress enrolment', () => {
     buildPaymentTile();
@@ -731,12 +731,11 @@ test('cancelEnrollment() does NOT fire the settle event when there was nothing t
 });
 
 /**
- * TWO-40 round 5, adversarial review finding (Han + Yoda): abandon-then-
- * retry while the FIRST mint is still outstanding used to leave the second
- * attempt's spinner running forever. fetchTokens()'s single in-flight guard
- * means the second click rides the first mint's request; when it resolves,
- * the fix must resume the lookup for whichever generation is CURRENT, not
- * drop tokens because they no longer match the stale generation.
+ * TWO-40: abandon-then-retry while the FIRST mint is still outstanding used to
+ * leave the second attempt's spinner running forever. fetchTokens()'s single
+ * in-flight guard means the second click rides the first mint's request; when
+ * it resolves, the fix must resume the lookup for whichever generation is
+ * CURRENT, not drop tokens because they no longer match the stale generation.
  */
 test('a mint that resolves after abandon-then-retry still resumes the buyer lookup for the current attempt', async () => {
     buildAddressForm();
@@ -798,8 +797,8 @@ test('a mint that resolves after abandon-then-retry still resumes the buyer look
 });
 
 /**
- * TWO-40 round 5, adversarial review finding (Han + Vader): getCurrentBuyer()
- * had no in-flight guard of its own (unlike fetchTokens()'s isFetchingTokens)
+ * TWO-40: getCurrentBuyer() had no in-flight guard of its own
+ * (unlike fetchTokens()'s isFetchingTokens)
  * - a second concurrent lookup opened a second signup popup from one gesture.
  */
 test('two concurrent getCurrentBuyer() calls only open one popup', async () => {
@@ -826,12 +825,11 @@ test('two concurrent getCurrentBuyer() calls only open one popup', async () => {
 });
 
 /**
- * TWO-40 round 5 follow-up, adversarial review round 2 (Han): the abandon-
- * then-retry resume fixed for the MINT stage had no equivalent for the
- * BUYER-LOOKUP stage - getCurrentBuyer()'s isFetchingBuyer guard's
- * superseded() branches just bare-returned. When click 1's lookup resolves,
- * the fix must resume for whichever generation is CURRENT rather than
- * dropping the result with nothing left to settle click 2.
+ * TWO-40: the abandon-then-retry resume fixed for the MINT stage had no
+ * equivalent for the BUYER-LOOKUP stage - getCurrentBuyer()'s isFetchingBuyer
+ * guard's superseded() branches just bare-returned. When click 1's lookup
+ * resolves, the fix must resume for whichever generation is CURRENT rather
+ * than dropping the result with nothing left to settle click 2.
  */
 test('a buyer lookup that resolves after abandon-then-retry during the lookup stage still resumes for the current attempt', async () => {
     buildAddressForm();
@@ -902,8 +900,8 @@ test('a buyer lookup that resolves after abandon-then-retry during the lookup st
 });
 
 /**
- * TWO-40 round 7, adversarial review round 3 (Han): resumeIfStillEnrolling()
- * checked `enrolling` once at SCHEDULE time then deferred via setTimeout(0)
+ * TWO-40: resumeIfStillEnrolling() checked `enrolling` once at SCHEDULE
+ * time then deferred via setTimeout(0)
  * - a second abandonment landing in that gap ran an unwanted lookup, popping
  * a signup window nobody asked for on the no-match path.
  */
@@ -952,11 +950,10 @@ test('a second abandonment landing during the deferred resume window does not fi
 });
 
 /**
- * TWO-40 round 5 follow-up, adversarial review round 2 (Vader): the
- * synchronous stretch between setting isFetchingTokens/isFetchingBuyer true
- * and the fetch() call starting was unprotected. A throw there left the
- * guard stuck true FOREVER, with no recovery and no settle to ever close
- * an already-open panel/spinner.
+ * TWO-40: the synchronous stretch between setting
+ * isFetchingTokens/isFetchingBuyer true and the fetch() call starting was
+ * unprotected. A throw there left the guard stuck true FOREVER, with no
+ * recovery and no settle to ever close an already-open panel/spinner.
  */
 test('a synchronous throw building the token-mint request does not permanently wedge fetchTokens()', () => {
     buildPaymentTile();
@@ -989,12 +986,10 @@ test('a synchronous throw building the token-mint request does not permanently w
 });
 
 /**
- * TWO-40 round 7, adversarial review round 3 (Vader): the retry cooldown
- * (`nextRetryAt`) predates the round-4 "keep panel open until settle"
- * redesign and was never wired into it. Unlike isFetchingTokens (where a
- * request is out and will eventually resume), a click inside the cooldown
- * has nothing in flight to ever settle it - the panel used to stick open
- * indefinitely.
+ * TWO-40: the retry cooldown (`nextRetryAt`) is not wired into the "keep panel
+ * open until settle" behaviour. Unlike isFetchingTokens (where a request is
+ * out and will eventually resume), a click inside the cooldown has nothing in
+ * flight to ever settle it - the panel used to stick open indefinitely.
  */
 test('a click landing inside the retry cooldown still settles its own flight, rather than dead-ending open', () => {
     buildPaymentTile();
@@ -1020,7 +1015,7 @@ test('a synchronous throw building the buyer-lookup request does not permanently
     stubFetch({});
     const instance = build();
 
-    // this.tokens is null - the exact throw shape Vader flagged.
+    // this.tokens is null - the throw shape this guards against.
     expect(instance.tokens).toBeNull();
 
     expect(() => instance.getCurrentBuyer()).not.toThrow();

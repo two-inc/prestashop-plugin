@@ -48,9 +48,9 @@ class TwoCheckoutManager {
         // mode, where company capture already happened at the address step,
         // well before the payment tile (and this flag) exist.
         this._tileCompanySelected = false;
-        // TWO-25326 bug 8: the company the buyer has actually picked, held for
-        // the page's lifetime rather than on the search instance that a
-        // re-render replaces. See getConfirmedCompanySelection().
+        // TWO-25326: the company the buyer has actually picked, held for the
+        // page's lifetime rather than on the search instance that a re-render
+        // replaces. See getConfirmedCompanySelection().
         this._confirmedCompanySelection = null;
         // TWO-40: what the invoice-address mirror has already written on this page.
         // Lives HERE, not on the search instance, because this class destroys and
@@ -502,7 +502,7 @@ class TwoCheckoutManager {
 
     /**
      * Bring the checkout's order summary in line with the surcharge cart line
-     * WITHOUT navigating the document (TWO-25326 bug 11).
+     * WITHOUT navigating the document (TWO-25326).
      *
      * Deliberately does NOT emit core's own `updateCart` event: on the payment
      * step core turns that into a full page navigation
@@ -1058,15 +1058,13 @@ class TwoCheckoutManager {
      * Get the selected company name+number as ONE atomic pair, for the
      * customer-visible intent sentence (TWO-25326 §7.3).
      *
-     * Adversarial review round 3: this used to be two separate methods
-     * (getSelectedCompanyName/getSelectedCompanyNumber), each independently
-     * falling back to a DOM field when its own `this.orderIntent` value was
-     * falsy. That defeated TwoOrderIntent's own joint-reassignment
-     * guarantee (round 2's fix) from one layer up - a falsy
-     * `lastCompanyNumber` (a genuine, valid "no number" case, e.g. manual
-     * entry) would fall through to whatever `input[name='companyid']`
-     * happened to still hold from an EARLIER, unrelated company selection,
-     * silently re-pairing it with the current name.
+     * Deliberately ONE method rather than a name getter and a number getter each
+     * independently falling back to a DOM field when its own `this.orderIntent`
+     * value is falsy: that defeats TwoOrderIntent's own joint-reassignment
+     * guarantee from one layer up - a falsy `lastCompanyNumber` (a genuine,
+     * valid "no number" case, e.g. manual entry) would fall through to whatever
+     * `input[name='companyid']` happened to still hold from an EARLIER,
+     * unrelated company selection, silently re-pairing it with the current name.
      *
      * `this.orderIntent` is the authoritative, already-paired source
      * whenever it has ANY answer at all (including "name with no number" -
@@ -2102,9 +2100,9 @@ class TwoCheckoutManager {
             this.initializeCompanySearch();
         }
 
-        // TWO-25326 bug 8, review round 1: the buyer is in the address form, so
-        // the in-memory confirmed selection stops being trustworthy and must
-        // stop out-ranking the session cookie.
+        // TWO-25326: the buyer is in the address form, so the in-memory
+        // confirmed selection stops being trustworthy and must stop out-ranking
+        // the session cookie.
         //
         // Both guards on that selection (address id, country ISO) compare a
         // value captured when it was made against one resolved when it is used
@@ -2120,9 +2118,10 @@ class TwoCheckoutManager {
         // PrestaShop emits `updatedAddressForm` for ordinary things and it can
         // land tens of milliseconds after an unrelated click (see
         // TwoCompanySearch's own note on this event), so an unconditional clear
-        // here could wipe a selection the buyer had just made and put bug 8
-        // straight back. A country select being present means an address form is
-        // genuinely rendered, which is the only case this needs to cover.
+        // here could wipe a selection the buyer had just made, which is the
+        // defect this holder exists to close. A country select being present
+        // means an address form is genuinely rendered, which is the only case
+        // this needs to cover.
         if (document.querySelector("select[name='id_country'], select[name='country']")) {
             this.clearConfirmedCompanySelection();
         }
@@ -2364,8 +2363,8 @@ class TwoCheckoutManager {
                 // address-area company/companyid DOM fields once search has
                 // relocated to the tile.
                 companySearchInAddressArea: this.config.companySearchInAddressArea !== false,
-                // TWO-25326 bug 8: read through a getter rather than passed by
-                // value, so the module always sees the CURRENT selection - this
+                // TWO-25326: read through a getter rather than passed by value,
+                // so the module always sees the CURRENT selection - this
                 // instance is built once, on the first Two selection, and long
                 // outlives any individual company choice.
                 getConfirmedCompany: () => this.getConfirmedCompanySelection(),
@@ -2491,14 +2490,14 @@ class TwoCheckoutManager {
      * The checkout address currently selected, or 0 when unknown.
      *
      * DELEGATES to TwoOrderIntent.getCurrentAddressId() whenever that module
-     * exists (review round 1). The value captured here is compared against the
-     * value THAT method resolves, so two independent resolutions with different
-     * fallback orders would disagree on a page where both a hidden
-     * `id_address_invoice` input and an open edit form are present - and a
-     * disagreement reads as "the buyer switched address", silently throwing away
-     * a valid selection and falling back to the very cookie path this exists to
-     * avoid. The local fallback below is a byte-for-byte mirror of that method's
-     * order for the case where the intent module has not been built yet.
+     * exists. The value captured here is compared against the value THAT method
+     * resolves, so two independent resolutions with different fallback orders
+     * would disagree on a page where both a hidden `id_address_invoice` input
+     * and an open edit form are present - and a disagreement reads as "the buyer
+     * switched address", silently throwing away a valid selection and falling
+     * back to the very cookie path this exists to avoid. The local fallback
+     * below is a byte-for-byte mirror of that method's order for the case where
+     * the intent module has not been built yet.
      *
      * @returns {number}
      */

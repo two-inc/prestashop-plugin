@@ -1,5 +1,5 @@
 /**
- * TWO-25326 bug 10: the company-search control does not reflow on resize.
+ * TWO-25326: the company-search control does not reflow on resize.
  *
  * ROOT CAUSE. ensureFieldWrapper() PINS the wrapper width in pixels, measured
  * from the input's own `outerWidth()`. Once pinned, the input - being

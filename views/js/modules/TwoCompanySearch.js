@@ -390,18 +390,18 @@ class TwoCompanySearch {
     
     /**
      * Marker class on this field's `.ui-autocomplete`, so the CSS can clamp THIS
-     * field's dropdown without also clamping an unrelated jQuery UI
-     * autocomplete elsewhere on the page - `.ui-autocomplete` is jQuery UI's
-     * own un-namespaced default class (TWO-30.x.10).
+     * field's dropdown without also clamping an unrelated jQuery UI autocomplete
+     * elsewhere on the page - `.ui-autocomplete` is jQuery UI's own un-namespaced
+     * default class.
      */
     static AUTOCOMPLETE_MENU_CLASS = 'two-company-autocomplete-menu';
 
     /**
      * Publish the company field's width as a CSS custom property on THIS
-     * instance's own panel (TWO-30.x.10 element 1) - on
-     * `document.documentElement` one control's width clamps another's dropdown.
-     * `setProperty()` rather than jQuery's `.css()`, which may mangle a custom
-     * property. No consumer left: the stylesheet unclamps menus in the panel.
+     * instance's own panel, not on `document.documentElement` where one control's
+     * width would clamp another's dropdown. `setProperty()` rather than jQuery's
+     * `.css()`, which may mangle a custom property. No consumer left: the
+     * stylesheet unclamps menus in the panel.
      */
     constrainAutocompleteMenuWidth() {
         const panel = this._dropdown && this._dropdown.length ? this._dropdown.get(0) : null;
@@ -433,11 +433,11 @@ class TwoCompanySearch {
     /**
      * Wrap the company field in a tight-fitting positioned span, idempotently.
      *
-     * TWO-30.x.10 element 2/3: positioning against the field's THEME wrapper (a
-     * Bootstrap `.form-group`/column div) is wrong, because that box commonly
-     * carries its own padding and so has a different width and left offset than
-     * the input it contains. A dedicated wrapper hugging only the input removes
-     * the dependency on whatever padding a theme's wrapper happens to carry.
+     * Positioning against the field's THEME wrapper (a Bootstrap
+     * `.form-group`/column div) is wrong, because that box commonly carries its
+     * own padding and so has a different width and left offset than the input it
+     * contains. A dedicated wrapper hugging only the input removes the dependency
+     * on whatever padding a theme's wrapper happens to carry.
      *
      * Re-run on every setupAutocomplete() call (not only init()), because that
      * method re-resolves `this.companyField` against whatever node PrestaShop
@@ -467,12 +467,12 @@ class TwoCompanySearch {
         if (!wrapper.children('.two-company-name-spinner').length) {
             wrapper.append('<span class="two-company-name-spinner" aria-hidden="true"></span>');
         }
-        // TWO-25326 bug 10: RELEASE any width this method pinned on a previous
-        // call before measuring, or the pin latches and the control never
-        // follows the viewport again. The input is a theme `.form-control`
-        // (`width: 100%` of its container), and after the first call that
-        // container IS this wrapper at a fixed pixel width - so `outerWidth()`
-        // stops measuring the layout and reads back the value pinned last time.
+        // TWO-25326: RELEASE any width this method pinned on a previous call
+        // before measuring, or the pin latches and the control never follows the
+        // viewport again. The input is a theme `.form-control` (`width: 100%` of
+        // its container), and after the first call that container IS this wrapper
+        // at a fixed pixel width - so `outerWidth()` stops measuring the layout
+        // and reads back the value pinned last time.
         //
         // Released and re-measured rather than simply not pinned: the pin is
         // still load-bearing on themes where the input has its own narrower
@@ -502,10 +502,10 @@ class TwoCompanySearch {
     }
 
     /**
-     * Keep the wrapper width and the dropdown-clamp CSS variable current across
-     * a viewport change, not only on the next keystroke (TWO-30.x.10). Both are
-     * otherwise refreshed only from the `source` callback, so a buyer who
-     * rotates a tablet without typing again sees them drift.
+     * Keep the wrapper width and the dropdown-clamp CSS variable current across a
+     * viewport change, not only on the next keystroke. Both are otherwise
+     * refreshed only from the `source` callback, so a buyer who rotates a tablet
+     * without typing again sees them drift.
      *
      * Bound at most once per instance (`_widthRefreshBound`): this method
      * re-runs on every country change and address-form update, and a second
@@ -762,8 +762,8 @@ class TwoCompanySearch {
      * sweep; a focus-moving control cannot.
      */
     removeDropdown() {
-        // A full teardown must not leave the settle listener bound past the
-        // panel it would have called closeDropdown() on (TWO-40 round 4).
+        // A full teardown must not leave the settle listener bound past the panel
+        // it would have called closeDropdown() on (TWO-40).
         this.endSoleTraderLoading();
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
@@ -849,13 +849,12 @@ class TwoCompanySearch {
             this._notListedButton.off('.twoDropdown');
             this._notListedButton.on('click.twoDropdown', (event) => {
                 event.preventDefault();
-                // #30.x.14 bug 2.5: this button sits inside the address step's
-                // markup and the theme binds a delegated accordion-toggle
-                // handler above it, which reads a stray click as "collapse this
-                // step".
+                // this button sits inside the address step's markup and the theme
+                // binds a delegated accordion-toggle handler above it, which
+                // reads a stray click as "collapse this step".
                 event.stopPropagation();
                 this._chipMode = 'manual';
-                // Abandons any Sole Trader wait in progress (TWO-40 round 4)
+                // Abandons any Sole Trader wait in progress (TWO-40)
                 // - this handler does not go through closeDropdown(), so
                 // without this the name-field spinner would keep spinning
                 // and the settle listener would stay bound past the flow the
@@ -898,13 +897,13 @@ class TwoCompanySearch {
                     this._closeTimerId = null;
                     return;
                 }
-                // Re-entrancy guard (TWO-40 round 5): this button stays
-                // clickable for the WHOLE round trip. TwoSoleTrader.js's own
-                // guards only cover the token-mint stage (`isFetchingTokens`);
-                // a second click landing during the buyer-lookup stage
-                // re-entered startEnrollment()'s "resume" branch and fired a
-                // second concurrent getCurrentBuyer() - on the no-match path
-                // that opened TWO signup popups from one buyer gesture.
+                // Re-entrancy guard (TWO-40): this button stays clickable for the
+                // WHOLE round trip. TwoSoleTrader.js's own guards only cover the
+                // token-mint stage (`isFetchingTokens`); a second click landing
+                // during the buyer-lookup stage re-entered startEnrollment()'s
+                // "resume" branch and fired a second concurrent getCurrentBuyer()
+                // - on the no-match path that opened TWO signup popups from one
+                // buyer gesture.
                 if (this._soleTraderLoading) {
                     if (!this._panelKeptPastPopup) {
                         return;
@@ -930,14 +929,14 @@ class TwoCompanySearch {
                 if (soleTrader && typeof soleTrader.startEnrollment === 'function') {
                     // Keep the panel OPEN and show the company-name field's
                     // spinner for the actual duration of this click's autofill
-                    // round trip (Doug, TWO-40 round 4). See
+                    // round trip (Doug, TWO-40). See
                     // beginSoleTraderLoading()/endSoleTraderLoading() for the
                     // event contract with TwoSoleTrader.js.
                     this.beginSoleTraderLoading();
                     try {
-                        // startEnrollment() is foreign-module code: a
-                        // synchronous throw would leave the spinner open with
-                        // nothing left to ever settle it (TWO-40 round 5).
+                        // startEnrollment() is foreign-module code: a synchronous
+                        // throw would leave the spinner open with nothing left to
+                        // ever settle it (TWO-40).
                         soleTrader.startEnrollment(
                             this._instanceNs,
                             this._soleTraderButton && this._soleTraderButton.get(0)
@@ -947,13 +946,13 @@ class TwoCompanySearch {
                         this.closeDropdown(true);
                     }
                 } else {
-                    // Nothing to wait on. Deferred by one
-                    // requestAnimationFrame because this branch does not go
-                    // through beginSoleTraderLoading()'s keep-open window, so
+                    // Nothing to wait on. Deferred by one requestAnimationFrame
+                    // because this branch does not go through
+                    // beginSoleTraderLoading()'s keep-open window, so
                     // renderChipSelection() and closeDropdown() would otherwise
-                    // land in the same synchronous tick with zero painted
-                    // frames (TWO-40 round 5). Only reachable when the global
-                    // instance is missing/malformed.
+                    // land in the same synchronous tick with zero painted frames
+                    // (TWO-40). Only reachable when the global instance is
+                    // missing/malformed.
                     window.requestAnimationFrame(() => this.closeDropdown(true));
                 }
             });
@@ -1449,8 +1448,8 @@ class TwoCompanySearch {
      */
     closeDropdown(returnFocus) {
         // Every way the panel closes must leave no sole-trader spinner or stray
-        // settle-listener behind (TWO-40 round 4) - Escape, for instance, goes
-        // straight to closeDropdown() otherwise.
+        // settle-listener behind (TWO-40) - Escape, for instance, goes straight
+        // to closeDropdown() otherwise.
         this.endSoleTraderLoading();
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
@@ -1537,11 +1536,11 @@ class TwoCompanySearch {
     }
 
     /**
-     * Visibility gating for the "Registered Company" mode chip. Visible
-     * whenever the panel is open, same as "Enter Manually", AND-ed with the
-     * country gate below - company search in a country bifrost's
-     * GET /companies/v2/supported-countries does not list returns no results,
-     * so offering the chip there just shows an empty panel.
+     * Visibility gating for the "Registered Company" mode chip. Visible whenever
+     * the panel is open, same as "Enter Manually", AND-ed with the country gate
+     * below - company search in a country that GET
+     * /companies/v2/supported-countries does not list returns no results, so
+     * offering the chip there just shows an empty panel.
      */
     syncRegisteredEntryVisibility() {
         if (!this._registeredButton || !this._registeredButton.length) {
@@ -1938,10 +1937,10 @@ class TwoCompanySearch {
         });
 
         this.companyField.on('mousedown.twoCompanyOpen', (event) => {
-            // NOT guarded on `this._dropdownOpen` (TWO-40 round 5): clicking
-            // the company field again - even while the panel is already open,
-            // e.g. with a Sole Trader wait in progress - is the buyer's own
-            // deliberate way back to ordinary search.
+            // NOT guarded on `this._dropdownOpen` (TWO-40): clicking the company
+            // field again - even while the panel is already open, e.g. with a
+            // Sole Trader wait in progress - is the buyer's own deliberate way
+            // back to ordinary search.
             if (this._destroyed || this._manualEntry) {
                 return;
             }
@@ -2331,12 +2330,12 @@ class TwoCompanySearch {
      * Used to recognise a candidate scope that is really the STEP: anything with
      * one of these INSIDE it spans more than one address, and is not a scope.
      *
-     * The ids alone are NOT enough (TWO-40, round 6): a theme is free to drop
-     * core's ids while keeping the rest of its markup, and then the step's outer
-     * wrapper looks blockless while still containing the other address. Hence
-     * also the classes core puts on a saved-address selector and its items, and
-     * the radio carrying the other address's id - a form field name rather than
-     * a styling hook, so a theme cannot drop it without breaking submission.
+     * The ids alone are NOT enough (TWO-40): a theme is free to drop core's ids
+     * while keeping the rest of its markup, and then the step's outer wrapper
+     * looks blockless while still containing the other address. Hence also the
+     * classes core puts on a saved-address selector and its items, and the radio
+     * carrying the other address's id - a form field name rather than a styling
+     * hook, so a theme cannot drop it without breaking submission.
      *
      * Nothing here can reject a legitimate scope: not one of these appears in
      * the markup of core's address FORM, which is all a correctly resolved scope
@@ -2368,12 +2367,12 @@ class TwoCompanySearch {
      * `<form>` inside the step's outer one (HTML drops the inner tag, so the
      * block element is the reliable boundary, not the form).
      *
-     * FAILS CLOSED (TWO-40, round 5): a candidate that CONTAINS another address
-     * block is rejected outright rather than used. The outer `.js-address-form`
-     * wrapper core emits around the whole step contains BOTH address blocks, and
-     * writing into it is precisely the document-wide write this feature exists
-     * to prevent. No scope means no mirror, a visible no-op, where a widened
-     * scope is a silent write into an address the buyer is not looking at.
+     * FAILS CLOSED (TWO-40): a candidate that CONTAINS another address block is
+     * rejected outright rather than used. The outer `.js-address-form` wrapper
+     * core emits around the whole step contains BOTH address blocks, and writing
+     * into it is precisely the document-wide write this feature exists to
+     * prevent. No scope means no mirror, a visible no-op, where a widened scope
+     * is a silent write into an address the buyer is not looking at.
      *
      * @returns {?Element}
      */
@@ -2863,19 +2862,18 @@ class TwoCompanySearch {
         // one the mirror recorded writing - which a pin caused by the company field
         // rules out.
         //
-        // COMPLETE is NOT inert on a pinned address, and that is deliberate rather
-        // than an oversight (TWO-40, round 1 of the content-match rework). A pin
-        // raised by a DIFFERENT field - a city the buyer typed - leaves the marked
-        // company name untouched, so the completion still fires there. It is
-        // bounded instead of gated: it writes only the NUMBER half of a pair the
-        // plugin itself created, only while the name half is still the mirror's own
-        // marked value, and only into an identification field that is empty and
-        // carries no marker of any kind. Gating it on the pin would put back the
-        // defect it was written to close - a mirrored company name reaching the
-        // order payload with no organisation number beside it, on a form where core
-        // requires one - and protecting that pair is worth more than the pin's
-        // reach here, because an empty unmarked field holds no answer of the
-        // buyer's to protect.
+        // COMPLETE is NOT inert on a pinned address, and that is deliberate
+        // rather than an oversight (TWO-40). A pin raised by a DIFFERENT field -
+        // a city the buyer typed - leaves the marked company name untouched, so
+        // the completion still fires there. It is bounded instead of gated: it
+        // writes only the NUMBER half of a pair the plugin itself created, only
+        // while the name half is still the mirror's own marked value, and only
+        // into an identification field that is empty and carries no marker of any
+        // kind. Gating it on the pin would put back the defect it was written to
+        // close - a mirrored company name reaching the order payload with no
+        // organisation number beside it, on a form where core requires one - and
+        // protecting that pair is worth more than the pin's reach here, because
+        // an empty unmarked field holds no answer of the buyer's to protect.
         if (!this.secondaryAddressIsPinned(root)) {
             this.populateInvoiceAddressFromConfirmedCompany(root);
         }
@@ -3571,11 +3569,10 @@ class TwoCompanySearch {
                 );
                 // Bound directly via jQuery, not through the widget -
                 // `autocomplete('destroy')` above only unwinds bindings the
-                // widget itself made (review finding, Han: harmless today
-                // only because a detached node can never receive a native
-                // focus/mousedown event again, an invariant this method does
-                // not otherwise rely on and the next DOM-recycling path could
-                // break silently).
+                // widget itself made (harmless today only because a detached node
+                // can never receive a native focus/mousedown event again, an
+                // invariant this method does not otherwise rely on and the next
+                // DOM-recycling path could break silently).
                 previousField.off('.twoCompanyOpen');
                 previousField.removeAttr('readonly aria-haspopup aria-expanded');
             }
@@ -3620,7 +3617,7 @@ class TwoCompanySearch {
         // Scope resolves on this render, so the withheld branch above did not
         // just run - drop any forced entry an earlier render on this SAME
         // instance left set, or it would stay stuck true for the rest of this
-        // instance's life with nothing left to clear it (round 2 review).
+        // instance's life with nothing left to clear it.
         this._manualEntryForced = false;
 
         // The anchored panel and its query field (TWO-25326 §1). Same re-run
@@ -3682,29 +3679,27 @@ class TwoCompanySearch {
             this._queryField.autocomplete({
                 appendTo: this._resultsList,
                 source: (request, response) => {
-                    // TWO-30.x.10 element 1: jQuery UI's own `_resizeMenu`
-                    // sizes the dropdown to whichever is WIDER, the field or
-                    // the longest rendered label - with up to 50 results plus
-                    // the manual-entry row, that reliably outgrows the field
-                    // by a large margin (625px against a 281px field, live).
-                    // Refreshed on every keystroke, before jQuery UI has a
-                    // chance to (re)compute its own inline width, so the CSS
-                    // rule below - `max-width: var(...)` - is already correct
-                    // by the time this request's response paints. A stylesheet
-                    // max-width caps the USED width regardless of what inline
-                    // `width` jQuery UI sets, with no `!important` required:
-                    // that is simply how the CSS width algorithm resolves
-                    // width against max-width.
+                    // jQuery UI's own `_resizeMenu` sizes the dropdown to
+                    // whichever is WIDER, the field or the longest rendered label
+                    // - with up to 50 results plus the manual-entry row, that
+                    // reliably outgrows the field by a large margin (625px
+                    // against a 281px field, live). Refreshed on every keystroke,
+                    // before jQuery UI has a chance to (re)compute its own inline
+                    // width, so the CSS rule below - `max-width: var(...)` - is
+                    // already correct by the time this request's response paints.
+                    // A stylesheet max-width caps the USED width regardless of
+                    // what inline `width` jQuery UI sets, with no `!important`
+                    // required: that is simply how the CSS width algorithm
+                    // resolves width against max-width.
                     //
-                    // ensureFieldWrapper() refreshed alongside it (round-2
-                    // review finding, Vader): a field hidden behind a
-                    // collapsed checkout step at page load measures 0 width,
-                    // so the wrapper's pinned width is cleared rather than
+                    // ensureFieldWrapper() refreshed alongside it: a field hidden
+                    // behind a collapsed checkout step at page load measures 0
+                    // width, so the wrapper's pinned width is cleared rather than
                     // set - and no `resize`/`orientationchange` fires just
-                    // because a later step reveals it. The first keystroke
-                    // once the buyer reaches it is the next point either
-                    // measurement can be trusted, so both are refreshed here,
-                    // not only the dropdown clamp.
+                    // because a later step reveals it. The first keystroke once
+                    // the buyer reaches it is the next point either measurement
+                    // can be trusted, so both are refreshed here, not only the
+                    // dropdown clamp.
                     this.ensureFieldWrapper();
                     this.constrainAutocompleteMenuWidth();
                     const term = String(request.term || '');
@@ -3815,14 +3810,13 @@ class TwoCompanySearch {
                 // 300ms matches the custom fallback path below and the
                 // Magento/WooCommerce plugins.
                 delay: 300,
-                // #30.x.14 bug 2.1, live-verified: jQuery UI's own default
-                // (`my: "left top"` against `at: "left bottom"`) butts the
-                // menu directly against the field with a zero-pixel seam - on
-                // screen it reads as one continuous control rather than a
-                // floating panel distinct from the input, which is exactly
-                // the "still just editing in the field" complaint. `top+8`
-                // opens a real gap so the two are visibly separate boxes, the
-                // same visual break Mag/WC's select2/selectWoo panel has
+                // jQuery UI's own default (`my: "left top"` against `at: "left
+                // bottom"`) butts the menu directly against the field with a
+                // zero-pixel seam - on screen it reads as one continuous control
+                // rather than a floating panel distinct from the input, which is
+                // exactly the "still just editing in the field" complaint.
+                // `top+8` opens a real gap so the two are visibly separate boxes,
+                // the same visual break Mag/WC's select2/selectWoo panel has
                 // below its own combobox.
                 position: { my: 'left top+8', at: 'left bottom', collision: 'none' },
                 select: (event, ui) => {
@@ -3869,20 +3863,19 @@ class TwoCompanySearch {
                 }
             });
 
-            // Marker class for the CSS width clamp (TWO-30.x.10 element 1,
-            // Han review finding): `.ui-autocomplete` is jQuery UI's own
-            // un-namespaced default class, shared by any OTHER jQuery UI
+            // Marker class for the CSS width clamp: `.ui-autocomplete` is jQuery
+            // UI's own un-namespaced default class, shared by any OTHER jQuery UI
             // autocomplete that might be live on the same page (a native
             // PrestaShop lookup, another module). `addClass` is idempotent, so
             // this is safe to repeat on every setupAutocomplete() re-run.
             //
-            // Wrapped in try/catch (round-2 review finding, Han): this is
-            // cosmetic, not core search functionality, and
+            // Wrapped in try/catch: this is cosmetic, not core search
+            // functionality, and
             // `autocomplete('widget')`/`autocomplete('instance')` below it is
-            // ALREADY documented as capable of throwing on a non-standard
-            // jQuery UI build. An uncaught throw here would escape
-            // setupAutocomplete(), init() and the constructor, aborting
-            // company search entirely over a failed style hook.
+            // ALREADY documented as capable of throwing on a non-standard jQuery
+            // UI build. An uncaught throw here would escape setupAutocomplete(),
+            // init() and the constructor, aborting company search entirely over a
+            // failed style hook.
             try {
                 const menu = this._queryField.autocomplete('widget');
                 menu.addClass(TwoCompanySearch.AUTOCOMPLETE_MENU_CLASS);
@@ -4147,11 +4140,11 @@ class TwoCompanySearch {
         this.setCompanyIdHint('');
         this.clearLookupWrittenAddressIdentifiers();
         this.clearPersistedCompany();
-        // FOURTH half (TWO-25326 bug 8): the in-memory copy the order-intent
-        // payload is built from. Clearing the cookie and leaving this behind
-        // would reintroduce the very defect it exists to fix, inverted - the
-        // intent would keep credit-checking a company the buyer has explicitly
-        // moved off, and would do it in preference to the cleared cookie.
+        // FOURTH half (TWO-25326): the in-memory copy the order-intent payload is
+        // built from. Clearing the cookie and leaving this behind would
+        // reintroduce the very defect it exists to fix, inverted - the intent
+        // would keep credit-checking a company the buyer has explicitly moved
+        // off, and would do it in preference to the cleared cookie.
         this.publishConfirmedSelection('', '');
         // FIFTH half (TWO-40 follow-up): whatever sole-trader identity this
         // clear is walking away from, the "Select a different sole trader"
@@ -4307,16 +4300,15 @@ class TwoCompanySearch {
             .text(this.getBackToSearchText());
         link.on('click.twoManualEntry', (event) => {
             event.preventDefault();
-            // Stop the click here (#30.x.14 bug 2.5, live-verified): with no
-            // stopPropagation, this click bubbled up into whatever delegated
-            // accordion-toggle handler the checkout theme binds on the
-            // address step container, and that handler read the same click
-            // as "collapse this step" - closing the whole address section the
-            // buyer was in the middle of, rather than just switching this
-            // field back to search. This button is a plain sibling inside
-            // that step's markup, not something the accordion is meant to
-            // hear from at all, so the fix is to keep the click here rather
-            // than let it carry on up past a node that never asked for it.
+            // Stop the click here: with no stopPropagation, this click bubbled up
+            // into whatever delegated accordion-toggle handler the checkout theme
+            // binds on the address step container, and that handler read the same
+            // click as "collapse this step" - closing the whole address section
+            // the buyer was in the middle of, rather than just switching this
+            // field back to search. This button is a plain sibling inside that
+            // step's markup, not something the accordion is meant to hear from at
+            // all, so the fix is to keep the click here rather than let it carry
+            // on up past a node that never asked for it.
             event.stopPropagation();
             this.exitManualEntryMode();
         });
@@ -4379,11 +4371,10 @@ class TwoCompanySearch {
      * trader is already adopted (Doug's ruling: the two must behave
      * identically, not one being a no-op).
      *
-     * Re-entrancy guard (adversarial review finding, TWO-40 follow-up -
-     * Han/Vader independently caught this): `TwoSoleTrader.startReplacement()`
-     * opens the popup SYNCHRONOUSLY with no guard of its own (unlike
-     * getCurrentBuyer()'s `isFetchingBuyer`) - without this, a double-click
-     * reliably opened two signup popups from one gesture.
+     * Re-entrancy guard (TWO-40): `TwoSoleTrader.startReplacement()` opens the
+     * popup SYNCHRONOUSLY with no guard of its own (unlike getCurrentBuyer()'s
+     * `isFetchingBuyer`) - without this, a double-click reliably opened two
+     * signup popups from one gesture.
      *
      * That guard, the spinner and the settle listener are now
      * beginSoleTraderLoading()'s, shared with the chip's own first-time
@@ -4409,8 +4400,7 @@ class TwoCompanySearch {
             } else {
                 // Nothing is going to fire the settle event for this click,
                 // so release the guard here rather than leaving it stuck and
-                // log visibly rather than a completely silent no-op
-                // (adversarial review finding).
+                // log visibly rather than a completely silent no-op.
                 // eslint-disable-next-line no-console
                 console.error('Two: TwoSoleTrader_Instance is missing or malformed; cannot reopen the signup popup.');
                 this.endSoleTraderLoading();
@@ -4451,9 +4441,9 @@ class TwoCompanySearch {
         link.on('click.twoSoleTraderReplace', (event) => {
             event.preventDefault();
             // Same accordion-toggle reason as renderBackToSearchLink()'s own
-            // stopPropagation (#30.x.14 bug 2.5): this button is a plain
-            // sibling inside the address step's markup, not something the
-            // theme's delegated collapse handler is meant to hear from.
+            // stopPropagation: this button is a plain sibling inside the address
+            // step's markup, not something the theme's delegated collapse handler
+            // is meant to hear from.
             event.stopPropagation();
             this.triggerSelectDifferentSoleTrader();
         });
@@ -4533,10 +4523,10 @@ class TwoCompanySearch {
     }
 
     /**
-     * @returns {string} the query field's accessible NAME (adversarial review
-     *   finding, round 2) - static, describing the field's role, deliberately
-     *   NOT the same string as the placeholder. See the comment in
-     *   buildDropdown() where this is applied for why the two must differ.
+     * @returns {string} the query field's accessible NAME - static,
+     *   describing the field's role, deliberately NOT the same string as the
+     *   placeholder. See the comment in buildDropdown() where this is applied
+     *   for why the two must differ.
      */
     getQueryAriaLabelText() {
         return this.text('company_search_query_label', 'Search for a company');
@@ -4553,16 +4543,15 @@ class TwoCompanySearch {
      * response (real results) can otherwise be carried forward hidden rather
      * than cleared.
      *
-     * `widget._suggest([])` (adversarial review finding), not
-     * `widget.menu.element.empty()`. `_suggest()` is Autocomplete's own
-     * method - `menu.element` is a level BELOW that, an internal property of
-     * the Menu sub-widget Autocomplete happens to compose, which is not part
-     * of Autocomplete's own documented surface at all. `_suggest([])` does
-     * the identical `this.menu.element.empty()` internally (see jQuery UI's
-     * own source) before rendering zero items, so this gets the same result
-     * through the one-level-shallower call. `response([])` right after this
-     * still runs `_close()` and hides the (now-empty) menu, so there is no
-     * visible flash between the two calls.
+     * `widget._suggest([])`, not `widget.menu.element.empty()`. `_suggest()` is
+     * Autocomplete's own method - `menu.element` is a level BELOW that, an
+     * internal property of the Menu sub-widget Autocomplete happens to compose,
+     * which is not part of Autocomplete's own documented surface at all.
+     * `_suggest([])` does the identical `this.menu.element.empty()` internally
+     * (see jQuery UI's own source) before rendering zero items, so this gets the
+     * same result through the one-level-shallower call. `response([])` right
+     * after this still runs `_close()` and hides the (now-empty) menu, so there
+     * is no visible flash between the two calls.
      *
      * @returns {void}
      */
@@ -5228,16 +5217,16 @@ class TwoCompanySearch {
             return '';
         }
 
-        // Both selectors (TWO-40 follow-up, adversarial review finding): this
-        // used to check `id_country` only, while TwoSoleTrader.js's
-        // billingCountry() and TwoOrderIntent.js's getCurrentAddressCountryISO()
-        // both already fell back to `select[name='country']` too. On a theme
-        // that renders the field under that name, this method fell straight
-        // through to `window.twopayment.company_search_country` (a page-load-time
-        // value, never reassigned client-side) while TwoSoleTrader.js resolved
-        // the LIVE value off the real select - so the sole-trader chip and the
-        // company search could silently disagree on country on exactly the
-        // theme shape this ticket's fix targets.
+        // BOTH selectors are queried, not `id_country` alone (TWO-40), because
+        // TwoSoleTrader.js's billingCountry() and TwoOrderIntent.js's
+        // getCurrentAddressCountryISO() also accept `select[name='country']`. On
+        // a theme that renders the field under that name, querying `id_country`
+        // alone falls straight through to
+        // `window.twopayment.company_search_country` (a page-load-time value,
+        // never reassigned client-side) while TwoSoleTrader.js resolved the LIVE
+        // value off the real select - so the sole-trader chip and the company
+        // search could silently disagree on country on exactly the theme shape
+        // this ticket's fix targets.
         const countryField = this.scopedQuery("select[name='id_country'], select[name='country']");
         if (countryField && countryField.selectedOptions.length > 0) {
             const selectedOption = countryField.selectedOptions[0];
@@ -5293,13 +5282,13 @@ class TwoCompanySearch {
      * hand; there is no test or build step that would catch one drifting from
      * the other.
      *
-     * nl/no/sv entries added (adversarial review finding, TWO-40 follow-up
-     * round 2): this shop ships nl/no/sv translations, so a theme with no
-     * `data-iso*` attribute and no id in `window.twopayment.countries`,
-     * rendered in one of those locales, used to fall through this map
-     * silently - reaching only English/Spanish/French country names left the
-     * text-match strategy blind for three of the shop's own locales, exactly
-     * the failure mode this whole fallback chain exists to close.
+     * nl/no/sv entries added (TWO-40): this shop ships nl/no/sv translations, so
+     * a theme with no `data-iso*` attribute and no id in
+     * `window.twopayment.countries`, rendered in one of those locales, used to
+     * fall through this map silently - reaching only English/Spanish/French
+     * country names left the text-match strategy blind for three of the shop's
+     * own locales, exactly the failure mode this whole fallback chain exists to
+     * close.
      */
     extractCountryFromText(text) {
         const countryMap = {
@@ -5387,8 +5376,8 @@ class TwoCompanySearch {
         if (ui.item.organization_number) {
             this.markOrganizationFieldSelected(ui.item.value, ui.item.organization_number);
 
-            // Publish BEFORE the cookie write and before the intent trigger:
-            // this is the copy the intent check will actually read (bug 8).
+            // Publish BEFORE the cookie write and before the intent trigger: this
+            // is the copy the intent check will actually read.
             this.publishConfirmedSelection(ui.item.value, ui.item.organization_number);
 
             // Persist for reliability across steps
@@ -5403,16 +5392,15 @@ class TwoCompanySearch {
             this.writeOrganizationToAddressIdentifiers(ui.item.organization_number);
         } else {
             // No org number on this result (e.g. GB, resolved later via
-            // fetchCompanyDetails/lookup_id). Adversarial review rounds 4-5
-            // (TWO-25326): clearing only organizationField+hint (round 4)
-            // still left the DNI/VAT identifier fields holding the PREVIOUS
-            // company's number, with their autofill marker intact - so
-            // setupAddressIdentifierSync()'s submit-time sync would adopt
-            // that leftover DNI value as this NEW company's org number,
-            // shipping a mismatched pair to the actual credit-check payload.
-            // The session cookie (persistCompanyToCookie) needed the same
-            // treatment. clearSelectedCompany() already does all of this
-            // atomically - use it instead of a partial hand-rolled clear.
+            // fetchCompanyDetails/lookup_id). Clearing only
+            // organizationField+hint (TWO-25326) still leaves the DNI/VAT
+            // identifier fields holding the PREVIOUS company's number, with their
+            // autofill marker intact - so setupAddressIdentifierSync()'s
+            // submit-time sync would adopt that leftover DNI value as this NEW
+            // company's org number, shipping a mismatched pair to the actual
+            // credit-check payload. The session cookie (persistCompanyToCookie)
+            // needed the same treatment. clearSelectedCompany() already does all
+            // of this atomically - use it instead of a partial hand-rolled clear.
             this.clearSelectedCompany();
         }
 
@@ -5521,11 +5509,11 @@ class TwoCompanySearch {
                         natIdVal
                     );
                     this.writeOrganizationToAddressIdentifiers(natIdVal);
-                    // Deferred (GB) path: the number only exists now, so this
-                    // is where the confirmed pair becomes publishable - and it
-                    // must be published BEFORE the intent trigger that
+                    // Deferred (GB) path: the number only exists now, so this is
+                    // where the confirmed pair becomes publishable - and it must
+                    // be published BEFORE the intent trigger that
                     // onCompanySelected()'s `finally` fires off the back of this
-                    // same lookup (TWO-25326 bug 8).
+                    // same lookup (TWO-25326).
                     this.publishConfirmedSelection(
                         this.companyField ? this.companyField.val() : '',
                         natIdVal
@@ -5550,7 +5538,7 @@ class TwoCompanySearch {
             const addresses = (details && (details.addresses || (details.company && details.company.addresses))) || [];
             if (Array.isArray(addresses) && addresses.length > 0 && stillOnSameCompany) {
                 // THREE states here, not two, and the two that look alike are not
-                // (TWO-40, round 1 of the content-match rework):
+                // (TWO-40):
                 //
                 //  - the form on screen IS the secondary address: the fill's writes
                 //    go into the address the pin judges, so they have to be
@@ -5746,14 +5734,12 @@ class TwoCompanySearch {
                 // leaving it be.
                 this.closeDropdown(false);
 
-                // Abandon any sole-trader enrolment in flight for the
-                // PREVIOUS country (adversarial review round 2, TWO-40
-                // follow-up - Han finding). Without this, a mint/lookup
-                // started for the old country resolves with
-                // `_enrollGeneration` never bumped, reads as still-current,
-                // and can pop a signup popup - or worse, silently publish a
-                // completed enrolment - for a country the buyer has already
-                // moved off.
+                // Abandon any sole-trader enrolment in flight for the PREVIOUS
+                // country (TWO-40). Without this, a mint/lookup started for the
+                // old country resolves with `_enrollGeneration` never bumped,
+                // reads as still-current, and can pop a signup popup - or worse,
+                // silently publish a completed enrolment - for a country the
+                // buyer has already moved off.
                 //
                 // The popup goes too, for the same reason: its tokens were
                 // minted against the country the buyer just left, so nothing
@@ -5776,10 +5762,9 @@ class TwoCompanySearch {
                 if (this.companyField && this.companyField.length > 0) {
                     this.companyField.val('');
                 }
-                // Adversarial review round 5 (TWO-25326): a manual
-                // organizationField+hint clear here left the DNI/VAT
-                // identifier fields and the session cookie holding the
-                // PREVIOUS country's company - same gap as the
+                // TWO-25326: a manual organizationField+hint clear here leaves
+                // the DNI/VAT identifier fields and the session cookie holding
+                // the PREVIOUS country's company - same gap as the
                 // onCompanySelected() no-org-number branch, same fix.
                 this.clearSelectedCompany();
                 // Recreate autocomplete to ensure new country is used immediately
@@ -5927,21 +5912,20 @@ class TwoCompanySearch {
         } catch (e) {
             // no-op
         }
-        // Its own try, same reason (adversarial review round 3, TWO-40
-        // follow-up - Vader finding): `TwoCheckoutManager.handleAddressFormUpdate()`
-        // destroys and rebuilds this instance on EVERY `updatedAddressForm`
-        // firing, not only on a country change - PrestaShop emits that event
-        // for far more than country changes (see the comment at its own call
-        // site). The country-select listener's own `cancelEnrollment()` call
-        // (round 2) only covers the country-change trigger; this covers every
-        // OTHER address-form replacement too. Without it, a sole-trader
-        // enrolment started against THIS instance, still in flight when the
-        // form gets replaced, resolves later against whatever instance is
-        // mounted then - `TwoSoleTrader.applyBuyer()` resolves
+        // Its own try, same reason (TWO-40):
+        // `TwoCheckoutManager.handleAddressFormUpdate()` destroys and rebuilds
+        // this instance on EVERY `updatedAddressForm` firing, not only on a
+        // country change - PrestaShop emits that event for far more than country
+        // changes (see the comment at its own call site). The country-select
+        // listener's own `cancelEnrollment()` call only covers the country-change
+        // trigger; this covers every OTHER address-form replacement too. Without
+        // it, a sole-trader enrolment started against THIS instance, still in
+        // flight when the form gets replaced, resolves later against whatever
+        // instance is mounted then - `TwoSoleTrader.applyBuyer()` resolves
         // `TwoCheckoutManager_Instance.companySearch` fresh, not a captured
-        // reference - silently adopting the identity into an address context
-        // the buyer has since moved on from, ungated because no generation
-        // bump ever ran for this trigger.
+        // reference - silently adopting the identity into an address context the
+        // buyer has since moved on from, ungated because no generation bump ever
+        // ran for this trigger.
         //
         // The CANCEL HALF ONLY - the one caller that deliberately does not use
         // abandonSoleTraderFlow(). Tearing down a search instance is not the
@@ -5977,11 +5961,10 @@ class TwoCompanySearch {
         // outliving this instance. The width CSS variable lives on this
         // instance's own panel, already removed above, so it needs no clearing.
         try {
-            // By reference, not by namespace alone (round-2 review finding,
-            // Vader) - `window` is a genuine page-wide singleton, so a
-            // namespace-only `.off('.twoCompanyWidth')` would remove another
-            // still-live instance's handler too, were one ever to exist at
-            // the same time as this one's teardown.
+            // By reference, not by namespace alone - `window` is a genuine
+            // page-wide singleton, so a namespace-only `.off('.twoCompanyWidth')`
+            // would remove another still-live instance's handler too, were one
+            // ever to exist at the same time as this one's teardown.
             if (this._widthRefreshHandler) {
                 $(window).off('resize.twoCompanyWidth orientationchange.twoCompanyWidth', this._widthRefreshHandler);
             }
@@ -6002,8 +5985,8 @@ class TwoCompanySearch {
 
     /**
      * Publish the confirmed company/organisation-number pair to
-     * TwoCheckoutManager, which holds it for the page's lifetime and hands it
-     * to TwoOrderIntent.collectFormData() (TWO-25326 bug 8).
+     * TwoCheckoutManager, which holds it for the page's lifetime and hands it to
+     * TwoOrderIntent.collectFormData() (TWO-25326).
      *
      * This is what makes the order-intent payload carry the company the buyer
      * actually just picked. It cannot come from the session cookie, because
@@ -6044,15 +6027,15 @@ class TwoCompanySearch {
      * visible number hint beside the field.
      *
      * The one path for that, deliberately, and the reason it exists as a method
-     * rather than three lines repeated: `data-two-company-name` is not decoration.
-     * It is the whole input to clearStaleOrganizationSelection(), which is what
-     * drops a selection once the buyer retypes the company name over it - and that
-     * guard reads `companyid` FIRST and returns immediately when it is empty. So a
-     * caller that places an organisation number anywhere else and skips these two
-     * writes does not merely miss a hint: it produces a selection the stale-
-     * selection guard cannot see at all, which is a credit check on one company
-     * under another company's name. That is exactly what the invoice-address
-     * mirror did before it was routed through here (TWO-40, round 5).
+     * rather than three lines repeated: `data-two-company-name` is not
+     * decoration. It is the whole input to clearStaleOrganizationSelection(),
+     * which is what drops a selection once the buyer retypes the company name
+     * over it - and that guard reads `companyid` FIRST and returns immediately
+     * when it is empty. So a caller that places an organisation number anywhere
+     * else and skips these two writes does not merely miss a hint: it produces a
+     * selection the stale-selection guard cannot see at all, which is a credit
+     * check on one company under another company's name. That is exactly what the
+     * invoice-address mirror did before it was routed through here (TWO-40).
      *
      * Does NOT publish to the manager and does NOT persist to the session: those
      * are separate concerns with separate ordering requirements, and one caller -
@@ -6106,18 +6089,19 @@ class TwoCompanySearch {
      * input event in the company field. That single mechanism is what killed all
      * three previous attempts.
      *
-     * A `TWO:`-prefixed organisation number goes into the hidden `companyid` and its
-     * `data-two-company-name` pairing tag like ANY OTHER, and is NOT written into the
-     * visible identification (`dni`) field (Doug's ruling, TWO-40, Option A). That
-     * one field is the only asymmetry - storage, pairing, the mirror, the session
-     * record and the routing are all uniform. It is not a sole-trader concept either:
-     * registered companies in some countries carry a `TWO:` identifier too, so the
-     * rule is keyed on the value and never on how it was captured. The reasoning for
-     * skipping `dni` (core's isDniLite validator rejects the value, our own reader
-     * rejects it too, and the field belongs to the buyer) lives on
-     * writeOrganizationToAddressIdentifiers(). An earlier round withheld the PAIRING
-     * and the NAME as well, and every defect that followed came from that divergence;
-     * this is deliberately not that.
+     * A `TWO:`-prefixed organisation number goes into the hidden `companyid` and
+     * its `data-two-company-name` pairing tag like ANY OTHER, and is NOT written
+     * into the visible identification (`dni`) field (Doug's ruling, TWO-40,
+     * Option A). That one field is the only asymmetry - storage, pairing, the
+     * mirror, the session record and the routing are all uniform. It is not a
+     * sole-trader concept either: registered companies in some countries carry a
+     * `TWO:` identifier too, so the rule is keyed on the value and never on how
+     * it was captured. The reasoning for skipping `dni` (core's isDniLite
+     * validator rejects the value, our own reader rejects it too, and the field
+     * belongs to the buyer) lives on writeOrganizationToAddressIdentifiers().
+     * Withholding the PAIRING and the NAME as well produces a mismatched
+     * name/number pair in the invoice form and breaks the "name and number travel
+     * together" invariant; this is deliberately not that.
      *
      * One value in the response IS deliberately not written, and it is a ruling
      * rather than an omission:
@@ -6167,20 +6151,20 @@ class TwoCompanySearch {
             && this.visibleAddressFormType() === 'invoice'
             && !this.visibleAddressFormRoot();
 
-        // THE PIN IS DELIBERATELY NOT CONSULTED HERE. This reverses an earlier
-        // review fix, and the reasoning is recorded so it is not "fixed" again.
+        // THE PIN IS DELIBERATELY NOT CONSULTED HERE, and the reasoning is
+        // recorded so it is not "fixed" again.
         //
-        // Round 1 added `secondaryAddressIsPinned()` as an early return, by analogy
-        // with the invoice mirror. Round 2 showed the analogy is false, in two ways.
-        // secondaryAddressFormRoot() resolves non-null ONLY when the invoice form is
-        // the VISIBLE, editable form - so the pin here gates the form the buyer is
-        // looking at and has just acted on, which is the opposite of what the pin is
-        // for. And an invoice form core pre-filled from a saved address carries
-        // street, postcode and city with nothing on record as having written them,
-        // which reads as buyer-authored and pins by DEFAULT - so the adoption would
-        // write nothing at all for every buyer editing an existing billing address.
-        // That is the reported bug reinstated: "absolutely nothing is being
-        // populated".
+        // Do NOT add `secondaryAddressIsPinned()` as an early return here: the
+        // analogy with the invoice mirror is false, in two ways.
+        // secondaryAddressFormRoot() resolves non-null ONLY when the invoice form
+        // is the VISIBLE, editable form - so the pin here gates the form the
+        // buyer is looking at and has just acted on, which is the opposite of
+        // what the pin is for. And an invoice form core pre-filled from a saved
+        // address carries street, postcode and city with nothing on record as
+        // having written them, which reads as buyer-authored and pins by DEFAULT
+        // - so the adoption would write nothing at all for every buyer editing an
+        // existing billing address. That is the reported bug reinstated:
+        // "absolutely nothing is being populated".
         //
         // The mirror's pin is right for the mirror because the mirror is a
         // cross-page-load carry-over into a form the buyer never asked it to touch.
@@ -6208,11 +6192,11 @@ class TwoCompanySearch {
         // filled, because an address fill carries no pairing and no such hazard.
         //
         // Writing nothing is NOT the same as leaving the form alone, though, and
-        // that distinction is a review finding rather than a subtlety: whatever
+        // the distinction is load-bearing rather than a subtlety: whatever
         // selection was standing before the buyer enrolled is still in the form -
-        // hidden pair, tag, and the lookup's own identification number - all of it
-        // belonging to a company the buyer has just moved off. The session and the
-        // manager now say sole trader while the form still says the abandoned
+        // hidden pair, tag, and the lookup's own identification number - all of
+        // it belonging to a company the buyer has just moved off. The session and
+        // the manager now say sole trader while the form still says the abandoned
         // company, and the resolver's address tier reads the form.
         //
         // Cleared field by field, and deliberately NOT through
@@ -6381,8 +6365,7 @@ class TwoCompanySearch {
         //
         // NO de-duplication against the street, on Doug's explicit ruling: it is
         // valid for an address to carry the same text on both lines, so suppressing a
-        // second line that matches the first would be discarding real data. An
-        // earlier round proposed exactly that and it was wrong.
+        // second line that matches the first would be discarding real data.
         const locator = [apartment, building].filter(Boolean).join(', ');
         const resolved = Object.assign({}, source);
         // The phone is carried on the response itself, not inside either address.

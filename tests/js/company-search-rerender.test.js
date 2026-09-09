@@ -121,7 +121,7 @@ describe('the real jQuery UI widget is what gets bound', () => {
         expect(searchInput().autocomplete('option', 'delay')).toBe(300);
     });
 
-    test('#30.x.14 bug 2.1: the menu opens with a visible gap below the field, not flush against it', () => {
+    test('the menu opens with a visible gap below the field, not flush against it', () => {
         makeInstance();
 
         // Live-verified: jQuery UI's default butted the menu flush against
@@ -215,12 +215,11 @@ describe('a click and a focus arrival both open the control', () => {
     });
 
     test('moving to a replaced field during setupAutocomplete() unbinds the old field\'s pointer/focus handlers', () => {
-        // Round-1 adversarial review finding (Han): setupAutocomplete()'s
-        // "moving to a replaced field" branch released the old field's
-        // jQuery UI widget but left `focus.twoCompanyOpen` /
-        // `mousedown.twoCompanyOpen` bound to it directly (they are bound
-        // via jQuery, not through the widget, so `autocomplete('destroy')`
-        // does not touch them).
+        // setupAutocomplete()'s "moving to a replaced field" branch released
+        // the old field's jQuery UI widget but left `focus.twoCompanyOpen` /
+        // `mousedown.twoCompanyOpen` bound to it directly (they are bound via
+        // jQuery, not through the widget, so `autocomplete('destroy')` does not
+        // touch them).
         const instance = makeInstance();
         const oldField = liveField();
 
@@ -362,14 +361,14 @@ describe('the company-search hints (TWO-25288)', () => {
 
             search('');
 
-            // #30.x.14 bug 2.1: a click into an empty field must open
-            // something, i.e. the PANEL - a plain `response([])` here is
-            // indistinguishable from "not a dropdown at all", which was the
-            // live complaint. TWO-25326 §1's separate focus-hint row and the
-            // too-short row it later merged into are BOTH gone now (TWO-40
-            // follow-up): the empty query renders no row at all, and the
-            // requirement lives in the query field's placeholder. Still not a
-            // real search, so no request goes out.
+            // a click into an empty field must open something, i.e. the PANEL -
+            // a plain `response([])` here is indistinguishable from "not a
+            // dropdown at all", which was the live complaint. TWO-25326 §1's
+            // separate focus-hint row and the too-short row it later merged
+            // into are BOTH gone now (TWO-40 follow-up): the empty query
+            // renders no row at all, and the requirement lives in the query
+            // field's placeholder. Still not a real search, so no request goes
+            // out.
             expect(rows()).toHaveLength(0);
             expect(ajax.calls).toHaveLength(0);
         });
@@ -761,14 +760,13 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         expect(shown(notListed())).toBe(true);
     });
 
-    test('#30.x.14: clicking the reverse link fires exactly one search, not two', () => {
-        // Round-1 adversarial review finding (Vader): exitManualEntryMode()
-        // used to BOTH `.trigger('focus')` (which the then-ungated
-        // `focus.twoCompanyOpen` handler treated as a fresh open) AND make
-        // its own explicit `autocomplete('search', term)` call - firing the
-        // search twice on every click. A raw ajax-call count can't tell the
-        // two apart: the result cache created for this same term by the
-        // search below serves BOTH calls with zero network requests either
+    test('clicking the reverse link fires exactly one search, not two', () => {
+        // exitManualEntryMode() used to BOTH `.trigger('focus')` (which the
+        // then-ungated `focus.twoCompanyOpen` handler treated as a fresh open)
+        // AND make its own explicit `autocomplete('search', term)` call -
+        // firing the search twice on every click. A raw ajax-call count can't
+        // tell the two apart: the result cache created for this same term by
+        // the search below serves BOTH calls with zero network requests either
         // way, whether the fix landed or not. Spying on the one shared call
         // site (openSearchForCurrentTerm()) is what actually distinguishes
         // them.
@@ -785,7 +783,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         spy.mockRestore();
     });
 
-    test('#30.x.14 bug 2.5: clicking it does not bubble into an ancestor handler (accordion-toggle regression)', () => {
+    test('clicking it does not bubble into an ancestor handler (accordion-toggle regression)', () => {
         const instance = makeInstance();
 
         search(AT_THRESHOLD);
@@ -1757,7 +1755,7 @@ describe('the organisation number reaches the address identifiers on submit', ()
         expect($("input[name='dni']").val()).toBe('buyer-typed');
     });
 
-    test('selecting a result with no organization_number and no lookup_id clears a PREVIOUS selection\'s number, not just its hint (adversarial review round 4, TWO-25326)', () => {
+    test('selecting a result with no organization_number and no lookup_id clears a PREVIOUS selection\'s number, not just its hint (TWO-25326)', () => {
         // First selection: a real org number captured.
         const search = makeInstance();
         search.onCompanySelected(null, {
@@ -1777,14 +1775,12 @@ describe('the organisation number reaches the address identifiers on submit', ()
         expect($("input[name='companyid']").attr('data-two-company-name')).toBeUndefined();
     });
 
-    test('selecting a no-org-number result also clears the DNI residue the previous selection wrote (adversarial review round 5, TWO-25326)', () => {
-        // Round 4 fixed organizationField/its tag but missed that
+    test('selecting a no-org-number result also clears the DNI residue the previous selection wrote (TWO-25326)', () => {
         // writeOrganizationToAddressIdentifiers() (called on the FIRST,
-        // org-number selection below) also marks the DNI field as
-        // autofilled with that number. setupAddressIdentifierSync()'s
-        // submit-time sync would otherwise adopt that leftover marked DNI
-        // value as the NEW company's org number, re-pairing it with the
-        // wrong name at submit.
+        // org-number selection below) also marks the DNI field as autofilled
+        // with that number. setupAddressIdentifierSync()'s submit-time sync
+        // would otherwise adopt that leftover marked DNI value as the NEW
+        // company's org number, re-pairing it with the wrong name at submit.
         const search = makeInstance();
         search.onCompanySelected(null, {
             item: { value: 'Example Trading Ltd', organization_number: '12345678' }

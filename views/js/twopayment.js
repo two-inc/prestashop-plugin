@@ -156,7 +156,7 @@
                     checkoutHost: twopayment.checkout_host,
                     orderIntentUrl: twopayment.order_intent_url,
                     ajaxToken: twopayment.ajax_token,
-                    // TWO-25326 bug 9: availability is about the cart's billing
+                    // TWO-25326: availability is about the cart's billing
                     // country, not the visitor/shop country. The payment step
                     // renders no country select, so it has to come from the
                     // payload - under its own key, since the search's

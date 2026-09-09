@@ -406,7 +406,7 @@ final class OrderCompanyPersistenceSpec
     /** @return array<string,string> */
     /**
      * A column the database refused to add must be DROPPED FROM THE WRITE, never
-     * written anyway (review round 4).
+     * written anyway.
      *
      * The failure is reachable without anyone doing anything wrong: files swapped
      * in place without core running an upgrade, or a database user with no ALTER

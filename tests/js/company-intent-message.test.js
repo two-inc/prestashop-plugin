@@ -97,7 +97,7 @@ describe('TwoOrderIntent.buildCompanyIntentMessage', () => {
     });
 });
 
-describe('TwoOrderIntent.publishPayloadCompany - name/number pairing (adversarial review round 2)', () => {
+describe('TwoOrderIntent.publishPayloadCompany - name/number pairing', () => {
     let TwoOrderIntent;
     let intent;
 

@@ -138,7 +138,7 @@ describe('click behaviour (b)', () => {
         instance.destroy();
     });
 
-    test('a rapid double-click only calls startReplacement() once (re-entrancy guard, TWO-40 review finding)', () => {
+    test('a rapid double-click only calls startReplacement() once (re-entrancy guard, TWO-40)', () => {
         const instance = makeSearchInstance();
         instance.adoptSoleTraderBuyer(NAMED_BUYER);
 
@@ -339,7 +339,7 @@ describe('popup URL (c)', () => {
     });
 });
 
-describe('country change abandons an in-flight replacement flow (e, round-2 review finding)', () => {
+describe('country change abandons an in-flight replacement flow (e)', () => {
     test('changing the billing country calls TwoSoleTrader_Instance.abandonEnrollment()', () => {
         const instance = makeSearchInstance();
         instance.adoptSoleTraderBuyer(NAMED_BUYER);
@@ -376,7 +376,7 @@ describe('country change abandons an in-flight replacement flow (e, round-2 revi
     });
 });
 
-describe('destroy() abandons an in-flight replacement flow too (f, round-3 review finding)', () => {
+describe('destroy() abandons an in-flight replacement flow too (f)', () => {
     test('destroy() calls TwoSoleTrader_Instance.cancelEnrollment() - covers updatedAddressForm rebuilds, not just a country change', () => {
         const instance = makeSearchInstance();
         instance.adoptSoleTraderBuyer(NAMED_BUYER);
@@ -389,8 +389,8 @@ describe('destroy() abandons an in-flight replacement flow too (f, round-3 revie
 
         // TwoCheckoutManager.handleAddressFormUpdate() destroys and rebuilds
         // this instance on EVERY `updatedAddressForm` firing (not only a
-        // country change - that's the round-2 fix's gap) - destroy() itself
-        // is the one choke point common to all of those triggers.
+        // country change, which the country listener alone would miss) -
+        // destroy() itself is the one choke point common to all triggers.
         instance.destroy();
 
         expect(cancelEnrollment).toHaveBeenCalledTimes(1);

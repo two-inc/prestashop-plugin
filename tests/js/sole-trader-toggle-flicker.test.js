@@ -1,5 +1,5 @@
 /**
- * TWO-25326 bug 9, availability-cache half. The cache
+ * TWO-25326, availability-cache half. The cache
  * isAvailableForCurrentCountry() reads must settle across payment-fragment
  * replacements and request storms. Two constraints inside TwoSoleTrader:
  *

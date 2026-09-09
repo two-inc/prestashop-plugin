@@ -245,8 +245,8 @@ describe('the survival test: the pair must outlive an ordinary input event, but 
  * `validate => isDniLite, size => 16`, and `Validate::isDniLite()` is
  * `/^[0-9A-Za-z-.]{1,16}$/U`. `TWO:ST123456789012` fails it twice - a colon is not in
  * the character class, and it is 18 characters - so core REFUSES TO SAVE THE ADDRESS,
- * and the error lands on a field the round that wrote it there was hiding: an
- * invisible, unfixable dead-end at checkout. It was pointless anyway, because this
+ * and the error lands on a field that would then be hidden: an
+ * invisible, unfixable dead-end at checkout. It is pointless anyway, because this
  * plugin's own reader validates `dni` against `/^[A-Z0-9\-]{5,20}$/i` and rejects the
  * colon too. And it is the wrong field: `isNeedDniByCountryId()` is country-level, so
  * `dni` is required of EVERY buyer in such a country - it is the buyer's own fiscal
@@ -839,9 +839,8 @@ describe('address routing: a building or apartment takes the first line, the str
     /**
      * NO DE-DUPLICATION, on Doug's explicit ruling. The captured response is exactly
      * this shape - `building` byte-identical to `street` - and it is valid for an
-     * address to carry the same text on both lines. An earlier round added a dedup
-     * that suppressed the second line, and it was rejected: suppressing it discards
-     * real data.
+     * address to carry the same text on both lines. A dedup suppressing the second
+     * line was rejected: suppressing it discards real data.
      */
     test('a building EQUAL to the street writes that same text to BOTH lines - no dedup', () => {
         buildAddressesStep({ editing: 'delivery' });
@@ -1053,8 +1052,8 @@ describe('the scoped writes reach ONE address block and no other', () => {
 
 describe('a pre-filled secondary address is still written into (the pin does not apply here)', () => {
     /**
-     * The INVERSE of an earlier review round's fix, and the reason is recorded in
-     * adoptSoleTraderBuyer() itself so it is not reinstated.
+     * The pin is deliberately not consulted here, and adoptSoleTraderBuyer()
+     * records the same reasoning so it is not reinstated there.
      *
      * secondaryAddressFormRoot() resolves non-null ONLY when the invoice form is
      * the VISIBLE, editable form - so consulting the mirror's pin here would gate

@@ -49,7 +49,7 @@ production shop ignores these variables even when they are present in its enviro
 exercise both. Also `rtrim($override, '/')` before appending `/soletrader/signup`, since a
 hand-typed env var may carry a trailing slash the host map never does.
 
-One asymmetry worth remembering (review round 1): unlike the API and portal hosts, this URL is
+One asymmetry worth remembering: unlike the API and portal hosts, this URL is
 never fetched server-side. The module only hands it to the browser, which opens it as a popup and
 then origin-checks the `postMessage` that comes back - so the value must resolve **in the
 browser**. `host.docker.internal` is a container-to-host alias and is the wrong answer here;
@@ -137,9 +137,8 @@ inconvenient to attribute:
   given the street takes the first line and the second is left alone. Both present are joined
   most-specific-first (`"Apartment 4, Mill House"`).
 - **No de-duplication against the street**, on Doug's explicit ruling: *"it is valid for some
-  addresses to have a matching first and second line so deduping would be wrong."* An earlier round
-  proposed exactly that dedup and it was rejected — an address whose `building` equals its `street`
-  writes that text to both lines.
+  addresses to have a matching first and second line so deduping would be wrong."* So an address
+  whose `building` equals its `street` writes that text to both lines.
 - **`region` → the form's state/county select where one exists, otherwise appended to `city` with a
   comma** (`"Ashford, Kent"`). The state match is best-effort by necessity: the response carries a
   region NAME with no code, PrestaShop needs a shop-local state id, so the only join available is on
@@ -169,8 +168,8 @@ visible `dni` address field.** That exception is forced by the platform, not cho
 - **Core rejects it.** `Address` declares `'dni' => ['validate' => 'isDniLite', 'size' => 16]` and
   `Validate::isDniLite()` is `/^[0-9A-Za-z-.]{1,16}$/U`. `TWO:ST123456789012` fails twice — a colon
   is not in the character class, and it is 18 characters. Writing it makes core **refuse to save the
-  address**, and an earlier round paired that with hiding the field, producing an invisible and
-  unfixable dead-end at checkout.
+  address**; pairing that with hiding the field produces an invisible and unfixable dead-end at
+  checkout.
 - **It is unreadable there anyway.** `extractOrgNumberFromAddress()` validates `dni` against
   `/^[A-Z0-9\-]{5,20}$/i`, which also rejects the colon. The value could never be read back, so
   persisting it there achieved nothing even when it did not break the save.
@@ -181,8 +180,8 @@ visible `dni` address field.** That exception is forced by the platform, not cho
   checkout outright.
 
 **There is consequently no display rule on that field, and that is a deletion rather than an
-omission.** An earlier round added `syncInternalIdentifierVisibility()` to hide it. With the value no
-longer reaching it there is nothing to hide — and the hiding could never have been complete, because
+omission.** With the value no longer reaching the field there is nothing to hide, and hiding it
+(`syncInternalIdentifierVisibility()`) could never have been complete anyway, because
 PrestaShop renders `dni` into address blocks, invoice PDFs and order emails through
 `AddressFormat::generateAddress()`, which no stylesheet reaches. The three genuine display surfaces
 (the hint under the company field, the search result rows, the order-intent sentence) continue to
@@ -193,10 +192,10 @@ column), the cart-scoped session record, the in-memory `$address->companyid` the
 controller sets, the order-scoped record described below, and the API payload. The prefix survives all
 of them unchanged.
 
-**The earlier round that refused the write for its own sake is superseded**, and the distinction
-matters: that round also withheld the pairing and the name, and every defect that followed came from
-*that* divergence — a mismatched name/number pair in the invoice form, the "name and number travel
-together" invariant broken, and the required-field dead-end above. Here the hidden pair, its tag, the
+**Refusing to write the identifier at all is NOT the rule here**, and the distinction matters:
+refusing it also withheld the pairing and the name, and that divergence is what produced a
+mismatched name/number pair in the invoice form, the broken "name and number travel together"
+invariant, and the required-field dead-end above. Here the hidden pair, its tag, the
 session record, the mirror and the routing all stay completely uniform. Only the buyer's own fiscal
 field is left alone.
 
@@ -253,8 +252,7 @@ script, or a database user with no `ALTER` privilege — and naming a nonexisten
 ENTIRE insert. That row carries `two_order_id`, the invoice URL and everything later status syncs key
 on, and the write happens inside the confirmation callback for an order Two has already approved.
 Losing the snapshot costs an empty organisation number on two admin PUTs; losing the row costs the
-buyer their order. The degradation is therefore exactly the pre-TWO-40 behaviour. Found by review
-round 4 — the first implementation logged the failure and wrote the column anyway.
+buyer their order. The degradation is therefore exactly the pre-TWO-40 behaviour.
 
 **Two known residuals on the `dni` path, recorded rather than patched.** Both exist only because a
 `TWO:` number no longer reaches `dni`, and both are mitigated server-side because the cart-scoped
@@ -267,7 +265,7 @@ session record is resolver priority 1:
   buyer's PERSONAL fiscal number as the organisation number. The underlying "`dni` is adopted as the
   org number" behaviour pre-dates this work and applies to every buyer on such a country; what is new
   is only that an internal identifier can never discharge the debt. Closing it means exempting an
-  internal identifier from that settle. Left alone deliberately: four review rounds on this state
+  internal identifier from that settle. Left alone deliberately: past attempts on this state
   machine have each produced defects of their own, and the order is protected by the session record
   and now by the order-scoped snapshot.
 - `getTwoUpdateOrderData()` prefers the STORED company name as well as the stored number, so an admin
@@ -277,9 +275,8 @@ session record is resolver priority 1:
   number would silently re-label a funded invoice. Preferring one and re-resolving the other would
   pair a new name with an old number, which is worse than either.
 
-**The address-wide pin is deliberately NOT consulted, and that is a REVERSAL of a review fix.**
-Round 1 of the adversarial review added `secondaryAddressIsPinned()` as an early return, reasoning by
-analogy with the invoice mirror. Round 2 showed the analogy is false, in two ways:
+**The address-wide pin is deliberately NOT consulted.** The analogy with the invoice mirror that
+would justify `secondaryAddressIsPinned()` as an early return here is false, in two ways:
 
 - `secondaryAddressFormRoot()` resolves non-null **only** when the invoice form is the VISIBLE,
   editable form. So the pin was gating the form the buyer is looking at and has just acted on - the
@@ -416,7 +413,7 @@ widening this one. No test anywhere currently fires a country-select `change` wh
 **Rationale**:
 - The blocker is not the write itself but what `TwoCompanySearch` already does around it. Its address-form submit handler adopts the identification field's value into the submitted organisation number, and it deliberately does not tag that adoption with a confirmed company name. Its stale-pairing check then reads company-set / number-set / tag-absent as "the buyer has edited past a stale selection" and clears the selection outright - dropping the identifier, dropping the number, and posting a company clear that destroys the session company. So any identifier an enrolment writes becomes a value the buyer's own next keystroke in the company field wipes.
 - Making that safe means changing that pre-existing state machine - either stopping the submit-time adoption from taking an enrolment-written identifier, or stopping the stale check from treating a marked-but-untagged pairing as buyer-stale. That is a change to behaviour this ticket did not come to change, so it belongs to its own piece of work rather than to a guard bolted onto the new write.
-- Each narrowing round produced a *new* defect class rather than converging: a country clobber through the cookie writer's DOM-guessed country, an address identifier pinned to the wrong address, a mismatched name/number pairing that made the confirmed-selection check lie, an unconditional overwrite of a number the buyer had typed themselves, and a feature detection that failed open. Three fresh sets of findings in three rounds is evidence the approach was wrong, not that the guards were incomplete.
+- Each narrowing attempt produced a *new* defect class rather than converging: a country clobber through the cookie writer's DOM-guessed country, an address identifier pinned to the wrong address, a mismatched name/number pairing that made the confirmed-selection check lie, an unconditional overwrite of a number the buyer had typed themselves, and a feature detection that failed open. Fresh defect classes rather than convergence is evidence the approach was wrong, not that the guards were incomplete.
 - Nothing downstream needs it: the enrolled company already reaches the order through the session record and the selection the enrolment itself publishes, which is how the payment-step path behaves.
 
 **Consequences**:
@@ -980,12 +977,9 @@ and not demoted), the two address-resolution-failure cases moved onto the delive
 tier, and `testPostedCountryCannotConjureAvailability` is unchanged and is now the
 more load-bearing of the pair.
 
-**The coupling to `#13`, and the trade-off it leaves — accepted, not absent**
-(corrected in round 5; an earlier revision of this paragraph said "which select" was
-"never a question on PrestaShop", which is true but incomplete, and reads as a claim
-that nothing can go wrong here). Per correction C there is only ever ONE country
-select on the page, so the browser cannot post the wrong one. But *which* address
-that one select belongs to depends on which pass the buyer is on: on the
+**The coupling to `#13`, and the trade-off it leaves — accepted, not absent.** PrestaShop
+renders only ever ONE country select on the page, so the browser cannot post the wrong
+one. But *which* address that one select belongs to depends on which pass the buyer is on: on the
 delivery-address-editing pass it is the DELIVERY country. So a buyer whose billing
 address differs from their shipping address, clicking the sole-trader chip while
 editing delivery, is now gated against their **shipping** country rather than their
@@ -1216,8 +1210,8 @@ Four things worth knowing before touching it:
     field carrying no marker of any kind. A number the mirror wrote and the buyer
     then cleared is not owed, and no COMPLETION refills it **on a form that kept its
     identification field** — which is the case the gate is about.
-  - **That qualification is not the whole story, and there is a SECOND route**
-    (round 6). It is not enough to scope the promise to the completion path: since
+  - **That qualification is not the whole story, and there is a SECOND route.**
+    It is not enough to scope the promise to the completion path: since
     the mirror publishes the selection through the hidden `companyid` field the way a
     real selection does, the submit handler's
     `syncOrganizationToAddressIdentifiers()` reads that field and writes its value
@@ -1227,10 +1221,10 @@ Four things worth knowing before touching it:
     with no country change at all. The second is deliberately left alone rather than
     fixed: it is precisely what a real selection does on that same form, and the
     alternative is offering the order a company name with no organisation number
-    beside it. Recorded because these two sentences exist to be accurate about what
-    the code guarantees, and a qualification that is merely narrower than the old
-    absolute is still false.
-  - **The residual, stated rather than claimed away** (round 5): the re-mark path
+    beside it. Stated so the guarantee is exact: a cleared number is never refilled
+    by a COMPLETION on a form that kept its identification field, and it IS restored
+    by the pre-submit sync on that same form.
+  - **The residual, stated rather than claimed away**: the re-mark path
     re-pends a placed number when the rebuild renders a country whose format has NO
     identification field, and it does so from the field being ABSENT, without
     consulting the value it held. So a number the buyer cleared themselves, followed
@@ -1387,10 +1381,9 @@ rather than by tests, and none of the tests could have found them.
 
 Doug's #1 originally asked for the rename to `PS_TWO_COMPANY_SEARCH_LOCATION` with a real migration,
 and classified it as mechanical/safe. **The premise is right and the classification is wrong.** The
-rename itself is two seds; a *tier-safe migration* is genuinely hard, and three adversarial review
-rounds each found a different variant of silent merchant data loss in it. Every finding in all three
-rounds was in this item — `#3` and `#7` were clean throughout, which is why they shipped first and
-this did not.
+rename itself is two seds; a *tier-safe migration* is genuinely hard, and review found three
+different variants of silent merchant data loss in it. Every one of those was in this item — `#3`
+and `#7` were clean throughout, which is why they shipped first and this did not.
 
 The confirmation that the rename is purely a location switch **does hold**: `isCompanySearchInAddressArea()`
 resolves to the `'1'`/`'0'` string the checkout JS compares against, `'1'` = address area, `'0'` =
@@ -1559,10 +1552,9 @@ ever starts emitting deprecations (or stops working under a future PHP), the rea
 silently returns empty. Worth ten minutes against a real PS 8.2+ shop; a typed column or an explicit
 carrier would be the durable fix.
 
-## Round 5 (independent adversarial review): what was fixed, and what was noted instead
+## What was fixed, and what was noted instead
 
-Five reproducible defects, not findings. All of the below are re-derived against this
-branch's HEAD, not carried over from the review's own line numbers.
+Five reproducible defects. All of the below are re-derived against this branch's HEAD.
 
 - **The mirrored organisation number was invisible to the stale-selection guard.**
   The mirror wrote the address `dni` and its autofill marker but never the hidden
@@ -1606,7 +1598,7 @@ branch's HEAD, not carried over from the review's own line numbers.
   country coupling and the cleared-number residual. Both reworded above, in place,
   rather than annotated here.
 
-### Noted, deliberately NOT fixed in this round
+### Noted, deliberately not fixed here
 
 - **Selection state lives in roughly six places with independently-copied validity
   logic** — the hidden `companyid` input plus its pairing tag, the address
@@ -1615,15 +1607,15 @@ branch's HEAD, not carried over from the review's own line numbers.
   server's cart-scoped record. Each carries its own notion of "is this selection
   usable", and that duplication is the root cause of the first defect above: the
   mirror satisfied one copy's rules and was invisible to another's. Consolidating
-  them is a refactor with a wide blast radius and this PR is five rounds deep, so it
+  them is a refactor with a wide blast radius, beyond what this PR takes on, so it
   is a follow-up, recorded here so it is not lost. The fix above deliberately reuses
   the existing publish path instead of adding a seventh place.
 - **A theme with no `input[name='saveAddress']` gets a silent no-op with no log.**
   Left as-is rather than logged, because the cheap version is not cheap: the mirror
   exits on the same condition for the ordinary delivery pass, so a one-line log at
   that point would fire on every normal page. Telling "no marker at all" from "this
-  is the delivery form" needs a branch of its own, which is more than this round is
-  taking on.
+  is the delivery form" needs a branch of its own, which is more than this PR takes
+  on.
 - **The per-mirror-write server round-trip form rebuild** is by design — core owns
   the rebuild and the mirror's country write legitimately triggers it.
 - **The cookie last-writer-wins race under concurrent AJAX** is pre-existing and

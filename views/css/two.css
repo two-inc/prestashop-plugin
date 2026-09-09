@@ -590,13 +590,13 @@
 }
 
 /*
- * Tight-fitting positioned wrapper around the company field (TWO-30.x.10),
- * created once by TwoCompanySearch.ensureFieldWrapper(). A plain block
- * element with no padding of its own stretches to exactly the input's width,
- * whatever a theme's own `.form-group`/column wrapper happens to add - which
- * is what lets the org-number label, the dropdown panel and the
- * return-to-search link below all match the field's real width and edge
- * instead of the wider, offset box the theme wrapper used to provide.
+ * Tight-fitting positioned wrapper around the company field, created once by
+ * TwoCompanySearch.ensureFieldWrapper(). A plain block element with no
+ * padding of its own stretches to exactly the input's width, whatever a
+ * theme's own `.form-group`/column wrapper happens to add - which is what
+ * lets the org-number label, the dropdown panel and the return-to-search link
+ * below all match the field's real width and edge instead of the wider,
+ * offset box the theme wrapper used to provide.
  *
  * `position: relative` is load-bearing: the dropdown panel is absolutely
  * positioned against this box, so the panel tracks the input rather than
@@ -1523,15 +1523,14 @@
 
 /* Autocomplete Dropdown Styling */
 /*
- * TWO-30.x.10 element 1: a proper small, contained dropdown matching the
- * field it belongs to, like WC/Magento's select2/selectWoo - not the
- * auto-widening box jQuery UI produces on its own. jQuery UI's `_resizeMenu`
- * sizes this element to whichever is WIDER: the field, or the longest
- * rendered label. With up to 50 results plus the manual-entry row that
- * reliably outgrows the field (625px against a 281px field, live).
- *
- * `max-width` here is what actually contains it: the CSS width-resolution
- * algorithm clamps a used width to `max-width` regardless of what inline
+ * A proper small, contained dropdown matching the field it belongs to, like
+ * WC/Magento's select2/selectWoo - not the auto-widening box jQuery UI
+ * produces on its own. jQuery UI's `_resizeMenu` sizes this element to
+ * whichever is WIDER: the field, or the longest rendered label. With up to 50
+ * results plus the manual-entry row that reliably outgrows the field (625px
+ * against a 281px field, live). `max-width` here is what actually contains
+ * it: the CSS width-resolution algorithm clamps a used width to `max-width`
+ * regardless of what inline
  * `width` jQuery UI sets on this same element, so no `!important` is needed
  * to win against it. The variable is kept current by
  * TwoCompanySearch.constrainAutocompleteMenuWidth(), refreshed on every
@@ -1539,16 +1538,16 @@
  * before that has ever run.
  *
  * The clamp itself is scoped to `.two-company-autocomplete-menu` (added to
- * the widget element by TwoCompanySearch, review finding) rather than the
- * bare `.ui-autocomplete` every other rule in this section still targets:
+ * the widget element by TwoCompanySearch) rather than the bare
+ * `.ui-autocomplete` every other rule in this section still targets:
  * `.ui-autocomplete` is jQuery UI's own un-namespaced default class, shared
  * by any OTHER jQuery UI autocomplete the page might have live (a native
- * PrestaShop lookup, another module) - an unscoped max-width would clamp
- * THAT one to this field's width too, which is a functional break, not
- * cosmetic bleed. `box-sizing: border-box` keeps the clamp's target the
- * same box model `outerWidth()` measures, so the dropdown's own
- * `1px solid` border does not push it a couple of pixels past the field
- * on a theme with no global border-box reset.
+ * PrestaShop lookup, another module) - an unscoped max-width would clamp THAT
+ * one to this field's width too, which is a functional break, not cosmetic
+ * bleed. `box-sizing: border-box` keeps the clamp's target the same box model
+ * `outerWidth()` measures, so the dropdown's own `1px solid` border does not
+ * push it a couple of pixels past the field on a theme with no global
+ * border-box reset.
  */
 .ui-autocomplete {
     max-height: 200px;
@@ -1556,12 +1555,12 @@
     border: 1px solid #ccc !important;
     border-radius: 4px !important;
     /*
-     * #30.x.14 bug 2.1, live-verified: with the previous shadow the panel's
-     * grey border sat flush against the field's own border (0px gap live),
-     * reading as one continuous control rather than a floating panel - on
-     * top of the JS `position` option now opening an 8px gap (see
-     * TwoCompanySearch.js), a visibly heavier shadow is what actually sells
-     * that gap as intentional rather than looking like a rendering seam.
+     * with the previous shadow the panel's grey border sat flush against the
+     * field's own border (0px gap live), reading as one continuous control
+     * rather than a floating panel - on top of the JS `position` option now
+     * opening an 8px gap (see TwoCompanySearch.js), a visibly heavier shadow
+     * is what actually sells that gap as intentional rather than looking like
+     * a rendering seam.
      */
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
     background: white !important;
@@ -1699,7 +1698,7 @@
     background: none;
     font: inherit;
     color: #1976d2;
-    /* #30.x.14 bug 2.4, live-verified: Doug does not want this underlined. */
+    /* Doug does not want this underlined. */
     text-decoration: none;
     cursor: pointer;
 }
