@@ -623,6 +623,7 @@ class TwoCompanySearch {
      * input, in this order:
      *
      *   input[name='company'] -> query field -> results host -> mode chips
+     *   (Registered company, Sole Trader, "not on the list")
      *
      * so with the panel open Tab runs from the query field on to the mode
      * controls in document order, with no key handling whatsoever: the
@@ -3142,10 +3143,9 @@ class TwoCompanySearch {
         memory.companyid = selection.companyid;
         memory.company = wroteCompany ? selection.company : '';
         memory.organization = wroteNumber ? selection.companyid : '';
-        // No `TWO:` carve-out here either: with the write gate gone, an internal
-        // identifier owes and settles exactly as any other number does.
-        // Owed whenever the name landed and the number did NOT, which is now two
-        // shapes rather than one:
+        // No `TWO:` carve-out: an internal identifier owes and settles exactly as
+        // any other number does. Owed whenever the name landed and the number did
+        // NOT, in two shapes:
         //
         //  - the form has NO identification field at all (the original case): there
         //    is nowhere for the number to go, and usually it stays owing harmlessly -

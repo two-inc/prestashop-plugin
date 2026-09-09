@@ -869,7 +869,7 @@ function shown(el) {
 
 /**
  * Open the dropdown the way a buyer does: a real mousedown on the
- * company-name field; focus alone must NOT open it.
+ * company-name field, not a synthetic openDropdown() call.
  *
  * @returns {Object} the query field, as a jQuery object
  */
