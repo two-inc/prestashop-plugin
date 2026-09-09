@@ -23,6 +23,7 @@ final class ApiKeyVerificationSpec
         // Merchant-facing surface.
         self::testEachCategoryGetsItsOwnWording();
         self::testNoticeNeverLeaksTheResponseBody();
+        self::testTheNoticeClaimsAWithholdOnlyForARejectedKey();
         self::testNoticeIsSilentWhenVerifiedOrUnconfigured();
         self::testNoticeSaysNothingWhileAVerificationIsStillRunning();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
@@ -32,9 +33,8 @@ final class ApiKeyVerificationSpec
         self::testVerifiedPanelFollowsTheLiveVerdict();
 
         // Checkout gate.
-        self::testEveryFailureCategoryWithholdsThePaymentOption();
-        self::testVerifiedKeyKeepsThePaymentOption();
-        self::testARecordlessHttp200WithholdsThePaymentOption();
+        self::testOnlyADefinitiveRejectionWithholdsThePaymentOption();
+        self::testARecordlessHttp200IsCategorisedButDoesNotWithhold();
         self::testWithholdingThePaymentOptionIsLogged();
         self::testWithholdReasonIsLoggedOncePerRequestNotPerCall();
         self::testPaymentSubmissionIsRefusedWhenTheKeyDoesNotVerify();
@@ -502,6 +502,37 @@ final class ApiKeyVerificationSpec
         TinyAssert::true(strpos(json_encode($stored), $body) === false, 'the cached verdict must not store the body');
     }
 
+    /**
+     * ABN-533. The notice names the withhold only where there is one. Telling a
+     * merchant the tile is hidden while it is still selling sends them looking
+     * for the wrong fix.
+     */
+    private static function testTheNoticeClaimsAWithholdOnlyForARejectedKey(): void
+    {
+        // [primed status, HTTP code, says "hidden from checkout", why].
+        $cases = array(
+            array(Twopayment::API_KEY_STATUS_INVALID, 401, true, 'a rejected key does hide the tile'),
+            array(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503, false, 'a 5xx leaves the tile selling'),
+            array(Twopayment::API_KEY_STATUS_UNREACHABLE, null, false, 'so does an unreachable Two'),
+            array(Twopayment::API_KEY_STATUS_ERROR, 418, false, 'and any other non-2xx'),
+        );
+
+        foreach ($cases as $case) {
+            list($status, $code, $claimsWithhold, $description) = $case;
+            $module = self::module(self::okOutcome());
+            $module->primeTwoApiKeyStatus($status, $code);
+
+            $notice = $module->noticeForTest();
+
+            TinyAssert::true($notice !== '', 'a failure is still reported: ' . $description);
+            TinyAssert::same(
+                $claimsWithhold,
+                strpos($notice, 'hidden from checkout') !== false,
+                $description
+            );
+        }
+    }
+
     private static function testNoticeIsSilentWhenVerifiedOrUnconfigured(): void
     {
         $module = self::module(self::okOutcome());
@@ -782,73 +813,73 @@ final class ApiKeyVerificationSpec
      * =================================================================== */
 
     /**
-     * ANY category, not just invalid_key: an outage or a routing failure that
-     * keeps offering Two hands the buyer a dead end at the last step.
+     * ABN-533. Only a definitive rejection - a key Two refused, or no key at
+     * all - withholds the payment option. Every other category is a statement
+     * about the service, and taking Two off a correctly configured shop for one
+     * costs the merchant every order for the length of the incident.
+     *
+     * [primed status, HTTP code, payment options offered, why].
      */
-    private static function testEveryFailureCategoryWithholdsThePaymentOption(): void
+    private static function testOnlyADefinitiveRejectionWithholdsThePaymentOption(): void
     {
-        $failures = array(
-            Twopayment::API_KEY_STATUS_INVALID => 401,
-            Twopayment::API_KEY_STATUS_SERVICE_ERROR => 503,
-            Twopayment::API_KEY_STATUS_UNREACHABLE => null,
-            Twopayment::API_KEY_STATUS_ERROR => 418,
-            Twopayment::API_KEY_STATUS_NOT_CONFIGURED => null,
+        $cases = array(
+            array(Twopayment::API_KEY_STATUS_OK, 200, 1,
+                'a verifying key is offered'),
+            array(Twopayment::API_KEY_STATUS_INVALID, 401, 0,
+                'Two refused the key, so the integration cannot take an order'),
+            array(Twopayment::API_KEY_STATUS_NOT_CONFIGURED, null, 0,
+                'there is no key to take an order with'),
+            array(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503, 1,
+                'a 5xx says nothing about the key'),
+            array(Twopayment::API_KEY_STATUS_UNREACHABLE, null, 1,
+                'an outage must not empty a correctly configured checkout'),
+            array(Twopayment::API_KEY_STATUS_ERROR, 418, 1,
+                'a non-2xx that is not a 401/403 is not a rejection of the key'),
+            array(Twopayment::API_KEY_STATUS_VERIFYING, null, 1,
+                'a cold cache is not evidence of a broken shop'),
         );
 
-        foreach ($failures as $status => $code) {
+        foreach ($cases as $case) {
+            list($status, $code, $offered, $description) = $case;
             $module = self::module(self::okOutcome());
             $module->primeTwoApiKeyStatus($status, $code);
             self::offerableCart($module);
 
             TinyAssert::same(
-                0,
+                $offered,
                 count($module->hookPaymentOptions([])),
-                'verification status "' . $status . '" must withhold the payment option'
+                'verification status "' . $status . '": ' . $description
             );
         }
     }
 
-    private static function testVerifiedKeyKeepsThePaymentOption(): void
-    {
-        $module = self::module(self::okOutcome());
-        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_OK, 200);
-        self::offerableCart($module);
-
-        TinyAssert::same(1, count($module->hookPaymentOptions([])), 'a verified key must still be offered Two');
-    }
-
     /**
-     * The fail-closed half of ABN-495, asserted through the gate's own live
-     * check rather than a primed verdict: a 200 with no merchant record used to
-     * categorise as 'ok', so Two was offered with no merchant identity stored.
+     * A 200 with no merchant record still categorises as 'error' rather than
+     * 'ok' (ABN-495) - a proxy or a maintenance page answers 200 too. ABN-533:
+     * that rejects no key, so it no longer withholds. Asserted through the
+     * gate's own live check rather than a primed verdict.
      */
-    private static function testARecordlessHttp200WithholdsThePaymentOption(): void
+    private static function testARecordlessHttp200IsCategorisedButDoesNotWithhold(): void
     {
         $module = self::module(self::recordlessOutcome());
         self::offerableCart($module);
 
         TinyAssert::same(
-            0,
-            count($module->hookPaymentOptions([])),
-            'a 200 carrying no merchant record must withhold the payment option'
+            Twopayment::API_KEY_STATUS_ERROR,
+            $module->getTwoApiKeyVerificationStatus()['status'],
+            'a 200 carrying no merchant record is not a verification'
         );
-
-        // The same cart with a real record, so the assertion above is the
-        // verdict talking and not some other guard on this path.
-        $verified = self::module(self::okOutcome());
-        self::offerableCart($verified);
-
         TinyAssert::same(
             1,
-            count($verified->hookPaymentOptions([])),
-            'and a 200 that does carry one must still be offered Two'
+            count($module->hookPaymentOptions([])),
+            'but it rejects no key, so the payment option stands'
         );
     }
 
     private static function testWithholdingThePaymentOptionIsLogged(): void
     {
         $module = self::module(self::okOutcome());
-        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503);
+        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_INVALID, 401);
         self::offerableCart($module);
         PrestaShopLogger::reset();
 
@@ -861,8 +892,8 @@ final class ApiKeyVerificationSpec
             }
         }
         TinyAssert::true($logged !== '', 'hiding the payment option must say why in the log');
-        TinyAssert::true(strpos($logged, 'service_error') !== false, 'the log must name the category');
-        TinyAssert::true(strpos($logged, '503') !== false, 'the log must carry the HTTP status');
+        TinyAssert::true(strpos($logged, 'invalid_key') !== false, 'the log must name the category');
+        TinyAssert::true(strpos($logged, '401') !== false, 'the log must carry the HTTP status');
     }
 
 
@@ -874,7 +905,7 @@ final class ApiKeyVerificationSpec
     private static function testWithholdReasonIsLoggedOncePerRequestNotPerCall(): void
     {
         $module = self::module(self::okOutcome());
-        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_UNREACHABLE, null);
+        $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_INVALID, 401);
         self::offerableCart($module);
         PrestaShopLogger::reset();
 
@@ -1161,17 +1192,40 @@ final class ApiKeyVerificationSpec
             'the browser flag and the server-side affordance question must be the same question'
         );
 
-        $failing = self::mediaHookModule('order');
-        $failing->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503);
-        Media::reset();
-
-        $failing->hookActionFrontControllerSetMedia();
-
-        TinyAssert::same(
-            false,
-            Media::$jsDef['twopayment']['api_key_verified'],
-            'a known failure withholds the affordance from the browser'
+        // ABN-533: a transient failure keeps the affordance; only a rejection
+        // takes it away, because only a rejection withholds Two itself.
+        $affordanceByStatus = array(
+            array(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503, true,
+                'a 5xx leaves a captured company something to feed'),
+            array(Twopayment::API_KEY_STATUS_UNREACHABLE, null, true,
+                'so does an unreachable Two'),
+            array(Twopayment::API_KEY_STATUS_ERROR, 418, true,
+                'and any other non-2xx'),
+            array(Twopayment::API_KEY_STATUS_INVALID, 401, false,
+                'a rejected key withholds Two, so the search has nothing to feed'),
+            array(Twopayment::API_KEY_STATUS_NOT_CONFIGURED, null, false,
+                'nor has an unconfigured shop'),
         );
+
+        foreach ($affordanceByStatus as $case) {
+            list($status, $code, $warranted, $description) = $case;
+            $failing = self::mediaHookModule('order');
+            $failing->primeTwoApiKeyStatus($status, $code);
+            Media::reset();
+
+            $failing->hookActionFrontControllerSetMedia();
+
+            TinyAssert::same(
+                $warranted,
+                Media::$jsDef['twopayment']['api_key_verified'],
+                $status . ': ' . $description
+            );
+            TinyAssert::same(
+                $warranted,
+                $failing->isTwoCompanySearchAffordanceWarranted(),
+                $status . ': the browser flag and the server-side question stay one question'
+            );
+        }
     }
 
     private static function mediaHookModule(string $phpSelf): object

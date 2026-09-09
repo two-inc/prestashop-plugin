@@ -1611,6 +1611,13 @@ class TwoCheckoutManager {
     // Tries several selectors in turn since the terms container's location
     // varies by theme/template version.
     showPaymentTerms() {
+        // ABN-533: revealing the block with no offered term shows its header and
+        // the template's placeholder day count as though they were an offer.
+        const offered = this.config.available_payment_terms;
+        if (!Array.isArray(offered) || offered.length === 0) {
+            return;
+        }
+
         let termsContainer = document.querySelector('#two-payment-terms');
 
         if (!termsContainer) {

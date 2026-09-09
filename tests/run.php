@@ -164,9 +164,9 @@ final class OrderBuilderSpec
         self::testGetTwoRequestHeadersSkipAuthForOrderIntent();
         self::testGetAvailablePaymentTermsIntersectsBackendWithAdminSubset();
         self::testGetAvailablePaymentTermsWithdrawnBackendTermDrops();
-        self::testGetAvailablePaymentTermsFallsBackToHardcodedWhenBackendUnresolved();
+        self::testGetAvailablePaymentTermsIsEmptyWhenBackendUnresolved();
         self::testGetAvailablePaymentTermsEomConstrainsToEomSubset();
-        self::testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault();
+        self::testGetAvailablePaymentTermsIsEmptyWhenNothingOfferableIsTicked();
         self::testGetMerchantAvailableTermsRefetchDecisionTable();
         self::testGetMerchantAvailableTermsSkipsFetchWithKeysNeverWritten();
         self::testTheMerchantRecordClockAfterEachResponseShape();
@@ -4928,15 +4928,21 @@ final class OrderBuilderSpec
         TinyAssert::same([30], $module->getAvailablePaymentTerms());
     }
 
-    private static function testGetAvailablePaymentTermsFallsBackToHardcodedWhenBackendUnresolved(): void
+    /**
+     * ABN-533. An unresolved backend set offers the BUYER nothing: the
+     * hardcoded option list keeps the admin screens usable and must never be
+     * composed into a term a merchant may not hold. The admin-side set over
+     * the same cold cache is the control, so this cannot pass by emptying both.
+     */
+    private static function testGetAvailablePaymentTermsIsEmptyWhenBackendUnresolved(): void
     {
         self::reset();
-        // Cold cache (unresolved backend): degrade to the historical hardcoded
-        // option list rather than blanking the term set.
         $module = self::termsHarness([]);
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_7', 1);
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_90', 1);
-        TinyAssert::same([7, 90], $module->getAvailablePaymentTerms());
+
+        TinyAssert::same([], $module->getAvailablePaymentTerms());
+        TinyAssert::same([7, 90], $module->configurableTermSetForTest());
     }
 
     private static function testGetAvailablePaymentTermsEomConstrainsToEomSubset(): void
@@ -4950,13 +4956,22 @@ final class OrderBuilderSpec
         TinyAssert::same([30], $module->getAvailablePaymentTerms());
     }
 
-    private static function testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault(): void
+    /**
+     * ABN-533. Backend resolves a set but the admin ticks nothing offerable:
+     * the buyer is offered NO term rather than the account default, which the
+     * merchant may not hold. The admin screens keep a non-empty set, because
+     * they render and save a row per term.
+     */
+    private static function testGetAvailablePaymentTermsIsEmptyWhenNothingOfferableIsTicked(): void
     {
         self::reset();
-        // Backend resolves a set but the admin ticks nothing offerable -> the
-        // account default term (pre-feature degrade posture).
         $module = self::termsHarness([60]);
-        TinyAssert::same([Twopayment::DEFAULT_PAYMENT_TERM_DAYS], $module->getAvailablePaymentTerms());
+
+        TinyAssert::same([], $module->getAvailablePaymentTerms());
+        TinyAssert::same(
+            [Twopayment::DEFAULT_PAYMENT_TERM_DAYS],
+            $module->configurableTermSetForTest()
+        );
     }
 
     /**
