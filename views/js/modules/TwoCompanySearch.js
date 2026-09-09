@@ -3147,10 +3147,10 @@ class TwoCompanySearch {
         // any other number does. Owed whenever the name landed and the number did
         // NOT, in two shapes:
         //
-        //  - the form has NO identification field at all (the original case): there
-        //    is nowhere for the number to go, and usually it stays owing harmlessly -
-        //    but a mirrored COUNTRY write can rebuild this form into one that does
-        //    have the field, and then it is owed to a form that can take it.
+        //  - the form has NO identification field at all: there is nowhere for the
+        //    number to go, and usually it stays owing harmlessly - but a mirrored
+        //    COUNTRY write can rebuild this form into one that does have the
+        //    field, and then it is owed to a form that can take it.
         //  - the field EXISTS but the write skipped it, because the value is an
         //    internal (`TWO:`) identifier that never enters `dni` (TWO-40).
         //
