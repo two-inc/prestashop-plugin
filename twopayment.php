@@ -3574,13 +3574,16 @@ class Twopayment extends PaymentModule
         }
         $allowed = $this->getMerchantBuyerCountries();
         if (is_array($allowed) && $allowed) {
-            $clauses[] = sprintf($this->l('offered only to buyers in %s'), implode(', ', $allowed));
+            $clauses[] = sprintf(
+                $this->l('offered only to buyers in %s'),
+                htmlspecialchars(implode(', ', $allowed), ENT_QUOTES, 'UTF-8')
+            );
         }
         $refused = $this->twoRefusedNonDefaultCurrencies();
         if ($refused) {
             $clauses[] = sprintf(
                 $this->l('hidden for baskets in %s'),
-                implode(', ', $refused)
+                htmlspecialchars(implode(', ', $refused), ENT_QUOTES, 'UTF-8')
             );
         }
         $surcharge = $this->getTwoSurchargeSettingsOrNull();
@@ -3644,66 +3647,80 @@ class Twopayment extends PaymentModule
         if (!Validate::isLoadedObject($currency)) {
             return null;
         }
-        $iso = Tools::strtoupper(trim((string) $currency->iso_code));
-        if ($iso === '') {
+        if (trim((string) $currency->iso_code) === '') {
             return $this->l('the shop default currency has no ISO code.');
         }
-        if (!in_array($iso, self::TWO_SUPPORTED_CURRENCY_ISOS, true)) {
-            return sprintf(
-                $this->l('%s is not a currency this payment method supports.'),
-                htmlspecialchars($iso, ENT_QUOTES, 'UTF-8')
-            );
-        }
-        if (!method_exists($this, 'getCurrency')) {
-            return null;
-        }
-        // Core's checkbox mode ignores the id and returns the whole allowlist,
-        // so membership is this side's test to make.
-        $assigned = (array) $this->getCurrency($idCurrency);
-        foreach ($assigned as $row) {
-            if (isset($row['id_currency']) && (int) $row['id_currency'] === $idCurrency) {
-                return null;
-            }
-        }
 
-        return $this->l('no currency is enabled for this module under Payment > Preferences.');
+        return $this->twoUsableCurrencyIsos() === array()
+            ? $this->l('no currency is enabled for this module under Payment > Preferences.')
+            : null;
     }
 
     /**
-     * ISO codes of the shop's other enabled currencies that checkCurrency()
-     * would refuse - unsupported by the provider, or not assigned to the
-     * module. The shop default has its own reason, so it is excluded here.
+     * ISO codes of the shop's enabled currencies that checkCurrency() would
+     * accept: supported by the provider AND assigned to the module. Empty
+     * means no cart in any currency is offered Two.
      *
      * @return string[]
      */
-    protected function twoRefusedNonDefaultCurrencies()
+    protected function twoUsableCurrencyIsos()
     {
-        if (!method_exists('Currency', 'getCurrencies')) {
-            return array();
-        }
-        $idDefault = (int) Configuration::get('PS_CURRENCY_DEFAULT');
         $assigned = array();
         if (method_exists($this, 'getCurrency')) {
-            foreach ((array) $this->getCurrency($idDefault) as $row) {
+            // Core's checkbox mode ignores the id and returns the whole
+            // allowlist, so membership is this side's test to make.
+            foreach ((array) $this->getCurrency((int) Configuration::get('PS_CURRENCY_DEFAULT')) as $row) {
                 if (isset($row['id_currency'])) {
                     $assigned[] = (int) $row['id_currency'];
                 }
             }
         }
 
-        $refused = array();
+        $usable = array();
+        foreach ($this->twoEnabledCurrencyRows() as $id => $iso) {
+            if (in_array($iso, self::TWO_SUPPORTED_CURRENCY_ISOS, true) && in_array($id, $assigned, true)) {
+                $usable[] = $iso;
+            }
+        }
+
+        return $usable;
+    }
+
+    /**
+     * The shop's enabled currencies as id => uppercase ISO.
+     *
+     * @return array<int, string>
+     */
+    protected function twoEnabledCurrencyRows()
+    {
+        if (!method_exists('Currency', 'getCurrencies')) {
+            return array();
+        }
+        $rows = array();
         foreach ((array) Currency::getCurrencies(false, true) as $row) {
             $id = (int) (isset($row['id_currency']) ? $row['id_currency'] : 0);
-            if ($id <= 0 || $id === $idDefault) {
-                continue;
-            }
             $iso = Tools::strtoupper(trim((string) (isset($row['iso_code']) ? $row['iso_code'] : '')));
-            if ($iso === '') {
-                continue;
+            if ($id > 0 && $iso !== '') {
+                $rows[$id] = $iso;
             }
-            if (!in_array($iso, self::TWO_SUPPORTED_CURRENCY_ISOS, true)
-                || !in_array($id, $assigned, true)
-            ) {
+        }
+
+        return $rows;
+    }
+
+    /**
+     * ISO codes of the shop's enabled currencies that checkCurrency() would
+     * refuse. Per-cart, so a constraint rather than a reason: another usable
+     * currency still offers Two.
+     *
+     * @return string[]
+     */
+    protected function twoRefusedNonDefaultCurrencies()
+    {
+        $usable = $this->twoUsableCurrencyIsos();
+        $refused = array();
+        foreach ($this->twoEnabledCurrencyRows() as $iso) {
+            if (!in_array($iso, $usable, true) && !in_array($iso, $refused, true)) {
                 $refused[] = $iso;
             }
         }

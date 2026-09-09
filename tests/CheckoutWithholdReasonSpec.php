@@ -264,6 +264,16 @@ final class CheckoutWithholdReasonSpec
             ],
             [
                 static function ($module): void {
+                    // The default is unassigned, but a second supported one is
+                    // assigned: carts in THAT currency are still offered Two.
+                    StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+                    StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 978]];
+                },
+                'Shown at checkout - hidden for baskets in GBP',
+                'a refused default currency is per-cart while another usable one remains',
+            ],
+            [
+                static function ($module): void {
                     StubStore::$currencies[826] = ['iso_code' => '', 'loaded' => true];
                 },
                 'the shop default currency has no ISO code.',
@@ -273,8 +283,8 @@ final class CheckoutWithholdReasonSpec
                 static function ($module): void {
                     StubStore::$currencies[826] = ['iso_code' => 'PLN', 'loaded' => true];
                 },
-                'PLN is not a currency this payment method supports.',
-                "a shop whose default currency is outside the provider's own list withholds every cart",
+                'no currency is enabled for this module under Payment > Preferences.',
+                'a shop with no usable currency at all withholds every cart',
             ],
             [
                 static function ($module): void {

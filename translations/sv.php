@@ -557,6 +557,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_65a3ef692e6a51f50564d0b7bf51c9b9'] = 'ditt merchant-konto har ännu inte identifierats. Spara %s för att verifiera API-nyckeln.';
 $_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] = 'döljs för varukorgar i en valuta som köpartillägget inte kan prissättas i';
 $_MODULE['<{twopayment}prestashop>twopayment_c3d38f77a364bef3afec146aece7a3b3'] = 'erbjuds endast köpare i %s';
-$_MODULE['<{twopayment}prestashop>twopayment_b80ff7399a5d689042195dd3d773816a'] = '%s är inte en valuta som den här betalningsmetoden stöder.';
 $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] = 'döljs för varukorgar i %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'butikens standardvaluta har ingen ISO-kod.';
