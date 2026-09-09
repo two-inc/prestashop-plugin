@@ -1,13 +1,8 @@
 /**
- * TWO-40 follow-up (Doug live-test findings, 2026-08-19):
- *
- *  1. Reopening while sole-trader-adopted must keep the "Sole Trader" chip
- *     selected - openDropdown() previously reset `_chipMode` unconditionally.
- *  2. The query input must not be usable while that chip is selected - the
- *     only way to pick a different company is item 3, not typing.
- *  3. Re-clicking "Sole Trader" while already adopted must call
- *     startReplacement(), exactly like the standalone link, not restart
- *     enrolment.
+ * TWO-40 follow-up: the sole-trader-adopted state of the company-search
+ * panel - which chip reads as selected on reopen, that the query input is
+ * hidden while "Sole Trader" is selected, and the two ways back out of the
+ * adopted state.
  */
 
 'use strict';
@@ -79,7 +74,7 @@ afterEach(() => {
     delete global.window.TwoSoleTrader_Instance;
 });
 
-describe('reopening while sole-trader-adopted (item 1)', () => {
+describe('reopening while sole-trader-adopted', () => {
     test('shows the "Sole Trader" chip selected, not "Registered Company"', () => {
         const instance = makeInstance();
         openPanel();
@@ -107,11 +102,11 @@ describe('reopening while sole-trader-adopted (item 1)', () => {
     });
 });
 
-describe('query input suppressed while Sole Trader is selected (item 2)', () => {
+describe('query input suppressed while Sole Trader is selected', () => {
     /**
-     * HIDDEN, not merely readonly (Doug, 2026-08-19): "the field should not
-     * be VISIBLE... I told you it was visible." Readonly assertions below are
-     * kept only as defence-in-depth; visibility is the actual requirement.
+     * Hidden, not merely readonly - visibility is the requirement and the
+     * readonly assertions are defence-in-depth. A different company is picked
+     * through the "Sole Trader" chip, never by typing.
      */
     function adoptAndReopen() {
         const instance = makeInstance();
@@ -334,8 +329,8 @@ describe('no stale result rows survive into sole-trader mode', () => {
         instance.closeDropdown(false);
         $("input[name='company']").trigger('mousedown');
 
-        // The field is hidden and blank here (see item 2 above), so a list of
-        // registered companies above it belongs to nothing the buyer can see.
+        // The query field is hidden and blank while the chip is selected, so a
+        // list of registered companies above it belongs to nothing visible.
         expect(resultTexts()).toEqual([]);
 
         instance.destroy();
@@ -375,7 +370,7 @@ describe('no stale result rows survive into sole-trader mode', () => {
     });
 });
 
-describe('re-clicking "Sole Trader" while adopted (item 3)', () => {
+describe('re-clicking "Sole Trader" while adopted', () => {
     test('calls startReplacement(), not startEnrollment() - same as the standalone link', () => {
         const instance = makeInstance();
         openPanel();
@@ -424,7 +419,7 @@ describe('re-clicking "Sole Trader" while adopted (item 3)', () => {
     });
 });
 
-describe('clicking back to "Registered company" while adopted (item 4)', () => {
+describe('clicking back to "Registered company" while adopted', () => {
     /**
      * The way out of the adopted state without launching a signup: unlike
      * the sole-trader chip's own handler, this one runs cancelEnrollment()
