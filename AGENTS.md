@@ -325,6 +325,9 @@ execute" as `bash script.sh`, and have it print what it checked.
   named as the authority for a rule.
 - Describe another plugin's behaviour in your own words; never reproduce its source
   text, schema fragments or test identifiers here.
+- Name the tracker on every reference: `prestashop-plugin PR #211`,
+  `woocommerce-plugin PR #487`, `Linear TWO-25326`. A bare `#211` renders as a live
+  link to whatever that number happens to be in this repository.
 
 ## Change Quality Rules
 
