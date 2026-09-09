@@ -61,7 +61,7 @@ final class ApiKeyVerificationSpec
         self::testSwitchingEnvironmentAloneNeverPublishesAVerdict();
         self::testChangedKeyNeverInheritsThePreviousVerdict();
 
-        // Inline live check (TWO-25386 #4).
+        // Inline live check (TWO-25386).
         self::testLiveCheckReportsOkForAVerifiedKey();
         self::testLiveCheckReportsTheFailureMessageForARejectedKey();
         self::testLiveCheckNeverTouchesConfigurationBeforeSave();
@@ -1737,7 +1737,7 @@ final class ApiKeyVerificationSpec
     }
 
     /* ===================================================================
-     * Inline live check (TWO-25386 #4) - General tab's blur/keystroke
+     * Inline live check (TWO-25386) - General tab's blur/keystroke
      * verification, never touching Configuration.
      * =================================================================== */
 

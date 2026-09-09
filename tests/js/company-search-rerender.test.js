@@ -149,7 +149,7 @@ describe('a click and a focus arrival both open the control', () => {
         makeInstance();
         const field = liveField();
 
-        // TWO-25326 §1: the PANEL is what opens, not jQuery UI's floating
+        // TWO-25326: the PANEL is what opens, not jQuery UI's floating
         // menu - its own `display` is meaningless while the panel is shut.
         // `shown()` walks the ancestor chain; jsdom computes no layout, so
         // jQuery's `:visible` cannot be used here.
@@ -246,7 +246,7 @@ describe('the company-search hints (TWO-25288)', () => {
      * the `_renderItem` patch are all the things under test.
      */
     function search(term) {
-        // Panel must be open before a query field exists (TWO-25326 §1); its
+        // Panel must be open before a query field exists (TWO-25326); its
         // empty-query open renders no row and makes no request (TWO-40
         // follow-up), so ajax counts below measure only what `term` caused.
         openPanel();
@@ -363,12 +363,10 @@ describe('the company-search hints (TWO-25288)', () => {
 
             // a click into an empty field must open something, i.e. the PANEL -
             // a plain `response([])` here is indistinguishable from "not a
-            // dropdown at all", which was the live complaint. TWO-25326 §1's
-            // separate focus-hint row and the too-short row it later merged
-            // into are BOTH gone now (TWO-40 follow-up): the empty query
-            // renders no row at all, and the requirement lives in the query
-            // field's placeholder. Still not a real search, so no request goes
-            // out.
+            // dropdown at all", which was the live complaint. The empty query
+            // renders no row at all (TWO-40 follow-up); the requirement lives
+            // in the query field's placeholder. Still not a real search, so no
+            // request goes out.
             expect(rows()).toHaveLength(0);
             expect(ajax.calls).toHaveLength(0);
         });
@@ -398,10 +396,8 @@ describe('the company-search hints (TWO-25288)', () => {
             search('exa');
 
             expect(ajax.calls).toHaveLength(0);
-            // Exactly one row now: the manual-entry footer left the list
-            // entirely in TWO-25326 §2 and is a real <button> outside the
-            // scroll container, so every jQuery-UI-path row count here drops
-            // by one.
+            // Exactly one row: the manual-entry control is a real <button>
+            // outside the scroll container (TWO-25326), never a row.
             expect(rows()).toHaveLength(1);
             expect(rows().eq(0).text()).toBe(instance.getSelectCountryText());
             expect(rows().eq(0).hasClass('two-autocomplete-select-country')).toBe(true);
@@ -505,21 +501,14 @@ describe('the company-search hints (TWO-25288)', () => {
 });
 
 /**
- * TWO-25288 element 5, rearchitected by TWO-25326 §2. The manual-entry
- * affordance on the jQuery UI path.
+ * The manual-entry affordance on the jQuery UI path (TWO-25288, TWO-25326).
  *
- * It used to be a pseudo-ROW that entered through the same `source` callback
- * the message rows use, with the treatment inverted so jQuery UI's menu would
- * navigate to it. §2 took it out of the list entirely: it is a real
- * `<button class="two-company-not-listed">`, a SIBLING of the scroll container,
- * so it is reachable without scrolling past up to 50 results and the cursor
- * keys - which only ever move within the list - cannot reach it.
- *
- * Every assertion below therefore moved from "the last row of the menu" to
- * "the button next to the menu", and every jQuery-UI-path row count in this
- * file dropped by one.
+ * A real `<button class="two-company-not-listed">`, a SIBLING of the scroll
+ * container rather than a row in the list, so it is reachable without
+ * scrolling past up to 50 results and the cursor keys - which only ever move
+ * within the list - cannot reach it.
  */
-describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', () => {
+describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => {
     const AT_THRESHOLD = 'a'.repeat(3);
 
     function search(term) {
@@ -541,7 +530,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         return $('ul.ui-autocomplete li');
     }
 
-    /** The affordance itself: a real <button>, no longer a row (§2). */
+    /** The affordance itself: a real <button>, not a row. */
     function notListed() {
         return $('.two-company-not-listed');
     }
@@ -596,10 +585,9 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         search(AT_THRESHOLD);
         ajax.last().succeed({ items: [] });
 
-        // Zero results is the state the affordance exists for. §1 requires the
-        // list to say so explicitly rather than close silently, so the row that
-        // shows is the "No matches found" one - and the button is still there
-        // beside it.
+        // Zero results is the state the affordance exists for: the list says
+        // so explicitly rather than closing silently, and the button is there
+        // beside the "No matches found" row.
         expect(rows()).toHaveLength(1);
         expect(rows().hasClass('two-autocomplete-no-matches')).toBe(true);
         expect(rows().text()).toBe(instance.getNoMatchesText());
@@ -633,11 +621,9 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
     test('it is offered before any search, not gated on the threshold', () => {
         makeInstance();
 
-        // §2, verbatim: a buyer must have a route into manual entry without
-        // typing a doomed query first. The WC regression recorded on
-        // TWO-25326 was exactly this - gating the control on the 3-character
-        // threshold removed it for a buyer who had typed nothing. That is the
-        // deliberate REVERSAL of the pseudo-row's old below-threshold gating.
+        // A buyer must have a route into manual entry without typing a
+        // doomed query first. Gating the control on the 3-character threshold
+        // is the WC regression recorded on TWO-25326.
         search('');
         // No row renders below the threshold any more (TWO-40 follow-up) -
         // the assertion that matters here is that manual entry is offered
@@ -672,7 +658,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         search(AT_THRESHOLD);
         ajax.last().succeed(SEARCH_RESPONSE);
 
-        // §2's structural claim, pinned through the widget's OWN accounting:
+        // Pinned through the widget's OWN accounting:
         // `ui-menu-item` is what refresh() puts on the rows it will move focus
         // through, and the button is not one of them because it is not in the
         // list. Asserting only on our own classes would pass just as happily
@@ -681,7 +667,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
         expect(navigable).toHaveLength(SEARCH_RESPONSE.items.length);
         expect(navigable.filter('.two-company-not-listed')).toHaveLength(0);
         expect(menu().find('.two-company-not-listed')).toHaveLength(0);
-        // §2/§4: jQuery UI's menu puts `tabindex="0"` on its own <ul>, which
+        // jQuery UI's menu puts `tabindex="0"` on its own <ul>, which
         // would make the scroll container a tab stop of its own and land Tab
         // there instead of on this button. That is the Hyva defect logged on
         // this ticket.
@@ -748,12 +734,11 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
 
         expect(instance._manualEntry).toBe(false);
         expect($('.two-company-search-back')).toHaveLength(0);
-        // Back in search mode with the panel open and focused, and the state
-        // of whatever the query field holds already painted rather than a
-        // blank box (§3 routes through openDropdown() for exactly that). The
-        // query field opens EMPTY by design now - it is deliberately not
-        // re-seeded from the confirmed name - so what is on screen is the
-        // too-short state, which renders no row any more (TWO-40 follow-up).
+        // Back in search mode with the panel open and focused rather than a
+        // blank box - the return link routes through openDropdown(). The query
+        // field opens EMPTY by design, not re-seeded from the confirmed name,
+        // so what is on screen is the too-short state, which renders no row
+        // (TWO-40 follow-up).
         expect(shown(panel())).toBe(true);
         expect(document.activeElement).toBe(searchInput().get(0));
         expect(rows()).toHaveLength(0);
@@ -827,10 +812,8 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
     });
 
     test('the country SELECT firing change does not wipe a hand-typed company in manual entry', () => {
-        // Doug's ruling (TWO-40 follow-up): "the ONLY time that a country
-        // change should not wipe company details is if the control is in
-        // manual entry mode." Before this, the listener wiped
-        // unconditionally - a hand-typed name and its dni went with it.
+        // A country change wipes company details in every mode except manual
+        // entry, where a hand-typed name and its dni must survive (TWO-40).
         const instance = makeInstance();
 
         search(AT_THRESHOLD);
@@ -965,9 +948,9 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
                     .toBe('Example Trading Ltd');
 
                 // Driven through the API rather than by clicking the button:
-                // §2 HIDES that button once hasConfirmedSelection() is true, which
-                // is precisely the state every test in this block sets up. The
-                // action itself is what is under test here, not the affordance.
+                // the button is hidden once hasConfirmedSelection() is true,
+                // which is precisely the state every test in this block sets
+                // up. The action itself is under test here, not the affordance.
                 instance.enterManualEntryMode();
 
                 expect(instance.organizationField.val()).toBe('');
@@ -1138,8 +1121,8 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
             // A keyboard user has just activated a control that the close has
             // taken off the page with the panel; leaving focus there strands
             // them silently, and a sighted mouse user would never notice the
-            // regression. §2 requires it to land in the manual company-name
-            // field, which is the thing they now have to type into.
+            // regression. It lands in the manual company-name field, the
+            // thing they now have to type into.
             expect(document.activeElement).toBe(liveField().get(0));
         });
 
@@ -1155,7 +1138,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326 §2)', ()
 
             link.trigger('click');
 
-            // §3 routes the way back through openDropdown(), so focus lands in
+            // The way back routes through openDropdown(), so focus lands in
             // the panel's QUERY field - the one thing on screen the buyer can
             // now type a search into - rather than on the readonly trigger.
             expect(document.activeElement).toBe(searchInput().get(0));
@@ -1200,7 +1183,7 @@ describe('the spinner always comes back down', () => {
      * things under test.
      */
     function search(term) {
-        // TWO-25326 §1: the widget lives on the panel's query field, so the
+        // TWO-25326: the widget lives on the panel's query field, so the
         // panel must be open first. Opened at most once: a second mousedown
         // re-runs openSearchForCurrentTerm(), inserting a search that would
         // shift every `ajax.calls[N]` index below.
@@ -1232,9 +1215,8 @@ describe('the spinner always comes back down', () => {
         // The defect: a failure that never calls response() leaves `pending`
         // stuck above zero, so the spinner runs for the rest of the session.
         expect(field.hasClass(LOADING_CLASS)).toBe(false);
-        // One row: the failure message. The manual-entry footer that used to
-        // follow it left the list in TWO-25326 §2 and is a button beside the
-        // scroll container now, so every row count on this path drops by one.
+        // One row: the failure message. The manual-entry control is a button
+        // beside the scroll container (TWO-25326), not a row.
         const menu = $('ul.ui-autocomplete li');
         expect(menu).toHaveLength(1);
         expect(menu.eq(0).hasClass('two-autocomplete-unavailable')).toBe(true);
@@ -1287,8 +1269,7 @@ describe('the spinner always comes back down', () => {
 
         // jQuery UI drops a superseded requestIndex itself — but only because
         // the callback is delivered rather than swallowed. The one row left is
-        // the "No matches found" row the LIVE (empty) response rendered - that
-        // is what §1 puts there in place of the old manual-entry footer; the
+        // the "No matches found" row the LIVE (empty) response rendered; the
         // stale response's company row is the thing that must not be here.
         const menu = $('ul.ui-autocomplete li');
         expect(menu).toHaveLength(1);
@@ -1363,10 +1344,9 @@ describe('selecting a company through the real widget', () => {
     /**
      * Search, settle, then pick the first row the way a buyer's click does.
      *
-     * Typed into the PANEL'S query field (TWO-25326 §1). The company-name
-     * field is no longer the search box - it is what the selection WRITES
-     * INTO, which is what these tests assert on, so the two must not be
-     * conflated.
+     * Typed into the PANEL'S query field (TWO-25326). The company-name field
+     * is not the search box - it is what the selection WRITES INTO, which is
+     * what these tests assert on, so the two must not be conflated.
      */
     function selectFirstResult(term, response) {
         const query = openPanel();
@@ -1389,7 +1369,7 @@ describe('selecting a company through the real widget', () => {
         // calling onCompanySelected() directly — otherwise the `select` option
         // could be unwired entirely and every direct-call test would still pass.
         expect(liveField().val()).toBe('Example Trading Ltd');
-        // §1: a completed selection ends the search - the panel closes and
+        // A completed selection ends the search - the panel closes and
         // focus returns to the company-name field holding the picked name.
         expect(shown(panel())).toBe(false);
         expect(document.activeElement).toBe(liveField().get(0));
@@ -2372,7 +2352,7 @@ describe('a destroyed instance cannot act on the live DOM', () => {
             // the exact zombie the flag exists to stop.
             //
             // Aimed at the QUERY field, not the company-name field: that is
-            // where the widget lives since TWO-25326 §1, so it is the
+            // where the widget lives (TWO-25326), so it is the
             // `hasClass` guard destroy() actually reaches on the bridge path.
             search._queryField.hasClass = () => {
                 throw new Error('simulated jQuery UI bridge failure');
@@ -2395,7 +2375,7 @@ describe('a destroyed instance cannot act on the live DOM', () => {
 
     test('destroy releases the widget from the field', () => {
         const search = makeInstance();
-        // The widget lives on the PANEL'S query field since TWO-25326 §1, so
+        // The widget lives on the PANEL'S query field (TWO-25326), so
         // that is the node this has to be asserted against. Asserting on the
         // company-name field would pass vacuously - it can never carry a
         // widget any more, whatever destroy() does or fails to do.
@@ -2413,7 +2393,7 @@ describe('a destroyed instance cannot act on the live DOM', () => {
     test('moving to a replaced field releases the widget left on the old one', () => {
         const search = makeInstance();
         const oldField = liveField().get(0);
-        // The widget is on the OUTGOING panel's query field (TWO-25326 §1),
+        // The widget is on the OUTGOING panel's query field (TWO-25326),
         // not on the company-name node, so that is what has to be released.
         const oldQuery = searchInput().get(0);
         expect($(oldQuery).hasClass('ui-autocomplete-input')).toBe(true);
@@ -2478,15 +2458,13 @@ describe('the in-field spinner GIF', () => {
     }
 
     /**
-     * The spinner element (TWO-25326 §1).
+     * The spinner element (TWO-25326).
      *
-     * The GIF is no longer a `background-image` on an input at all. §1 wants it
-     * "within and at the right hand end of the QUERY field", and a background
-     * on the input cannot be positioned there reliably - where it lands depends
-     * on whatever padding the merchant's theme gives text inputs. So it is a
-     * real absolutely-positioned `<span>`, a SIBLING of the query field, shown
-     * by the same loading classes as before through a `~` rule. The CSS
-     * contract is what these tests are about, so they moved with it.
+     * A real absolutely-positioned `<span>`, a SIBLING of the query field,
+     * shown by the loading classes through a `~` rule. It belongs within and
+     * at the right hand end of the query field, and a `background-image` on
+     * the input cannot be positioned there reliably - where it lands depends
+     * on whatever padding the merchant's theme gives text inputs.
      */
     function spinner() {
         return $('.two-company-dropdown__spinner');
@@ -2527,14 +2505,10 @@ describe('the in-field spinner GIF', () => {
         // show nothing.
         expect(spinner()).toHaveLength(1);
         expect(styleOf(spinner().get(0)).display).toBe('none');
-        // §7, and the reason this assertion INVERTED rather than moved: the
-        // company-name field used to carry `padding-right: 32px`
-        // unconditionally to reserve the spinner's lane and stop its text
-        // reflowing as the GIF came and went. With the spinner gone from that
-        // field the padding is 32px of dead space making it visibly unlike
-        // every other input on the address form, which is what §7 forbids. The
-        // lane is reserved on the QUERY field now, where the spinner actually
-        // is.
+        // The spinner's lane is reserved on the QUERY field, where the
+        // spinner is. The same padding on the company-name field would be 32px
+        // of dead space, making it visibly unlike every other input on the
+        // address form.
         expect(styleOf(liveField().get(0)).paddingRight).not.toBe('32px');
         expect(styleOf(searchInput().get(0)).paddingRight).toBe('30px');
     });
@@ -2570,7 +2544,7 @@ describe('the in-field spinner GIF', () => {
         // spinner is drawn at whatever size the field gives it.
         //
         // Read off the spinner element rather than the input, because that is
-        // where the GIF lives since §1 - but the failure mode is unchanged: a
+        // where the GIF lives - but the failure mode is unchanged: a
         // `background` SHORTHAND declared anywhere that out-ranks this rule
         // resets the longhands it omits, so `background-size` reverts to
         // `auto` and the spinner is drawn at whatever size its box gives it.
@@ -2739,7 +2713,7 @@ describe('the custom fallback used when jQuery UI is absent', () => {
         return $('.two-company-dropdown__results li');
     }
 
-    /** The "My company is not on the list" button (§2), shared by both paths. */
+    /** The "My company is not on the list" button, shared by both paths. */
     function notListed() {
         return $('.two-company-not-listed');
     }
@@ -2811,12 +2785,8 @@ describe('the custom fallback used when jQuery UI is absent', () => {
         });
 
         test('clearing the field shows no row and makes no request, rather than leaving stale results', () => {
-            // This path used to close the list outright when the field was
-            // cleared; TWO-25326 §1 required the too-short state to stay on
-            // screen rather than close, and TWO-40 removed the row that state
-            // rendered entirely (see the query-field placeholder tests above).
-            // What survives is that clearing the field must not leave the
-            // PREVIOUS result set on screen.
+            // The panel stays open on the too-short state rather than
+            // closing (TWO-25326).
             const search = makeInstance();
             type(AT_THRESHOLD_FALLBACK);
             ajax.last().succeed(SEARCH_RESPONSE);
@@ -2833,19 +2803,14 @@ describe('the custom fallback used when jQuery UI is absent', () => {
     });
 
     /**
-     * TWO-25288 element 5, rearchitected by TWO-25326 §2, fallback path.
+     * The manual-entry affordance on the fallback path (TWO-25288, TWO-25326).
      *
-     * The affordance used to be a row this path rendered for itself, with a
-     * hand-rolled `role="button"` / `tabindex="0"` / Enter-Space bridge and its
-     * own close timer, because the path had no keyboard model at all. Both are
-     * gone: the control is the SAME real `<button>` the jQuery UI path uses,
-     * built once by buildDropdown() outside the results host, and this path now
-     * has real cursor-key navigation of its own bound to the query field. So
-     * "it survives every renderer" is no longer a claim about re-appending a
-     * row - the button is not in the list and no renderer can wipe it - but it
-     * is still worth pinning per state, because §2 gates its VISIBILITY.
+     * The SAME real `<button>` the jQuery UI path uses, built once by
+     * buildDropdown() outside the results host, so no renderer can wipe it;
+     * cursor-key navigation is bound to the query field. Still pinned per
+     * state, because the button's VISIBILITY is gated.
      */
-    describe('the manual-entry affordance (TWO-25326 §2)', () => {
+    describe('the manual-entry affordance (TWO-25326)', () => {
         const AT_THRESHOLD = AT_THRESHOLD_FALLBACK;
 
         test('the threshold this block types against is the shipped one', () => {
@@ -2863,14 +2828,14 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             expect(listRows()).toHaveLength(SEARCH_RESPONSE.items.length);
             expect(listRows().hasClass('two-autocomplete-manual-entry')).toBe(false);
             // ...and the affordance below it, outside the scroll container, so
-            // it is reachable without scrolling past up to 50 results (§2).
+            // it is reachable without scrolling past up to 50 results.
             expect(notListed()).toHaveLength(1);
             expect(notListed().text()).toBe(search.getManualEntryText());
             // Nested inside the three-chip mode selector (TWO-40 design
             // revision): a sibling of "Sole Trader"/"Registered Company"
             // inside `.two-company-mode-chips`, which sits directly after the
             // results host - still outside the scroll container either way,
-            // so still reachable without scrolling past up to 50 results (§2).
+            // so still reachable without scrolling past up to 50 results.
             const chips = notListed().parent();
             expect(chips.is('.two-company-mode-chips')).toBe(true);
             expect(chips.prev().is('.two-company-dropdown__results')).toBe(true);
@@ -2883,10 +2848,9 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             type(AT_THRESHOLD);
             ajax.last().succeed({ items: [] });
 
-            // This path used to close the list outright on an empty result set.
-            // §1 makes it say so explicitly instead, and the affordance is
-            // still on offer beside the message - which is the state it exists
-            // for.
+            // An empty result set says so explicitly rather than closing the
+            // list, and the affordance is on offer beside the message - the
+            // state it exists for.
             expect(listRows()).toHaveLength(1);
             expect(listRows().hasClass('two-autocomplete-no-matches')).toBe(true);
             expect(listRows().text()).toBe(search.getNoMatchesText());
@@ -2921,10 +2885,9 @@ describe('the custom fallback used when jQuery UI is absent', () => {
         });
 
         test('it is offered before any search, not gated on the threshold', () => {
-            // §2, verbatim, and the REVERSAL of the old row's gating: a buyer
-            // must have a route into manual entry without typing a doomed query
-            // first. Gating it on the 3-character threshold is the WC
-            // regression recorded on TWO-25326.
+            // A buyer must have a route into manual entry without typing a
+            // doomed query first. Gating it on the 3-character threshold is
+            // the WC regression recorded on TWO-25326.
             const search = makeInstance();
             expect(search._customAutocomplete).toBeTruthy();
 
@@ -2962,10 +2925,8 @@ describe('the custom fallback used when jQuery UI is absent', () => {
         });
 
         test('the cursor keys move through the results and cannot reach it', () => {
-            // The keyboard model this path did NOT have before §1: a buyer
-            // could open the panel, type, see results and have no way at all to
-            // choose one. The rows are navigable; the button, being outside the
-            // list, is not - which is the same contract the jQuery UI path has.
+            // The rows are navigable; the button, being outside the list, is
+            // not - the same contract the jQuery UI path has.
             const search = makeInstance();
             type(AT_THRESHOLD);
             ajax.last().succeed(SEARCH_RESPONSE);
@@ -3022,10 +2983,9 @@ describe('the custom fallback used when jQuery UI is absent', () => {
 
             expect(search._manualEntry).toBe(false);
             expect($('.two-company-search-back')).toHaveLength(0);
-            // §3 routes back through openDropdown(), so the panel is open
-            // rather than blank, with the query field deliberately opening
-            // EMPTY rather than re-seeded - which renders no row any more
-            // (TWO-40 follow-up).
+            // The way back routes through openDropdown(), so the panel is
+            // open rather than blank, with the query field opening EMPTY
+            // rather than re-seeded - which renders no row (TWO-40 follow-up).
             expect(shown(panel())).toBe(true);
             expect($('.two-autocomplete-too-short')).toHaveLength(0);
             expect(shown(notListed())).toBe(true);
@@ -3037,8 +2997,8 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             ajax.last().succeed(SEARCH_RESPONSE);
 
             notListed().trigger('click');
-            // §2: the company-name field is a plain text input again, and it is
-            // the thing they now have to type into.
+            // The company-name field is a plain text input now, and the thing
+            // they have to type into.
             expect(document.activeElement).toBe(liveField().get(0));
 
             const link = $('.two-company-search-back');
@@ -3099,9 +3059,9 @@ describe('the custom fallback used when jQuery UI is absent', () => {
             ajax.last().succeed(SEARCH_RESPONSE);
             notListed().trigger('click');
 
-            // §3 wants it in normal block flow below the company-name field and
-            // never overlapping it, so it is appended to the wrapper AFTER the
-            // panel rather than inserted straight after the input.
+            // Normal block flow below the company-name field, never
+            // overlapping it: appended to the wrapper AFTER the panel rather
+            // than inserted straight after the input.
             const link = $('.two-company-search-back');
             expect(link).toHaveLength(1);
             expect(link.get(0).previousElementSibling).toBe(panel().get(0));
@@ -3346,7 +3306,7 @@ describe('the inline grey company-id hint (TWO-25288)', () => {
     });
 });
 
-describe('a panel the buyer opened survives a re-render (TWO-25326 §1)', () => {
+describe('a panel the buyer opened survives a re-render (TWO-25326)', () => {
     // Found in a real browser, invisible to every test that existed.
     //
     // PrestaShop fires `updatedAddressForm` for ordinary interactions, and it
@@ -3354,8 +3314,8 @@ describe('a panel the buyer opened survives a re-render (TWO-25326 §1)', () => 
     // measured against a real PrestaShop 8 at click +165ms, re-render +195ms.
     // The handler closed the panel and rebuilt it shut, so the buyer clicked
     // the company field, saw a dropdown appear and vanish, and had no route
-    // into manual entry at all. §1 requires the click to open the panel; a
-    // panel that reopens and then disappears on its own does not satisfy it.
+    // into manual entry at all. A click must open the panel and leave it
+    // open; one that reopens and then disappears on its own does not.
     test('an open panel is reopened after the address form is re-rendered', () => {
         makeInstance();
         openPanel();

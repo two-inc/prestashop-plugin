@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Coverage for upgrade/upgrade-2.7.6.php - the company-search location key
  * rename `PS_TWO_ENABLE_COMPANY_NAME` -> `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS`
- * (TWO-40 item #1).
+ * (TWO-40).
  *
  * Kept separate from CompanySearchLocationConfigSpec, which pins how the key is
  * RESOLVED and round-tripped. This file pins the one-time MIGRATION, which has

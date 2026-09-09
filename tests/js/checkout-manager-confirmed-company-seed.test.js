@@ -1,5 +1,5 @@
 /**
- * TWO-40 #13. Seeding the page-lifetime confirmed selection from the
+ * TWO-40. Seeding the page-lifetime confirmed selection from the
  * server's cart-scoped record.
  *
  * `TwoCheckoutManager._confirmedCompanySelection` is page-lifetime only, but

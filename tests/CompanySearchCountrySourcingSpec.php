@@ -335,7 +335,7 @@ final class CompanySearchCountrySourcingSpec
     }
 
     /**
-     * The INVOICE address, and never the delivery one (TWO-40 #13).
+     * The INVOICE address, and never the delivery one (TWO-40).
      *
      * This resolver is the billing-only one, and its callers depend on that:
      * getTwoBrowserCompanySelection() invalidates a stored company selection by

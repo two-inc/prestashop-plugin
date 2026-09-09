@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /**
  * The address-lookup switch is unavailable, and forced off, whenever the
- * company search is not in the address area - TWO-25326 §7.1 follow-up.
+ * company search is not in the address area - TWO-25326.
  *
  * PS_TWO_ADDRESS_LOOKUP governs one thing: what a company selection writes
  * into the checkout ADDRESS step. Once PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS moves the
@@ -188,9 +188,8 @@ final class AddressLookupGatingSpec
 
     /**
      * The presentation half, asserted as a shape over the shipped admin
-     * template. Nothing else in this suite can see it, and a server-side gate
-     * with no visible counterpart is the version of this bug Doug reported:
-     * the control still looked settable.
+     * template. Nothing else in this suite can see it, and a server-side gate with
+     * no visible counterpart leaves the control still looking settable.
      */
     private static function testAdminJsGreysTheControlOut(): void
     {

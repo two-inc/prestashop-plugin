@@ -71,8 +71,8 @@ function makeInstance(extraConfig) {
 /**
  * The autocomplete widget, wherever it currently lives.
  *
- * TWO-25326 §1 moved it off `input[name='company']` and onto the anchored
- * panel's own query field: the company-name field stopped being the search box.
+ * TWO-25326: the widget lives on the anchored panel's own query field, not on
+ * `input[name='company']`.
  * The panel is built by setupAutocomplete(), so this resolves from the moment
  * an instance exists - it does NOT need the panel to have been opened. Resolved
  * from the live DOM on each call rather than cached, for the same reason
@@ -615,13 +615,11 @@ describe('class-static result cache', () => {
                     // be identified in the DOM as the failure row.
                     two_row_class: 'two-autocomplete-select-country'
                 }
-                // ...and NOTHING else. The manual-entry footer that used to be
-                // appended here as a second pseudo-row is gone: TWO-25326 §2
-                // made "My company is not on the list" a real <button> outside
-                // the scroll container, so it is no longer part of any rendered
-                // item set. Asserted immediately below rather than left implied,
-                // because "the route out is still offered" is the property that
-                // mattered about the old row.
+                // ...and NOTHING else: "My company is not on the list" is a
+                // real <button> outside the scroll container (TWO-25326), never
+                // a rendered item. Asserted immediately below rather than left
+                // implied - "the route out is still offered" is the property
+                // that matters.
             ]);
             expect(rendered[0].label).not.toBe(search.getSearchUnavailableText());
             expect(panelParts().notListed.length).toBe(1);

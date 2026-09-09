@@ -74,7 +74,7 @@ class Twopayment extends PaymentModule
     // Cached GET /v1/merchant `invoice_distributed_by_merchant` flag (TWO-25111).
     // Gates the plugin-side invoice upload (TwoInvoiceUploadService) - the
     // merchant-controlled admin toggle PS_TWO_USE_OWN_INVOICES it replaces is
-    // retired (TWO-25106, Option A: flag-driven only, no admin toggle).
+    // retired (TWO-25106): flag-driven only, no admin toggle.
     // Populated by the SAME fetch as CONFIG_MERCHANT_AVAILABLE_TERMS and gated
     // by the shared CONFIG_MERCHANT_AVAILABLE_TERMS_TS. Null-safe: a response
     // without the field caches `0` (absent = false).
@@ -2503,10 +2503,9 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Enable company search in address entry'),
                         'name' => 'PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS',
                         'is_bool' => true,
-                        // TWO-25326 §7.1 (2026-08-03 design ruling): this switch now
-                        // governs WHERE the one company-search control (dropdown /
-                        // query field / manual entry) renders, not whether it exists
-                        // - the control is never off.
+                        // TWO-25326: governs WHERE the one company-search control
+                        // (dropdown / query field / manual entry) renders, not
+                        // whether it exists - the control is never off.
                         //
                         // SENTENCE CASE, matching every other label on this
                         // page ("Autofill company address", "Automatically
@@ -2873,7 +2872,7 @@ class Twopayment extends PaymentModule
     protected function getAddressLookupEnabled()
     {
         // Forced off while the company search is not in the address area
-        // (TWO-25326 §7.1 follow-up). Derived from the STORED position rather
+        // (TWO-25326). Derived from the STORED position rather
         // than through isAddressLookupSettingAvailable(), which also consults
         // the request: this method is read on the front office, and a resolver
         // the checkout runs must not be steerable by a query parameter.
@@ -2899,7 +2898,7 @@ class Twopayment extends PaymentModule
      * Effective value of PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS, as the '1'/'0' string
      * the checkout JS compares against - '1' means the company-search
      * control renders in the address area, '0' means it has relocated to
-     * the payment tile (TWO-25326 §7.1, 2026-08-03 design ruling).
+     * the payment tile (TWO-25326).
      *
      * This is "here vs there" for the ONE shared control (TwoCompanySearch.js),
      * never "on vs off" - the control always exists somewhere. Reusing this
@@ -2931,11 +2930,11 @@ class Twopayment extends PaymentModule
      * It governs what a company selection writes into the checkout ADDRESS
      * step, so it means nothing once the company search itself has moved out
      * of the address step and into the payment tile - there is no address-area
-     * lookup left to govern (TWO-25326 §7.1). In that state it is not merely
+     * lookup left to govern (TWO-25326). In that state it is not merely
      * inert, it is forced off: greyed out in the admin form by the config
      * page's JS, rendered as "No", and refused on save however it was posted.
-     * Mirrors woocommerce-plugin's admin.js, which disables and unchecks its
-     * `enable_address_lookup` field whenever company search is off.
+     * The other plugins disable and untick their own address-lookup setting on
+     * the same condition.
      *
      * Reads the SUBMITTED company-search position where there is one, falling
      * back to the stored one, so the same POST that turns the search into a
@@ -2996,7 +2995,7 @@ class Twopayment extends PaymentModule
      * The payment step renders an address SELECTOR rather than the address form
      * (checkout/_partials/steps/addresses.tpl gates address-form.tpl behind
      * $show_delivery_address_form), so the tile-mounted search control
-     * (TWO-25326 §7.1) has no country select to read and this is its only
+     * (TWO-25326) has no country select to read and this is its only
      * source. The shipping address is a country the buyer supplied, not a
      * guess, which is why it is allowed to stand in here at all.
      *
@@ -3071,8 +3070,8 @@ class Twopayment extends PaymentModule
         $fields_values = array();
         // Read through the same default-on resolver the checkout uses, so an
         // install whose upgrade script has not run yet renders the switch in
-        // the position it is actually behaving in (TWO-25326 §7.1: this is
-        // also the address-area/payment-tile location switch now).
+        // the position it is actually behaving in (TWO-25326: the switch
+        // selects the address-area or payment-tile location).
         $fields_values['PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'] = Tools::getValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', $this->isCompanySearchInAddressArea());
         // Rendered through the same gate the save enforces, so the switch is
         // never drawn in a position the module will not honour: the
@@ -3102,7 +3101,7 @@ class Twopayment extends PaymentModule
 
         Configuration::updateValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS', Tools::getValue('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS'));
         // Server-side half of the "unavailable when the search is not in the
-        // address area" gate (TWO-25326 §7.1 follow-up). The admin JS greys
+        // address area" gate (TWO-25326). The admin JS greys
         // the switch out, and a disabled control posts nothing - but a
         // hand-crafted or replayed POST can still carry a ticked box, and it
         // must not take effect. Matched by the same gate in
@@ -5009,16 +5008,16 @@ class Twopayment extends PaymentModule
             'invalid_response_from_server' => $this->l('Invalid response from server'),
             'choose_payment_terms' => $this->l('Choose the Buy Now, Pay Later option that works best for you'),
             'payment_period_starts' => $this->l('Your payment period starts when your order is fulfilled'),
-            // TWO-25326 §7.3 (2026-08-03 design ruling): the tile is
-            // text-only when the address-area control is active - no
+            // TWO-25326: the tile is text-only when the address-area
+            // control is active - no
             // separate company name/number label, just these two sentences
             // with the company folded straight in. Exact wording, matched
             // by the cross-platform test script - do not paraphrase.
             'invoice_likely_accepted_for' => sprintf($this->l('This order by %%s (%%s) is likely to be accepted by %s'), $this->getTwoBrandConfig('product_name')),
             'invoice_cannot_be_approved_for' => sprintf($this->l('%s is not available for this order by %%s (%%s)'), $this->getTwoBrandConfig('product_name')),
             // Name-only fallback: a company captured without an organisation
-            // number (should not occur once §6 gating is enforced, but kept
-            // so a stray no-number case never renders "Example Ltd ()").
+            // number (the capture path requires one, but kept so a stray
+            // no-number case never renders "Example Ltd ()").
             'invoice_likely_accepted_for_no_number' => sprintf($this->l('This order by %%s is likely to be accepted by %s'), $this->getTwoBrandConfig('product_name')),
             'invoice_cannot_be_approved_for_no_number' => sprintf($this->l('%s is not available for this order by %%s'), $this->getTwoBrandConfig('product_name')),
             'invoice_likely_accepted' => sprintf($this->l('Your invoice with %s is likely to be accepted, subject to additional checks.'), $this->getTwoBrandConfig('product_name')),
@@ -5088,12 +5087,12 @@ class Twopayment extends PaymentModule
             // same three-chip pattern.
             'company_search_manual_entry' => $this->l('Enter manually'),
             'company_search_back_to_search' => $this->l('Search for company'),
-            // Zero-result wording (TWO-25326 §1). EXACT across all four
+            // Zero-result wording (TWO-25326). EXACT across all four
             // plugins - "No results found" is a different string and the
             // cross-platform test script checks for this one verbatim.
             'company_search_no_matches' => $this->l('No matches found'),
             // Accessible name for the company-name field once it acts as the
-            // trigger that opens the search panel (TWO-25326 §1). Its visible
+            // trigger that opens the search panel (TWO-25326). Its visible
             // value is the confirmed company name itself.
             'company_search_edit' => $this->l('Search for a different company'),
             // The three-chip mode selector (TWO-40 design revision). Shown
@@ -5146,12 +5145,9 @@ class Twopayment extends PaymentModule
                 // Ticked rows only - published to the buyer, so
                 // everything else stays server-side.
                 'custom_headers' => self::getTwoBrowserCustomHeaders(),
-                // TWO-25326 §7.1 (2026-08-03 ruling): this used to gate the
-                // search widget's existence (on/off). It now decides WHERE
-                // the one control renders instead: '1' = address area
-                // (default, unchanged behaviour), '0' = the same control
-                // relocates into the payment tile. Never a second control,
-                // never fully off.
+                // TWO-25326: WHERE the one company-search control renders -
+                // '1' = address area (the default), '0' = the payment tile.
+                // Never a second control, never fully off.
                 'company_name_search' => $this->isCompanySearchInAddressArea(),
                 // TWO-25326: may the company-search affordance render? A real
                 // PHP bool, so addJsDef emits a real JS boolean.
@@ -5302,7 +5298,7 @@ class Twopayment extends PaymentModule
 
         // CRITICAL FIX: Remove async loading and ensure proper load order for reliable initialization
         // Ensures they load AFTER jQuery
-        // Shared company-number DISPLAY rule (TWO-25326 §12), used by both the
+        // Shared company-number DISPLAY rule (TWO-25326), used by both the
         // search control and the order-intent sentence - so it has to be in
         // place before either of them, hence a priority below both.
         $this->context->controller->registerJavascript('two-company-number', $this->getTwoModuleAssetPath('views/js/modules/TwoCompanyNumber.js'), array('priority' => 200, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCompanyNumber.js')));
@@ -5310,9 +5306,8 @@ class Twopayment extends PaymentModule
         $this->context->controller->registerJavascript('two-order-intent', $this->getTwoModuleAssetPath('views/js/modules/TwoOrderIntent.js'), array('priority' => 202, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOrderIntent.js')));
         $this->context->controller->registerJavascript('two-sole-trader', $this->getTwoModuleAssetPath('views/js/modules/TwoSoleTrader.js'), array('priority' => 204, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoSoleTrader.js')));
         $this->context->controller->registerJavascript('two-optional-fields', $this->getTwoModuleAssetPath('views/js/modules/TwoOptionalFields.js'), array('priority' => 204, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoOptionalFields.js')));
-        // TwoCompanySummary.js (read-only tile label, TWO-25288) REMOVED by
-        // TWO-25326 §7.3 (2026-08-03 ruling): the captured company now lives
-        // only inside the intent-message sentence, never a separate label.
+        // No separate company label: the captured company appears only
+        // inside the intent-message sentence (TWO-25326).
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', $this->getTwoModuleAssetPath('views/js/modules/TwoCheckoutManager.js'), array('priority' => 205, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCheckoutManager.js')));
         $this->context->controller->registerJavascript('two-script', $this->getTwoModuleAssetPath('views/js/twopayment.js'), array('priority' => 206, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/twopayment.js')));
@@ -5685,12 +5680,11 @@ class Twopayment extends PaymentModule
             // Optional buyer reference fields, rendered inside the tile rather
             // than in the billing address block.
             'two_optional_fields' => $optional_fields,
-            // TWO-25326 §7.1 (2026-08-03 ruling): "here vs there" for the ONE
-            // company-search control (TwoCompanySearch.js), driven by the
-            // EXISTING PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS switch rather than a new
-            // setting. When true, the tile renders its own mount point for
-            // that control and the address-area control is suppressed
-            // client-side.
+            // TWO-25326: "here vs there" for the ONE company-search control
+            // (TwoCompanySearch.js), driven by the existing
+            // PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS switch. When true, the tile
+            // renders its own mount point and the address-area control is
+            // suppressed client-side.
             'company_search_tile' => $this->isCompanySearchInAddressArea() !== '1',
             'two_product_name' => $this->getTwoBrandConfig('product_name'),
         ));
@@ -11867,7 +11861,7 @@ class Twopayment extends PaymentModule
      * `invoice_distributed_by_merchant` flag from the cached GET /v1/merchant
      * record. This is the ONLY gate for the plugin-side invoice upload
      * (TwoInvoiceUploadService): the manual PS_TWO_USE_OWN_INVOICES admin
-     * toggle is retired (TWO-25111 / TWO-25106 Option A) and any leftover
+     * toggle is retired (TWO-25111 / TWO-25106) and any leftover
      * value of it in the configuration table has zero effect. The API
      * enforces the same flag server-side (403 when false, TWO-24761), so this
      * plugin-side gate only avoids doomed upload attempts; it is not a

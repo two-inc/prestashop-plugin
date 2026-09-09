@@ -1,8 +1,8 @@
 /**
- * TWO-25503. Doug found this on a real checkout with company search in the
- * address area: with a billing address that differs from the shipping one, a
- * company picked on the BILLING form never reached the order-intent call. The
- * payment tile then spun forever with nothing said to the buyer.
+ * TWO-25503. With company search in the address area and a billing address
+ * that differs from the shipping one, a company picked on the BILLING form
+ * never reached the order-intent call, and the payment tile spun forever with
+ * nothing said to the buyer.
  *
  * Two independent causes, both pinned here.
  *

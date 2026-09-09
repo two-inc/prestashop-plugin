@@ -1,25 +1,17 @@
 /**
- * Live bug (Doug, 2026-08-12): sole-trader autofill's passive lookup finds no
- * matching Two session cookie for the checkout email, so it opens the hosted
- * signup popup. The buyer completes a REAL OTP verification there for a
- * DIFFERENT, genuinely-registered email (their sole-trader account may not
- * share an inbox with whatever they typed into PrestaShop's own personal-
- * information step for this order). The popup posts 'ACCEPTED' back and
- * closes - authentication succeeded - but the resulting buyer lookup used to
- * re-validate `buyer.email` against `checkoutEmail()` (still the FIRST,
- * unrelated email, since nothing in this flow ever writes the popup's email
- * back into the PS form) and rejected an otherwise-successful response,
- * reopening the very popup the buyer had just finished with. Every retry
- * hits the identical mismatch, forever - the bug is not a real validation
- * rule, it is `getCurrentBuyer()` reusing the SAME email-match heuristic for
- * two calls with different trust levels: an unauthenticated cookie probe
- * (where the heuristic is the only signal available) and a call that follows
- * a genuine OTP round trip (where the server has already told this browser
- * exactly who the buyer is).
+ * Sole-trader autofill's passive lookup finds no matching Two session cookie for
+ * the checkout email, so it opens the hosted signup popup. The buyer may complete
+ * a real OTP verification there for a DIFFERENT, genuinely-registered email -
+ * their sole-trader account need not share an inbox with whatever they typed into
+ * PrestaShop's own personal-information step. Re-validating `buyer.email` against
+ * `checkoutEmail()` after that round trip rejects an otherwise-successful response
+ * and reopens the popup the buyer has just finished with, on every retry: the same
+ * email-match heuristic cannot serve both an unauthenticated cookie probe, where
+ * it is the only signal, and a call the server has already authenticated.
  *
- * Fix: bindPopupMessageListener()'s 'ACCEPTED' handler calls
- * getCurrentBuyer(true) - `trustedIdentity` - which applies any buyer the
- * endpoint returns without re-checking it against checkoutEmail() at all.
+ * bindPopupMessageListener()'s 'ACCEPTED' handler therefore calls
+ * getCurrentBuyer(true) - `trustedIdentity` - which applies any buyer the endpoint
+ * returns without re-checking it against checkoutEmail().
  */
 
 'use strict';

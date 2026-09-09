@@ -859,10 +859,10 @@ class TwoSoleTrader {
     /**
      * Mint tokens as soon as checkout is reached and a billing country
      * resolves - unconditionally, with no eligibility check of any kind
-     * (TWO-40 follow-up, Doug: neither the registry's per-country answer nor
-     * a merchant buyer-country record has any bearing on whether minting is
-     * authorised - that decision belongs to the Two API these tokens are
-     * minted against, not to a client-side guess). This is also what arms
+     * (TWO-40 follow-up: neither the registry's per-country answer nor a
+     * merchant buyer-country record bears on whether minting is authorised -
+     * that decision belongs to the Two API these tokens are minted against,
+     * not to a client-side guess). This is also what arms
      * the background refresh (see startTokenRefreshInterval()), so the
      * buyer's first "I'm a sole trader" click has only the autofill lookup
      * between it and the signup popup.
@@ -1443,10 +1443,10 @@ class TwoSoleTrader {
     }
 
     /**
-     * Start the 30-minute background re-mint (TWO-40 follow-up, Doug: a
-     * buyer who sits on checkout too long can outlast the delegated auth
-     * tokens' server-side lifetime, breaking autofill and the sole-trader
-     * flow entirely). Armed from fetchTokens()'s success branch, which for the
+     * Start the 30-minute background re-mint (TWO-40 follow-up: a buyer who
+     * sits on checkout too long can outlast the delegated auth tokens'
+     * server-side lifetime, breaking autofill and the sole-trader flow
+     * entirely). Armed from fetchTokens()'s success branch, which for the
      * ordinary flow is startEagerTokenMint()'s mint at mount - so the cadence
      * is already running by the time the buyer clicks. Idempotent: tokens
      * are held across country changes (no re-mint), so the only mint that
@@ -1800,8 +1800,7 @@ class TwoSoleTrader {
      *   THERE, which this browser never sees and has no business
      *   re-validating. Requiring it to also equal checkoutEmail() - the
      *   separate email PrestaShop's own personal-information step collected
-     *   for the order - was live-bug TWO-40 (Doug, 2026-08-12): a buyer
-     *   enrolled under a real sole-trader email different from the one on
+     *   for the order - was live-bug TWO-40: a buyer enrolled under a real sole-trader email different from the one on
      *   the order got a real, successful OTP verification for that email,
      *   then had this check silently disagree with the server and reopen
      *   the signup popup, forever. The two emails identify two different
@@ -2172,7 +2171,7 @@ class TwoSoleTrader {
                     // into sole-trader mode that adopts an identity, and for
                     // "select a different sole trader".
                     self.recheckOrderIntent();
-                    // TWO-25326 §12: companyLabel falls back to
+                    // TWO-25326: companyLabel falls back to
                     // buyer.organization_number when company_name is blank (see
                     // the comment above applyBuyer) - and that is exactly where
                     // the synthetic `TWO:`-prefixed identifier shows up, since
@@ -2424,11 +2423,9 @@ class TwoSoleTrader {
                 console.error('Two: sole-trader signup popup was blocked and no on-page error UI is available here.');
             }
         } else {
-            // Opened fine - hand off to the popup window, but do NOT settle
-            // the spinner yet (TWO-40 follow-up, Doug: it was clearing as
-            // soon as this line ran, not when the popup actually closed).
-            // watchPopupUntilClosed() settles it once `popup.closed` is
-            // actually true.
+            // Opened fine - hand off to the popup window, but do NOT settle the
+            // spinner yet (TWO-40 follow-up): watchPopupUntilClosed() settles it
+            // once `popup.closed` is actually true.
             this._popup = popup;
             TwoSoleTrader._popupSeq += 1;
             this._popupId = TwoSoleTrader._popupSeq;
@@ -2617,7 +2614,7 @@ class TwoSoleTrader {
      * Raise the hosted signup popup back to the front, if one is still up.
      *
      * The counterpart to closeSignupPopup() for the ONE gesture that means
-     * "I want that popup, not this page" (Doug, TWO-40 follow-up): re-clicking
+     * "I want that popup, not this page" (TWO-40 follow-up): re-clicking
      * the Sole trader chip while a popup from an earlier launch is still open.
      * Every other way focus comes back to the checkout takes the popup down.
      *
@@ -2764,11 +2761,7 @@ class TwoSoleTrader {
             // a real OTP verification in the hosted popup. The resulting
             // buyer lookup must not be re-gated on checkoutEmail() matching -
             self._signupPopupOpened = false;
-            // see getCurrentBuyer()'s JSDoc (live bug TWO-40, Doug
-            // 2026-08-12: a buyer whose Two account email genuinely differs
-            // from the order's checkout email got a successful OTP, then had
-            // this exact call disagree with the server and reopen the popup
-            // forever).
+            // see getCurrentBuyer()'s JSDoc (live bug TWO-40).
             self.getCurrentBuyer(true);
         };
         window.addEventListener('message', this._messageHandler);
@@ -2857,7 +2850,7 @@ class TwoSoleTrader {
      * to hear it is already a no-op, the same way a stale popup message
      * finding this object gone would be.
      *
-     * Gated on `this._popup`, though (TWO-40 follow-up, Doug): while a
+     * Gated on `this._popup`, though (TWO-40 follow-up): while a
      * signup popup is open, the spinner must wait for the popup itself to
      * close - completed, cancelled inside it, or just closed by the buyer -
      * not for whichever internal call happens to settle first. applyBuyer()'s
@@ -2870,15 +2863,14 @@ class TwoSoleTrader {
      * under its `keepPopupTracked` caller, which relies on this guard
      * holding the settle back until the popup it left open closes.
      *
-     * Gated on the post-popup WRITE too (Doug, TWO-40 follow-up: "the flow is
-     * complete when the popup is gone AND the lookup has come back AND the
-     * name and number are saved"). The popup poll fires within 500ms of the
-     * window closing, and the hosted flow closes it as soon as it has posted
-     * 'ACCEPTED' - so the poll routinely won this race against the
-     * getCurrentBuyer() -> saveCompany -> adoptEnrolledIdentity() chain that
-     * message starts, and settled the flight with the company field still
-     * empty. isWriteRoundTripOutstanding() covers that chain; whichever of
-     * the two finishes last is the one that dispatches.
+     * Gated on the post-popup WRITE too (TWO-40 follow-up): the flow is complete
+     * only when the popup is gone AND the lookup has come back AND the name and
+     * number are saved. The popup poll fires within 500ms of the window closing,
+     * and the hosted flow closes it as soon as it has posted 'ACCEPTED', so the
+     * poll would otherwise beat the getCurrentBuyer() -> saveCompany ->
+     * adoptEnrolledIdentity() chain that message starts and settle the flight
+     * with the company field still empty. isWriteRoundTripOutstanding() covers
+     * that chain; whichever of the two finishes last is the one that dispatches.
      *
      * @param {boolean} [force] Dispatch even with a write round trip out.
      *   For cancelEnrollment() only: the generation bump it just made means

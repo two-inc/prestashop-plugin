@@ -477,7 +477,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
     public function ajaxProcessCheckOrderIntent()
     {
-        // Order intent pre-approval preview toggle (TWO-25386 #8). Server-side
+        // Order intent pre-approval preview toggle (TWO-25386). Server-side
         // hard gate, defense-in-depth alongside the client-side
         // shouldRunOrderIntent() check in TwoOrderIntent.js. Never touches
         // Twopayment::checkTwoOrderIntentApprovalAtPayment() - the authoritative
@@ -765,8 +765,8 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     /**
      * Helper method to validate AJAX token.
      *
-     * DEBUG ESCAPE HATCH (TWO-25386 #4, ported from woocommerce-plugin's
-     * `skip_confirm_auth`): PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when enabled,
+     * DEBUG ESCAPE HATCH (TWO-25386), matching the equivalent switch on the
+     * other platform plugins: PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when enabled,
      * skips this token check entirely on every action on this controller.
      * Default OFF - matches the pre-existing always-checked behaviour.
      */

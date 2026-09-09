@@ -1,7 +1,7 @@
 /**
- * TWO-25503. Doug found this in the payment tile: selecting a company there
- * correctly ran the order-intent check, but the two ways of arriving at a SOLE
- * TRADER did not re-run it - switching into sole-trader mode where an identity
+ * TWO-25503. In the payment tile, selecting a company correctly ran the
+ * order-intent check, but the two ways of arriving at a SOLE TRADER did not
+ * re-run it - switching into sole-trader mode where an identity
  * is adopted, and "select a different sole trader". The tile went on showing the
  * previous company's approval sentence, because the stale result from the first
  * selection was never refreshed.

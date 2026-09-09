@@ -1,21 +1,20 @@
 /**
- * TWO-40 follow-up, Doug live-test finding (2026-08-19): with the billing
- * country set to United Kingdom, which the registry DOES support sole
- * traders for, the "Sole trader" chip did not render at all.
+ * TWO-40 follow-up: three defects that between them kept the "Sole trader" chip
+ * from rendering for a billing country the registry DOES support sole traders for
+ * (GB).
  *
  * Unlike company-search-sole-trader-entry.test.js, which stubs
  * `TwoSoleTrader_Instance`, these run the REAL TwoSoleTrader beside the real
- * search control: the defects are in the seam between the two, which a stub
- * on either side would hide.
+ * search control: the defects are in the seam between the two, which a stub on
+ * either side would hide.
  *
- *  1. `{success: false}` (a stale ajax token) was flattened into
- *     `available: false` and cached as a real answer for 24h, with nothing
- *     that re-asks inside the TTL.
- *  2. A negative answer was persisted, so eligibility becoming true again
- *     stayed invisible for up to 24h. It's now REMOVED from the cache instead.
- *  3. Availability resolves asynchronously and nothing pushed the answer to
- *     the search control until it next re-evaluated. TwoSoleTrader.apply()
- *     now re-syncs the chip, the direction WooCommerce already pushes it.
+ *  1. `{success: false}` (a stale ajax token) must not flatten into
+ *     `available: false` and cache as a real answer for 24h with nothing that
+ *     re-asks inside the TTL.
+ *  2. A negative answer is REMOVED from the cache rather than persisted, so
+ *     eligibility becoming true again is visible at once.
+ *  3. Availability resolves asynchronously, so TwoSoleTrader.apply() pushes the
+ *     answer to the search control rather than waiting for it to re-evaluate.
  */
 
 'use strict';

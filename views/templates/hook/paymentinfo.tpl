@@ -39,8 +39,7 @@
             <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="{$two_product_name|escape:'html':'UTF-8'}" class="two-logo" />
             <p class="two-tagline">
                 {l s='Business payments made simple' mod='twopayment'}
-                {* "What is Two" explainer link (TWO-25386 #2, ported from
-                   woocommerce-plugin's `show_abt_link`). Default ON. *}
+                {* "What is Two" explainer link (TWO-25386). Default ON. *}
                 {if $show_about_link}
                 <span class="two-info-tooltip">
                     <span class="two-info-icon">?</span>
@@ -131,8 +130,7 @@
         <div class="two-optional-fields" id="two-optional-fields">
             {foreach from=$two_optional_fields item="field"}
                 <div class="two-optional-field two-optional-field--{$field.key|escape:'html':'UTF-8'}">
-                    {* Display input tooltips (TWO-25386 #3, ported from
-                       woocommerce-plugin's `display_tooltips`). Default OFF. *}
+                    {* Display input tooltips (TWO-25386). Default OFF. *}
                     <label class="two-optional-field__label" for="two-field-{$field.key|escape:'html':'UTF-8'}"{if $display_tooltips} title="{$field.help|escape:'html':'UTF-8'}"{/if}>
                         {$field.label|escape:'html':'UTF-8'}
                     </label>

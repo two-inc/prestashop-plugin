@@ -99,24 +99,20 @@ final class MirrorWriteRecordSpec
     }
 
     /**
-     * Doug's ruling is that ANY address field the buyer has entered pins the
-     * address, and the pin's test is a content match against what the mirror last
-     * wrote. A field with nowhere to keep its last-written value cannot be judged
-     * that way at all, so the set of keys IS the set of fields the rule covers -
-     * assert it explicitly rather than leaving it to whichever spec happens to
-     * mention each one.
+     * ANY address field the buyer has entered pins the address, and the pin's test
+     * is a content match against what the mirror last wrote. A field with nowhere
+     * to keep its last-written value cannot be judged that way, so the set of keys
+     * IS the set of fields the rule covers - asserted here explicitly.
      */
     private static function testEveryComparableFieldHasItsOwnKey(): void
     {
         $fields = array_keys(Twopayment::MIRROR_WRITE_SESSION_KEYS);
         sort($fields);
 
-        // `address2` and `state` joined the set when the sole-trader autofill began
-        // routing building/apartment and region into them (TWO-40, Doug's ruling): a
-        // buyer typing into a second address line or a county is stating an
-        // independent answer exactly as much as one typing a city, so those fields
-        // pin the address like any other. Leaving them untracked would have made the
-        // pin miss a real case of buyer-entered data, against the address-wide rule.
+        // `address2` and `state` are in the set because sole-trader autofill routes
+        // building/apartment and region into them (TWO-40): a buyer typing into a
+        // second address line or a county is stating an independent answer as much
+        // as one typing a city, so those fields pin the address like any other.
         TinyAssert::same(
             ['address1', 'address2', 'city', 'company', 'country', 'organization', 'postcode', 'state'],
             $fields,

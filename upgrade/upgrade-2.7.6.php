@@ -4,7 +4,7 @@
  *
  * Carries the company-search location setting across the rename
  * `PS_TWO_ENABLE_COMPANY_NAME` -> `PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS`
- * (TWO-40, item #1). The old name said "enable company name", which has not
+ * (TWO-40). The old name said "enable company name", which has not
  * been what the switch does since TWO-25326 - it decides WHERE the one
  * company-search control renders (address entry vs payment tile), never
  * whether it exists.

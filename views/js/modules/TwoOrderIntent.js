@@ -5,7 +5,7 @@ class TwoOrderIntent {
             orderIntentUrl: '',
             ajaxToken: '',
             enablePaymentPreventionOnDecline: true,
-            // TWO-25326 §7.1: gates whether collectFormData() may trust the
+            // TWO-25326: gates whether collectFormData() may trust the
             // address form's `company`/`companyid` DOM fields at all.
             companySearchInAddressArea: true,
             // The control whose block this module's address-id reads must agree
@@ -93,7 +93,7 @@ class TwoOrderIntent {
     }
 
     /**
-     * TWO-25326 §7.3. The single place the company name and number are folded
+     * TWO-25326. The single place the company name and number are folded
      * into the sentence, so every caller renders identical wording. Omits the
      * parenthesised number when none is known ("Example Ltd", never
      * "Example Ltd ()").
@@ -102,7 +102,7 @@ class TwoOrderIntent {
      * stays name-only: no PrestaShop brand overlay defines its own template today.
      */
     buildCompanyIntentMessage(approved, name, number) {
-        // TWO-25326 §12: `TWO:`-prefixed internal identifiers are never shown.
+        // TWO-25326: `TWO:`-prefixed internal identifiers are never shown.
         // The suppressed case falls through to the `_no_number` templates, so
         // it can never render an empty pair of brackets.
         const displayNumber = window.TwoCompanyNumber.forDisplay(number);
@@ -160,7 +160,7 @@ class TwoOrderIntent {
     }
     
     /**
-     * Feeds the company-aware intent wording (TWO-25326 §7.3), the only place
+     * Feeds the company-aware intent wording (TWO-25326), the only place
      * the captured company appears in the tile.
      *
      * The payload comes from the module's own backend, built from the session
@@ -322,7 +322,7 @@ class TwoOrderIntent {
             };
             let company = '';
             let companyid = '';
-            // TWO-25326 §7.1: the address-area `company`/`companyid` DOM
+            // TWO-25326: the address-area `company`/`companyid` DOM
             // fields are only trustworthy when the search control lives there.
             // In tile mode `company` stays visible and typeable BY DESIGN,
             // while `companyid` is the tile's own hidden field elsewhere in the
@@ -681,7 +681,7 @@ class TwoOrderIntent {
         if (result.approved ? approvedSuppressed : declinedSuppressed) {
             result.message = '';
         }
-        // TWO-25326 §7.1: the address-area field is not a trustworthy source
+        // TWO-25326: the address-area field is not a trustworthy source
         // once search has relocated to the tile - see collectFormData().
         if (this.config.companySearchInAddressArea !== false) {
             const companyField = document.querySelector("input[name='company']");

@@ -1,5 +1,5 @@
 /**
- * TWO-40 follow-up, Doug: delegated auth tokens can expire server-side if a
+ * TWO-40 follow-up: delegated auth tokens can expire server-side if a
  * buyer sits on checkout too long, breaking autofill and the sole-trader
  * flow. Pins the fixed behaviour: a 30-minute background re-mint, armed by
  * startEagerTokenMint() as soon as an eligible billing country resolves, and

@@ -75,7 +75,7 @@ describe('the two unconditional chips', () => {
     });
 });
 
-describe('chip DOM order (TWO-40 follow-up: Doug wants Registered/Sole Trader/Enter Manually)', () => {
+describe('chip DOM order: Registered, then Sole Trader, then Enter Manually (TWO-40)', () => {
     test('modeChips renders Registered Company, then Sole Trader, then Enter Manually', () => {
         makeInstance();
         openPanel();
@@ -127,7 +127,7 @@ describe('clicking "Registered Company"', () => {
         expect(shown(panelParts().panel)).toBe(true);
     });
 
-    test('never cancels a pending sole-trader enrolment (Doug, TWO-25658): neither the reopen nor the chip', () => {
+    test('never cancels a pending sole-trader enrolment (TWO-25658): neither the reopen nor the chip', () => {
         const soleTraderInstance = {
             isAvailableForCurrentCountry: () => true,
             startEnrollment: jest.fn(),
@@ -149,7 +149,7 @@ describe('clicking "Registered Company"', () => {
 });
 
 describe('clicking "Enter Manually" while a sole-trader enrolment is active', () => {
-    /** The chip never cancels (Doug, TWO-25658); adoptSoleTraderBuyer()'s manual-entry guard keeps a lookup still out off the hand-typed name. */
+    /** The chip never cancels (TWO-25658); adoptSoleTraderBuyer()'s manual-entry guard keeps a still-out lookup off the hand-typed name. */
     test('does not cancel on the click, nor did the reopen before it', () => {
         const soleTraderInstance = {
             isAvailableForCurrentCountry: () => true,

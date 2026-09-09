@@ -3,7 +3,7 @@
  * UPGRADE SCRIPT: Version 2.7.12
  *
  * Carries the skip-confirm-token debug toggle onto its renamed configuration
- * key, `PS_TWO_SKIP_CONFIRM_TOKEN_CHECK` (TWO-25386 #4). Naming only - the
+ * key, `PS_TWO_SKIP_CONFIRM_TOKEN_CHECK` (TWO-25386). Naming only - the
  * toggle gates the same CSRF-style token check on the order-intent controller
  * as before, and the default is still OFF.
  *
@@ -134,7 +134,7 @@ function upgrade_module_2_7_12($module)
     if ($threw !== null) {
         PrestaShopLogger::addLog(
             'Two Payment v2.7.12 upgrade: ' . $oldKey . ' -> PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'
-            . ' raised "' . $threw . '" - ' . $outcome . ' (TWO-25386 #4)',
+            . ' raised "' . $threw . '" - ' . $outcome . ' (TWO-25386)',
             max($severity, 2),
             null,
             'Module',
@@ -146,7 +146,7 @@ function upgrade_module_2_7_12($module)
 
     PrestaShopLogger::addLog(
         'Two Payment v2.7.12 upgrade: ' . $oldKey . ' -> PS_TWO_SKIP_CONFIRM_TOKEN_CHECK - '
-        . $outcome . ' (TWO-25386 #4)',
+        . $outcome . ' (TWO-25386)',
         $severity,
         null,
         'Module',

@@ -1,7 +1,6 @@
 /**
- * TWO-25326, second attempt. Doug re-tested the shipped fix live and the defect
- * was still there: search a company -> intent fires for it (correct); search
- * again, select a DIFFERENT company -> the intent fires for the FIRST one.
+ * TWO-25326: search a company -> intent fires for it (correct); search again,
+ * select a DIFFERENT company -> the intent fires for the FIRST one.
  *
  * order-intent-stale-selection.test.js pins a `requestSeq` gate against a slow
  * response overwriting a fast one, but mocks `collectFormData` out entirely -
@@ -9,7 +8,7 @@
  * staleness lives.
  *
  * Root cause: in tile mode collectFormData() reads nothing from the
- * address-area DOM (by design, §7.1) and falls through to a `getCompany`
+ * address-area DOM (by design) and falls through to a `getCompany`
  * round trip answered from the SESSION COOKIE. That cookie is written by
  * TwoCompanySearch.persistCompanyToCookie()'s fire-and-forget `saveCompany`
  * request, fired the SAME TICK as the intent check - so the cookie the

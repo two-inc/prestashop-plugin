@@ -76,7 +76,7 @@ final class AdminControlsSpec
         }
     }
 
-    // ---- #9 custom payment term days --------------------------------------
+    // ---- custom payment term days ------------------------------------------
 
     /**
      * 20 is in the hardcoded PAYMENT_TERMS_OPTIONS fallback (the source
@@ -143,7 +143,7 @@ final class AdminControlsSpec
         TinyAssert::same(array(20, 30), $module->getAvailablePaymentTerms());
     }
 
-    // ---- #10 default pre-selected term ------------------------------------
+    // ---- default pre-selected term -----------------------------------------
 
     private static function moduleWithApiDefault(?int $apiDefault): TwopaymentTestHarness
     {
@@ -210,7 +210,7 @@ final class AdminControlsSpec
         TinyAssert::same(30, $module->getDefaultPaymentTerm());
     }
 
-    // ---- #8 order intent toggle --------------------------------------------
+    // ---- order intent toggle -----------------------------------------------
 
     private static function testOrderIntentPropertyDefaultsOnWhenUnset(): void
     {
@@ -303,7 +303,7 @@ final class AdminControlsSpec
         TinyAssert::false(array_key_exists('status', $controller->emitted[0]) && $controller->emitted[0]['status'] === 'order_intent_disabled');
     }
 
-    // ---- #4 skip confirm-order token check ---------------------------------
+    // ---- skip confirm-order token check ------------------------------------
 
     private static function testSkipConfirmTokenCheckBypassesTokenValidation(): void
     {
@@ -328,7 +328,7 @@ final class AdminControlsSpec
         TinyAssert::true($controller->validateAjaxToken());
     }
 
-    // ---- #5 clear settings on deactivation --------------------------------
+    // ---- clear settings on deactivation ------------------------------------
 
     private static function testClearSettingsOnDeactivationDefaultsToFalse(): void
     {
@@ -412,7 +412,7 @@ final class AdminControlsSpec
         TinyAssert::same(1, $module->wipeCount);
     }
 
-    // ---- #1 vendor/site name -----------------------------------------------
+    // ---- vendor/site name --------------------------------------------------
 
     private static function headersFor(TwopaymentTestHarness $module, string $endpoint): array
     {
@@ -470,7 +470,7 @@ final class AdminControlsSpec
         TinyAssert::false(self::hasVendorHeader($headers));
     }
 
-    // ---- #6 checkout sort order --------------------------------------------
+    // ---- checkout sort order -----------------------------------------------
 
     private static function validationErrors(TwopaymentTestHarness $module): array
     {

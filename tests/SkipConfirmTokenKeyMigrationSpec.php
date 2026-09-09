@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /**
  * Coverage for upgrade/upgrade-2.7.12.php - the skip-confirm-token debug
- * toggle's configuration-key rename (TWO-25386 #4).
+ * toggle's configuration-key rename (TWO-25386).
  *
  * What is pinned here:
  *

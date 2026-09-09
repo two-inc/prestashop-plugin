@@ -49,8 +49,8 @@ function stubSoleTrader(available) {
         startEnrollment: jest.fn(),
         cancelEnrollment: jest.fn(),
         closeSignupPopup: jest.fn(),
-        // The atomic "buyer is leaving this flow" pair (TWO-40 follow-up,
-        // Doug). Stubbed as ONE fn, not as a composition of the two above:
+        // The atomic "buyer is leaving this flow" pair (TWO-40). Stubbed
+        // as ONE fn, not as a composition of the two above:
         // what belongs to TwoCompanySearch is which operation each gesture
         // picks. That it really does close before cancelling is
         // TwoSoleTrader's own contract, pinned against the real module in
@@ -148,13 +148,13 @@ describe('activation', () => {
     });
 
     /**
-     * TWO-40, Doug's request: keep the panel open with a spinner for the Sole
-     * Trader autofill round trip, driven by the real notifyEnrollmentSettled()
+     * TWO-40: the panel stays open with a spinner for the Sole Trader
+     * autofill round trip, driven by the real notifyEnrollmentSettled()
      * settle event, not a fixed timeout.
      *
-     * Spinner is on the company-NAME field, not the query field (TWO-40
-     * follow-up, Doug): the query row is hidden once this chip is selected,
-     * and the name field is where the fetched value lands.
+     * The spinner is on the company-NAME field, not the query field: the
+     * query row is hidden once this chip is selected, and the name field is
+     * where the fetched value lands.
      */
     test('clicking it starts sole-trader enrolment, keeps the panel open with the name-field spinner, and only closes when the flight settles', () => {
         const soleTrader = stubSoleTrader(true);
@@ -310,8 +310,8 @@ describe('focus leaving the panel closes the panel only (TWO-25658)', () => {
     });
 });
 
-describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug spec)', () => {
-    /** Doug, TWO-25658: the Sole trader chip raises, any other chip closes - close only; abandon is for a popup already gone. */
+describe('a chip clicked while the signup popup is open (TWO-40)', () => {
+    /** TWO-25658: the Sole trader chip raises, any other chip closes - close only; abandon is for a popup already gone. */
     /** Launch the flow so a popup is notionally up, then clear the bookkeeping. */
     function launchThenPopupOpen(soleTrader) {
         openPanel();
@@ -443,7 +443,7 @@ describe('a chip clicked while the signup popup is open (TWO-40 follow-up, Doug 
     });
 });
 
-describe('reopening search closes the popup only (Doug, TWO-25658)', () => {
+describe('reopening search closes the popup only (TWO-25658)', () => {
     test('opening the dropdown again closes an open popup and cancels nothing', () => {
         const soleTrader = stubSoleTrader(true);
         makeInstance();
@@ -460,9 +460,9 @@ describe('reopening search closes the popup only (Doug, TWO-25658)', () => {
     });
 
     /**
-     * The bug Doug found (TWO-40 follow-up, guide §14): an address-form
-     * re-render restores a panel the buyer already had, which says nothing
-     * about their intent, so it must NOT abandon. PrestaShop fires
+     * An address-form re-render restores a panel the buyer already had, which
+     * says nothing about their intent, so it must NOT abandon (TWO-40).
+     * PrestaShop fires
      * `updatedAddressForm` for shipping recalculations whose XHR callback can
      * run with the buyer looking at the popup in another window.
      */
@@ -500,7 +500,7 @@ describe('reopening search closes the popup only (Doug, TWO-25658)', () => {
     });
 
     /**
-     * The FULL re-render path (guide §14): the checkout manager destroys this
+     * The FULL re-render path: the checkout manager destroys this
      * instance and builds a replacement. destroy()'s cancel must disown the
      * WRITE only - `cancelEnrollment(true)` - since the buyer may still be
      * filling that popup in. The replacement instance meets a live popup it

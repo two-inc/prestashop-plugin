@@ -97,7 +97,7 @@ instance, so a suite that only loaded the class would find the manual-entry path
 still pass on the paths that call `render()` directly. That is not hypothetical — it is how
 this suite first failed.
 
-`company-search-dropdown.test.js` — TWO-25326 §1-§5 and §7, one test per bullet of the
+`company-search-dropdown.test.js` — TWO-25326, one test per bullet of the
 cross-platform regression script, worded so a failure names the *requirement* rather than
 the implementation. This is the suite that pins the anchored dropdown rework: that a click
 or a keypress (but **not** plain focus) opens a panel anchored to the field, that the panel
@@ -360,7 +360,7 @@ action through the controller's own switch: the tier ordering, the shape check o
 country, and that a posted country is still gated by the registry rather than trusted.
 
 `sole-trader-chip-visibility.test.js` — why the "Sole trader" chip did not render for GB
-at all (Doug, 2026-08-19). The only suite that runs the REAL `TwoSoleTrader` beside the
+at all. The only suite that runs the REAL `TwoSoleTrader` beside the
 real search control: all three defects live in the seam between the module that resolves
 the availability answer and the one that draws the chip, so a stub on either side hides
 them. Covers the answer landing while the panel is already open, every declined-request

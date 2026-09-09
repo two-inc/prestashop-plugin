@@ -10,9 +10,8 @@ if (!defined('_PS_VERSION_')) {
 }
 
 /**
- * Read-only admin view of the module's own log entries (TWO-25386 #7, ported
- * from magento-plugin's Block/Adminhtml/System/Config/Button/ErrorCheck.php
- * "Check last 100 error log records" action).
+ * Read-only admin view of the module's own log entries (TWO-25386), matching
+ * the last-error-records view the other platform plugins offer.
  *
  * PrestaShopLogger::addLog() writes into core's `log` table with no
  * module-specific column, so every line this module has ever logged carries

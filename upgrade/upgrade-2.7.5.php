@@ -49,8 +49,8 @@
  * The company-search location key's rename was developed here, withdrawn from
  * this version, and then landed in 2.7.6 as
  * PS_TWO_ENABLE_COMPANY_NAME -> PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS - in a
- * deliberately SIMPLIFIED, GLOBAL-TIER-ONLY form, on Doug's explicit ruling
- * that with no live merchants the tier-exact migration is not worth its risk.
+ * deliberately SIMPLIFIED, GLOBAL-TIER-ONLY form: with no live merchants the
+ * tier-exact migration is not worth its risk.
  *
  * The reason a SAFE rename is hard still stands and is still the record: review
  * found three different silent merchant-data-loss variants in it, because

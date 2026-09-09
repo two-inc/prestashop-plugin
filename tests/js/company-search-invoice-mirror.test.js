@@ -946,7 +946,7 @@ describe('the gate reports whether the number actually reached a field', () => {
     });
 
     /**
-     * TWO-40, Doug's ruling, Option A. An internal (`TWO:`) identifier is NEVER
+     * TWO-40. An internal (`TWO:`) identifier is NEVER
      * written into the visible `dni` field, and the gate answers FALSE for it.
      *
      * `false` is load-bearing rather than incidental: the mirror below takes
@@ -1007,13 +1007,12 @@ describe('the gate reports whether the number actually reached a field', () => {
 /**
  * TWO-40: the record follows the WRITE, not the attempt.
  *
- * The mirror used to set `memory.organization` and report the `organization` half
- * of the record from having CALLED the writer. A recorded write the form does not
- * hold is read as buyer tampering by the very next render, which pins the WHOLE
- * secondary address - so the record has to be taken from the writer's answer.
+ * `memory.organization` is taken from the writer's ANSWER, never from having
+ * called it: a recorded write the form does not hold is read as buyer tampering
+ * by the very next render, which pins the WHOLE secondary address.
  *
- * An internal (`TWO:`) identifier is ONE of the ways that answer can be no (TWO-40,
- * Option A): it never enters the visible `dni` field. So it is the sharpest case for
+ * An internal (`TWO:`) identifier is ONE of the ways that answer can be no: it
+ * never enters the visible `dni` field. So it is the sharpest case for
  * this rule - the write is declined, and nothing may be recorded as written. The
  * other refusals - lookup off, empty value, no field, every field skipped - are
  * pinned in the describe above.
@@ -1077,7 +1076,7 @@ describe('the record follows the write, not the attempt', () => {
  * yet" - and the mirror's own country write can rebuild the form into one that DOES
  * have an identification field, which is what makes the debt worth recording.
  *
- * Since TWO-40 Option A the debt has a SECOND job, and it is why the condition is
+ * The debt has a SECOND job, and it is why the condition is
  * keyed on `!wroteNumber` rather than on "the form has no identification field". An
  * internal (`TWO:`) identifier is never written into the visible `dni` field, so on a
  * form that HAS that field the number still lands nowhere - and `organizationPending`
@@ -1234,7 +1233,7 @@ describe('the completion records what the writer actually placed', () => {
     }
 
     /**
-     * TWO-40, Doug's ruling, Option A. An internal (`TWO:`) pending number publishes
+     * TWO-40. An internal (`TWO:`) pending number publishes
      * THE PAIR - the hidden `companyid` and its `data-two-company-name` tag - exactly
      * as a real one does, and leaves the visible `dni` field alone.
      *

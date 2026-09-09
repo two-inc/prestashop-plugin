@@ -1,12 +1,8 @@
 /**
- * TWO-40, Doug's ruling, OPTION A: an internal (`TWO:`-prefixed) organisation
+ * TWO-40: an internal (`TWO:`-prefixed) organisation
  * number MUST NEVER be written into the visible `dni` ("Identification
  * number") address field. Everything else about such a number stays
  * byte-identical to any other.
- *
- * Replaces `internal-identifier-visibility.test.js`, which pinned the
- * opposite (write into `dni`, then hide the field with CSS) - every spec here
- * is the INVERSE of one that stood there.
  *
  * Why the write is wrong, verified against real PrestaShop core:
  *
@@ -23,11 +19,11 @@
  * and confirmation emails via `AddressFormat::generateAddress()`, which no
  * CSS rule of this plugin's reaches.
  *
- * Not the earlier reverted approach (`.ai/decisions.md`), which also
- * withheld the pairing and the name - the uniformity specs below are as
- * load-bearing as the skip specs. Not a sole-trader rule either: registered
- * companies can legitimately carry a `TWO:` identifier, so every assertion
- * here is keyed on the VALUE, never on how it was captured.
+ * The pairing and the name are still written as for any other number - the
+ * uniformity specs below are as load-bearing as the skip ones. Not a
+ * sole-trader rule either: registered companies can legitimately carry a
+ * `TWO:` identifier, so every assertion here is keyed on the VALUE, never on
+ * how it was captured.
  */
 
 'use strict';

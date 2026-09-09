@@ -45,11 +45,10 @@ function buildCountry(iso) {
 
 /**
  * A country <select> with NONE of the `data-iso-code`/`data-iso`/
- * `data-country-iso` attributes - the exact shape that exposed the missing
- * `window.twopayment.countries` id-to-ISO fallback in billingCountry() (TWO-40
- * follow-up). Doug's own repro (>10 min open, France -> GB -> reopen, chip
- * still missing) happens on any theme/PS version whose options look like
- * this - that fallback is the only thing that can resolve them at all.
+ * `data-country-iso` attributes - the shape that needs billingCountry()'s
+ * `window.twopayment.countries` id-to-ISO fallback (TWO-40 follow-up), the only
+ * thing that can resolve such options at all. Themes and PS versions that render
+ * options this way are otherwise left with no country.
  */
 function buildCountryNoIsoAttr(id, text) {
     const holder = document.createElement('div');
@@ -558,8 +557,8 @@ describe('billingCountry() id-to-ISO map fallback (TWO-40 follow-up)', () => {
     });
 
     test('a later country change through the map fallback is picked up - not pinned to the page-load value', async () => {
-        // This is Doug's exact repro shape: no ISO attribute anywhere, a
-        // country change, then a re-check with no reopen forced in between.
+        // No ISO attribute anywhere, a country change, then a re-check with no
+        // reopen forced in between.
         buildPaymentTile();
         const select = buildCountryNoIsoAttr('44', 'Nederland');
         window.twopayment = { countries: { 44: 'nl', 8: 'gb' } };

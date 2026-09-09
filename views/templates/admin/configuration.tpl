@@ -404,7 +404,7 @@
                 $(this).closest('tr.two-custom-header-row').remove();
             });
 
-            // Inline API-key live check (TWO-25386 #4): fires on blur AND on
+            // Inline API-key live check (TWO-25386): fires on blur AND on
             // a debounced keystroke, so a merchant sees the verdict before
             // ever reaching Save. Never touches Configuration - see
             // ajaxProcessVerifyApiKeyLive().

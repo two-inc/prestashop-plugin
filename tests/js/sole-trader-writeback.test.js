@@ -237,7 +237,7 @@ describe('the survival test: the pair must outlive an ordinary input event, but 
 });
 
 /**
- * TWO-40, Doug's ruling, OPTION A. An internal (`TWO:`) organisation number is
+ * TWO-40. An internal (`TWO:`) organisation number is
  * handled EXACTLY like any other everywhere except one place: it is never written
  * into the visible `dni` field.
  *
@@ -595,7 +595,7 @@ describe('soleTraderPairReport(): three outcomes for the identification field, n
     });
 
     /**
-     * EMPTY, for an internal identifier (TWO-40, Option A). A `TWO:` number never
+     * EMPTY, for an internal identifier (TWO-40). A `TWO:` number never
      * enters the visible `dni` field, so the report reads the field back as empty and
      * says `''` - the truthful answer, and the reason the report is read off the form
      * rather than assumed from having called the writer.
@@ -754,7 +754,7 @@ describe('the invoice form is on screen but cannot be scoped to one address bloc
 });
 
 /**
- * Doug's ADDRESS ROUTING rule (TWO-40): the building/apartment locator is the more
+ * ADDRESS ROUTING (TWO-40): the building/apartment locator is the more
  * specific of the two and takes the FIRST line, pushing the street to the second.
  * Where neither is given the street takes the first line and the second is left
  * alone.
@@ -837,10 +837,8 @@ describe('address routing: a building or apartment takes the first line, the str
     });
 
     /**
-     * NO DE-DUPLICATION, on Doug's explicit ruling. The captured response is exactly
-     * this shape - `building` byte-identical to `street` - and it is valid for an
-     * address to carry the same text on both lines. A dedup suppressing the second
-     * line was rejected: suppressing it discards real data.
+     * NO DE-DUPLICATION: `building` byte-identical to `street` is a valid address,
+     * and suppressing the second line would discard real data.
      */
     test('a building EQUAL to the street writes that same text to BOTH lines - no dedup', () => {
         buildAddressesStep({ editing: 'delivery' });
@@ -875,7 +873,7 @@ describe('address routing: a building or apartment takes the first line, the str
 });
 
 /**
- * Doug's REGION routing rule (TWO-40): the response's `region` must LAND rather
+ * REGION ROUTING (TWO-40): the response's `region` must LAND rather
  * than be dropped. Into the form's own state/county select where the country has
  * one, and appended to the city where it does not - most countries (GB among them)
  * render no state field at all, and the alternative to appending is losing it.
@@ -1170,7 +1168,7 @@ describe('the submit-time sync passes through the same single gate', () => {
     /**
      * The submit-time sync goes through writeOrganizationToAddressIdentifiers() and
      * therefore inherits its one carve-out: a `TWO:` companyid is NOT copied into
-     * `dni` (TWO-40, Option A). Core's `isDniLite` would refuse the resulting address
+     * `dni` (TWO-40). Core's `isDniLite` would refuse the resulting address
      * outright, so a copy here would turn "submit the address step" into a dead end.
      *
      * The pairing this test sets up is deliberately NOT disturbed by the sync - that

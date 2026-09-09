@@ -1,10 +1,9 @@
 /**
- * Doug, live-testing checkout: the order-summary line for the hidden Two
- * surcharge product was captioned "Payment terms fee" - (1) rendered as a
- * clickable link (core wraps every cart-summary product name in an anchor to
- * its product page; this one is hidden, `visibility: 'none'`, so the link
- * goes nowhere buyer-useful) and (2) missing the "- N days" suffix
- * (Magento/WooCommerce parity: "Payment terms fee - 30 days").
+ * The order-summary line for the hidden Two surcharge product must carry the
+ * day count and must not be a link: core wraps every cart-summary product
+ * name in an anchor to its product page, and this product is hidden
+ * (`visibility: 'none'`), so the link goes nowhere buyer-useful. The day
+ * count keeps the caption consistent with the other platform plugins.
  *
  * The day count can't live on the catalog product's own name - one shared
  * row, concurrent carts can hold different terms (see
