@@ -245,6 +245,29 @@ final class CheckoutWithholdReasonSpec
             ],
             [
                 static function ($module): void {
+                    // Assigned, but not the shop's default: core's checkbox
+                    // mode hands back the whole list, so membership decides.
+                    StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 999]];
+                },
+                'no currency is enabled for this module under Payment > Preferences.',
+                'an allowlist that excludes the default currency withholds every cart',
+            ],
+            [
+                static function ($module): void {
+                    StubStore::$currencies[826] = ['iso_code' => 'PLN', 'loaded' => true];
+                },
+                'PLN is not a currency this payment method supports.',
+                "a shop whose default currency is outside the provider's own list withholds every cart",
+            ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '["NO","GB"]');
+                },
+                'offered only to buyers in GB, NO',
+                'a populated allowlist withholds from every other buyer, which no local field explains',
+            ],
+            [
+                static function ($module): void {
                 },
                 'Shown at checkout',
                 'nothing withholding it reads as shown',

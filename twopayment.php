@@ -3538,8 +3538,11 @@ class Twopayment extends PaymentModule
         if ($reason === null && $this->twoNativeCountryRestrictionAllowsNothing()) {
             $reason = $this->l('no country is enabled for this module under Payment > Preferences.');
         }
-        if ($reason === null && !$this->twoModuleAllowsShopDefaultCurrency()) {
-            $reason = $this->l('no currency is enabled for this module under Payment > Preferences.');
+        if ($reason === null) {
+            $currencyReason = $this->twoDefaultCurrencyReason();
+            if ($currencyReason !== null) {
+                $reason = $currencyReason;
+            }
         }
         if ($reason !== null) {
             return array(
@@ -3568,6 +3571,10 @@ class Twopayment extends PaymentModule
                 $this->describeTwoMinimumFloor($floors[0]),
                 $this->describeTwoMinimumFloor($floors[1])
             );
+        }
+        $allowed = $this->getMerchantBuyerCountries();
+        if (is_array($allowed) && $allowed) {
+            $clauses[] = sprintf($this->l('offered only to buyers in %s'), implode(', ', $allowed));
         }
         $surcharge = $this->getTwoSurchargeSettingsOrNull();
         if ($surcharge !== null && !empty($surcharge['enabled'])) {
@@ -3614,20 +3621,42 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether the module is enabled for the shop's default currency. Core's
-     * getCurrency() takes an explicit id; the no-argument path resolves the
-     * context currency instead, which an admin page does not have.
+     * Why the shop's default currency would be refused at checkout, or null
+     * when it would not. Mirrors checkCurrency()'s two gates in its order: the
+     * provider's own ISO list, then the module's PrestaShop assignment.
      *
-     * @return bool
+     * @return string|null
      */
-    protected function twoModuleAllowsShopDefaultCurrency()
+    protected function twoDefaultCurrencyReason()
     {
         $idCurrency = (int) Configuration::get('PS_CURRENCY_DEFAULT');
-        if ($idCurrency <= 0 || !method_exists($this, 'getCurrency')) {
-            return true;
+        if ($idCurrency <= 0) {
+            return null;
+        }
+        $currency = new Currency($idCurrency);
+        if (!Validate::isLoadedObject($currency)) {
+            return null;
+        }
+        $iso = Tools::strtoupper(trim((string) $currency->iso_code));
+        if ($iso === '' || !in_array($iso, self::TWO_SUPPORTED_CURRENCY_ISOS, true)) {
+            return sprintf(
+                $this->l('%s is not a currency this payment method supports.'),
+                htmlspecialchars($iso, ENT_QUOTES, 'UTF-8')
+            );
+        }
+        if (!method_exists($this, 'getCurrency')) {
+            return null;
+        }
+        // Core's checkbox mode ignores the id and returns the whole allowlist,
+        // so membership is this side's test to make.
+        $assigned = (array) $this->getCurrency($idCurrency);
+        foreach ($assigned as $row) {
+            if (isset($row['id_currency']) && (int) $row['id_currency'] === $idCurrency) {
+                return null;
+            }
         }
 
-        return (bool) $this->getCurrency($idCurrency);
+        return $this->l('no currency is enabled for this module under Payment > Preferences.');
     }
 
     /**
