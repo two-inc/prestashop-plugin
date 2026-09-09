@@ -2184,7 +2184,7 @@ class Twopayment extends PaymentModule
         if ($days === null) {
             return null;
         }
-        $offered = $this->getMerchantAvailableTerms(false);
+        $offered = $this->getMerchantAvailableTerms();
         if ($offered === array() || !in_array($days, $offered, true)) {
             return null;
         }
