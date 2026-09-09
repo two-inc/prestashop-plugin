@@ -1838,7 +1838,8 @@ class Twopayment extends PaymentModule
             // Default pre-selected term (TWO-25386 #10): an explicit admin
             // choice that takes priority over getDefaultPaymentTerm()'s
             // derived default (API due_in_days, else 30 days, else lowest
-            // offered term) whenever the chosen term is still offered. This is
+            // offered term, else none at all) whenever the chosen term is
+            // still offered. This is
             // the highest-priority item in this batch per the ticket: the
             // surcharge differential-basis calculation
             // (buildTwoBuyerFeeShare -> getDefaultPaymentTerm) reads through
@@ -4959,7 +4960,8 @@ class Twopayment extends PaymentModule
                 'client_version' => $client_params['client_v'],
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
-                'default_payment_term' => $this->getDefaultPaymentTerm(),
+                // 0, not a day count, when no term is offered (ABN-544).
+                'default_payment_term' => (int) $this->getDefaultPaymentTerm(),
                 // Enables the checkout JS to mirror the buyer surcharge as a
                 // real PrestaShop cart line on payment-option selection.
                 'surcharge_cart_line' => !empty($this->getTwoSurchargeSettingsOrNull()['enabled']),
@@ -15597,9 +15599,9 @@ class Twopayment extends PaymentModule
      * on GET /v1/merchant), in net days, or null when it is unset or unresolved.
      *
      * CACHE-ONLY - never blocks on HTTP. The value is primed by the SAME fetch
-     * as the available_terms list, through refreshMerchantRecord(). On a cold
-     * cache this returns null and getDefaultPaymentTerm() falls back to the
-     * historical 30-day default (TWO-24813 / TWO-24859).
+     * as the available_terms list, through refreshMerchantRecord(). A cold
+     * cache returns null here and, with nothing offered either, leaves
+     * getDefaultPaymentTerm() with no default at all (ABN-544).
      *
      * `due_in_days` is NOT guaranteed to be a member of the offered term set -
      * callers must honour it only when it is an available term (see
@@ -15623,7 +15625,9 @@ class Twopayment extends PaymentModule
      *   2. the merchant's API default term (due_in_days) when it is offered;
      *   3. the historical DEFAULT_PAYMENT_TERM_DAYS (30) when it is offered;
      *   4. the lowest offered term.
-     * A single offered term always wins outright.
+     * A single offered term always wins outright. With nothing offered there is
+     * no default at all: a substituted day count would offer the buyer a term
+     * the merchant's account cannot honour (ABN-544).
      *
      * This is the ONLY function that resolves "the default term" - callers
      * that need it (checkout render, and buildTwoBuyerFeeShare() for the
@@ -15631,7 +15635,7 @@ class Twopayment extends PaymentModule
      * the admin-chosen default in step 1 is automatically what the surcharge
      * calc uses too. Do not re-derive a default term anywhere else.
      *
-     * @return int Default payment term in days
+     * @return int|null Default payment term in days, null when none is offered
      */
     public function getDefaultPaymentTerm()
     {
@@ -15669,7 +15673,7 @@ class Twopayment extends PaymentModule
             return self::DEFAULT_PAYMENT_TERM_DAYS;
         }
 
-        return !empty($available_terms) ? $available_terms[0] : self::DEFAULT_PAYMENT_TERM_DAYS;
+        return !empty($available_terms) ? $available_terms[0] : null;
     }
 
     public function restoreDuplicateCart($id_order, $id_customer)
@@ -15790,12 +15794,12 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * @return int Selected payment term in days
+     * @return int Selected payment term in days, 0 when no term is offered
      */
     public function getSelectedPaymentTerm()
     {
         $available_terms = $this->getAvailablePaymentTerms();
-        $default_term = $this->getDefaultPaymentTerm();
+        $default_term = (int) $this->getDefaultPaymentTerm();
         
         $cookie_term_raw = isset($this->context->cookie->two_payment_term)
             ? (string)$this->context->cookie->two_payment_term

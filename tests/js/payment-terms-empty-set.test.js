@@ -68,6 +68,19 @@ describe('the config the checkout manager is built with', () => {
 
         expect(config.available_payment_terms).toEqual(expected);
     });
+
+    // ABN-544: same seam for the default term.
+    test.each([
+        ['an absent default stays absent', undefined, 0],
+        ['a zero default stays zero', 0, 0],
+        ['a real default is carried through', 45, 45],
+    ])('%s', (description, defaultTerm, expected) => {
+        loadScript('views/js/twopayment.js');
+
+        const config = window.twoBuildCheckoutManagerConfig({ default_payment_term: defaultTerm });
+
+        expect(config.default_payment_term).toBe(expected);
+    });
 });
 
 describe('the payment-term block against the offered set', () => {
