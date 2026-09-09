@@ -826,9 +826,8 @@ test('two concurrent getCurrentBuyer() calls only open one popup', async () => {
 });
 
 /**
- * TWO-40 round 5 follow-up, adversarial review round 2 (Han): the abandon-
- * then-retry resume fixed for the MINT stage had no equivalent for the
- * BUYER-LOOKUP stage - getCurrentBuyer()'s isFetchingBuyer guard's
+ * TWO-40: the abandon-then-retry resume fixed for the MINT stage had no
+ * equivalent for the BUYER-LOOKUP stage - getCurrentBuyer()'s isFetchingBuyer guard's
  * superseded() branches just bare-returned. When click 1's lookup resolves,
  * the fix must resume for whichever generation is CURRENT rather than
  * dropping the result with nothing left to settle click 2.
@@ -902,8 +901,8 @@ test('a buyer lookup that resolves after abandon-then-retry during the lookup st
 });
 
 /**
- * TWO-40 round 7, adversarial review round 3 (Han): resumeIfStillEnrolling()
- * checked `enrolling` once at SCHEDULE time then deferred via setTimeout(0)
+ * TWO-40: resumeIfStillEnrolling() checked `enrolling` once at SCHEDULE
+ * time then deferred via setTimeout(0)
  * - a second abandonment landing in that gap ran an unwanted lookup, popping
  * a signup window nobody asked for on the no-match path.
  */
@@ -952,8 +951,8 @@ test('a second abandonment landing during the deferred resume window does not fi
 });
 
 /**
- * TWO-40 round 5 follow-up, adversarial review round 2 (Vader): the
- * synchronous stretch between setting isFetchingTokens/isFetchingBuyer true
+ * TWO-40: the synchronous stretch between setting
+ * isFetchingTokens/isFetchingBuyer true
  * and the fetch() call starting was unprotected. A throw there left the
  * guard stuck true FOREVER, with no recovery and no settle to ever close
  * an already-open panel/spinner.
@@ -989,9 +988,8 @@ test('a synchronous throw building the token-mint request does not permanently w
 });
 
 /**
- * TWO-40 round 7, adversarial review round 3 (Vader): the retry cooldown
- * (`nextRetryAt`) predates the round-4 "keep panel open until settle"
- * redesign and was never wired into it. Unlike isFetchingTokens (where a
+ * TWO-40: the retry cooldown (`nextRetryAt`) is not wired into the "keep
+ * panel open until settle" behaviour. Unlike isFetchingTokens (where a
  * request is out and will eventually resume), a click inside the cooldown
  * has nothing in flight to ever settle it - the panel used to stick open
  * indefinitely.

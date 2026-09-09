@@ -134,7 +134,7 @@ class Twopayment extends PaymentModule
     // claim re-stamps the slot's clock, so without a cap on the age of the
     // VERDICT itself, a shop whose verification never completes - a fatal, a
     // killed worker - could re-carry and re-freshen the same ancient 'ok'
-    // indefinitely (review round 3). Past this, a claim carries nothing and the
+    // indefinitely. Past this, a claim carries nothing and the
     // gates close until a call actually finishes.
     const API_KEY_STATUS_CARRY_MAX_AGE = 900;
 
@@ -4627,13 +4627,12 @@ class Twopayment extends PaymentModule
                 // NOT because the search needs the key: it is relayed through
                 // this module's own controller (ajaxProcessCompanySearch()),
                 // which spends the merchant's key server-side regardless, so
-                // it would keep working. Round-6 review corrected the reasoning here - the
-                // behaviour matches the sibling plugins either way, and the
-                // cost of the gate is a search + address auto-fill a buyer
-                // could otherwise still have used.
+                // it would keep working. The behaviour matches the sibling
+                // plugins either way, and the cost of the gate is a search +
+                // address auto-fill a buyer could otherwise still have used.
                 //
-                // The SAME predicate the address-form override asks (review round
-                // 5), because the JS control and the server-rendered placeholder
+                // The SAME predicate the address-form override asks, because
+                // the JS control and the server-rendered placeholder
                 // are two halves of one affordance and this flag is that
                 // affordance's only reader. Asking "verified?" here while the
                 // override asks "warranted?" left them disagreeing on exactly one
@@ -4641,7 +4640,7 @@ class Twopayment extends PaymentModule
                 // state where a shop with a back-office translation of the core
                 // placeholder kept the hint on a field with no search behind it.
                 //
-                // A live check ONLY on the real checkout page (review round 4).
+                // A live check ONLY on the real checkout page.
                 // This hook also runs on the module's own front controllers, and
                 // one of those is the payment POST - where the verification gate
                 // deliberately refuses to make an HTTP call, because a stall

@@ -174,8 +174,8 @@ describe('the SECOND search-and-select cycle', () => {
 describe('the confirmed selection is still subject to every existing invalidation', () => {
     /**
      * Every test in this block asserts a POSITIVE control alongside the
-     * invalidated case (review round 1 finding: these were vacuous). Expecting
-     * only the cookie's value cannot distinguish "correctly invalidated" from
+     * invalidated case. Expecting only the cookie's value cannot distinguish
+     * "correctly invalidated" from
      * "the shortcut was never consulted at all" - both produce it. Each test
      * therefore runs the same scenario twice, once with the invalidating
      * condition and once without, and requires the two to DIFFER.
@@ -253,10 +253,10 @@ describe('the confirmed selection is still subject to every existing invalidatio
 
 describe('the REAL TwoCheckoutManager store, not a stand-in', () => {
     /**
-     * Review round 1 found the manager half of this fix entirely unverified:
-     * gutting setConfirmedCompanySelection() and deleting the getter injection
-     * left all 401 tests passing, because every other test in this file
-     * substitutes a hand-written store. These tests run the real methods, on a
+     * Every other test in this file substitutes a hand-written store, which
+     * leaves the manager half unverified: gutting
+     * setConfirmedCompanySelection() and deleting the getter injection keeps
+     * the whole suite green. These tests run the real methods, on a
      * real instance, and read the result through the intent module's own
      * config - so the injection, the capture of the address/country context and
      * the clear paths are all executed.

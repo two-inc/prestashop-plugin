@@ -213,7 +213,7 @@ describe('the scope every field lookup is confined to', () => {
 });
 
 /**
- * TWO-40, adversarial review round 5, B6.
+ * TWO-40.
  *
  * The scope resolution's candidate list used to end in `form`, so a theme whose
  * markup does not carry core's block ids resolved to the step's OUTER form - the
@@ -754,7 +754,7 @@ describe('the rebuild that separates the number from the name', () => {
 });
 
 /**
- * TWO-40, adversarial review round 5, B1.
+ * TWO-40.
  *
  * The mirror used to write the identification field directly and never touch the
  * hidden `companyid` input or its `data-two-company-name` pairing tag. Those two

@@ -5347,10 +5347,10 @@ class TwoCompanySearch {
             this.writeOrganizationToAddressIdentifiers(ui.item.organization_number);
         } else {
             // No org number on this result (e.g. GB, resolved later via
-            // fetchCompanyDetails/lookup_id). Adversarial review rounds 4-5
-            // (TWO-25326): clearing only organizationField+hint (round 4)
-            // still left the DNI/VAT identifier fields holding the PREVIOUS
-            // company's number, with their autofill marker intact - so
+            // fetchCompanyDetails/lookup_id). Clearing only
+            // organizationField+hint (TWO-25326) still leaves the DNI/VAT
+            // identifier fields holding the PREVIOUS company's number, with
+            // their autofill marker intact - so
             // setupAddressIdentifierSync()'s submit-time sync would adopt
             // that leftover DNI value as this NEW company's org number,
             // shipping a mismatched pair to the actual credit-check payload.
@@ -5691,8 +5691,7 @@ class TwoCompanySearch {
                 this.closeDropdown(false);
 
                 // Abandon any sole-trader enrolment in flight for the
-                // PREVIOUS country (adversarial review round 2, TWO-40
-                // follow-up - Han finding). Without this, a mint/lookup
+                // PREVIOUS country (TWO-40). Without this, a mint/lookup
                 // started for the old country resolves with
                 // `_enrollGeneration` never bumped, reads as still-current,
                 // and can pop a signup popup - or worse, silently publish a
@@ -5720,10 +5719,9 @@ class TwoCompanySearch {
                 if (this.companyField && this.companyField.length > 0) {
                     this.companyField.val('');
                 }
-                // Adversarial review round 5 (TWO-25326): a manual
-                // organizationField+hint clear here left the DNI/VAT
-                // identifier fields and the session cookie holding the
-                // PREVIOUS country's company - same gap as the
+                // TWO-25326: a manual organizationField+hint clear here
+                // leaves the DNI/VAT identifier fields and the session cookie
+                // holding the PREVIOUS country's company - same gap as the
                 // onCompanySelected() no-org-number branch, same fix.
                 this.clearSelectedCompany();
                 // Recreate autocomplete to ensure new country is used immediately
@@ -5871,14 +5869,14 @@ class TwoCompanySearch {
         } catch (e) {
             // no-op
         }
-        // Its own try, same reason (adversarial review round 3, TWO-40
-        // follow-up - Vader finding): `TwoCheckoutManager.handleAddressFormUpdate()`
+        // Its own try, same reason (TWO-40):
+        // `TwoCheckoutManager.handleAddressFormUpdate()`
         // destroys and rebuilds this instance on EVERY `updatedAddressForm`
         // firing, not only on a country change - PrestaShop emits that event
         // for far more than country changes (see the comment at its own call
         // site). The country-select listener's own `cancelEnrollment()` call
-        // (round 2) only covers the country-change trigger; this covers every
-        // OTHER address-form replacement too. Without it, a sole-trader
+        // only covers the country-change trigger; this covers every OTHER
+        // address-form replacement too. Without it, a sole-trader
         // enrolment started against THIS instance, still in flight when the
         // form gets replaced, resolves later against whatever instance is
         // mounted then - `TwoSoleTrader.applyBuyer()` resolves

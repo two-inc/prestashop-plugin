@@ -1757,7 +1757,7 @@ describe('the organisation number reaches the address identifiers on submit', ()
         expect($("input[name='dni']").val()).toBe('buyer-typed');
     });
 
-    test('selecting a result with no organization_number and no lookup_id clears a PREVIOUS selection\'s number, not just its hint (adversarial review round 4, TWO-25326)', () => {
+    test('selecting a result with no organization_number and no lookup_id clears a PREVIOUS selection\'s number, not just its hint (TWO-25326)', () => {
         // First selection: a real org number captured.
         const search = makeInstance();
         search.onCompanySelected(null, {
@@ -1777,11 +1777,10 @@ describe('the organisation number reaches the address identifiers on submit', ()
         expect($("input[name='companyid']").attr('data-two-company-name')).toBeUndefined();
     });
 
-    test('selecting a no-org-number result also clears the DNI residue the previous selection wrote (adversarial review round 5, TWO-25326)', () => {
-        // Round 4 fixed organizationField/its tag but missed that
+    test('selecting a no-org-number result also clears the DNI residue the previous selection wrote (TWO-25326)', () => {
         // writeOrganizationToAddressIdentifiers() (called on the FIRST,
-        // org-number selection below) also marks the DNI field as
-        // autofilled with that number. setupAddressIdentifierSync()'s
+        // org-number selection below) also marks the DNI field as autofilled
+        // with that number. setupAddressIdentifierSync()'s
         // submit-time sync would otherwise adopt that leftover marked DNI
         // value as the NEW company's org number, re-pairing it with the
         // wrong name at submit.

@@ -422,8 +422,8 @@ describe('a payment-option change never navigates the document', () => {
     });
 
     /**
-     * Review round 1. Each partial's selector is a two-convention alternation, and
-     * core replaces the whole matched set. On the shipped theme both classes are on
+     * Each partial's selector is a two-convention alternation, and core
+     * replaces the whole matched set. On the shipped theme both classes are on
      * one node, so this is moot there - but a theme spelling them as two separate
      * nodes would get the replacement written into BOTH, i.e. a duplicated totals
      * block. One replacement, and a warning that there was more than one candidate.

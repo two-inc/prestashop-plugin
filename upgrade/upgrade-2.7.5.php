@@ -52,9 +52,9 @@
  * deliberately SIMPLIFIED, GLOBAL-TIER-ONLY form, on Doug's explicit ruling
  * that with no live merchants the tier-exact migration is not worth its risk.
  *
- * The reason a SAFE rename is hard still stands and is still the record: three
- * adversarial review rounds each found a different silent merchant-data-loss
- * variant in it, because `deleteByName()` is name-wide while every writer is
+ * The reason a SAFE rename is hard still stands and is still the record:
+ * adversarial review found three different silent merchant-data-loss variants
+ * in it, because `deleteByName()` is name-wide while every writer is
  * tier-scoped, PrestaShop has THREE configuration tiers (global / shop-group /
  * shop), and neither the resolving API nor the offline test double can tell
  * those tiers apart. A rename that must not lose a multistore merchant's

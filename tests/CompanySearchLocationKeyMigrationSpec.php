@@ -9,8 +9,7 @@ declare(strict_types=1);
  *
  * Kept separate from CompanySearchLocationConfigSpec, which pins how the key is
  * RESOLVED and round-tripped. This file pins the one-time MIGRATION, which has
- * its own failure modes and its own reason to exist - the rename shipped with
- * no assertion on its behaviour at all until review round 1 said so.
+ * its own failure modes and its own reason to exist.
  *
  * What is pinned here:
  *

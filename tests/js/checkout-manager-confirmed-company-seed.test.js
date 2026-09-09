@@ -158,7 +158,7 @@ describe('the config mapping the server payload goes through', () => {
 });
 
 /**
- * TWO-40, adversarial review round 5, B3.
+ * TWO-40.
  *
  * `isCompanyDataMissing()` read ONLY the hidden `companyid` input. Seeding
  * the page-lifetime holder from the server's record added a second

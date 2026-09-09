@@ -2185,7 +2185,7 @@ class TwoSoleTrader {
                     // were withdrawn for hand-rolling it here instead
                     // (`.ai/decisions.md`, 2026-08-10); see adoptSoleTraderBuyer().
                     self.adoptEnrolledIdentity(buyer);
-                    // TWO-25326 bug 8, review round 1: publish the enrolled
+                    // TWO-25326 bug 8: publish the enrolled
                     // sole trader as the confirmed selection, exactly as a
                     // search selection does.
                     //
@@ -2206,7 +2206,7 @@ class TwoSoleTrader {
                     // into sole-trader mode that adopts an identity, and for
                     // "select a different sole trader".
                     self.recheckOrderIntent();
-                    // TWO-25326 §12, review round 2: companyLabel falls back to
+                    // TWO-25326 §12: companyLabel falls back to
                     // buyer.organization_number when company_name is blank
                     // (see the comment above applyBuyer) - and that is exactly
                     // where the synthetic `TWO:`-prefixed identifier shows up,

@@ -85,7 +85,7 @@ load order a theme's `<script>` tags produce.
 - a **country change** clears the display along with the fields its listener clears.
 - values are written as **text, not markup**: a company name shaped like `<img onerror=...>`
   from the register, and one typed by the buyer, both render as characters. This is the only
-  injection-relevant line in the module and it was unguarded until the review round asked.
+  injection-relevant line in the module.
 
 It builds its DOM from the **shipped** `views/templates/hook/paymentinfo.tpl` via
 `buildPaymentTile()`, which strips Smarty rather than copying the markup into the test. A

@@ -404,7 +404,7 @@ is not persisted here", never to a dropped payment record.
   Adversarial review on this exact feature found real races on every iteration
   (stuck-forever spinners on two different abandon/retry paths, a missing
   re-entrancy guard causing double signup popups, a guard released too early) —
-  budget for multiple review rounds, don't expect to get this right in one pass.
+  budget for several iterations, don't expect to get this right in one pass.
   - **The NAME field, not the query field, and this was arrived at the long way
     round.** Earlier rounds put it in the query input, which §1 does settle as
     where an in-field spinner on ordinary company search belongs. It cannot be
@@ -1039,8 +1039,8 @@ affordance.
   mode never destroyed anything (a click there just re-triggers the widget library's
   own open handler), and a `reopenSearch()` mode-switch-and-rebuild dance existed only
   to paper over the difference.
-- Shipped as two PRs because the area had 6+ documented oscillating review rounds
-  behind it: #485 (`0b93055`) stops the destroy — the widget just closes and stays
+- Shipped as two PRs because the area had a documented history of oscillating
+  fixes behind it: #485 (`0b93055`) stops the destroy — the widget just closes and stays
   alive; then #486 (`004814f`) seeds the widget's own underlying `<select>` with a
   synthetic `<option>` for the adopted identity and selects it, reusing the exact
   mechanism the page-load restore already used, so the widget renders the adoption as
@@ -1062,7 +1062,7 @@ affordance.
 
 Two sequential Sole trader clicks stacked two hosted signup popups; the in-gesture
 re-entrancy guard only covers re-entry within one gesture. Getting from there to a
-correct design took four review rounds and one outright revert, and the shape of that
+correct design took several iterations and one outright revert, and the shape of that
 failure is the lesson:
 
 - A guard keyed on "any outstanding flight" refused legitimate clicks whenever a stale

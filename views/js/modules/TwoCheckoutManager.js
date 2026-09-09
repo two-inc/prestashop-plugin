@@ -1058,11 +1058,10 @@ class TwoCheckoutManager {
      * Get the selected company name+number as ONE atomic pair, for the
      * customer-visible intent sentence (TWO-25326 §7.3).
      *
-     * Adversarial review round 3: this used to be two separate methods
-     * (getSelectedCompanyName/getSelectedCompanyNumber), each independently
-     * falling back to a DOM field when its own `this.orderIntent` value was
-     * falsy. That defeated TwoOrderIntent's own joint-reassignment
-     * guarantee (round 2's fix) from one layer up - a falsy
+     * Deliberately ONE method rather than a name getter and a number getter
+     * each independently falling back to a DOM field when its own
+     * `this.orderIntent` value is falsy: that defeats TwoOrderIntent's own
+     * joint-reassignment guarantee from one layer up - a falsy
      * `lastCompanyNumber` (a genuine, valid "no number" case, e.g. manual
      * entry) would fall through to whatever `input[name='companyid']`
      * happened to still hold from an EARLIER, unrelated company selection,
@@ -2102,7 +2101,7 @@ class TwoCheckoutManager {
             this.initializeCompanySearch();
         }
 
-        // TWO-25326 bug 8, review round 1: the buyer is in the address form, so
+        // TWO-25326 bug 8: the buyer is in the address form, so
         // the in-memory confirmed selection stops being trustworthy and must
         // stop out-ranking the session cookie.
         //
@@ -2491,7 +2490,7 @@ class TwoCheckoutManager {
      * The checkout address currently selected, or 0 when unknown.
      *
      * DELEGATES to TwoOrderIntent.getCurrentAddressId() whenever that module
-     * exists (review round 1). The value captured here is compared against the
+     * exists. The value captured here is compared against the
      * value THAT method resolves, so two independent resolutions with different
      * fallback orders would disagree on a page where both a hidden
      * `id_address_invoice` input and an open edit form are present - and a

@@ -280,7 +280,6 @@ test('the interval fires repeatedly, not just once - two consecutive successful 
 });
 
 /**
- * Adversarial review round 1 BLOCKER (Han/Vader/Yoda, independently):
  * openPopup() bakes `this.tokens` into the popup's own URL at open time: a
  * background tick that swaps `this.tokens` while that popup is still open
  * would authenticate the popup's eventual 'ACCEPTED' completion against a

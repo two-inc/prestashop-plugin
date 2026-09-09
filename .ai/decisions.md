@@ -49,7 +49,7 @@ production shop ignores these variables even when they are present in its enviro
 exercise both. Also `rtrim($override, '/')` before appending `/soletrader/signup`, since a
 hand-typed env var may carry a trailing slash the host map never does.
 
-One asymmetry worth remembering (review round 1): unlike the API and portal hosts, this URL is
+One asymmetry worth remembering: unlike the API and portal hosts, this URL is
 never fetched server-side. The module only hands it to the browser, which opens it as a popup and
 then origin-checks the `postMessage` that comes back - so the value must resolve **in the
 browser**. `host.docker.internal` is a container-to-host alias and is the wrong answer here;
@@ -267,7 +267,7 @@ session record is resolver priority 1:
   buyer's PERSONAL fiscal number as the organisation number. The underlying "`dni` is adopted as the
   org number" behaviour pre-dates this work and applies to every buyer on such a country; what is new
   is only that an internal identifier can never discharge the debt. Closing it means exempting an
-  internal identifier from that settle. Left alone deliberately: four review rounds on this state
+  internal identifier from that settle. Left alone deliberately: past attempts on this state
   machine have each produced defects of their own, and the order is protected by the session record
   and now by the order-scoped snapshot.
 - `getTwoUpdateOrderData()` prefers the STORED company name as well as the stored number, so an admin
