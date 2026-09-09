@@ -217,6 +217,30 @@ describe('an uncovered country still leaves a route to naming a company', () => 
         expect(global.document.activeElement).toBe(panelParts().notListed.get(0));
     });
 
+    test('the panel body is repainted for the term the gate just dropped', async () => {
+        // Given: an open panel in a covered country, with a term typed.
+        buildAddressForm({ country: 'GB' });
+        const instance = makeInstance();
+        await resolveFetch({ success: true, countries: ['GB'] });
+        openPanel();
+        panelParts().query.val('Alp');
+        // Blanking the field fires no event, so the rows the old term produced
+        // outlive it unless the gate re-renders explicitly.
+        let repaints = 0;
+        instance.openSearchForCurrentTerm = () => { repaints += 1; };
+
+        // When: the country becomes one company search does not cover.
+        $("select[name='id_country'] option").get(0).setAttribute('data-iso-code', 'NO');
+        instance.syncModeChipVisibility();
+
+        expect(repaints).toBe(1);
+        expect(panelParts().query.val()).toBe('');
+
+        // And a later sync, with nothing left to drop, does not re-render.
+        instance.syncModeChipVisibility();
+        expect(repaints).toBe(1);
+    });
+
     test('the row comes back when the country becomes covered under an OPEN panel', async () => {
         // Given: an open panel in an uncovered country, so the row is gone.
         buildAddressForm({ country: 'NO' });

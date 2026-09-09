@@ -1706,8 +1706,16 @@ class TwoCompanySearch {
         if (!searchRow.length) {
             return;
         }
+        const dropped = this._queryField.val() || '';
         this._queryField.val('');
         searchRow.hide().attr('hidden', 'hidden');
+        // Only on the sync that actually drops a term: blanking the field with
+        // `.val()` fires no event, so the rows that term produced would stay
+        // painted and clickable next to a search row that is no longer
+        // rendered. Every later sync has nothing to drop and must not re-render.
+        if (dropped !== '') {
+            this.openSearchForCurrentTerm();
+        }
     }
 
     /**
