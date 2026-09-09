@@ -3538,7 +3538,7 @@ class Twopayment extends PaymentModule
         if ($reason === null && $this->twoNativeCountryRestrictionAllowsNothing()) {
             $reason = $this->l('no country is enabled for this module under Payment > Preferences.');
         }
-        if ($reason === null && !$this->getCurrency()) {
+        if ($reason === null && !$this->twoModuleAllowsShopDefaultCurrency()) {
             $reason = $this->l('no currency is enabled for this module under Payment > Preferences.');
         }
         if ($reason !== null) {
@@ -3614,6 +3614,23 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Whether the module is enabled for the shop's default currency. Core's
+     * getCurrency() takes an explicit id; the no-argument path resolves the
+     * context currency instead, which an admin page does not have.
+     *
+     * @return bool
+     */
+    protected function twoModuleAllowsShopDefaultCurrency()
+    {
+        $idCurrency = (int) Configuration::get('PS_CURRENCY_DEFAULT');
+        if ($idCurrency <= 0 || !method_exists($this, 'getCurrency')) {
+            return true;
+        }
+
+        return (bool) $this->getCurrency($idCurrency);
+    }
+
+    /**
      * Whether PrestaShop's own per-module country restriction leaves nothing
      * enabled for this shop. Fails OPEN on a lookup error, like checkCountry().
      *
@@ -3658,9 +3675,11 @@ class Twopayment extends PaymentModule
         // Lowered as every runtime read of this key lowers it, so the row, the host
         // map and the production warning below all judge the same value (ABN-532).
         $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
-        // Same live verdict the checkout gate uses (TWO-25326) - a health row
-        // reporting "Verified" while Two is being withheld is worse than no row.
+        // Same live verdict the checkout gate uses (TWO-25326).
         $api_verified = $this->isTwoApiKeyVerified();
+        // Only a definitive rejection withholds (ABN-533), so only that earns
+        // "action required"; a transient verdict falls through to the record.
+        $api_key_rejected = self::isDefinitiveFailureStatus($this->getTwoApiKeyVerificationStatus()['status']);
         $ssl_disabled = (bool) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
         $merchant_short_name = (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
 
@@ -3709,7 +3728,7 @@ class Twopayment extends PaymentModule
             $html .= '</div>';
         }
 
-        if (!$api_verified) {
+        if ($api_key_rejected) {
             $html .= '<div class="alert alert-warning" style="margin-top:12px;margin-bottom:0;">';
             $html .= '<strong>' . $this->l('Action required:') . '</strong> ';
             $html .= $this->l('API key is not verified. Checkout requests may fail until the General settings are saved with a valid key.');
@@ -5453,9 +5472,7 @@ class Twopayment extends PaymentModule
         if (!$this->isTwoSurchargeQuotableForCart($cart)) {
             // Only the unrecognised-method arm is silent; the FX arm logs its own detail.
             if ($this->getTwoSurchargeSettingsOrNull() === null) {
-                $this->logTwoPaymentOptionHidden(
-                    'the buyer surcharge cannot be priced for cart ' . (int) $cart->id
-                );
+                $this->logTwoPaymentOptionHidden('the saved surcharge method is not recognised');
             }
             return [];
         }

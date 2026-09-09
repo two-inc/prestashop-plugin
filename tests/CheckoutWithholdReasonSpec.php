@@ -17,6 +17,7 @@ final class CheckoutWithholdReasonSpec
         self::testEveryWithholdingBranchNamesItsReasonInTheLog();
         self::testAWithholdReasonIsLoggedOncePerRequest();
         self::testTheProviderNameFallsBackToTheProductName();
+        self::testTheActionRequiredAlertFollowsTheDefinitiveVerdict();
         self::testTheHealthChecklistNamesWhyTheMethodIsAbsent();
     }
 
@@ -47,7 +48,7 @@ final class CheckoutWithholdReasonSpec
                 static function ($module): void {
                     Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'not-a-method');
                 },
-                'the buyer surcharge cannot be priced',
+                'Payment option hidden - the saved surcharge method is not recognised',
                 'an unrecognised stored surcharge method names the withhold, not only itself',
             ],
         ];
@@ -66,6 +67,35 @@ final class CheckoutWithholdReasonSpec
             TinyAssert::true(
                 self::logged($fragment),
                 $description . ': logged ' . self::allLogged()
+            );
+        }
+    }
+
+    /**
+     * ABN-533: only a definitive rejection earns "action required". A transient
+     * verdict falls through to the cached record and withholds nothing, so the
+     * panel must not tell the merchant to go and fix their key.
+     */
+    private static function testTheActionRequiredAlertFollowsTheDefinitiveVerdict(): void
+    {
+        // [primed verdict, HTTP code, alert expected, why].
+        $cases = [
+            [Twopayment::API_KEY_STATUS_INVALID, 401, true, 'a rejected key is the merchant\'s to fix'],
+            [Twopayment::API_KEY_STATUS_NOT_CONFIGURED, null, true, 'and so is an unconfigured one'],
+            [Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503, false, 'an outage is not the merchant\'s to fix'],
+            [Twopayment::API_KEY_STATUS_UNREACHABLE, null, false, 'nor is a network failure reaching us'],
+        ];
+
+        foreach ($cases as [$status, $code, $expected, $description]) {
+            $module = self::offerableModule();
+            $module->primeTwoApiKeyStatus($status, $code);
+
+            $html = $module->exposeTwoPluginHealthChecklist();
+
+            TinyAssert::same(
+                $expected,
+                strpos($html, 'Action required:') !== false,
+                $description . ': rendered ' . $html
             );
         }
     }

@@ -629,8 +629,13 @@ namespace {
         {
             $moduleName = property_exists($this, 'name') ? (string) $this->name : '';
             $currencies = StubStore::$moduleCurrencies[$moduleName] ?? [];
+            // As core: no argument resolves the CONTEXT currency, which an admin
+            // page has none of - it is not "the whole allowlist".
             if ($idCurrency === null) {
-                return $currencies;
+                $idCurrency = (int) Configuration::get('PS_CURRENCY_DEFAULT');
+                if ($idCurrency <= 0) {
+                    return [];
+                }
             }
 
             $idCurrency = (int) $idCurrency;
