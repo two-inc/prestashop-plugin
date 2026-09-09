@@ -1943,10 +1943,8 @@ class TwoCheckoutManager {
                     const amount = (days && (days in response.amounts)) ? Number(response.amounts[days]) : 0;
                     return isFinite(amount) ? amount : 0;
                 });
-                // One decision for the whole set (Magento parity): any priced
-                // term puts an amount on every chip, a zero-fee chip included;
-                // every term ~zero shows none anywhere. A zero, invalid or
-                // absent quote counts as zero rather than as a failure.
+                // One decision for the whole set, never per chip (Magento
+                // parity). A zero, invalid or absent quote counts as zero.
                 const allZero = amounts.every((amount) => amount < 0.005);
                 chips.forEach((chip, index) => {
                     const surchargeLabel = chip.querySelector('.two-term-chip__surcharge');
