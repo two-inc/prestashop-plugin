@@ -73,6 +73,7 @@ final class FxRatesSpec
         self::testCapRoundingToZeroPassesThroughAndKeepsTheOption();
         self::testAbsentCapStillChargesAndOffersTheOption();
         self::testFixedSurchargeRoundingToZeroProceedsWithInfoLog();
+        self::testChargedTermQuoteDecidesThePaymentOption();
         // The cart-line-sync half of TWO-25269 lives in SurchargeCartLineSpec,
         // which already owns the real cart/product/tax fixture:
         // testQuoteFailureKeepsLineAndFailsLoudly.
@@ -968,6 +969,170 @@ final class FxRatesSpec
         TinyAssert::true(is_array($pricing), 'the pricing quote must have been requested');
         TinyAssert::same(0.0, $pricing['buyer_fee_share']['surcharge'], 'a negligible fixed amount is quoted as 0.00');
         TinyAssert::same(30.0, $pricing['buyer_fee_share']['cap'], '500000 IDR is a healthy 30.00 EUR cap');
+    }
+
+    /**
+     * gateModule's reachable-checkout fixture plus a stubbed pricing wire and
+     * a cart basis (ABN-546).
+     *
+     * @param mixed $feeResponse response array, or a callable given the payload
+     */
+    private static function feeGateModule(float $gross, $feeResponse): object
+    {
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[904] = [
+            'id_country' => 826,
+            'company' => 'Example Trading Ltd',
+            'vat_number' => 'GB123456789',
+            'loaded' => true,
+        ];
+        StubStore::$moduleCurrencies['twopayment'] = [['id_currency' => 1]];
+
+        $module = new class ($feeResponse) extends TwopaymentTestHarness {
+            /** @var array<int,array{endpoint:string,payload:array}> */
+            public array $requests = [];
+            private $feeResponse;
+
+            public function __construct($feeResponse)
+            {
+                parent::__construct();
+                $this->feeResponse = $feeResponse;
+            }
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                $this->requests[] = ['endpoint' => $endpoint, 'payload' => $payload, 'timeout' => $timeout];
+                if ($endpoint !== '/v1/pricing/order/fee') {
+                    return ['http_status' => 500];
+                }
+                return is_callable($this->feeResponse)
+                    ? call_user_func($this->feeResponse, $payload)
+                    : $this->feeResponse;
+            }
+
+            protected function getTwoPaymentOption()
+            {
+                return (object) ['method' => 'two'];
+            }
+        };
+        $module->active = true;
+
+        $cart = new Cart(4242);
+        $cart->id_address_invoice = 904;
+        $cart->id_currency = 1;
+        StubStore::$cartTotals[4242][true][Cart::BOTH] = $gross;
+        StubStore::$cartTotals[4242][false][Cart::BOTH] = $gross;
+        $module->context->cart = $cart;
+
+        return $module;
+    }
+
+    /** ABN-546 - the charged term's quote decides the payment option. */
+    private static function testChargedTermQuoteDecidesThePaymentOption(): void
+    {
+        $failFor = function (int $failingDays) {
+            return function (array $payload) use ($failingDays) {
+                if ((int) $payload['order_terms']['duration_days'] === $failingDays) {
+                    return ['http_status' => 503];
+                }
+                return ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'EUR'];
+            };
+        };
+        $failed = ['http_status' => 503];
+        $quoted = ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'EUR'];
+        $zeroQuote = ['http_status' => 200, 'buyer_fee_share' => '0.00', 'currency' => 'EUR'];
+
+        $cases = [
+            ['percentage', '1.5', 100.0, 30, $failed, 0, true, 30, null, 'a pricing call that fails withholds the option'],
+            ['percentage', '1.5', 100.0, 30, ['http_status' => 200, 'currency' => 'EUR'], 0, true, 30, null, 'a 200 carrying no buyer fee share withholds the option'],
+            ['percentage', '1.5', 100.0, 30, ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => 'SEK'], 0, true, 30, null, 'a quote in the wrong currency withholds the option'],
+            ['percentage', '1.5', 100.0, 30, $zeroQuote, 1, false, 30, null, 'a quote of zero is a real answer and withholds nothing'],
+            ['percentage', '0', 100.0, 30, $failed, 1, false, null, ['pct' => '1.5'], 'a charged term that charges nothing is never quoted'],
+            ['percentage', '1.5', 0.0, 30, $failed, 1, false, null, ['gross' => 100.0], 'an empty basket is never quoted'],
+            ['none', '1.5', 100.0, 30, $failed, 1, false, null, ['type' => 'percentage'], 'a disabled surcharge is never quoted'],
+            ['percentage', '1.5', 100.0, 30, $failFor(60), 1, false, 30, null, 'a failing term that is not the charged term withholds nothing'],
+            ['percentage', '1.5', 100.0, 60, $failFor(60), 0, true, 60, null, 'the selected term is the one judged'],
+            ['percentage', '1.5', 100.0, null, $failFor(30), 0, true, 30, null, 'with no term selected the merchant default term is judged'],
+            ['differential', '1.5', 100.0, 30, $failed, 1, false, null, ['differential' => false], 'the default term in fee-difference mode prices its own delta at zero'],
+        ];
+
+        $run = function (string $type, string $pct, float $gross, ?int $cookieTerm, $feeResponse, bool $differential = false): object {
+            self::reset();
+            self::tableWithoutUsd();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $type === 'differential' ? 'percentage' : $type);
+            Configuration::updateValue('PS_TWO_SURCHARGE_DIFFERENTIAL', $differential ? 1 : 0);
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', $pct);
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 1);
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_60', 1);
+            if ($cookieTerm !== null) {
+                Context::getContext()->cookie->two_payment_term = (string) $cookieTerm;
+            }
+            return self::feeGateModule($gross, $feeResponse);
+        };
+        $quotedTerms = function (object $module): array {
+            $terms = [];
+            foreach ($module->requests as $request) {
+                if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                    $terms[] = (int) $request['payload']['order_terms']['duration_days'];
+                }
+            }
+            return $terms;
+        };
+
+        TinyAssert::notSame(
+            Twopayment::API_TIMEOUT_STATE_CHECK,
+            Twopayment::API_TIMEOUT_FEE_QUOTE_GATE,
+            'the gate ceiling must be its own bound, not the render-path default'
+        );
+
+        foreach ($cases as $case) {
+            list($type, $pct, $gross, $cookieTerm, $feeResponse, $expectedOptions, $expectLog, $quotedDays, $control, $description) = $case;
+
+            $module = $run($type, $pct, $gross, $cookieTerm, $feeResponse, $type === 'differential');
+            TinyAssert::same($expectedOptions, count($module->hookPaymentOptions([])), $description);
+            TinyAssert::same(
+                $expectLog,
+                self::hasLog('the buyer surcharge quote for the', 3),
+                'the withhold must be logged at error level exactly when it happens: ' . $description
+            );
+
+            $quotes = $quotedTerms($module);
+            if ($quotedDays === null) {
+                TinyAssert::same(0, count($quotes), 'no quote may be requested at all: ' . $description);
+            } else {
+                TinyAssert::true(in_array($quotedDays, $quotes, true), 'the charged term must be the term quoted: ' . $description);
+                foreach ($module->requests as $request) {
+                    if ($request['endpoint'] === '/v1/pricing/order/fee') {
+                        TinyAssert::same(
+                            Twopayment::API_TIMEOUT_FEE_QUOTE_GATE,
+                            $request['timeout'],
+                            'the gate must quote on its own ceiling: ' . $description
+                        );
+                    }
+                }
+            }
+
+            if ($control === null) {
+                continue;
+            }
+            // Control on the same fixture with only the skipping condition
+            // lifted: it must quote and withhold, so the row above passes
+            // because of that condition and not because the fixture cannot
+            // reach the gate at all.
+            $controlType = $control['type'] ?? $type;
+            $controlModule = $run(
+                $controlType,
+                $control['pct'] ?? $pct,
+                $control['gross'] ?? $gross,
+                $cookieTerm,
+                $feeResponse,
+                array_key_exists('differential', $control) ? $control['differential'] : ($controlType === 'differential')
+            );
+            $expectedControlTerm = $cookieTerm ?? 30;
+            TinyAssert::same(0, count($controlModule->hookPaymentOptions([])), 'control must withhold: ' . $description);
+            TinyAssert::same([$expectedControlTerm], $quotedTerms($controlModule), 'control must quote the charged term: ' . $description);
+        }
     }
 
 }

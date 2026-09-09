@@ -202,6 +202,7 @@ class Twopayment extends PaymentModule
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
     const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for render-path fetches (invoice-download state check, merchant-record and FX-rate refreshes, fee quotes)
     const API_TIMEOUT_PDF_FETCH = 10; // Tight timeout for synchronous invoice PDF fetches (buyer + admin download clicks)
+    const API_TIMEOUT_FEE_QUOTE_GATE = 30; // Payment-options gate's own ceiling for the buyer fee quote (ABN-546)
     const API_CONNECT_TIMEOUT = 5; // Connection-establishment timeout for all Two API calls
     
     // Constants for validation tolerances
@@ -5875,7 +5876,13 @@ class Twopayment extends PaymentModule
         // shared pricing builder keeps the intent, create and update payloads
         // consistent, so the order-intent approval reconciles against the same
         // gross the create call sends. TWO-24752 / TWO-24893.
-        $surchargeLine = $this->buildTwoSurchargeLineItemForCart($cart, $subtotalsTotals['gross'], $paymentTermDays);
+        $surchargeQuoteUnavailable = false;
+        $surchargeLine = $this->buildTwoSurchargeLineItemForCart(
+            $cart,
+            $subtotalsTotals['gross'],
+            $paymentTermDays,
+            $surchargeQuoteUnavailable
+        );
         if ($surchargeLine !== null && $this->validateTwoLineItems(array($surchargeLine))) {
             $line_items[] = $surchargeLine;
             $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
@@ -5903,9 +5910,17 @@ class Twopayment extends PaymentModule
             abs($payloadFeeNetCents - $cartFeeNetCents)
         );
         $enforceSurchargeParity = (bool) $syncSurchargeCartLine;
-        if ($surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE)) {
+        // An unavailable quote is a parity failure in its own right (ABN-546):
+        // the buyer can switch term after the payment-options gate ran, and a
+        // pre-switch term that quoted zero leaves zero on both sides, which the
+        // cents comparison reads as agreement.
+        $surchargeParityFailed = ($surchargeQuoteUnavailable && $enforceSurchargeParity)
+            || $surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
+        if ($surchargeParityFailed) {
             PrestaShopLogger::addLog(
-                'TwoPayment: ' . $contextLabel . ' surcharge parity mismatch - cart line (net/gross)=(' .
+                'TwoPayment: ' . $contextLabel . ' surcharge parity mismatch - '
+                . ($surchargeQuoteUnavailable ? 'the fee quote for the ordered term did not resolve; ' : '')
+                . 'cart line (net/gross)=(' .
                 $this->getTwoRoundAmount($cartFeeNetCents / 100) . '/' . $this->getTwoRoundAmount($cartFeeGrossCents / 100) .
                 ') vs payload fee line (net/gross)=(' .
                 $this->getTwoRoundAmount($payloadFeeNetCents / 100) . '/' . $this->getTwoRoundAmount($payloadFeeGrossCents / 100) . ')',
@@ -12542,6 +12557,9 @@ class Twopayment extends PaymentModule
     /** @var bool Logged the unresolvable-checkout-country withhold reason yet? */
     protected $twoSearchCountryWithholdLogged = false;
 
+    /** @var bool Logged the failed-buyer-fee-quote withhold reason yet (ABN-546)? */
+    protected $twoFeeQuoteWithholdLogged = false;
+
     /**
      * Whether this instance has already reported that the country allowlist
      * could not be consulted (TWO-25387). Separate from the flag above because
@@ -12970,13 +12988,13 @@ class Twopayment extends PaymentModule
      * order was created with ZERO surcharge and nothing logged. A silent
      * undercharge on every affected order.
      *
-     * THE CONDITION IS TERM-INDEPENDENT, deliberately. No term is selected
-     * when payment options render, so the gate cannot ask "is the chosen
-     * term quotable". It does not need to: the rate lookup for the
-     * (shop default -> cart) pair fails identically for every term, so one
-     * unresolvable pair condemns all of them. Gating instead on "any offered
-     * term is unquotable" would over-reject a whole store because of one
-     * misconfigured term.
+     * THE FX CONDITION IS TERM-INDEPENDENT, deliberately: the rate lookup for
+     * the (shop default -> cart) pair fails identically for every term, so one
+     * unresolvable pair condemns all of them, and gating instead on "any
+     * offered term is unquotable" would over-reject a whole store because of
+     * one misconfigured term. The quote condition below asks about a single
+     * term for a DIFFERENT reason: a quote can fail for one term and succeed
+     * for another, so judging every term would over-reject.
      *
      *   surcharge enabled
      *   AND cart currency !== the currency the surcharge is configured in
@@ -12987,8 +13005,8 @@ class Twopayment extends PaymentModule
      * A percentage-only grid needs no conversion (percentages are
      * currency-agnostic), so it never trips the gate.
      *
-     * The no-FX-rate condition is the ONLY thing this gate trips on. Because
-     * it is term-independent, the loop below reaches the same answer on the
+     * The FX LOOP below trips on the no-FX-rate condition only. Because that
+     * condition is term-independent, the loop reaches the same answer on the
      * first currency-bearing term it sees; it is written as a loop only so it
      * can skip terms with no currency-bearing member at all. It must never
      * grow a per-term charge condition: any single term rejecting would take
@@ -12999,6 +13017,13 @@ class Twopayment extends PaymentModule
      * than treating it as uncapped, so there was never an overcharge to guard.
      * References live on TWO-25269 - this repository is public and that
      * service's is not.)
+     *
+     * The second condition is a FAILED FEE QUOTE for the term the checkout
+     * would charge for (ABN-546) - the selected term, else the merchant
+     * default - judged after the loop by isTwoChargedTermFeeQuotable(). A term
+     * charging nothing is never quoted. Checkout only: hookPaymentOptions is
+     * the sole caller and never runs in admin, so a pricing outage cannot
+     * reach the configuration page or its merchant fee-rates preview.
      *
      * @param Cart $cart
      * @return bool
@@ -13022,36 +13047,128 @@ class Twopayment extends PaymentModule
         $cart_iso = Validate::isLoadedObject($cart_currency)
             ? Tools::strtoupper(trim((string) $cart_currency->iso_code))
             : '';
-        if ($cart_iso === '' || $shop_iso === '' || $cart_iso === $shop_iso) {
-            // No re-denomination needed at all.
-            return true;
+        if ($cart_iso !== '' && $shop_iso !== '' && $cart_iso !== $shop_iso) {
+            foreach ($this->getAvailablePaymentTerms() as $days) {
+                $days = (int) $days;
+                $share = $this->buildTwoBuyerFeeShare($days);
+                if ($share === null) {
+                    continue;
+                }
+                // Percentage-only terms carry no currency-bearing member.
+                if (!isset($share['surcharge']) && !isset($share['cap'])) {
+                    continue;
+                }
+                if ($this->convertTwoBuyerFeeShareCurrency($share, $cart_iso, $days) === null) {
+                    // convertTwoBuyerFeeShareCurrency has already logged the
+                    // reason - no FX rate for the pair - at error level with the
+                    // currency pair and term.
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Payment option hidden for cart ' . (int) $cart->id
+                        . ' - buyer surcharge cannot be quoted in ' . $cart_iso
+                        . ' (configured in ' . $shop_iso . '), failing closed rather than charging the wrong amount',
+                        3
+                    );
+                    return false;
+                }
+            }
         }
 
-        foreach ($this->getAvailablePaymentTerms() as $days) {
-            $days = (int) $days;
-            $share = $this->buildTwoBuyerFeeShare($days);
-            if ($share === null) {
-                continue;
-            }
-            // Percentage-only terms carry no currency-bearing member.
-            if (!isset($share['surcharge']) && !isset($share['cap'])) {
-                continue;
-            }
-            if ($this->convertTwoBuyerFeeShareCurrency($share, $cart_iso, $days) === null) {
-                // convertTwoBuyerFeeShareCurrency has already logged the
-                // reason - no FX rate for the pair - at error level with the
-                // currency pair and term.
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Payment option hidden for cart ' . (int) $cart->id
-                    . ' - buyer surcharge cannot be quoted in ' . $cart_iso
-                    . ' (configured in ' . $shop_iso . '), failing closed rather than charging the wrong amount',
-                    3
-                );
-                return false;
-            }
+        return $this->isTwoChargedTermFeeQuotable($cart);
+    }
+
+    /**
+     * Whether one term prices a surcharge at all (ABN-546). The ONE definition
+     * shared by the payment-options gate and the line builder: a term that
+     * prices nothing must be skipped by both, or the gate offers Two and the
+     * builder then refuses the order over a fee of zero.
+     *
+     * A cap alone charges nothing (a cap needs a percentage behind it), and in
+     * fee-difference mode the default term is its own reference, so its delta
+     * is structurally zero unless a fixed amount rides along.
+     *
+     * @param int $days
+     * @return bool
+     */
+    public function doesTwoTermPriceASurcharge($days)
+    {
+        $days = (int) $days;
+        $share = $this->buildTwoBuyerFeeShare($days);
+        if ($share === null) {
+            return false;
+        }
+        $fixed = isset($share['surcharge']) ? (float) $share['surcharge'] : 0.0;
+        if ($fixed > 0) {
+            return true;
+        }
+        $percentage = isset($share['percentage']) ? (float) $share['percentage'] : 0.0;
+        if ($percentage <= 0) {
+            return false;
+        }
+        $settings = $this->getTwoSurchargeSettings();
+        if (!empty($settings['differential']) && $days === (int) $this->getDefaultPaymentTerm()) {
+            return false;
         }
 
         return true;
+    }
+
+    /**
+     * Whether the fee quote for the term this checkout would be charged for
+     * resolves at all (ABN-546). ONE term - the selected one, else the
+     * merchant default - deliberately outside the caller's FX loop, which
+     * must stay term-independent.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    private function isTwoChargedTermFeeQuotable($cart)
+    {
+        if (empty($this->getAvailablePaymentTerms())) {
+            return true;
+        }
+        $days = (int) $this->getSelectedPaymentTerm();
+        if (!$this->doesTwoTermPriceASurcharge($days)) {
+            return true;
+        }
+
+        // The hidden surcharge line must never feed its own quote.
+        $gross_basis = round((float) $cart->getOrderTotal(true, Cart::BOTH), 2);
+        $surchargeCartLine = $this->getTwoSurchargeCartLine($cart);
+        if ($surchargeCartLine !== null) {
+            $gross_basis = round($gross_basis - $surchargeCartLine['gross'], 2);
+        }
+        if ($gross_basis <= 0) {
+            return true;
+        }
+
+        $currency_iso = '';
+        $currency = new Currency((int) $cart->id_currency);
+        if (Validate::isLoadedObject($currency)) {
+            $currency_iso = (string) $currency->iso_code;
+        }
+        $quote = $this->fetchTwoTermFee(
+            $days,
+            $gross_basis,
+            $this->resolveTwoBuyerCountryIso($cart),
+            $currency_iso,
+            true,
+            self::API_TIMEOUT_FEE_QUOTE_GATE
+        );
+        if ($quote !== null) {
+            return true;
+        }
+
+        if (!$this->twoFeeQuoteWithholdLogged) {
+            $this->twoFeeQuoteWithholdLogged = true;
+            PrestaShopLogger::addLog(
+                'TwoPayment: Payment option hidden for cart ' . (int) $cart->id
+                . ' - the buyer surcharge quote for the ' . $days . '-day term did not resolve,'
+                . ' failing closed rather than charging nothing',
+                3
+            );
+        }
+
+        return false;
     }
 
     /**
@@ -13077,9 +13194,14 @@ class Twopayment extends PaymentModule
      * @param float  $gross_amount fee basis (product + shipping gross)
      * @param string $buyer_country ISO-2 code
      * @param string $currency_iso  store currency
+     * @param bool $cacheAcrossRequests whether this quote may use the session
+     *   cookie cache - the charge paths only, never the chip previews, whose
+     *   per-term loop would fill the shared cookie (ABN-546).
+     * @param int|null $timeout seconds; the payment-options gate passes its own
+     *   ceiling, everything else takes the render-path default.
      * @return array|null {buyer_fee_share, total_fee_tax_rate, currency}
      */
-    public function fetchTwoTermFee($days, $gross_amount, $buyer_country, $currency_iso)
+    public function fetchTwoTermFee($days, $gross_amount, $buyer_country, $currency_iso, $cacheAcrossRequests = false, $timeout = null)
     {
         $days = (int) $days;
         $gross_amount = (float) $gross_amount;
@@ -13088,9 +13210,11 @@ class Twopayment extends PaymentModule
             return $this->twoFeeCache[$cacheKey];
         }
 
-        $sessionCached = $this->getTwoFeeQuoteFromSession($cacheKey);
-        if ($sessionCached !== null) {
-            return $this->twoFeeCache[$cacheKey] = $sessionCached;
+        if ($cacheAcrossRequests) {
+            $sessionCached = $this->getTwoFeeQuoteFromSession($cacheKey);
+            if ($sessionCached !== null) {
+                return $this->twoFeeCache[$cacheKey] = $sessionCached;
+            }
         }
 
         $share = $this->buildTwoBuyerFeeShare($days);
@@ -13124,7 +13248,13 @@ class Twopayment extends PaymentModule
 
         // Tight timeout: this sits on the checkout/order-build path and must
         // never stall checkout on a slow pricing call.
-        $response = $this->setTwoPaymentRequest('/v1/pricing/order/fee', $payload, 'POST', array(), self::API_TIMEOUT_STATE_CHECK);
+        $response = $this->setTwoPaymentRequest(
+            '/v1/pricing/order/fee',
+            $payload,
+            'POST',
+            array(),
+            $timeout !== null ? (int) $timeout : self::API_TIMEOUT_STATE_CHECK
+        );
         if (!is_array($response)) {
             return $this->twoFeeCache[$cacheKey] = null;
         }
@@ -13151,7 +13281,9 @@ class Twopayment extends PaymentModule
             'total_fee_tax_rate' => isset($response['total_fee_tax_rate']) ? (string) $response['total_fee_tax_rate'] : null,
             'currency' => $respCurrency,
         );
-        $this->storeTwoFeeQuoteInSession($cacheKey, $quote);
+        if ($cacheAcrossRequests) {
+            $this->storeTwoFeeQuoteInSession($cacheKey, $quote);
+        }
 
         return $this->twoFeeCache[$cacheKey] = $quote;
     }
@@ -13162,6 +13294,11 @@ class Twopayment extends PaymentModule
      * (days|gross|country|currency) — any change in cart total, term, buyer
      * country or currency invalidates the cache immediately regardless of TTL.
      * Fail-soft: any malformed/missing cache data is treated as a miss.
+     *
+     * ONE slot, holding the CHARGED term's quote only (ABN-546): the whole
+     * cookie shares a 4KB browser cap, and a slot per offered term would let a
+     * chip-preview render push the shopper's session over it. Successes only -
+     * a null lives in the request-scoped cache and no longer.
      *
      * @param string $cacheKey
      * @return array|null
@@ -13508,6 +13645,12 @@ class Twopayment extends PaymentModule
         // otherwise the fee would be recomputed for the default term and the
         // update gross would diverge from the created-order gross. TWO-24752.
         $days = $paymentTermDays !== null ? (int) $paymentTermDays : $this->getSelectedPaymentTerm();
+        if (!$this->doesTwoTermPriceASurcharge($days)) {
+            // No line, and NOT an unavailable quote: the gate concedes this
+            // term on the same predicate, so a pricing outage must not refuse
+            // the order over a fee of zero (ABN-546).
+            return null;
+        }
         $currencyIso = '';
         $currency = new Currency((int) $cart->id_currency);
         if (Validate::isLoadedObject($currency)) {
@@ -13515,7 +13658,7 @@ class Twopayment extends PaymentModule
         }
         $buyerCountry = $this->resolveTwoBuyerCountryIso($cart);
 
-        $fee = $this->fetchTwoTermFee($days, (float) $gross_basis, $buyerCountry, $currencyIso);
+        $fee = $this->fetchTwoTermFee($days, (float) $gross_basis, $buyerCountry, $currencyIso, true);
         if ($fee === null) {
             // TWO-25269: tell the caller this null is an unavailable QUOTE,
             // not an absent surcharge. applyTwoSurchargeCartLineSync must not

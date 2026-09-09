@@ -93,6 +93,44 @@ The standard for EVERY module setting, not only the surcharge method.
 Degrading a junk value to a working default is the failure this replaces: it
 prices an order under a configuration nobody chose, and nobody is told.
 
+## A Failed Buyer Fee Quote Withholds Two At Checkout Only
+
+ABN-546. The same failure means different things on the two surfaces.
+
+- **Checkout.** `isTwoSurchargeQuotableForCart()` is the ONE withholding gate, and
+  `hookPaymentOptions()` returns `[]`, so the tile is absent from the list rather
+  than offered-and-disabled. A fee quote that does not resolve withholds Two, because
+  the alternative is an order created with no surcharge at all — a silent undercharge.
+  The reason is logged at error level, once per render.
+- **One term, never all of them**: the selected term, else the merchant default. The
+  FX loop in the same predicate stays term-independent; a per-term condition inside it
+  took whole stores offline once already (TWO-25276).
+- **A quoted zero, an empty basket, a disabled surcharge and a term that prices no
+  surcharge are answers, not failures**, and withhold nothing. Whether a term prices a
+  surcharge is ONE predicate shared by the gate and the line builder — a cap with no
+  percentage behind it prices nothing, and in fee-difference mode so does the default
+  term unless a fixed amount rides along. If the two sides ever judge that separately,
+  the gate offers Two and order create then refuses it over a fee of zero.
+- **The order-create parity gate owns the term the buyer actually orders.** The gate
+  runs at render, and the buyer can switch term inside the rendered tile; an
+  unresolvable quote for the ordered term is a parity failure there and refuses the
+  order, because zero on both sides otherwise reads as agreement.
+- **The gate quotes on its own ceiling** (`API_TIMEOUT_FEE_QUOTE_GATE`), not the
+  render-path default. The ceiling favours availability over render latency: a shop
+  whose pricing is merely slow keeps the tile rather than having it withheld over a
+  fee the order would have priced correctly. The cost during an outage is one such
+  timeout per payment-options render, and that is accepted.
+- **The cross-request cookie cache holds the CHARGED term's successful quote only.**
+  The whole cookie shares a 4KB browser cap, so a slot per offered term would let a
+  chip-preview render push the shopper's session over it and lose their cart. Chip
+  previews stay on the request-scoped cache, which does hold a null for the rest of
+  that request.
+- **Admin.** The configuration page previews merchant fee RATES from a different
+  endpoint and degrades to a notice. `hookPaymentOptions()` never runs in admin, so a
+  pricing outage can neither lock the merchant out nor blank that preview.
+- The per-term checkout chips stay fail-soft: they show a number, they never decide
+  one, so a failed quote zeroes that chip only.
+
 ## An Admin Save Stays Possible; The Buyer Path Fails Closed
 
 **No verdict from the save-time API-key check blocks the General save** (ABN-495).

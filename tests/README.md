@@ -17,6 +17,7 @@ This folder contains deterministic tests for order-building and payload safety l
 - Free-shipping discount gross re-derivation when the net cap bites
 - High-quantity lines staying inside `NET_FORMULA_TOLERANCE`
 - Currency compatibility gating for payment option visibility
+- Buyer fee quote failure withholding the payment option at checkout, judged on the charged term only
 - Large rounded discount split handling keeps tax-formula validation stable
 - Cart-rule monetary (`value_real`/`value_tax_exc`) discount line attribution
 - Buyer company resolution across the intent, create and update payloads: the invoice address wins, the shipping address is the fallback, and the name and organisation number always come from the same address

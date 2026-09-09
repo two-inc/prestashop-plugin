@@ -26,6 +26,9 @@ final class SurchargeCartLineSpec
         self::testUnrecognisedMethodKeepsLineAndFailsLoudly();
         self::testCartLineNetMatchesTwoPayloadFeeLine();
         self::testOrderCreateParityGateFailsClosedOnDivergence();
+        self::testOrderCreateParityGateFailsClosedOnUnavailableQuote();
+        self::testOrderCreateCompletesForANonChargingTermDuringAnOutage();
+        self::testNonEnforcingPathStaysQuietOnAnUnavailableQuote();
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
         self::testStaleGuardRemovesLineWhenSessionMarkerLost();
         self::testStaleGuardKeepsLegitimateLine();
@@ -415,6 +418,132 @@ final class SurchargeCartLineSpec
                 'merchant_shipping_document_url' => '',
             ]);
         }, 'Surcharge line mismatch');
+    }
+
+    /**
+     * ABN-546: zero on both sides is not agreement. The payment-options gate
+     * judges the term selected at render; the buyer can switch term inside the
+     * rendered tile, and where the pre-switch term quoted zero there is no
+     * cart line at all - so an unresolvable quote for the term actually being
+     * ordered reads as parity and would book the order with no fee.
+     */
+    private static function testOrderCreateParityGateFailsClosedOnUnavailableQuote(): void
+    {
+        // The rendered term quoted zero, so no surcharge cart line exists.
+        $module = self::makeModule([30 => '0.00', 60 => '8.00']);
+        $cart = self::makeCart();
+        $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::count(0, self::feeLines(), 'a zero quote leaves no cart line');
+
+        // The buyer switches term and pricing is now unreachable.
+        Context::getContext()->cookie->two_payment_term = 60;
+        $module->forcedFeeResponse = ['http_status' => 503];
+
+        TinyAssert::throws(static function () use ($module, $cart) {
+            $module->getTwoNewOrderData('merchant-attempt-8103', $cart, [
+                'merchant_confirmation_url' => 'https://shop.local/confirm',
+                'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                'merchant_edit_order_url' => '',
+                'merchant_order_verification_failed_url' => '',
+                'merchant_invoice_url' => '',
+                'merchant_shipping_document_url' => '',
+            ]);
+        }, 'Surcharge line mismatch');
+    }
+
+    /**
+     * ABN-546: the gate and the line builder share one predicate, so every
+     * shape that prices nothing is skipped by BOTH. Without that, the gate
+     * offered Two and the builder then refused the order over a fee of zero -
+     * after the buyer had approved, which cancels the Two order and shows a
+     * generic cart error.
+     */
+    private static function testOrderCreateCompletesForANonChargingTermDuringAnOutage(): void
+    {
+        $cases = [
+            ['percentage', '0', '0', '', false, 'a term with no percentage and no fixed amount'],
+            ['percentage', '0', '0', '10', false, 'a cap with no percentage behind it'],
+            ['percentage', '1.5', '0', '', true, 'the ordered term is its own reference in fee-difference mode'],
+        ];
+
+        foreach ($cases as $case) {
+            list($type, $pct, $fixed, $cap, $differential, $description) = $case;
+
+            $module = self::makeModule();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $type);
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', $fixed);
+            Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', $cap);
+            Configuration::updateValue('PS_TWO_SURCHARGE_DIFFERENTIAL', $differential ? 1 : 0);
+            $cart = self::makeCart();
+            // The ordered term is the merchant default, which is what makes it
+            // its own reference in fee-difference mode.
+            Context::getContext()->cookie->two_payment_term = 30;
+            TinyAssert::same(30, (int) $module->getDefaultPaymentTerm(), 'fixture premise: ordered term is the default: ' . $description);
+            $module->forcedFeeResponse = ['http_status' => 503];
+
+            $threw = null;
+            $payload = null;
+            try {
+                $payload = $module->getTwoNewOrderData('merchant-attempt-8104', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $threw = $e->getMessage();
+            }
+
+            TinyAssert::same(null, $threw, 'order create must complete during an outage: ' . $description);
+            $feeLines = array_values(array_filter($payload['line_items'], static function ($item) {
+                return isset($item['type']) && $item['type'] === 'SERVICE';
+            }));
+            TinyAssert::count(0, $feeLines, 'no fee line for a term pricing nothing: ' . $description);
+            TinyAssert::count(0, $module->feeRequests, 'and never quoted, so an outage cannot refuse it: ' . $description);
+        }
+    }
+
+    /**
+     * ABN-546: the admin order-update path never refuses, so an unresolvable
+     * quote there is not a parity event to report - only the enforcing paths
+     * treat it as one.
+     */
+    private static function testNonEnforcingPathStaysQuietOnAnUnavailableQuote(): void
+    {
+        $method = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
+        $cases = [
+            [false, false, 'the update path reports nothing and never throws'],
+            [true, true, 'an enforcing path refuses the order'],
+        ];
+
+        foreach ($cases as $case) {
+            list($enforce, $expectThrow, $description) = $case;
+
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $module->forcedFeeResponse = ['http_status' => 503];
+            Context::getContext()->cookie->two_payment_term = 30;
+            PrestaShopLogger::reset();
+
+            $threw = false;
+            try {
+                $method->invoke($module, $cart, 'spec context', false, 30, $enforce);
+            } catch (Exception $e) {
+                $threw = strpos($e->getMessage(), 'Surcharge line mismatch') !== false;
+            }
+            TinyAssert::same($expectThrow, $threw, $description);
+
+            $logged = false;
+            foreach (PrestaShopLogger::$logs as $entry) {
+                if (strpos($entry['message'], 'surcharge parity mismatch') !== false) {
+                    $logged = true;
+                }
+            }
+            TinyAssert::same($expectThrow, $logged, 'the parity log follows enforcement: ' . $description);
+        }
     }
 
     /* ---- requirement 3: stale-line guards ---- */
