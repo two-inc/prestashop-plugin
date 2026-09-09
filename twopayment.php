@@ -2028,7 +2028,7 @@ class Twopayment extends PaymentModule
         foreach ($payment_terms as $term) {
             $fields_values['PS_TWO_PAYMENT_TERMS_' . $term] = Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term, Configuration::get('PS_TWO_PAYMENT_TERMS_' . $term));
         }
-        $fields_values['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'] = Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', Configuration::get('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'));
+        $fields_values['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'] = $this->getTwoLegacyCustomTermOptionValue();
         $fields_values['PS_TWO_DEFAULT_PAYMENT_TERM'] = (string) Tools::getValue(
             'PS_TWO_DEFAULT_PAYMENT_TERM',
             $this->getTwoDefaultPaymentTermFormDefault()
@@ -2168,9 +2168,7 @@ class Twopayment extends PaymentModule
         }
         $days = TwoStoredTerm::days($stored);
 
-        // The core HelperForm templates emit option values, option labels and the field hint
-        // unescaped; the browser posts the decoded value back, so keep still round-trips.
-        $escaped = htmlspecialchars($stored, ENT_QUOTES, 'UTF-8');
+        $escaped = $this->getTwoLegacyCustomTermOptionValue();
 
         return array(
             'type' => 'select',
@@ -2189,6 +2187,29 @@ class Twopayment extends PaymentModule
                 'name' => 'name',
             ),
         );
+    }
+
+    /**
+     * The stored term as the keep option carries it. The core form templates emit option values
+     * unescaped, and the browser posts the decoded value back, so keep still round-trips.
+     *
+     * @return string
+     */
+    protected function getTwoLegacyCustomTermOptionValue()
+    {
+        return htmlspecialchars($this->getTwoStoredCustomTerm(), ENT_QUOTES, 'UTF-8');
+    }
+
+    /**
+     * The posted custom term, trimmed, or null where the form carried no row to post.
+     *
+     * @return string|null
+     */
+    protected function getTwoPostedCustomTerm()
+    {
+        $posted = Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', null);
+
+        return is_scalar($posted) ? trim((string) $posted) : null;
     }
 
     /**
@@ -2272,8 +2293,8 @@ class Twopayment extends PaymentModule
         // whenever it holds nothing worth showing, so an unposted field means
         // "leave the stored value alone", not "clear it".
         $stored_custom = $this->getTwoStoredCustomTerm();
-        $posted_custom = Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', null);
-        $effective_custom = $posted_custom === null ? $stored_custom : trim((string) $posted_custom);
+        $posted_custom = $this->getTwoPostedCustomTerm();
+        $effective_custom = $posted_custom === null ? $stored_custom : $posted_custom;
 
         // A custom term satisfies the mandatory selection, as on the other platforms - but only
         // one checkout would actually offer, else the shop falls back to a term nobody chose.
@@ -2321,8 +2342,7 @@ class Twopayment extends PaymentModule
 
         // Deprecated custom term (ABN-522): the post can only clear it, and
         // validTwoPaymentTermsFormValues has already refused anything else.
-        $posted_custom = Tools::getValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', null);
-        if ($posted_custom !== null && trim((string) $posted_custom) === '') {
+        if ($this->getTwoPostedCustomTerm() === '') {
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', '');
         }
         // After the checkbox writes, so the fold-in tick survives them.

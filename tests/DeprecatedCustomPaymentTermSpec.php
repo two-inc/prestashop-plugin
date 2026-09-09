@@ -47,6 +47,12 @@ final class DeprecatedCustomPaymentTermSpec
             {
                 return $this->getTwoLegacyCustomTermInput();
             }
+
+            /** @return array<string,mixed> */
+            public function paymentTermsFormValuesForTest(): array
+            {
+                return $this->getTwoPaymentTermsFormValues();
+            }
         };
         $module->primeTwoAvailableTerms($offered);
 
@@ -124,6 +130,11 @@ final class DeprecatedCustomPaymentTermSpec
                 strpos($input['desc'] . $query[0]['name'] . $query[0]['id_option'], '<b>') === false,
                 $description . ' - the stored value never reaches the page as markup'
             );
+            TinyAssert::same(
+                $query[0]['id_option'],
+                self::harness($offered)->paymentTermsFormValuesForTest()['PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS'],
+                $description . ' - the form preselects the keep option'
+            );
         }
     }
 
@@ -160,6 +171,7 @@ final class DeprecatedCustomPaymentTermSpec
                 'keeping an unusable value blocks the whole section save',
             ),
             array('30.0', '', '', '', true, 'an unusable value can still be removed'),
+            array('45', array(), '', '45', true, 'a post carrying something other than a value leaves the stored term alone'),
         );
         foreach ($cases as list($stored, $posted, $refusal, $stored_after, $ticked_after, $description)) {
             StubStore::reset();
