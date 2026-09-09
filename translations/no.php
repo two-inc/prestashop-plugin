@@ -555,3 +555,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] 
 $_MODULE['<{twopayment}prestashop>twopayment_7cbb9ce1159879e80679e80e29e1b006'] = 'merchant-kontoen din er ennå ikke identifisert. Lagre General for å verifisere API-nøkkelen.';
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'ingen land er aktivert for denne modulen under Betaling > Innstillinger.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'ingen valuta er aktivert for denne modulen under Betaling > Innstillinger.';
+$_MODULE['<{twopayment}prestashop>twopayment_a74f8585cb2ed969c9c43bc108723ca6'] = 'Kan ikke kontrolleres - API-nøkkelen kunne ikke verifiseres akkurat nå.';

@@ -555,3 +555,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] 
 $_MODULE['<{twopayment}prestashop>twopayment_7cbb9ce1159879e80679e80e29e1b006'] = 'ditt merchant-konto har ännu inte identifierats. Spara General för att verifiera API-nyckeln.';
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'inget land är aktiverat för den här modulen under Betalning > Inställningar.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'ingen valuta är aktiverad för den här modulen under Betalning > Inställningar.';
+$_MODULE['<{twopayment}prestashop>twopayment_a74f8585cb2ed969c9c43bc108723ca6'] = 'Kan inte kontrolleras - API-nyckeln kunde inte verifieras just nu.';
