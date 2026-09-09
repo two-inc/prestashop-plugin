@@ -98,8 +98,9 @@ prices an order under a configuration nobody chose, and nobody is told.
 **No verdict from the save-time API-key check blocks the General save** (ABN-495).
 A connection failure, a timeout and a 5xx judge nothing about the key, and the form
 re-renders from POST, so a blocked save looks stored while nothing was written and
-leaves the merchant unable to store even the vendor name that would fix the outage.
-The verdict is reported as a warning beside the save confirmation instead.
+leaves the merchant unable to store the replacement key that would fix the outage,
+or even change the vendor name while it lasts. The verdict is reported as a warning
+beside the save confirmation instead.
 
 - **A key Two rejected (401/403) is the one submitted value a save discards** — the
   stored key is kept and the warning says so.
@@ -117,12 +118,12 @@ The verdict is reported as a warning beside the save confirmation instead.
 ## Company Search: This Module's Own Implementation
 
 `views/js/modules/TwoCompanySearch.js` is this module's own panel. The Magento and
-WooCommerce plugins share one framework-free panel module between them; nothing of
-that is vendored here, so a fix to shared panel behaviour on those two platforms is
-not a fix here, and vice versa. Never describe a change as cross-platform without
+WooCommerce plugins each carry a copy of one framework-free module — copies that
+have drifted from each other — and nothing of that is vendored here, so a fix to
+shared panel behaviour on those two platforms is not a fix here, and vice versa. Never describe a change as cross-platform without
 having made it in each module that carries the behaviour.
 
-**The unsupported-country gate disables the Registered Company chip, never manual
+**The unsupported-country gate HIDES the Registered Company chip, never manual
 entry.** Manual entry hands the field over as a plain typeable input that never
 reaches the registry, so disabling it there blocks a mode that was never going to
 search and leaves a buyer in an uncovered country with no way to name their company
@@ -145,7 +146,7 @@ PrestaShop's own address field.
 
 ## What Focus Landing on the Checkout Does to an Open Signup Popup
 
-Every focus while the hosted sole-trader signup window is up is classified once
+Every focus on the checkout is classified once, whether a popup is up or not
 (TWO-25658):
 
 - **The chip that opened the popup on screen leaves it exactly as it is.** Only an
@@ -181,7 +182,7 @@ the handler leaves the `Tab` event undefaulted — and verify the keyboard behav
 itself in a real browser. A passing jsdom Tab test is never evidence that a trap is
 absent.
 
-Two more traps in the same suite:
+Three more traps in the JS suites:
 
 - **A real chip click fires no `focusin`.** The chip's `mousedown` handler calls
   `preventDefault()`, which suppresses the native focus, so a rule written only
@@ -195,17 +196,19 @@ Two more traps in the same suite:
 
 ## The Custom Request-Header Table
 
-Every rule the save enforces — reserved names matched case-insensitively,
-printable-ASCII values, no empty name — is re-applied where a header is READ, since
+Every rule the save enforces — a name in the RFC 7230 token set, reserved names
+matched case-insensitively, printable-ASCII values, no empty value — is re-applied
+where a header is READ, since
 a stored value can arrive from a hand-edited row or an import that no form
 validated. A refusal names the rule, never who sets the header: the reason must be
 true of every reserved name, not of the one example that prompted the question.
 **A value pattern is anchored `\z`, never `$`** — `$` also matches immediately
 before a trailing newline, which is precisely the byte a printable-ASCII rule exists
 to refuse, and a header value ending in one is a response-splitting sink.
-**There is deliberately no data patch** for the single token field it replaced —
-that field never reached a production release on any platform, so no merchant ever
-had one configured; do not add one on the assumption that stored values exist.
+**The header table gets no data patch or migration, deliberately.** The
+single-value setting it replaces never reached a production release on any
+platform, so no merchant ever had one configured; do not add one on the assumption
+that stored values exist.
 
 ## A Guard Is Invoked Through `bash`
 
