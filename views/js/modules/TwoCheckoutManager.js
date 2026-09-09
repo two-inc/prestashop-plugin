@@ -1907,11 +1907,9 @@ class TwoCheckoutManager {
      * Fail-soft by design: any failure (network error, non-200, success:false,
      * missing config) clears every chip's surcharge slot to blank — the buyer
      * must never see the configured rate, and a loader that never resolves
-     * reads as broken. A zero amount for a term hides that chip's fee text
-     * ("no fee" semantics), it is NOT a failure signal. Only the
-     * .two-term-chip__surcharge nodes are touched — never the chip's
-     * selected/aria state, so a buyer clicking before the fetch resolves is
-     * never clobbered.
+     * reads as broken. Only the .two-term-chip__surcharge nodes are touched —
+     * never the chip's selected/aria state, so a buyer clicking before the
+     * fetch resolves is never clobbered.
      */
     refreshTermSurchargeAmounts(termsContainer) {
         try {
@@ -1939,21 +1937,24 @@ class TwoCheckoutManager {
                 // number formatting, no client-side price-locale guessing.
                 const currency = String(response.currency || '').toUpperCase().replace(/^\s+|\s+$/g, '');
                 const suffix = currency !== '' ? ' ' + currency : '';
-                termsContainer.querySelectorAll('.two-term-chip').forEach((chip) => {
+                const chips = Array.from(termsContainer.querySelectorAll('.two-term-chip'));
+                const amounts = chips.map((chip) => {
+                    const days = chip.dataset.days;
+                    const amount = (days && (days in response.amounts)) ? Number(response.amounts[days]) : 0;
+                    return isFinite(amount) ? amount : 0;
+                });
+                // One decision for the whole set, never per chip (Magento
+                // parity). A zero, invalid or absent quote counts as zero.
+                const allZero = amounts.every((amount) => amount < 0.005);
+                chips.forEach((chip, index) => {
                     const surchargeLabel = chip.querySelector('.two-term-chip__surcharge');
                     if (!surchargeLabel) {
                         return;
                     }
-                    const days = chip.dataset.days;
-                    const amount = (days && (days in response.amounts)) ? Number(response.amounts[days]) : 0;
-                    if (!isFinite(amount) || amount <= 0) {
-                        // Zero/invalid/absent quote for THIS term: show no fee
-                        // rather than "+0.00" (Magento zero-hide semantics) —
-                        // and never leave the loading dots behind.
-                        surchargeLabel.textContent = '';
-                        return;
-                    }
-                    surchargeLabel.textContent = '+' + amount.toFixed(2) + suffix;
+                    // Assigned either way, so the loading dots never survive.
+                    surchargeLabel.textContent = allZero
+                        ? ''
+                        : '+' + amounts[index].toFixed(2) + suffix;
                 });
             }).fail(() => {
                 this.clearTermSurchargeLoading(termsContainer);
