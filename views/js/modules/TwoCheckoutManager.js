@@ -1709,16 +1709,22 @@ class TwoCheckoutManager {
 
         const availableTerms = this.config.available_payment_terms;
         const configuredDefaultTerm = this.config.default_payment_term;
+        const retainedTerm = this.config.selected_payment_term;
         const termType = this.config.payment_term_type || 'STANDARD';
 
         if (!availableTerms || !Array.isArray(availableTerms) || availableTerms.length === 0) {
             return;
         }
 
-        // Guard against a configured default that isn't actually offered — falls back
+        // The buyer's retained selection wins over the configured default: the
+        // order is booked on the retained term, so selecting the default here
+        // would show a term the submission does not use.
+        const preferredTerm = availableTerms.includes(retainedTerm) ? retainedTerm : configuredDefaultTerm;
+
+        // Guard against a preferred term that isn't actually offered — falls back
         // to the first offered term so the chip UI and "Pay in X days" text never
         // point at a term with no selectable chip.
-        const defaultTerm = availableTerms.includes(configuredDefaultTerm) ? configuredDefaultTerm : null;
+        const initialTerm = availableTerms.includes(preferredTerm) ? preferredTerm : null;
 
         termsContainer.setAttribute('role', 'radiogroup');
         
@@ -1766,6 +1772,24 @@ class TwoCheckoutManager {
                 : payInText + ' ' + days + ' ' + daysText;
         };
 
+        const activeTerm = initialTerm || availableTerms[0];
+
+        // The term the server currently holds. The chips only ever show this,
+        // so a persist that fails cannot leave the buyer looking at a term the
+        // order would not be booked on.
+        let persistedTerm = activeTerm;
+
+        const applySelection = (days) => {
+            termsContainer.querySelectorAll('.two-term-chip').forEach((chip) => {
+                const isSelected = Number(chip.dataset.days) === Number(days);
+                chip.classList.toggle('two-term-chip--selected', isSelected);
+                chip.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+            });
+            if (selectedDays) {
+                selectedDays.textContent = formatPayInLabel(days);
+            }
+        };
+
         // Create term chips (parity with Magento/WooCommerce chip selector)
         availableTerms.forEach((days, index) => {
             const termChip = document.createElement('button');
@@ -1806,14 +1830,13 @@ class TwoCheckoutManager {
 
             termChip.dataset.days = days;
 
-            // Set default term: use configured default, or if only one term, make it selected, or first term
-            const isDefaultTerm = defaultTerm ? (days === defaultTerm) :
+            const isInitialTerm = initialTerm ? (days === initialTerm) :
                                  (singleTerm ? true : index === 0);
 
-            if (isDefaultTerm) {
+            if (isInitialTerm) {
                 termChip.classList.add('two-term-chip--selected');
             }
-            termChip.setAttribute('aria-checked', isDefaultTerm ? 'true' : 'false');
+            termChip.setAttribute('aria-checked', isInitialTerm ? 'true' : 'false');
 
             // A single term is non-selectable; skip the click handler and remove it
             // from the tab order so it doesn't present as a dead interactive control.
@@ -1825,17 +1848,7 @@ class TwoCheckoutManager {
             }
 
             termChip.addEventListener('click', () => {
-                termsContainer.querySelectorAll('.two-term-chip').forEach(chip => {
-                    chip.classList.remove('two-term-chip--selected');
-                    chip.setAttribute('aria-checked', 'false');
-                });
-
-                termChip.classList.add('two-term-chip--selected');
-                termChip.setAttribute('aria-checked', 'true');
-
-                if (selectedDays) {
-                    selectedDays.textContent = formatPayInLabel(days);
-                }
+                applySelection(days);
 
                 // Persist selection in cookie via backend (10s timeout). Abort any
                 // still-in-flight persist so an out-of-order response can't leave
@@ -1852,6 +1865,7 @@ class TwoCheckoutManager {
                             data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
                             timeout: 10000
                         }).done(() => {
+                            persistedTerm = days;
                             // The surcharge amount is term-dependent: with Two
                             // selected, re-quote and update the cart line for
                             // the newly persisted term (idempotent server-side;
@@ -1862,6 +1876,7 @@ class TwoCheckoutManager {
                         }).fail((xhr, statusText) => {
                             if (statusText !== 'abort') {
                                 console.error('Two Payment: Error saving term:', statusText);
+                                applySelection(persistedTerm);
                             }
                         });
                     }
@@ -1873,10 +1888,6 @@ class TwoCheckoutManager {
             termsContainer.appendChild(termChip);
         });
         
-        // Set initial selected term display — falls back to the first offered term
-        // when no valid default was configured (defaultTerm is null in that case).
-        const activeTerm = defaultTerm || availableTerms[0];
-
         if (selectedDays && activeTerm) {
             selectedDays.textContent = formatPayInLabel(activeTerm);
         }
