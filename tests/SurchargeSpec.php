@@ -61,6 +61,7 @@ final class SurchargeSpec
         self::testSurchargeLineItemTaxRateSelfConsistentAtHighPrecision();
         self::testSurchargeLineItemHonorsExplicitTermOverride();
         self::testOrderPayloadInjectsSurchargeLineAndBumpsTotals();
+        self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
     }
 
     private static function reset(): void
@@ -1529,4 +1530,57 @@ final class SurchargeSpec
         TinyAssert::same('0.25', $feeLines[0]['tax_rate']);
         TinyAssert::same('6.25', $feeLines[0]['gross_amount']);
     }
+    /**
+     * TWO-25707: a comma decimal separator is a supported way to type a
+     * surcharge value, so it is normalised before the numeric check rather
+     * than refused by it. A rejection names the cell it came from - the grid
+     * has three columns per term, and a message naming none of them leaves the
+     * merchant hunting.
+     */
+    private static function testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell(): void
+    {
+        // [posted percentage, fixed fee, cap, expected error fragments, expected stored triple, description]
+        $cases = [
+            ['12,5', '', '', [], ['12.5', '', ''], 'a comma percentage is accepted and stored as a dot decimal'],
+            ['12.5', '', '1,5', [], ['12.5', '', '1.5'], 'a comma cap is accepted alongside a dot percentage'],
+            ['12,5', '2,25', '3,5', [], ['12.5', '2.25', '3.5'], 'every cell in the row normalises'],
+            ['12.5', '', '1.5', [], ['12.5', '', '1.5'], 'dot decimals keep working'],
+            ['1.234,5', '', '', ['Percentage for the 30-day term'], null, 'both separators are ambiguous and refused'],
+            ['abc', '', '', ['Percentage for the 30-day term'], null, 'a non-number is refused by column and term'],
+            ['', '-1', '', ['Fixed fee for the 30-day term'], null, 'a negative is refused by column and term'],
+            ['', '', '0,0', ['Surcharge cap for the 30-day term cannot be 0'], null, 'a comma zero cap is normalised before the zero-cap rule'],
+            ['abc', 'abc', '', ['Percentage for the 30-day term', 'Fixed fee for the 30-day term'], null, 'each bad cell is reported, not just the first'],
+        ];
+
+        foreach ($cases as [$pct, $fixed, $cap, $expectedErrors, $expectedStored, $description]) {
+            self::reset();
+            Tools::resetTestValues();
+            StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+            $module = self::makeConfigHarness();
+
+            Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            Tools::setTestValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_30', $fixed);
+            Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', $cap);
+
+            $errors = $module->validateSurchargeFormForTest();
+            TinyAssert::count(count($expectedErrors), $errors, $description);
+            foreach ($expectedErrors as $index => $fragment) {
+                TinyAssert::true(
+                    strpos($errors[$index], $fragment) !== false,
+                    $description . ' (expected "' . $fragment . '" in "' . $errors[$index] . '")'
+                );
+            }
+
+            if ($expectedStored === null) {
+                continue;
+            }
+            $module->saveSurchargeFormForTest();
+            TinyAssert::same($expectedStored[0], (string) Configuration::get('PS_TWO_SURCHARGE_PCT_30'), $description);
+            TinyAssert::same($expectedStored[1], (string) Configuration::get('PS_TWO_SURCHARGE_FIXED_30'), $description);
+            TinyAssert::same($expectedStored[2], (string) Configuration::get('PS_TWO_SURCHARGE_CAP_30'), $description);
+        }
+    }
+
 }

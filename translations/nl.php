@@ -192,7 +192,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_44fdec47036f482b68b748f9d786801b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_484f5a79672cebe198ebdde45a1d672f'] = 'Cadeauverpakking';
 $_MODULE['<{twopayment}prestashop>twopayment_5a3888e2dc8411b9315151d138a7e8fd'] = 'De bestelling is via %s terugbetaald. De koper ontvangt direct een creditnota. Standaard: Terugbetaald';
 $_MODULE['<{twopayment}prestashop>twopayment_4942bc0bc6522799a5aa074673f90664'] = 'Betaling niet beschikbaar';
-$_MODULE['<{twopayment}prestashop>twopayment_49adcf16d38223955a24cb4df235fde6'] = 'Toeslagwaarden moeten niet-negatieve getallen zijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_268080635e4033e05865df7fdd177b8e'] = '%s is een B2B Buy Now, Pay Later-oplossing';
 $_MODULE['<{twopayment}prestashop>twopayment_4b63989fed5f90859fafd6e1f02be539'] = 'De betaalgegevens van de bestelling kunnen niet worden opgehaald; neem contact op met de winkeleigenaar.';
 $_MODULE['<{twopayment}prestashop>twopayment_4b6e94a357f5914cc27795141c380dc1'] = 'Details: %s.';
@@ -559,3 +558,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c3d38f77a364bef3afec146aece7a3b3'] = 'alleen aangeboden aan kopers in %s';
 $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] = 'verborgen voor winkelwagens in %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'de standaardvaluta van de winkel heeft geen ISO-code.';
+$_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s voor de termijn van %2$d dagen moet een niet-negatief getal zijn, maar bevat "%3$s".';

@@ -15840,11 +15840,18 @@ class Twopayment extends PaymentModule
                 if ($raw === false || $raw === null || trim((string) $raw) === '') {
                     continue;
                 }
-                if (!is_numeric($raw) || (float) $raw < 0) {
-                    $this->errors[] = $this->l('Surcharge values must be non-negative numbers.');
+                $normalized = $this->normalizeTwoSurchargeNumber($raw);
+                if ($normalized === null || (float) $normalized < 0) {
+                    $this->errors[] = sprintf(
+                        $this->l('%1$s for the %2$d-day term must be a non-negative number, but reads "%3$s".'),
+                        $this->getTwoSurchargeFieldLabel($suffix),
+                        $days,
+                        htmlspecialchars(trim((string) $raw), ENT_QUOTES, 'UTF-8')
+                    );
 
-                    return;
+                    continue;
                 }
+                $raw = $normalized;
                 // A cap of exactly 0 is refused (TWO-25289). It is never what
                 // a merchant means by it: the cap bounds the WHOLE fee - the
                 // percentage and the fixed fee together, not the percentage
@@ -15868,11 +15875,52 @@ class Twopayment extends PaymentModule
                         $this->l('Surcharge cap for the %d-day term cannot be 0. To charge nothing on this term, set the percentage and the fixed fee to 0 instead, and leave the cap empty.'),
                         $days
                     );
-
-                    return;
                 }
             }
         }
+    }
+
+    /**
+     * A surcharge cell's value as a numeric string, or null when it is not a
+     * number at all. A comma decimal separator is accepted and normalised
+     * (TWO-25707); a value carrying both separators is ambiguous about which
+     * is which, so it is refused rather than guessed at.
+     *
+     * @param mixed $raw
+     *
+     * @return string|null
+     */
+    protected function normalizeTwoSurchargeNumber($raw)
+    {
+        if (!is_scalar($raw)) {
+            return null;
+        }
+        $value = trim((string) $raw);
+        if (strpos($value, ',') !== false && strpos($value, '.') === false) {
+            $value = str_replace(',', '.', $value);
+        }
+
+        return is_numeric($value) ? $value : null;
+    }
+
+    /**
+     * The grid column's own heading, so a rejection names the cell the
+     * merchant has to go and correct.
+     *
+     * @param string $suffix
+     *
+     * @return string
+     */
+    protected function getTwoSurchargeFieldLabel($suffix)
+    {
+        if ($suffix === 'PCT') {
+            return $this->l('Percentage');
+        }
+        if ($suffix === 'FIXED') {
+            return $this->l('Fixed fee');
+        }
+
+        return $this->l('Cap');
     }
 
     protected function saveTwoSurchargeFormValues()
@@ -15947,8 +15995,8 @@ class Twopayment extends PaymentModule
             $days = (int) $days;
             foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
                 $name = 'PS_TWO_SURCHARGE_' . $suffix . '_' . $days;
-                $raw = Tools::getValue($name, '');
-                Configuration::updateValue($name, is_numeric($raw) ? (string) (float) $raw : '');
+                $normalized = $this->normalizeTwoSurchargeNumber(Tools::getValue($name, ''));
+                Configuration::updateValue($name, $normalized === null ? '' : (string) (float) $normalized);
             }
         }
     }
