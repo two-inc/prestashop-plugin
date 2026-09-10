@@ -15555,11 +15555,10 @@ class Twopayment extends PaymentModule
     protected function getTwoSurchargeGridHtml()
     {
         $cell_style = 'width:110px;';
-        // id + per-column classes let the admin JS (configuration.tpl) show/hide
-        // the whole grid and individual columns by the selected surcharge type,
-        // without fragile positional selectors.
-        $html = '<table id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;">';
-        $html .= '<thead><tr>'
+        // Per-column classes let the admin JS (configuration.tpl) show/hide
+        // individual columns by the selected surcharge type, without fragile
+        // positional selectors.
+        $html = '<thead><tr>'
             . '<th>' . $this->l('Term') . '</th>'
             . '<th class="two-col-percentage">' . $this->l('Percentage') . '</th>'
             . '<th class="two-col-fixed">' . $this->l('Fixed fee') . '</th>'
@@ -15569,6 +15568,7 @@ class Twopayment extends PaymentModule
             . '</tr></thead><tbody>';
 
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
+        $visible_rows = 0;
         $source = $this->getOfferableTermSource();
         sort($source);
         foreach ($source as $days) {
@@ -15585,7 +15585,11 @@ class Twopayment extends PaymentModule
             $type_class = $is_eom_capable ? 'two-term-both' : 'two-term-standard';
             $checked = (bool) Configuration::get('PS_TWO_PAYMENT_TERMS_' . $days);
             $valid_for_type = $term_type !== 'EOM' || $is_eom_capable;
-            $row_style = ($checked && $valid_for_type) ? '' : ' style="display:none"';
+            $offered = $checked && $valid_for_type;
+            if ($offered) {
+                ++$visible_rows;
+            }
+            $row_style = $offered ? '' : ' style="display:none"';
 
             $html .= '<tr class="two-surcharge-row two-surcharge-row-' . $days . ' ' . $type_class . '"'
                 . ' data-term="' . $days . '"' . $row_style . '>'
@@ -15598,7 +15602,24 @@ class Twopayment extends PaymentModule
                 . '</tr>';
         }
 
-        $html .= '</tbody></table>';
+        $html .= '</tbody>';
+
+        // With no offered term the grid holds nothing to configure, so its
+        // headings give way to the instruction that gets the merchant there.
+        // Initial visibility is computed SERVER-side, like the rows above,
+        // so the headings never flash on a term-less shop and the instruction
+        // still stands where the admin JS does not run. The id is what that JS
+        // toggles the whole grid by.
+        $html = '<table id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;'
+            . ($visible_rows > 0 ? '' : 'display:none;') . '">' . $html . '</table>';
+        $html .= '<p id="two-surcharge-empty" class="help-block" style="margin-bottom:0;'
+            . ($visible_rows > 0 ? 'display:none;' : '') . '">'
+            . htmlspecialchars(
+                $this->l('No payment term is offered, so there is nothing to surcharge. Tick the terms you offer under Available Payment Terms to set their fees.'),
+                ENT_QUOTES,
+                'UTF-8'
+            )
+            . '</p>';
 
         // Cap semantics, stated where the cap is entered. Both sentences
         // exist because the grid otherwise invites exactly the mistake it

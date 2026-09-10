@@ -246,12 +246,22 @@
             // updateSurchargeGridVisibility(), which toggles COLUMNS: a cell is
             // visible only when both its row and its column are, so the two
             // functions compose without coordination.
+            //
+            // With no offered term the grid has nothing to configure, so the
+            // headings give way to an instruction to offer a term first.
             function updateSurchargeGridRows() {
                 var offered = twoOfferedTermDays();
+                var visible = 0;
                 $('#two-surcharge-grid .two-surcharge-row').each(function () {
                     var $row = $(this);
-                    $row.toggle(offered.indexOf(parseInt($row.data('term'), 10)) !== -1);
+                    var isOffered = offered.indexOf(parseInt($row.data('term'), 10)) !== -1;
+                    $row.toggle(isOffered);
+                    if (isOffered) {
+                        visible += 1;
+                    }
                 });
+                $('#two-surcharge-grid').toggle(visible > 0);
+                $('#two-surcharge-empty').toggle(visible === 0);
                 updateTwoDefaultTermOptions(offered);
             }
 

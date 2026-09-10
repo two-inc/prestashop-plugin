@@ -62,6 +62,7 @@ final class SurchargeSpec
         self::testSurchargeLineItemHonorsExplicitTermOverride();
         self::testOrderPayloadInjectsSurchargeLineAndBumpsTotals();
         self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
+        self::testSurchargeGridEmptyStateReplacesTheHeadings();
     }
 
     private static function reset(): void
@@ -1530,6 +1531,7 @@ final class SurchargeSpec
         TinyAssert::same('0.25', $feeLines[0]['tax_rate']);
         TinyAssert::same('6.25', $feeLines[0]['gross_amount']);
     }
+
     /**
      * TWO-25707: a comma decimal separator is a supported way to type a
      * surcharge value, so it is normalised before the numeric check rather
@@ -1580,6 +1582,54 @@ final class SurchargeSpec
             TinyAssert::same($expectedStored[0], (string) Configuration::get('PS_TWO_SURCHARGE_PCT_30'), $description);
             TinyAssert::same($expectedStored[1], (string) Configuration::get('PS_TWO_SURCHARGE_FIXED_30'), $description);
             TinyAssert::same($expectedStored[2], (string) Configuration::get('PS_TWO_SURCHARGE_CAP_30'), $description);
+        }
+    }
+
+    /**
+     * TWO-25708: with no offered term the grid has nothing to configure, so
+     * the Term/Percentage/Cap headings give way to the instruction that says
+     * how to get a row - never a bare set of headings over an empty table.
+     */
+    private static function testSurchargeGridEmptyStateReplacesTheHeadings(): void
+    {
+        $harness = static function (): object {
+            return new class extends TwopaymentTestHarness {
+                public function getTwoSurchargeGridHtmlPublic(): string
+                {
+                    return $this->getTwoSurchargeGridHtml();
+                }
+            };
+        };
+        $instruction = 'No payment term is offered, so there is nothing to surcharge.';
+
+        // [ticked terms, term type, grid expected visible, description]
+        $cases = [
+            [[30, 60], 'STANDARD', true, 'an offered term keeps the grid on screen'],
+            [[], 'STANDARD', false, 'no ticked term leaves nothing to configure'],
+            [[90], 'EOM', false, 'a ticked term the term type excludes offers no row either'],
+            [[30], 'EOM', true, 'a ticked EOM-eligible term keeps the grid on screen'],
+        ];
+
+        foreach ($cases as [$ticked, $termType, $gridVisible, $description]) {
+            self::reset();
+            foreach (Twopayment::PAYMENT_TERMS_OPTIONS as $days) {
+                Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . (int) $days, in_array((int) $days, $ticked, true) ? 1 : 0);
+            }
+            Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $termType);
+            $html = $harness()->getTwoSurchargeGridHtmlPublic();
+
+            TinyAssert::true(
+                (strpos($html, 'id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;display:none;"') !== false) !== $gridVisible,
+                $description . ' (grid visibility)'
+            );
+            TinyAssert::true(
+                (strpos($html, 'id="two-surcharge-empty" class="help-block" style="margin-bottom:0;display:none;"') !== false) === $gridVisible,
+                $description . ' (instruction visibility)'
+            );
+            TinyAssert::true(
+                strpos($html, $instruction) !== false,
+                $description . ': the instruction must be rendered whatever its visibility, so the JS only has to toggle it'
+            );
         }
     }
 

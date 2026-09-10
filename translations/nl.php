@@ -559,3 +559,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_c3d38f77a364bef3afec146aece7a3b3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] = 'verborgen voor winkelwagens in %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'de standaardvaluta van de winkel heeft geen ISO-code.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s voor de termijn van %2$d dagen moet een niet-negatief getal zijn, maar bevat "%3$s".';
+$_MODULE['<{twopayment}prestashop>twopayment_15822db7e17c37f46eac066b85b2d144'] = 'Er wordt geen betaaltermijn aangeboden, dus er is niets om een toeslag over te berekenen. Vink onder Beschikbare betaaltermijnen de termijnen aan die u aanbiedt om hun tarieven in te stellen.';

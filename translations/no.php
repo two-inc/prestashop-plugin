@@ -559,3 +559,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_c3d38f77a364bef3afec146aece7a3b3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] = 'skjult for handlekorger i %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'butikkens standardvaluta har ingen ISO-kode.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s for betingelsen på %2$d dager må være et ikke-negativt tall, men inneholder "%3$s".';
+$_MODULE['<{twopayment}prestashop>twopayment_15822db7e17c37f46eac066b85b2d144'] = 'Ingen betalingsbetingelse tilbys, så det er ingenting å legge tillegg på. Merk av betingelsene du tilbyr under Tilgjengelige betalingsbetingelser for å angi gebyrene deres.';
