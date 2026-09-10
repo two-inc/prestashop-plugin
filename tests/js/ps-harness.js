@@ -119,6 +119,29 @@ function loadScript(relPath) {
 }
 
 /**
+ * Run the admin settings screen's own JS.
+ *
+ * It ships inside the Smarty template, so the real shipped source is what
+ * runs here: the {literal} block is plain JS once its tags are dropped.
+ *
+ * @param {string} requiredSymbol a symbol the block must define, so a template
+ *   restructure fails here rather than silently running nothing
+ */
+function loadAdminConfigScript(requiredSymbol) {
+    const tpl = fs.readFileSync(path.join(REPO_ROOT, 'views/templates/admin/configuration.tpl'), 'utf8');
+    const block = tpl.split('{literal}')[1];
+    if (!block) {
+        throw new Error('configuration.tpl: no {literal} block found');
+    }
+    const source = block.split('{/literal}')[0].replace(/<\/?script[^>]*>/g, '');
+    if (source.indexOf(requiredSymbol) === -1) {
+        throw new Error('configuration.tpl: {literal} block does not carry ' + requiredSymbol);
+    }
+    const indirectEval = eval;
+    indirectEval(source);
+}
+
+/**
  * Load the shared company-number display helper (TWO-25326).
  *
  * Must load before any module that calls `window.TwoCompanyNumber` unguarded
@@ -954,6 +977,7 @@ module.exports = {
     loadCompanySearch: loadCompanySearch,
     loadOrderIntent: loadOrderIntent,
     loadScript: loadScript,
+    loadAdminConfigScript: loadAdminConfigScript,
     installStylesheet: installStylesheet,
     buildAddressForm: buildAddressForm,
     buildAddressesStep: buildAddressesStep,

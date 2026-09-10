@@ -218,22 +218,71 @@
             updateSurchargeGridVisibility();
             $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);
 
-            // Surcharge grid ROWS - one row is server-rendered per offerable
-            // term; show a row only while its "Available Payment Terms"
-            // checkbox is ticked AND the term is valid for the selected term
-            // type. Orthogonal to updateSurchargeGridVisibility(), which
-            // toggles COLUMNS: a cell is visible only when both its row and its
-            // column are, so the two functions compose without coordination.
-            function updateSurchargeGridRows() {
+            // The terms the shop currently offers, read from the live
+            // "Available Payment Terms" ticks and narrowed by the selected term
+            // type - the client-side counterpart of getConfigurableTermSet().
+            // The custom-days input shares the name prefix and carries no day
+            // count, so it drops out here.
+            function twoOfferedTermDays() {
                 var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
+                var offered = [];
+                $('input[name^="PS_TWO_PAYMENT_TERMS_"]').each(function () {
+                    var $box = $(this);
+                    var match = String($box.attr('name') || '').match(/_(\d+)$/);
+                    var days = match ? parseInt(match[1], 10) : 0;
+                    if (!days || !$box.is(':checked')) {
+                        return;
+                    }
+                    if (termType === 'EOM' && !$box.hasClass('two-term-both')) {
+                        return;
+                    }
+                    offered.push(days);
+                });
+                return offered;
+            }
+
+            // Surcharge grid ROWS - one row is server-rendered per offerable
+            // term; show a row only while its term is offered. Orthogonal to
+            // updateSurchargeGridVisibility(), which toggles COLUMNS: a cell is
+            // visible only when both its row and its column are, so the two
+            // functions compose without coordination.
+            function updateSurchargeGridRows() {
+                var offered = twoOfferedTermDays();
                 $('#two-surcharge-grid .two-surcharge-row').each(function () {
                     var $row = $(this);
-                    var term = parseInt($row.data('term'), 10);
-                    var checked = $('input[name="PS_TWO_PAYMENT_TERMS_' + term + '"]').is(':checked');
-                    var validForType = termType !== 'EOM' || $row.hasClass('two-term-both');
-                    $row.toggle(checked && validForType);
+                    $row.toggle(offered.indexOf(parseInt($row.data('term'), 10)) !== -1);
                 });
+                updateTwoDefaultTermOptions(offered);
             }
+
+            // Default-term dropdown - its options follow the same offered set.
+            // An explicit default whose term stops being offered falls back to
+            // Automatic, and is restored if that term is offered again in the
+            // same edit.
+            var twoDefaultTermWanted = null;
+
+            function updateTwoDefaultTermOptions(offered) {
+                var $select = $('select[name="PS_TWO_DEFAULT_PAYMENT_TERM"]');
+                if (!$select.length) {
+                    return;
+                }
+                if (twoDefaultTermWanted === null) {
+                    twoDefaultTermWanted = String($select.val() || '');
+                }
+                $select.find('option').each(function () {
+                    var $option = $(this);
+                    var value = String($option.attr('value') || '');
+                    var isOffered = value === '' || offered.indexOf(parseInt(value, 10)) !== -1;
+                    $option.prop('disabled', !isOffered).toggle(isOffered);
+                });
+                var wantedOffered = twoDefaultTermWanted === ''
+                    || offered.indexOf(parseInt(twoDefaultTermWanted, 10)) !== -1;
+                $select.val(wantedOffered ? twoDefaultTermWanted : '');
+            }
+
+            $('select[name="PS_TWO_DEFAULT_PAYMENT_TERM"]').on('change', function () {
+                twoDefaultTermWanted = String($(this).val() || '');
+            });
             $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', updateSurchargeGridRows);
             $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', updateSurchargeGridRows);
             // Run after the checkbox-group and column-visibility passes above,
