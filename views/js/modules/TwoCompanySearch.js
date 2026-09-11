@@ -1435,15 +1435,11 @@ class TwoCompanySearch {
 
     /**
      * @param {boolean} returnFocus Put focus back on the company-name field -
-     *   what every close the buyer reaches does, so they are never left
-     *   standing on a control that has just gone (ABN-554). False only where
-     *   the close is a mechanical consequence of something else and moving
-     *   focus would fight it: a re-render, a country change mid-select,
-     *   another popover claiming the open slot, or manual entry, which places
-     *   focus in that same field itself. False too where the buyer has already
-     *   placed focus themselves - the deferred focus-leave close only ever
-     *   fires once focus has landed on another control, and taking it back
-     *   would undo the buyer's own Tab (TWO-25326).
+     *   what every close the buyer reaches does (ABN-554). False where
+     *   something else already owns focus: a re-render, a country change
+     *   mid-select, another popover claiming the open slot, manual entry,
+     *   and the focus-leave close, which fires only once focus has landed
+     *   elsewhere (TWO-25326).
      */
     closeDropdown(returnFocus) {
         // Every way the panel closes must leave no sole-trader spinner or stray
