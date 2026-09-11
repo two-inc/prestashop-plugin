@@ -843,9 +843,8 @@ function renderPaymentTile(soleTrader, subtitle, tagline) {
             .replace(/\{\$subtitle\|[^}]*\}/g, subtitle);
     }
     if (tagline) {
-        // The explainer `{if}` is nested inside the tagline one, so it is
-        // resolved first: that leaves the outer block free of `{if}` and the
-        // non-greedy patterns below cannot stop at the wrong `{/if}`.
+        // The explainer `{if}` nests inside the tagline one and is resolved
+        // first, so the outer non-greedy pattern cannot stop at its `{/if}`.
         html = html
             .replace(
                 /\{if \$show_about_link\}([\s\S]*?)\{\/if\}/g,
@@ -857,9 +856,8 @@ function renderPaymentTile(soleTrader, subtitle, tagline) {
             )
             .replace(/\{\$tagline_faq_url\|[^}]*\}/g, tagline.faqUrl);
     }
-    // Innermost `{if}` blocks first, repeatedly: a nested block stripped
-    // outside-in would end at the inner `{/if}` and leave an orphan tag plus
-    // half an element behind.
+    // Innermost `{if}` blocks first, repeatedly: stripped outside-in, a nested
+    // block ends at the inner `{/if}` and leaves an orphan tag behind.
     let stripped;
     do {
         stripped = html;

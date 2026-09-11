@@ -12894,9 +12894,7 @@ class Twopayment extends PaymentModule
      * Normalize a brand 'checkout_tagline_faq_url' value into the URL the
      * template renders, or '' for anything unusable.
      *
-     * The URL reaches buyer-facing markup as an href, so only http(s) passes:
-     * a javascript: or data: target resolves to no link, and therefore to no
-     * tagline.
+     * The URL reaches buyer-facing markup as an href, so only http(s) passes.
      *
      * @param mixed $configured
      * @return string
