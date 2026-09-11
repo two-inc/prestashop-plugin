@@ -2692,12 +2692,16 @@ namespace {
             return (string) $this->getTwoPaymentOption()->getCallToActionText();
         }
 
-        /** The tile subtitle as the template receives it (TWO-25711). */
-        public function exposeTwoPaymentOptionSubtitle(): string
+        /**
+         * A var the tile template receives, as it receives it (TWO-25711).
+         *
+         * @return mixed
+         */
+        public function exposeTwoPaymentOptionAssigned(string $key)
         {
             $this->getTwoPaymentOption();
 
-            return (string) $this->context->smarty->assigned['subtitle'];
+            return $this->context->smarty->assigned[$key];
         }
 
         /** This harness skips the constructor, which is what runs the self-heal in production. */

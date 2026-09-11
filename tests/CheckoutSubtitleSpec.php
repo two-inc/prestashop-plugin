@@ -149,7 +149,7 @@ final class CheckoutSubtitleSpec
             $module = new TwopaymentTestHarness();
             $module->_path = '/modules/twopayment/';
 
-            TinyAssert::same($expected, $module->exposeTwoPaymentOptionSubtitle(), $description);
+            TinyAssert::same($expected, $module->exposeTwoPaymentOptionAssigned('subtitle'), $description);
         }
     }
 }
