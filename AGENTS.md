@@ -317,12 +317,25 @@ told "radio group" and finds none of the interaction that implies.
 - **Selection follows focus, so the persist is coalesced on the keyboard path.** Each
   arrow key changes the term, which persists it and re-quotes the fee; without
   coalescing an arrow sweep is one round trip per keystroke. A click persists at once.
-- **A chip's visible text is only the day count**, so its `aria-label` carries the
-  whole phrase and contains that text, as WCAG 2.5.3 requires. Do not remove it as
-  redundant.
+- **A chip's visible text states the term in full**, so a standard-term chip carries
+  no `aria-label` of its own: one restating "30 days" would risk WCAG 2.5.3. Only an
+  end-of-month chip is named, because `EOM+30` needs spelling out — see below.
 - **A single offered term is a `disabled` chip**: `disabled` takes it out of the tab
   order whatever its `tabindex`, and the arrow handler ignores a group of fewer than
   two enabled chips. It is therefore not reachable or announceable by keyboard at all.
+
+## A Chip States Its Term Type, Not Just A Day Count
+
+An end-of-month term falls due that many days after the end of the month, so a chip
+reading "30 days" on a shop configured that way states the wrong due date (ABN-554).
+The visible text is `30 days` under standard terms and `EOM+30` under end of month.
+
+Only the end-of-month chip carries a `title` and an `aria-label`, and both read
+`EOM+30: pay 30 days after the end of the month`. The name opens with the visible
+token because WCAG 2.5.3 requires the accessible name to contain the visible text, so
+the phrase may not be reordered to put the explanation first. It is one translated
+sentence with the day count substituted, not a concatenation of translated fragments:
+word order differs by language.
 
 ## The Custom Request-Header Table
 

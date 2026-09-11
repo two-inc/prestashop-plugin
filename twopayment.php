@@ -5031,7 +5031,12 @@ class Twopayment extends PaymentModule
             'pay_in' => $this->l('Pay in'),
             'days' => $this->l('days'),
             'from_end_of_month' => $this->l('from end of month'),
-            'end_of_month_plus_days' => $this->l('End of Month + %s days'),
+            'eom_plus_days' => $this->l('EOM+%s'),
+            // Both placeholders are the same day count; the chip renderer
+            // substitutes every one of them. `%s` is deliberately left
+            // UNRESOLVED for the same reason as the placeholders below: the
+            // browser holds the term and interpolates it.
+            'eom_chip_explainer' => $this->l('EOM+%s: pay %s days after the end of the month'),
             'company_search_searching' => $this->l('Searching...'),
             'company_search_unavailable' => $this->l('Company search is temporarily unavailable. Please try again.'),
             // Distinct from company_search_unavailable on purpose: nothing is
@@ -5052,7 +5057,7 @@ class Twopayment extends PaymentModule
             // is not duplicated on screen alongside a placeholder that used to
             // just repeat the unclicked field's own watermark wording. `%d` is
             // deliberately left UNRESOLVED here for the same reason as
-            // `end_of_month_plus_days` above: the browser JS holds the one
+            // `eom_chip_explainer` above: the browser JS holds the one
             // threshold constant and interpolates it, so the number this
             // sentence claims cannot drift from the number the search
             // enforces.

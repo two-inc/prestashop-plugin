@@ -1750,9 +1750,19 @@ class TwoCheckoutManager {
         // lands last rather than whichever the buyer clicked last.
         let pendingTermRequest = null;
 
-        const formatChipLabel = (days) => termType === 'EOM'
-            ? this.t('end_of_month_plus_days', 'End of Month + %s days').replace('%s', days)
+        // An end-of-month term falls due that many days after the end of the
+        // month, so the bare day count states the wrong due date for it.
+        const formatChipText = (days) => termType === 'EOM'
+            ? this.t('eom_plus_days', 'EOM+%s').replace('%s', days)
             : days + ' ' + this.t('days', 'days');
+
+        // What EOM+30 means, spelled out, and empty under standard terms where
+        // the visible text already says it.
+        const formatEomExplainer = (days) => termType === 'EOM'
+            ? this.t('eom_chip_explainer', 'EOM+%s: pay %s days after the end of the month')
+                .split('%s')
+                .join(days)
+            : '';
 
         const formatPayInLabel = (days) => {
             const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in
@@ -1845,21 +1855,21 @@ class TwoCheckoutManager {
             termChip.type = 'button';
             termChip.className = 'two-term-chip' + (singleTerm ? ' two-term-chip--single' : '');
             termChip.setAttribute('role', 'radio');
-            // The visible text is only the day count, so the name supplies the
-            // phrase around it — and contains it, as WCAG 2.5.3 requires.
-            termChip.setAttribute('aria-label', formatPayInLabel(days));
 
             const daysLabel = document.createElement('span');
             daysLabel.className = 'two-term-chip__days';
-
-            // Format display based on term type (EOM+X for End-of-Month, X for Standard)
-            if (termType === 'EOM') {
-                daysLabel.textContent = 'EOM+' + days;
-            } else {
-                daysLabel.textContent = days;
-            }
-            termChip.title = formatChipLabel(days);
+            daysLabel.textContent = formatChipText(days);
             termChip.appendChild(daysLabel);
+
+            // Only under end-of-month terms: the visible text of a standard
+            // chip already reads as its name, and a second one restating it
+            // risks WCAG 2.5.3. The end-of-month name opens with the visible
+            // token, which that criterion requires it to contain.
+            const explainer = formatEomExplainer(days);
+            if (explainer) {
+                termChip.setAttribute('aria-label', explainer);
+                termChip.title = explainer;
+            }
 
             // Per-term surcharge slot: starts as a loading indicator (three
             // animated dots, Magento gateway_method.html parity) on EVERY
