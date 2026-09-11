@@ -227,6 +227,14 @@ Escape-to-close nor the close-on-focus-leave handler can see a keystroke.
 `setupCompanyFieldOpeners()` binds focus, mousedown and keydown to one
 `openDropdown()`.
 
+**In a country the search does not cover, a printable key takes the buyer into
+manual entry and keeps the character.** The panel opens onto a chip there, a chip
+is a `<button>` that swallows text, and this field is a readonly search trigger
+until manual entry takes it over — so every character typed was lost with nothing
+on screen to say so. Manual entry is the only state this field accepts typing in,
+and in that country it is the only route to naming a company at all (ABN-554).
+Space and Enter are excluded: both activate the focused chip.
+
 **Closing the panel puts focus back on the company-name field** — Escape, a
 pointer press outside it, a company adopted from the results, manual entry taking
 the field over, and a sole-trader signup that answers or is abandoned (ABN-554).
