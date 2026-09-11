@@ -1207,7 +1207,11 @@ class TwoCompanySearch {
             if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
                 return;
             }
+            // False, then the conditional return: focus that MOVED is the
+            // buyer's own Tab and stays put (TWO-25326), but focus that was
+            // DROPPED leaves them on nothing once the panel goes.
             this.closeDropdown(false);
+            this.returnFocusIfDropped();
         }, 0);
     }
 

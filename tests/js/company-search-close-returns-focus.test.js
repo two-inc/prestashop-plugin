@@ -184,6 +184,18 @@ describe('the opener suppression covers the close\'s own focus and nothing after
         expect(document.activeElement).toBe(expected());
     });
 
+    test('focus DROPPED rather than moved leaves the buyer on the company field', () => {
+        makeInstance();
+        openPanel();
+
+        document.activeElement.blur();
+        panelParts().panel.trigger('focusout');
+        jest.advanceTimersByTime(10);
+
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(document.activeElement).toBe(companyFieldNode());
+    });
+
     test('focus leaving the panel for another control closes it and leaves that control alone', () => {
         makeInstance();
         openPanel();
