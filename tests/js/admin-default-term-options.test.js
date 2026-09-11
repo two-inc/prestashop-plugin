@@ -1,10 +1,7 @@
 /**
- * TWO-25705: the "Default payment terms" dropdown must offer only terms the
- * shop currently offers.
- *
- * Unticking a term rewrites the grid immediately but left the dropdown still
- * offering - and still showing as selected - the term that had just been
- * withdrawn, so the screen stated a default the save would refuse.
+ * TWO-25705: the "Default payment terms" dropdown offers exactly the terms the
+ * shop currently offers, and its selection is one of them - otherwise the
+ * screen states a default the save would refuse.
  */
 
 'use strict';

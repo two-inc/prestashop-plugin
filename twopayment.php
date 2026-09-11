@@ -15608,12 +15608,9 @@ class Twopayment extends PaymentModule
 
         $html .= '</tbody>';
 
-        // With no offered term the grid holds nothing to configure, so its
-        // headings give way to the instruction that gets the merchant there.
-        // Initial visibility is computed SERVER-side, like the rows above,
-        // so the headings never flash on a term-less shop and the instruction
-        // still stands where the admin JS does not run. The id is what that JS
-        // toggles the whole grid by.
+        // Initial visibility is computed SERVER-side, like the rows above, so
+        // the instruction still stands where the admin JS does not run
+        // (TWO-25708).
         $html = '<table id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;'
             . ($visible_rows > 0 ? '' : 'display:none;') . '">' . $html . '</table>';
         $html .= '<p id="two-surcharge-empty" class="help-block" style="margin-bottom:0;'
