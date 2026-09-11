@@ -223,7 +223,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_624d960f1513f62685fb2017c0bbc926'] 
 $_MODULE['<{twopayment}prestashop>twopayment_633918382ee5b43840752588882a0496'] = 'Kunne ikke bekrefte at handlekurven stemmer for denne betalingen. Prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_656a6828d7ef1bb791e42087c4b5ee6e'] = 'API-nøkkel';
 $_MODULE['<{twopayment}prestashop>twopayment_65a4e2b7da5e4f1c422b2de7277d8311'] = 'Intervallet tillegget rundes av til (f.eks. 1 = hele enheter, 0,50 = nærmeste halve). Gjelder bare når det er valgt en avrundingsretning.';
-$_MODULE['<{twopayment}prestashop>twopayment_65facdf395107d60a23ce012c2a1c456'] = 'Slutten av måneden + %s dager';
+$_MODULE['<{twopayment}prestashop>twopayment_43027795a425292b9d90ba92ee7b69de'] = 'EOM+%s';
+$_MODULE['<{twopayment}prestashop>twopayment_3b2c485f6b1aa49371c9ea4cf16762d5'] = 'EOM+%s: betal %s dager etter månedens slutt';
 $_MODULE['<{twopayment}prestashop>twopayment_b6ad84289187f5d686fbc5c417f796f6'] = '%s svarkode %d';
 $_MODULE['<{twopayment}prestashop>twopayment_d798878a0be2e5e69e818bd8164c1172'] = 'Kunne ikke oppdatere status til kansellert, kontroller med %1$s-administrasjonen for id %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_6735bd225a891660cc38b49f427acb08'] = 'Dette skyldes vanligvis et frakt- eller rabattbeløp som handlekurven ennå ikke har lagt til. Oppdater handlekurven og prøv igjen, eller kontakt butikken.';
