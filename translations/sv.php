@@ -225,6 +225,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_656a6828d7ef1bb791e42087c4b5ee6e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_65a4e2b7da5e4f1c422b2de7277d8311'] = 'Steget som tilläggsavgiften avrundas till (t.ex. 1 = hela enheter, 0,50 = närmaste halva). Gäller endast när en avrundningsriktning är vald.';
 $_MODULE['<{twopayment}prestashop>twopayment_43027795a425292b9d90ba92ee7b69de'] = 'EOM+%s';
 $_MODULE['<{twopayment}prestashop>twopayment_3b2c485f6b1aa49371c9ea4cf16762d5'] = 'EOM+%s: betala %s dagar efter månadens slut';
+$_MODULE['<{twopayment}prestashop>twopayment_49021580a8968c03b1aade60433a2184'] = 'EOM+%1$s: betala %1$s dagar efter månadens slut, plus %2$s i avgift';
 $_MODULE['<{twopayment}prestashop>twopayment_b6ad84289187f5d686fbc5c417f796f6'] = '%s svarskod %d';
 $_MODULE['<{twopayment}prestashop>twopayment_d798878a0be2e5e69e818bd8164c1172'] = 'Kunde inte uppdatera status till avbruten, kontrollera med %1$s-administratören för id %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_6735bd225a891660cc38b49f427acb08'] = 'Detta är oftast en frakt- eller rabattsumma som varukorgen ännu inte har tillämpat. Uppdatera din varukorg och försök igen, eller kontakta butiken.';

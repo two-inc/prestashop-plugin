@@ -6,8 +6,7 @@
  * per chip is silent when it regresses: the chips still render, they just
  * disagree about whether the buyer is being charged.
  *
- * Same rule and threshold as magento-plugin's Luma renderer
- * (view/frontend/web/js/view/payment/method-renderer/gateway_method.js).
+ * Every platform's checkout applies the same rule and the same threshold.
  */
 
 'use strict';

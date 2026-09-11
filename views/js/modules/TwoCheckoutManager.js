@@ -1764,6 +1764,17 @@ class TwoCheckoutManager {
                 .join(days)
             : '';
 
+        // The same sentence with the amount left as `%2$s`: the quote lands
+        // after the chip does, so applyTermChipName() substitutes it then.
+        const formatEomExplainerWithFee = (days) => termType === 'EOM'
+            ? this.t(
+                'eom_chip_explainer_fee',
+                'EOM+%1$s: pay %1$s days after the end of the month, plus a %2$s surcharge'
+            )
+                .split('%1$s')
+                .join(days)
+            : '';
+
         const formatPayInLabel = (days) => {
             const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in
                 ? window.twopayment.i18n.pay_in
@@ -1867,8 +1878,9 @@ class TwoCheckoutManager {
             // token, which that criterion requires it to contain.
             const explainer = formatEomExplainer(days);
             if (explainer) {
-                termChip.setAttribute('aria-label', explainer);
-                termChip.title = explainer;
+                termChip.dataset.chipName = explainer;
+                termChip.dataset.chipNameFee = formatEomExplainerWithFee(days);
+                this.applyTermChipName(termChip, '');
             }
 
             // Per-term surcharge slot: starts as a loading indicator (three
@@ -1958,16 +1970,42 @@ class TwoCheckoutManager {
     }
 
     /**
+     * One chip's accessible name, stating the surcharge when the chip shows one.
+     * An aria-label replaces the whole accessible name, so without the amount in
+     * it the amount rendered inside the chip is announced nowhere. A no-op on a
+     * standard chip, which carries no name of its own.
+     *
+     * @param {HTMLElement} chip
+     * @param {string} feeText the formatted amount, unprefixed and empty unless
+     *     the chip displays one
+     */
+    applyTermChipName(chip, feeText) {
+        const base = chip.dataset.chipName;
+        if (!base) {
+            return;
+        }
+        const name = feeText && chip.dataset.chipNameFee
+            ? chip.dataset.chipNameFee.split('%2$s').join(feeText)
+            : base;
+        chip.setAttribute('aria-label', name);
+        chip.title = name;
+    }
+
+    /**
      * Clear every chip's surcharge slot (removes the loading dots) so a
      * failed/absent quote reads as a deliberate empty state, never as a
-     * permanently-animating loader.
+     * permanently-animating loader. The names lose the amount with it.
      */
     clearTermSurchargeLoading(termsContainer) {
         if (!termsContainer) {
             return;
         }
-        termsContainer.querySelectorAll('.two-term-chip .two-term-chip__surcharge').forEach((label) => {
-            label.textContent = '';
+        termsContainer.querySelectorAll('.two-term-chip').forEach((chip) => {
+            this.applyTermChipName(chip, '');
+            const label = chip.querySelector('.two-term-chip__surcharge');
+            if (label) {
+                label.textContent = '';
+            }
         });
     }
 
@@ -2021,14 +2059,14 @@ class TwoCheckoutManager {
                 // parity). A zero, invalid or absent quote counts as zero.
                 const allZero = amounts.every((amount) => amount < 0.005);
                 chips.forEach((chip, index) => {
+                    const feeText = allZero ? '' : amounts[index].toFixed(2) + suffix;
+                    this.applyTermChipName(chip, feeText);
                     const surchargeLabel = chip.querySelector('.two-term-chip__surcharge');
                     if (!surchargeLabel) {
                         return;
                     }
                     // Assigned either way, so the loading dots never survive.
-                    surchargeLabel.textContent = allZero
-                        ? ''
-                        : '+' + amounts[index].toFixed(2) + suffix;
+                    surchargeLabel.textContent = feeText ? '+' + feeText : '';
                 });
             }).fail(() => {
                 this.clearTermSurchargeLoading(termsContainer);

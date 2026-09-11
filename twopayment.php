@@ -5037,6 +5037,14 @@ class Twopayment extends PaymentModule
             // UNRESOLVED for the same reason as the placeholders below: the
             // browser holds the term and interpolates it.
             'eom_chip_explainer' => $this->l('EOM+%s: pay %s days after the end of the month'),
+            // The same sentence stating the surcharge, because an aria-label
+            // replaces the whole accessible name and the amount rendered inside
+            // the chip is then announced nowhere. Numbered placeholders: `%1$s`
+            // is the day count, `%2$s` the formatted amount, both substituted by
+            // the browser.
+            'eom_chip_explainer_fee' => $this->l(
+                'EOM+%1$s: pay %1$s days after the end of the month, plus a %2$s surcharge'
+            ),
             'company_search_searching' => $this->l('Searching...'),
             'company_search_unavailable' => $this->l('Company search is temporarily unavailable. Please try again.'),
             // Distinct from company_search_unavailable on purpose: nothing is

@@ -225,6 +225,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_656a6828d7ef1bb791e42087c4b5ee6e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_65a4e2b7da5e4f1c422b2de7277d8311'] = 'Het interval waarop de toeslag wordt afgerond (bijv. 1 = hele eenheden, 0,50 = op een halve). Geldt alleen als er een afrondingsrichting is gekozen.';
 $_MODULE['<{twopayment}prestashop>twopayment_43027795a425292b9d90ba92ee7b69de'] = 'EOM+%s';
 $_MODULE['<{twopayment}prestashop>twopayment_3b2c485f6b1aa49371c9ea4cf16762d5'] = 'EOM+%s: betaal %s dagen na het einde van de maand';
+$_MODULE['<{twopayment}prestashop>twopayment_49021580a8968c03b1aade60433a2184'] = 'EOM+%1$s: betaal %1$s dagen na het einde van de maand, plus %2$s toeslag';
 $_MODULE['<{twopayment}prestashop>twopayment_b6ad84289187f5d686fbc5c417f796f6'] = '%s-responscode %d';
 $_MODULE['<{twopayment}prestashop>twopayment_d798878a0be2e5e69e818bd8164c1172'] = 'De status kon niet worden bijgewerkt naar geannuleerd; controleer bij het %1$s-beheer voor id %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_6735bd225a891660cc38b49f427acb08'] = 'Meestal gaat het om verzendkosten of een korting die nog niet in de winkelwagen is toegepast. Vernieuw je winkelwagen en probeer het opnieuw, of neem contact op met de winkel.';

@@ -337,6 +337,15 @@ the phrase may not be reordered to put the explanation first. It is one translat
 sentence with the day count substituted, not a concatenation of translated fragments:
 word order differs by language.
 
+That name states the surcharge too, because an `aria-label` replaces the whole
+accessible name and the amount rendered inside the chip is then announced nowhere:
+`EOM+30: pay 30 days after the end of the month, plus a 7.25 EUR surcharge`. It is a
+second whole sentence rather than the first with a clause appended, and its
+placeholders are numbered because the day count and the amount are different values.
+The quote lands after the chips are built, so each chip keeps both sentences on itself
+and the name is restated when the amounts arrive — a failed or absent quote puts it
+back to the one claiming no amount, alongside the blank it leaves in the chip.
+
 ## The Custom Request-Header Table
 
 Every rule the save enforces — a name in the RFC 7230 token set, reserved names

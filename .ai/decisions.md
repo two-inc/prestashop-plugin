@@ -2181,3 +2181,18 @@ that, whatever it says.
 language, so a translator needs the whole sentence; the day count is substituted into
 it. The same rule is why the visible end-of-month token is a template rather than a
 concatenation of `EOM+` and the number.
+
+**The name states the surcharge, because an `aria-label` replaces the whole accessible
+name.** The amount rendered inside the chip stops being announced the moment a label
+is added, so a screen-reader buyer choosing between two priced end-of-month terms
+heard both term sentences and neither fee. The priced wording is a second whole
+sentence — `EOM+30: pay 30 days after the end of the month, plus a 7.25 EUR
+surcharge` — for the same translation reason as the first, and its placeholders are
+numbered because two different values go in.
+
+**The name is restated when the quote lands, not fixed when the chip is built.** The
+fee is fetched after the chips render, so each chip carries both sentences and the
+name is rewritten alongside the visible amount. The three states that show no amount
+on the chip — a quote in flight, a failed or absent quote, and a set where every term
+quotes nothing — all name no amount either, so the name can never claim a fee the
+chip does not show.
