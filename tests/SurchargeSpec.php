@@ -1605,21 +1605,28 @@ final class SurchargeSpec
         };
         $instruction = 'No payment term is available to surcharge.';
 
-        // [ticked terms, term type, grid expected visible, description]
+        // [ticked terms, term type, stored custom term, grid expected visible, description]
         $cases = [
-            [[30, 60], 'STANDARD', true, 'an offered term keeps the grid on screen'],
-            [[], 'STANDARD', false, 'no ticked term leaves nothing to configure'],
-            [[90], 'EOM', false, 'a ticked term the term type excludes offers no row either'],
-            [[30], 'EOM', true, 'a ticked EOM-eligible term keeps the grid on screen'],
+            [[30, 60], 'STANDARD', '', true, 'an offered term keeps the grid on screen'],
+            [[], 'STANDARD', '', false, 'no ticked term leaves nothing to configure'],
+            [[90], 'EOM', '', false, 'a ticked term the term type excludes offers no row either'],
+            [[30], 'EOM', '', true, 'a ticked EOM-eligible term keeps the grid on screen'],
+            // The deprecated custom term is offered without a tick of its own,
+            // so the instruction would deny a term checkout is charging for.
+            [[], 'STANDARD', '45', true, 'a custom term is offered even with nothing ticked'],
+            [[], 'EOM', '90', true, 'the term type does not withdraw the custom term either'],
+            [[], 'STANDARD', 'abc', false, 'an unusable custom term offers nothing'],
+            [[], 'STANDARD', '120', false, 'a custom term the source does not offer offers nothing'],
         ];
 
-        foreach ($cases as [$ticked, $termType, $gridVisible, $description]) {
+        foreach ($cases as [$ticked, $termType, $customTerm, $gridVisible, $description]) {
             self::reset();
             Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
             foreach (Twopayment::PAYMENT_TERMS_OPTIONS as $days) {
                 Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . (int) $days, in_array((int) $days, $ticked, true) ? 1 : 0);
             }
             Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $termType);
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', $customTerm);
             $html = $harness()->getTwoSurchargeGridHtmlPublic();
 
             TinyAssert::true(

@@ -197,7 +197,7 @@
             // and hide the columns that don't apply to the selected method.
             // Null until the first row pass; the column pass decides on the
             // surcharge type alone until then.
-            var twoVisibleSurchargeRows = null;
+            var twoHasOfferedTerm = null;
 
             function updateSurchargeGridVisibility() {
                 var type = $('select[name="PS_TWO_SURCHARGE_TYPE"]').val();
@@ -217,7 +217,7 @@
                 // cannot see (TWO-25289). Falls back to the table if the
                 // form-group does not resolve - the markup nests differently
                 // across PrestaShop majors.
-                var hasRows = twoVisibleSurchargeRows === null || twoVisibleSurchargeRows > 0;
+                var hasRows = twoHasOfferedTerm === null || twoHasOfferedTerm;
                 var scope = gridGroup.length ? gridGroup : grid;
                 scope.find('.two-col-percentage').toggle(showPercentage && hasRows);
                 scope.find('.two-col-fixed').toggle(showFixed && hasRows);
@@ -260,20 +260,31 @@
             // headings give way to an instruction to offer a term first.
             function updateSurchargeGridRows() {
                 var offered = twoOfferedTermDays();
-                var visible = 0;
                 $('#two-surcharge-grid .two-surcharge-row').each(function () {
                     var $row = $(this);
-                    var isOffered = offered.indexOf(parseInt($row.data('term'), 10)) !== -1;
-                    $row.toggle(isOffered);
-                    if (isOffered) {
-                        visible += 1;
-                    }
+                    $row.toggle(offered.indexOf(parseInt($row.data('term'), 10)) !== -1);
                 });
-                twoVisibleSurchargeRows = visible;
-                $('#two-surcharge-grid').toggle(visible > 0);
-                $('#two-surcharge-empty').toggle(visible === 0);
+                // The deprecated custom term is offered with no tick of its
+                // own, so it counts here even though no row shows it.
+                var custom = twoUnionedCustomTermDays();
+                var hasOfferedTerm = offered.length > 0 || custom > 0;
+                twoHasOfferedTerm = hasOfferedTerm;
+                $('#two-surcharge-grid').toggle(hasOfferedTerm);
+                $('#two-surcharge-empty').toggle(!hasOfferedTerm);
                 updateSurchargeGridVisibility();
-                updateTwoDefaultTermOptions(offered);
+                updateTwoDefaultTermOptions(offered, custom);
+            }
+
+            // The day count narrowOfferedTerms() unions, 0 once the merchant
+            // chooses Remove on the row that carries it.
+            function twoUnionedCustomTermDays() {
+                var custom = (typeof twoCustomTermDays !== 'undefined') ? parseInt(twoCustomTermDays, 10) : 0;
+                var $custom = $('select[name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS"]');
+                if ($custom.length && String($custom.val() || '') === '') {
+                    return 0;
+                }
+
+                return custom > 0 ? custom : 0;
             }
 
             // Default-term dropdown. The option set is getConfigurableTermSet()
@@ -283,20 +294,15 @@
             // server rendered the option list.
             var twoDefaultTermWanted = null;
 
-            function updateTwoDefaultTermOptions(offered) {
+            // Removing the custom term withdraws it from the offered set on
+            // save, so the option it kept alive goes with it.
+            function updateTwoDefaultTermOptions(offered, custom) {
                 var $select = $('select[name="PS_TWO_DEFAULT_PAYMENT_TERM"]');
                 if (!$select.length) {
                     return;
                 }
                 if (twoDefaultTermWanted === null) {
                     twoDefaultTermWanted = String($select.val() || '');
-                }
-                var custom = (typeof twoCustomTermDays !== 'undefined') ? parseInt(twoCustomTermDays, 10) : 0;
-                // Removing the custom term withdraws it from the offered set
-                // on save, so the option it kept alive goes with it.
-                var $custom = $('select[name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS"]');
-                if ($custom.length && String($custom.val() || '') === '') {
-                    custom = 0;
                 }
                 var fallback = (typeof twoFallbackTermDays !== 'undefined') ? parseInt(twoFallbackTermDays, 10) : 0;
                 var selectable = custom > 0 && offered.indexOf(custom) === -1 ? offered.concat([custom]) : offered;

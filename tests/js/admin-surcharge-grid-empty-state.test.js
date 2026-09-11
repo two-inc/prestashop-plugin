@@ -14,7 +14,7 @@ const EOM_TERM_DAYS = [30, 45, 60];
 
 let $;
 
-function buildForm(ticked) {
+function buildForm(ticked, customDays, withTermTypeRadio) {
     // Core's own checkbox markup: HelperForm's template emits the FIELD's
     // class and drops the per-option one, so nothing on the input says which
     // term type the term belongs to.
@@ -29,12 +29,25 @@ function buildForm(ticked) {
         return '<tr class="two-surcharge-row" data-term="' + days + '"></tr>';
     }).join('');
 
-    document.body.innerHTML = `
+    // The term-type radio renders only on a shop whose stored type is EOM
+    // (TWO-25656), so its absence is what a STANDARD shop looks like.
+    const termTypeRadio = withTermTypeRadio === false ? '' : `
         <div class="form-group">
             <input type="radio" name="PS_TWO_PAYMENT_TERM_TYPE" value="STANDARD" checked>
             <input type="radio" name="PS_TWO_PAYMENT_TERM_TYPE" value="EOM">
-        </div>
+        </div>`;
+    // The legacy custom-term row renders only while a custom term is stored,
+    // and offers exactly keep or Remove.
+    const customSelect = customDays ? '<div class="form-group">'
+        + '<select name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS">'
+        + '<option value="' + customDays + '" selected>' + customDays + ' days</option>'
+        + '<option value="">Remove</option>'
+        + '</select></div>' : '';
+
+    document.body.innerHTML = `
+        ${termTypeRadio}
         <div class="form-group">${checkboxes}</div>
+        ${customSelect}
         <div class="form-group">
             <select name="PS_TWO_DEFAULT_PAYMENT_TERM"><option value="" selected>Automatic</option></select>
         </div>
@@ -61,24 +74,35 @@ function row(days) {
     return document.querySelector('.two-surcharge-row[data-term="' + days + '"]');
 }
 
+function untickAll() {
+    [30, 60, 90].forEach((days) => {
+        $('input[name="PS_TWO_PAYMENT_TERMS_' + days + '"]').prop('checked', false);
+    });
+    $('input[name="PS_TWO_PAYMENT_TERMS_30"]').trigger('change');
+}
+
 function isVisible(selector) {
     return document.querySelector(selector).style.display !== 'none';
 }
 
-beforeEach(async () => {
+async function start(customDays, withTermTypeRadio) {
     const loaded = loadCompanySearch();
     $ = loaded.$;
     global.twoEomTermDays = EOM_TERM_DAYS;
+    global.twoCustomTermDays = customDays || 0;
     // 60 starts unticked so the initial pass has an observable effect.
-    buildForm([30, 90]);
+    buildForm([30, 90], customDays || 0, withTermTypeRadio);
     loadAdminConfigScript('two-surcharge-empty');
     await awaitInitialPass();
-});
+}
 
 afterEach(() => {
-    releaseWidgets($);
+    if ($) {
+        releaseWidgets($);
+    }
     document.body.innerHTML = '';
     delete global.twoEomTermDays;
+    delete global.twoCustomTermDays;
 });
 
 describe('the surcharge grid against the offered terms', () => {
@@ -89,7 +113,9 @@ describe('the surcharge grid against the offered terms', () => {
         ['a ticked term the term type excludes offers no row either', [90], 'EOM', false, true],
         ['a ticked EOM-eligible term keeps the grid on screen', [30], 'EOM', true, false],
         ['ticking a term again brings the grid back', [30, 60, 90], 'STANDARD', true, false],
-    ])('%s', (description, ticked, termType, gridVisible, instructionVisible) => {
+    ])('%s', async (description, ticked, termType, gridVisible, instructionVisible) => {
+        await start();
+
         $('input[name="PS_TWO_PAYMENT_TERM_TYPE"][value="' + termType + '"]').prop('checked', true);
         [30, 60, 90].forEach((days) => {
             $('input[name="PS_TWO_PAYMENT_TERMS_' + days + '"]').prop('checked', ticked.indexOf(days) !== -1);
@@ -101,11 +127,52 @@ describe('the surcharge grid against the offered terms', () => {
         expect(isVisible('p.two-col-cap')).toBe(gridVisible);
     });
 
-    test('the instruction never replaces the grid while a row is still offered', () => {
+    test('the instruction never replaces the grid while a row is still offered', async () => {
+        await start();
+
         $('input[name="PS_TWO_PAYMENT_TERMS_60"]').prop('checked', true).trigger('change');
 
         expect(row(60).style.display).not.toBe('none');
         expect(isVisible('#two-surcharge-grid')).toBe(true);
         expect(isVisible('#two-surcharge-empty')).toBe(false);
+    });
+});
+
+describe('a shop with no term-type radio on the form', () => {
+    // The radio renders only while the stored type is EOM (TWO-25656), so its
+    // absence means STANDARD and must narrow nothing.
+    test('every ticked term stays offered', async () => {
+        await start(0, false);
+
+        untickAll();
+        $('input[name="PS_TWO_PAYMENT_TERMS_90"]').prop('checked', true).trigger('change');
+
+        expect(row(90).style.display).not.toBe('none');
+        expect(isVisible('#two-surcharge-grid')).toBe(true);
+        expect(isVisible('#two-surcharge-empty')).toBe(false);
+    });
+});
+
+describe('the deprecated custom term against the empty state', () => {
+    // It is offered with no tick of its own, so the instruction would deny a
+    // term checkout is charging for.
+    test('it keeps the instruction off the screen with nothing ticked', async () => {
+        await start(45);
+
+        untickAll();
+
+        expect(isVisible('#two-surcharge-grid')).toBe(true);
+        expect(isVisible('#two-surcharge-empty')).toBe(false);
+        expect(isVisible('p.two-col-cap')).toBe(true);
+    });
+
+    test('choosing Remove leaves nothing offered', async () => {
+        await start(45);
+
+        untickAll();
+        $('select[name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS"]').val('').trigger('change');
+
+        expect(isVisible('#two-surcharge-grid')).toBe(false);
+        expect(isVisible('#two-surcharge-empty')).toBe(true);
     });
 });

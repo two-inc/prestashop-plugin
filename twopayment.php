@@ -15580,7 +15580,7 @@ class Twopayment extends PaymentModule
             . '</tr></thead><tbody>';
 
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
-        $visible_rows = 0;
+        $offered_terms = array();
         $source = $this->getOfferableTermSource();
         sort($source);
         foreach ($source as $days) {
@@ -15599,7 +15599,7 @@ class Twopayment extends PaymentModule
             $valid_for_type = $term_type !== 'EOM' || $is_eom_capable;
             $offered = $checked && $valid_for_type;
             if ($offered) {
-                ++$visible_rows;
+                $offered_terms[] = $days;
             }
             $row_style = $offered ? '' : ' style="display:none"';
 
@@ -15616,13 +15616,21 @@ class Twopayment extends PaymentModule
 
         $html .= '</tbody>';
 
+        // The deprecated custom term is offered with no tick of its own, so it
+        // counts here even though no row shows it (TWO-25705).
+        $custom_days = $this->getTwoUnionedCustomTermDays();
+        if ($custom_days > 0 && !in_array($custom_days, $offered_terms, true)) {
+            $offered_terms[] = $custom_days;
+        }
+        $has_offered_term = !empty($offered_terms);
+
         // Initial visibility is computed SERVER-side, like the rows above, so
         // the instruction still stands where the admin JS does not run
         // (TWO-25708).
         $html = '<table id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;'
-            . ($visible_rows > 0 ? '' : 'display:none;') . '">' . $html . '</table>';
+            . ($has_offered_term ? '' : 'display:none;') . '">' . $html . '</table>';
         $html .= '<p id="two-surcharge-empty" class="help-block" style="margin-bottom:0;'
-            . ($visible_rows > 0 ? 'display:none;' : '') . '">'
+            . ($has_offered_term ? 'display:none;' : '') . '">'
             . htmlspecialchars(
                 $this->l('No payment term is available to surcharge. The Payment terms list above and the payment term type decide which terms appear here.'),
                 ENT_QUOTES,
@@ -15640,7 +15648,7 @@ class Twopayment extends PaymentModule
         // admin JS hides it on load, but relying on that alone flashes
         // cap-only copy on every render and leaves it up permanently wherever
         // the JS does not run.
-        $cap_help_style = ($visible_rows > 0 && in_array(
+        $cap_help_style = ($has_offered_term && in_array(
             TwoSurchargeCalculator::normalizeType(Configuration::get('PS_TWO_SURCHARGE_TYPE')),
             array('percentage', 'fixed_and_percentage'),
             true
