@@ -1665,7 +1665,7 @@ class TwoCheckoutManager {
         const termsHtml = `
             <div class="two-payment-terms" id="two-payment-terms" style="display: block;">
                 <div class="two-terms-header">
-                    <h4 class="two-terms-title">${this.t('choose_payment_terms', 'Choose the Buy Now, Pay Later option that works best for you')}</h4>
+                    <h4 class="two-terms-title" id="two-terms-title">${this.t('choose_payment_terms', 'Choose the Buy Now, Pay Later option that works best for you')}</h4>
                     <p class="two-terms-description">${this.t('payment_period_starts', 'Your payment period starts when your order is fulfilled')}</p>
                 </div>
                 <div class="two-term-chips">
@@ -1725,6 +1725,17 @@ class TwoCheckoutManager {
         const initialTerm = availableTerms.includes(preferredTerm) ? preferredTerm : null;
 
         termsContainer.setAttribute('role', 'radiogroup');
+        // A chip's text states only the term, so the strip's title is what names
+        // the group — one term or several (ABN-554). A theme-supplied container
+        // may carry no title, hence the fallback to the same wording.
+        if (document.getElementById('two-terms-title')) {
+            termsContainer.setAttribute('aria-labelledby', 'two-terms-title');
+        } else {
+            termsContainer.setAttribute(
+                'aria-label',
+                this.t('choose_payment_terms', 'Choose the Buy Now, Pay Later option that works best for you')
+            );
+        }
         
         // Update description based on term type
         var termsDescription = document.querySelector('#two-terms-description');
@@ -1775,21 +1786,12 @@ class TwoCheckoutManager {
                 .join(days)
             : '';
 
-        const formatPayInLabel = (days) => {
-            const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in
-                ? window.twopayment.i18n.pay_in
-                : 'Pay in';
-            const daysText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.days
-                ? window.twopayment.i18n.days
-                : 'days';
-            const fromEndOfMonthText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.from_end_of_month
-                ? window.twopayment.i18n.from_end_of_month
-                : 'from end of month';
-
-            return termType === 'EOM'
-                ? payInText + ' ' + days + ' ' + daysText + ' ' + fromEndOfMonthText
-                : payInText + ' ' + days + ' ' + daysText;
-        };
+        // One translated sentence per term type, never assembled from fragments:
+        // a translator cannot reorder or agree words across a concatenation.
+        const formatPayInLabel = (days) => (termType === 'EOM'
+            ? this.t('pay_in_days_eom', 'Pay in %s days from end of month')
+            : this.t('pay_in_days', 'Pay in %s days')
+        ).replace('%s', days);
 
         const activeTerm = initialTerm || availableTerms[0];
 

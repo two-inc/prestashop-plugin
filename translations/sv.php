@@ -321,7 +321,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a58a88e252eae380cbcff6421cd5d08c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a7ae6fbd75c4968e5b9c92b908fe824e'] = 'Telefonnummret i din fakturaadress verkar vara ogiltigt. Gå tillbaka och se till att du har angett ett giltigt telefonnummer för ditt land.';
 $_MODULE['<{twopayment}prestashop>twopayment_ab63d3168928b8331551047a81e5dd32'] = 'Välj ditt land ovan för att söka efter ditt företag.';
 $_MODULE['<{twopayment}prestashop>twopayment_6ebe8c3878e997b8c76f41aa5db69404'] = 'Grund för tilläggsberäkning';
-$_MODULE['<{twopayment}prestashop>twopayment_ad390087f94a9a17adaf0b81ad83b2e7'] = 'från månadsskiftet';
 $_MODULE['<{twopayment}prestashop>twopayment_b1021ae56c3544e96ea36a7d80e48145'] = 'Kunderna måste ange sitt företagsnamn i fakturaadressen';
 $_MODULE['<{twopayment}prestashop>twopayment_6c00ecbc1163f6b8f6f8f9892b1380b5'] = 'Det uppstod ett problem vid behandlingen av din %s-betalningsförfrågan. Försök igen eller välj en annan betalningsmetod.';
 $_MODULE['<{twopayment}prestashop>twopayment_b2676a7777337b3c9d44551409210ae7'] = 'Avgift för betalningsvillkor';
@@ -329,7 +328,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_b2df7887a34999a0fee743420750a9ec'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6cc6a209c9258aa18a263139db725920'] = 'Minsta ordervärde måste vara minst plattformens minimum på %1$s, %2$s moms.';
 $_MODULE['<{twopayment}prestashop>twopayment_b4d559d50e616b7eb46089c0734d1b1c'] = 'Presentinslagning för denna order';
 $_MODULE['<{twopayment}prestashop>twopayment_b4e549c7d1dbcd350dffb942b6e35e37'] = 'Commit:';
-$_MODULE['<{twopayment}prestashop>twopayment_b4fe334d1b7cdcbc01db8426803ebaff'] = 'Betala om';
+$_MODULE['<{twopayment}prestashop>twopayment_777444672172a872fbe496f2f0599660'] = 'Betala om %s dagar';
+$_MODULE['<{twopayment}prestashop>twopayment_65112567dfe66bf4a6a4ae4ef0710d89'] = 'Betala om %s dagar från månadsskiftet';
 $_MODULE['<{twopayment}prestashop>twopayment_35895cff7df70dab18783453e2bd241f'] = 'Betala med %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b5f41647401f7d6a7aa511cbd9aa5ecf'] = 'Spårningsnumret kunde inte vidarebefordras till fakturaleverantören; fakturan skickas utan det.';
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Titel';
