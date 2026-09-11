@@ -15872,7 +15872,7 @@ class Twopayment extends PaymentModule
                         $this->l('%1$s for the %2$d-day term must be a non-negative number, but reads "%3$s".'),
                         $this->getTwoSurchargeFieldLabel($suffix),
                         $days,
-                        htmlspecialchars(trim((string) $raw), ENT_QUOTES, 'UTF-8')
+                        htmlspecialchars(is_scalar($raw) ? trim((string) $raw) : gettype($raw), ENT_QUOTES, 'UTF-8')
                     );
 
                     continue;
@@ -15909,8 +15909,11 @@ class Twopayment extends PaymentModule
     /**
      * A surcharge cell's value as a numeric string, or null when it is not a
      * number at all. A comma decimal separator is accepted and normalised
-     * (TWO-25707); a value carrying both separators is ambiguous about which
-     * is which, so it is refused rather than guessed at.
+     * (TWO-25707).
+     *
+     * The pattern is deliberately narrow: only a single comma followed by one
+     * or two digits, which is a money decimal and cannot be a thousands
+     * separator. Swapping every comma would turn a typed 1,000 into 1.
      *
      * @param mixed $raw
      *
@@ -15922,7 +15925,7 @@ class Twopayment extends PaymentModule
             return null;
         }
         $value = trim((string) $raw);
-        if (strpos($value, ',') !== false && strpos($value, '.') === false) {
+        if (preg_match('/^[+-]?[0-9]*,[0-9]{1,' . TwoSurchargeCalculator::MONEY_DECIMALS . '}$/', $value) === 1) {
             $value = str_replace(',', '.', $value);
         }
 
