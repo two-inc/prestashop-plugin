@@ -298,6 +298,32 @@ Three more traps in the JS suites:
   existing suite already catches proves the suite is sensitive, not that the case
   added covers anything.
 
+## The Payment-Term Chips Owe The Radio-Group Keyboard Contract
+
+The chip row advertises itself as a radio group — a `radiogroup` container, `radio`
+chips, an `aria-checked` state — so it owes the W3C pattern's keyboard behaviour
+(ABN-554). Advertising the role without it is the defect: a screen-reader buyer is
+told "radio group" and finds none of the interaction that implies.
+
+- **One tab stop, on the checked chip.** A roving `tabindex` keeps exactly one chip
+  tabbable. A selection matching no offered chip falls back to the first, so no state
+  drops the group out of the tab order.
+- **The arrow keys move the checked selection**, wrapping at both ends, with Home and
+  End for the first and last term; focus and selection move together, and the handler
+  returns without preventing the default for an arrow carrying alt, ctrl or meta,
+  since swallowing those breaks the browser's own shortcuts.
+- **One predicate sets the selected class, `aria-checked` and the tab stop**, so the
+  visual and programmatic states cannot drift apart.
+- **Selection follows focus, so the persist is coalesced on the keyboard path.** Each
+  arrow key changes the term, which persists it and re-quotes the fee; without
+  coalescing an arrow sweep is one round trip per keystroke. A click persists at once.
+- **A chip's visible text is only the day count**, so its `aria-label` carries the
+  whole phrase and contains that text, as WCAG 2.5.3 requires. Do not remove it as
+  redundant.
+- **A single offered term is a `disabled` chip**: `disabled` takes it out of the tab
+  order whatever its `tabindex`, and the arrow handler ignores a group of fewer than
+  two enabled chips. It is therefore not reachable or announceable by keyboard at all.
+
 ## The Custom Request-Header Table
 
 Every rule the save enforces — a name in the RFC 7230 token set, reserved names
