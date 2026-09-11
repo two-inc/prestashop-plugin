@@ -43,6 +43,9 @@
             // substituting one offers the buyer a term the merchant may not hold.
             available_payment_terms: config.available_payment_terms || [],
             default_payment_term: config.default_payment_term || 0,
+            // 0 when the server published no retained selection; the picker
+            // then falls back to the default term.
+            selected_payment_term: config.selected_payment_term || 0,
             payment_term_type: config.payment_term_type
         };
     }

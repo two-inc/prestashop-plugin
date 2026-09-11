@@ -61,6 +61,8 @@ final class SurchargeSpec
         self::testSurchargeLineItemTaxRateSelfConsistentAtHighPrecision();
         self::testSurchargeLineItemHonorsExplicitTermOverride();
         self::testOrderPayloadInjectsSurchargeLineAndBumpsTotals();
+        self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
+        self::testSurchargeGridEmptyStateReplacesTheHeadings();
     }
 
     private static function reset(): void
@@ -1529,4 +1531,123 @@ final class SurchargeSpec
         TinyAssert::same('0.25', $feeLines[0]['tax_rate']);
         TinyAssert::same('6.25', $feeLines[0]['gross_amount']);
     }
+
+    /**
+     * TWO-25707: a comma decimal separator is a supported way to type a
+     * surcharge value, so it is normalised before the numeric check rather
+     * than refused by it. A rejection names the cell it came from - the grid
+     * has three columns per term, and a message naming none of them leaves the
+     * merchant hunting.
+     */
+    private static function testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell(): void
+    {
+        // [posted percentage, fixed fee, cap, expected error fragments, expected stored triple, description]
+        $cases = [
+            ['12,5', '', '', [], ['12.5', '', ''], 'a comma percentage is accepted and stored as a dot decimal'],
+            ['12.5', '', '1,5', [], ['12.5', '', '1.5'], 'a comma cap is accepted alongside a dot percentage'],
+            ['12,5', '2,25', '3,5', [], ['12.5', '2.25', '3.5'], 'every cell in the row normalises'],
+            ['12.5', '', '1.5', [], ['12.5', '', '1.5'], 'dot decimals keep working'],
+            ['', '', '0,4', [], ['', '', '0.4'], 'a sub-unit comma cap is normalised before the zero-cap rule reads it'],
+            ['', '1,000', '', ['Fixed fee for the 30-day term'], null, 'a thousands separator is not a decimal comma'],
+            ['', '', 'abc', ['Cap for the 30-day term'], null, 'a bad cap is named as the cap, not as another column'],
+            ['1.234,5', '', '', ['Percentage for the 30-day term'], null, 'both separators are ambiguous and refused'],
+            ['abc', '', '', ['Percentage for the 30-day term'], null, 'a non-number is refused by column and term'],
+            ['', '-1', '', ['Fixed fee for the 30-day term'], null, 'a negative is refused by column and term'],
+            ['', '', '0,0', ['Surcharge cap for the 30-day term cannot be 0'], null, 'a comma zero cap is normalised before the zero-cap rule'],
+            ['abc', 'abc', '', ['Percentage for the 30-day term', 'Fixed fee for the 30-day term'], null, 'each bad cell is reported, not just the first'],
+        ];
+
+        foreach ($cases as [$pct, $fixed, $cap, $expectedErrors, $expectedStored, $description]) {
+            self::reset();
+            Tools::resetTestValues();
+            StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+            $module = self::makeConfigHarness();
+
+            Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            Tools::setTestValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_30', $fixed);
+            Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', $cap);
+
+            $errors = $module->validateSurchargeFormForTest();
+            TinyAssert::count(count($expectedErrors), $errors, $description);
+            foreach ($expectedErrors as $index => $fragment) {
+                TinyAssert::true(
+                    strpos($errors[$index], $fragment) !== false,
+                    $description . ' (expected "' . $fragment . '" in "' . $errors[$index] . '")'
+                );
+            }
+
+            if ($expectedStored === null) {
+                continue;
+            }
+            $module->saveSurchargeFormForTest();
+            TinyAssert::same($expectedStored[0], (string) Configuration::get('PS_TWO_SURCHARGE_PCT_30'), $description);
+            TinyAssert::same($expectedStored[1], (string) Configuration::get('PS_TWO_SURCHARGE_FIXED_30'), $description);
+            TinyAssert::same($expectedStored[2], (string) Configuration::get('PS_TWO_SURCHARGE_CAP_30'), $description);
+        }
+    }
+
+    /**
+     * TWO-25708: with no offered term the grid has nothing to configure, so
+     * the Term/Percentage/Cap headings give way to the instruction that says
+     * how to get a row - never a bare set of headings over an empty table.
+     */
+    private static function testSurchargeGridEmptyStateReplacesTheHeadings(): void
+    {
+        $harness = static function (): object {
+            return new class extends TwopaymentTestHarness {
+                public function getTwoSurchargeGridHtmlPublic(): string
+                {
+                    return $this->getTwoSurchargeGridHtml();
+                }
+            };
+        };
+        $instruction = 'No payment term is available to surcharge.';
+
+        // [ticked terms, term type, stored custom term, grid expected visible, description]
+        $cases = [
+            [[30, 60], 'STANDARD', '', true, 'an offered term keeps the grid on screen'],
+            [[], 'STANDARD', '', false, 'no ticked term leaves nothing to configure'],
+            [[90], 'EOM', '', false, 'a ticked term the term type excludes offers no row either'],
+            [[30], 'EOM', '', true, 'a ticked EOM-eligible term keeps the grid on screen'],
+            // The deprecated custom term is offered without a tick of its own,
+            // so the instruction would deny a term checkout is charging for.
+            [[], 'STANDARD', '45', true, 'a custom term is offered even with nothing ticked'],
+            [[], 'EOM', '90', true, 'the term type does not withdraw the custom term either'],
+            [[], 'STANDARD', 'abc', false, 'an unusable custom term offers nothing'],
+            [[], 'STANDARD', '120', false, 'a custom term the source does not offer offers nothing'],
+        ];
+
+        foreach ($cases as [$ticked, $termType, $customTerm, $gridVisible, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            foreach (Twopayment::PAYMENT_TERMS_OPTIONS as $days) {
+                Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . (int) $days, in_array((int) $days, $ticked, true) ? 1 : 0);
+            }
+            Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $termType);
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', $customTerm);
+            $html = $harness()->getTwoSurchargeGridHtmlPublic();
+
+            TinyAssert::true(
+                (strpos($html, 'id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;display:none;"') !== false) !== $gridVisible,
+                $description . ' (grid visibility)'
+            );
+            TinyAssert::true(
+                (strpos($html, 'id="two-surcharge-empty" class="help-block" style="margin-bottom:0;display:none;"') !== false) === $gridVisible,
+                $description . ' (instruction visibility)'
+            );
+            TinyAssert::true(
+                strpos($html, $instruction) !== false,
+                $description . ': the instruction must be rendered whatever its visibility, so the JS only has to toggle it'
+            );
+            // The cap help text describes cells that are only on screen while
+            // a row is.
+            TinyAssert::true(
+                (strpos($html, '<p class="help-block two-col-cap" style="margin-top:8px;display:none;">') !== false) !== $gridVisible,
+                $description . ' (cap help visibility)'
+            );
+        }
+    }
+
 }

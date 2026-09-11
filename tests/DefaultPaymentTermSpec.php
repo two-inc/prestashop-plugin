@@ -29,6 +29,36 @@ final class DefaultPaymentTermSpec
         // The interaction the last review flagged as untested: a due_in_days the
         // backend-narrowed available_terms set no longer offers must be ignored.
         self::testDefaultIgnoresApiDefaultWithdrawnFromBackendTerms();
+
+        // TWO-25709.
+        self::testRetainedTermIsPublishedToTheCheckoutJs();
+    }
+
+    /**
+     * TWO-25709: the checkout JS seeds its term picker from the payload this
+     * hook publishes, and the order is booked on getSelectedPaymentTerm() -
+     * the retained selection, not the default. Publishing only the default
+     * leaves the picker showing one term while the submission uses another,
+     * which is not visible from the browser tests: they can only read what
+     * this key carries.
+     */
+    private static function testRetainedTermIsPublishedToTheCheckoutJs(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        $payloadStart = strpos($source, "Media::addJsDef(array('twopayment' =>");
+        TinyAssert::true($payloadStart !== false, 'the checkout JS payload is no longer built with Media::addJsDef');
+
+        // [key, resolver, description]
+        $cases = [
+            ['selected_payment_term', 'getSelectedPaymentTerm', 'the retained selection must reach the term picker'],
+            ['default_payment_term', 'getDefaultPaymentTerm', 'the configured default stays published as the fallback'],
+        ];
+        foreach ($cases as [$key, $resolver, $description]) {
+            TinyAssert::true(
+                strpos($source, "'" . $key . "' => (int) \$this->" . $resolver . "()", $payloadStart) !== false,
+                $description
+            );
+        }
     }
 
     private static function enableTerms(array $days): void

@@ -19,6 +19,7 @@ final class DeprecatedCustomPaymentTermSpec
         self::testARenderedCheckboxKeepsItsStoredTick();
         self::testSaveStates();
         self::testFoldsInOnlyAgainstAResolvedOfferedSet();
+        self::testUnionedDayCountReachesTheAdminTemplate();
     }
 
     /**
@@ -59,6 +60,42 @@ final class DeprecatedCustomPaymentTermSpec
         $module->primeTwoAvailableTerms($offered);
 
         return $module;
+    }
+
+    /**
+     * TWO-25705: the admin JS judges the default-term options by the live
+     * ticks, and this term has no tick of its own, so the day count
+     * narrowOfferedTerms() unions has to be published for it to leave that
+     * option alone.
+     */
+    private static function testUnionedDayCountReachesTheAdminTemplate(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        TinyAssert::true(
+            strpos($source, "'two_custom_term_days' => \$this->getTwoUnionedCustomTermDays(),") !== false,
+            'the admin template no longer receives the custom term day count'
+        );
+
+        // [stored custom days, offered set, published day count, description]
+        $cases = array(
+            array('', array(30, 60), 0, 'nothing stored publishes nothing'),
+            array('45', array(30, 45, 60), 45, 'a stored term the source offers is published'),
+            array('45', array(30, 60), 0, 'a term the source does not offer is not published'),
+            array('abc', array(30, 60), 0, 'an unusable stored value publishes nothing'),
+        );
+
+        foreach ($cases as list($stored, $offered, $expected, $description)) {
+            $module = new class() extends TwopaymentTestHarness {
+                public function unionedCustomTermDaysForTest(): int
+                {
+                    return $this->getTwoUnionedCustomTermDays();
+                }
+            };
+            $module->primeTwoAvailableTerms($offered);
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', $stored);
+
+            TinyAssert::same($expected, $module->unionedCustomTermDaysForTest(), $description);
+        }
     }
 
     /** The one normalisation every reader of the stored value goes through. */

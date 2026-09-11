@@ -15,6 +15,75 @@ final class EomTermTypeVisibilitySpec
         self::testConfigWriteRestoresTheSelector();
         self::testAbsentPostLeavesTheStoredTypeUntouched();
         self::testSelectorFollowsTheContextRow();
+        self::testEomDayListIsPublishedToTheAdminTemplate();
+        self::testConfigurableTermSetIsWhatTheAdminJsResolves();
+    }
+
+    /**
+     * TWO-25705: the admin JS resolves getConfigurableTermSet() from the live
+     * form so the screen and the save judge the default term against the same
+     * set. Core's checkbox template drops the per-option class that used to
+     * carry the term type, so both inputs to that rule have to be published.
+     */
+    private static function testEomDayListIsPublishedToTheAdminTemplate(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+
+        // [published expression, description]
+        $published = array(
+            array(
+                "'two_eom_term_days' => json_encode(array_map('intval', self::EOM_PAYMENT_TERMS_OPTIONS)),",
+                'the admin template no longer receives the EOM-eligible day counts',
+            ),
+            array(
+                "'two_fallback_term_days' => (int) self::DEFAULT_PAYMENT_TERM_DAYS,",
+                'the admin template no longer receives the term substituted for an empty narrowing',
+            ),
+        );
+        foreach ($published as list($expression, $description)) {
+            TinyAssert::true(strpos($source, $expression) !== false, $description);
+        }
+
+        // The browser suite cannot read a PHP constant, so both day counts are
+        // written out in tests/js/admin-default-term-options.test.js and
+        // tests/js/admin-surcharge-grid-empty-state.test.js. Pinned here, or a
+        // change to either constant leaves those fixtures green against a page
+        // that no longer behaves that way.
+        TinyAssert::same(array(30, 45, 60), array_map('intval', Twopayment::EOM_PAYMENT_TERMS_OPTIONS), 'the EOM day counts the browser fixtures hardcode');
+        TinyAssert::same(30, (int) Twopayment::DEFAULT_PAYMENT_TERM_DAYS, 'the fallback day count the browser fixtures hardcode');
+    }
+
+    /**
+     * The rule the admin JS mirrors, stated on the server side so the set the
+     * browser resolves can be read against it (TWO-25705). The browser half is
+     * in tests/js/admin-default-term-options.test.js, over these same
+     * configurations.
+     */
+    private static function testConfigurableTermSetIsWhatTheAdminJsResolves(): void
+    {
+        // [ticked terms, term type, resolved set, description]
+        $cases = array(
+            array(array(30, 90), 'STANDARD', array(30, 90), 'the ticked terms'),
+            array(array(90), 'STANDARD', array(90), 'a single ticked term'),
+            array(array(30, 90), 'EOM', array(30), 'a ticked term the term type excludes drops out'),
+            array(array(), 'STANDARD', array(30), 'nothing ticked resolves the substituted term'),
+            array(array(90), 'EOM', array(30), 'every ticked term excluded resolves it too'),
+        );
+
+        foreach ($cases as list($ticked, $termType, $expected, $description)) {
+            $module = self::module();
+            $module->primeTwoAvailableTerms(array(30, 60, 90));
+            foreach (Twopayment::PAYMENT_TERMS_OPTIONS as $days) {
+                Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . (int) $days, in_array((int) $days, $ticked, true) ? 1 : 0);
+            }
+            Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $termType);
+
+            TinyAssert::same(
+                $expected,
+                (new ReflectionMethod(Twopayment::class, 'getConfigurableTermSet'))->invoke($module),
+                $description
+            );
+        }
     }
 
     private static function module(): TwopaymentTestHarness

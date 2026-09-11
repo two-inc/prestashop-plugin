@@ -1223,6 +1223,15 @@ class Twopayment extends PaymentModule
                     . '&configure=' . $this->name
                     . '&token=' . Tools::getAdminTokenLite('AdminModules')
                     . '&ajax=1&action=VerifyApiKeyLive',
+                // Core's checkbox template drops the per-option class, so a
+                // checkbox's term type is unreadable from the rendered input.
+                'two_eom_term_days' => json_encode(array_map('intval', self::EOM_PAYMENT_TERMS_OPTIONS)),
+                // Offered with no tick of its own, so no live control carries
+                // it (TWO-25705).
+                'two_custom_term_days' => $this->getTwoUnionedCustomTermDays(),
+                // getConfigurableTermSet()'s substitute for an empty
+                // narrowing (TWO-25705).
+                'two_fallback_term_days' => (int) self::DEFAULT_PAYMENT_TERM_DAYS,
                 // Dispatched to ajaxProcessRefreshMerchantRecord() by AdminController::postProcess().
                 'two_refresh_merchant_url' => $this->context->link->getAdminLink('AdminModules', false)
                     . '&configure=' . $this->name
@@ -5231,6 +5240,10 @@ class Twopayment extends PaymentModule
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 // 0, not a day count, when no term is offered (ABN-544).
                 'default_payment_term' => (int) $this->getDefaultPaymentTerm(),
+                // The term the order will actually be booked on, which the
+                // picker selects: a re-entered checkout must never show a term
+                // other than the one buildTermsPayload() sends (TWO-25709).
+                'selected_payment_term' => (int) $this->getSelectedPaymentTerm(),
                 // Enables the checkout JS to mirror the buyer surcharge as a
                 // real PrestaShop cart line on payment-option selection.
                 'surcharge_cart_line' => !empty($this->getTwoSurchargeSettingsOrNull()['enabled']),
@@ -15550,11 +15563,10 @@ class Twopayment extends PaymentModule
     protected function getTwoSurchargeGridHtml()
     {
         $cell_style = 'width:110px;';
-        // id + per-column classes let the admin JS (configuration.tpl) show/hide
-        // the whole grid and individual columns by the selected surcharge type,
-        // without fragile positional selectors.
-        $html = '<table id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;">';
-        $html .= '<thead><tr>'
+        // Per-column classes let the admin JS (configuration.tpl) show/hide
+        // individual columns by the selected surcharge type, without fragile
+        // positional selectors.
+        $html = '<thead><tr>'
             . '<th>' . $this->l('Term') . '</th>'
             . '<th class="two-col-percentage">' . $this->l('Percentage') . '</th>'
             . '<th class="two-col-fixed">' . $this->l('Fixed fee') . '</th>'
@@ -15564,6 +15576,7 @@ class Twopayment extends PaymentModule
             . '</tr></thead><tbody>';
 
         $term_type = Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
+        $offered_terms = array();
         $source = $this->getOfferableTermSource();
         sort($source);
         foreach ($source as $days) {
@@ -15580,7 +15593,11 @@ class Twopayment extends PaymentModule
             $type_class = $is_eom_capable ? 'two-term-both' : 'two-term-standard';
             $checked = (bool) Configuration::get('PS_TWO_PAYMENT_TERMS_' . $days);
             $valid_for_type = $term_type !== 'EOM' || $is_eom_capable;
-            $row_style = ($checked && $valid_for_type) ? '' : ' style="display:none"';
+            $offered = $checked && $valid_for_type;
+            if ($offered) {
+                $offered_terms[] = $days;
+            }
+            $row_style = $offered ? '' : ' style="display:none"';
 
             $html .= '<tr class="two-surcharge-row two-surcharge-row-' . $days . ' ' . $type_class . '"'
                 . ' data-term="' . $days . '"' . $row_style . '>'
@@ -15593,7 +15610,29 @@ class Twopayment extends PaymentModule
                 . '</tr>';
         }
 
-        $html .= '</tbody></table>';
+        $html .= '</tbody>';
+
+        // The deprecated custom term is offered with no tick of its own, so it
+        // counts here even though no row shows it (TWO-25705).
+        $custom_days = $this->getTwoUnionedCustomTermDays();
+        if ($custom_days > 0 && !in_array($custom_days, $offered_terms, true)) {
+            $offered_terms[] = $custom_days;
+        }
+        $has_offered_term = !empty($offered_terms);
+
+        // Initial visibility is computed SERVER-side, like the rows above, so
+        // the instruction still stands where the admin JS does not run
+        // (TWO-25708).
+        $html = '<table id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;'
+            . ($has_offered_term ? '' : 'display:none;') . '">' . $html . '</table>';
+        $html .= '<p id="two-surcharge-empty" class="help-block" style="margin-bottom:0;'
+            . ($has_offered_term ? 'display:none;' : '') . '">'
+            . htmlspecialchars(
+                $this->l('No payment term is available to surcharge. The Payment terms list above and the payment term type decide which terms appear here.'),
+                ENT_QUOTES,
+                'UTF-8'
+            )
+            . '</p>';
 
         // Cap semantics, stated where the cap is entered. Both sentences
         // exist because the grid otherwise invites exactly the mistake it
@@ -15605,11 +15644,11 @@ class Twopayment extends PaymentModule
         // admin JS hides it on load, but relying on that alone flashes
         // cap-only copy on every render and leaves it up permanently wherever
         // the JS does not run.
-        $cap_help_style = in_array(
+        $cap_help_style = ($has_offered_term && in_array(
             TwoSurchargeCalculator::normalizeType(Configuration::get('PS_TWO_SURCHARGE_TYPE')),
             array('percentage', 'fixed_and_percentage'),
             true
-        ) ? '' : 'display:none;';
+        )) ? '' : 'display:none;';
         $html .= '<p class="help-block two-col-cap" style="margin-top:8px;' . $cap_help_style . '">'
             . htmlspecialchars(
                 $this->l('The cap applies to the whole fee: the percentage and the fixed fee together, not the percentage alone. Leave it empty for no cap.'),
@@ -15835,11 +15874,18 @@ class Twopayment extends PaymentModule
                 if ($raw === false || $raw === null || trim((string) $raw) === '') {
                     continue;
                 }
-                if (!is_numeric($raw) || (float) $raw < 0) {
-                    $this->errors[] = $this->l('Surcharge values must be non-negative numbers.');
+                $normalized = $this->normalizeTwoSurchargeNumber($raw);
+                if ($normalized === null || (float) $normalized < 0) {
+                    $this->errors[] = sprintf(
+                        $this->l('%1$s for the %2$d-day term must be a non-negative number, but reads "%3$s".'),
+                        $this->getTwoSurchargeFieldLabel($suffix),
+                        $days,
+                        htmlspecialchars(is_scalar($raw) ? trim((string) $raw) : gettype($raw), ENT_QUOTES, 'UTF-8')
+                    );
 
-                    return;
+                    continue;
                 }
+                $raw = $normalized;
                 // A cap of exactly 0 is refused (TWO-25289). It is never what
                 // a merchant means by it: the cap bounds the WHOLE fee - the
                 // percentage and the fixed fee together, not the percentage
@@ -15863,11 +15909,55 @@ class Twopayment extends PaymentModule
                         $this->l('Surcharge cap for the %d-day term cannot be 0. To charge nothing on this term, set the percentage and the fixed fee to 0 instead, and leave the cap empty.'),
                         $days
                     );
-
-                    return;
                 }
             }
         }
+    }
+
+    /**
+     * A surcharge cell's value as a numeric string, or null when it is not a
+     * number at all. A comma decimal separator is accepted and normalised
+     * (TWO-25707).
+     *
+     * The pattern is deliberately narrow: only a single comma followed by one
+     * or two digits, which is a money decimal and cannot be a thousands
+     * separator. Swapping every comma would turn a typed 1,000 into 1.
+     *
+     * @param mixed $raw
+     *
+     * @return string|null
+     */
+    protected function normalizeTwoSurchargeNumber($raw)
+    {
+        if (!is_scalar($raw)) {
+            return null;
+        }
+        $value = trim((string) $raw);
+        if (preg_match('/^[+-]?[0-9]*,[0-9]{1,' . TwoSurchargeCalculator::MONEY_DECIMALS . '}$/', $value) === 1) {
+            $value = str_replace(',', '.', $value);
+        }
+
+        return is_numeric($value) ? $value : null;
+    }
+
+    /**
+     * The grid column's own heading, so a rejection names the cell the
+     * merchant has to go and correct.
+     *
+     * @param string $suffix
+     *
+     * @return string
+     */
+    protected function getTwoSurchargeFieldLabel($suffix)
+    {
+        if ($suffix === 'PCT') {
+            return $this->l('Percentage');
+        }
+        if ($suffix === 'FIXED') {
+            return $this->l('Fixed fee');
+        }
+
+        return $this->l('Cap');
     }
 
     protected function saveTwoSurchargeFormValues()
@@ -15942,8 +16032,8 @@ class Twopayment extends PaymentModule
             $days = (int) $days;
             foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
                 $name = 'PS_TWO_SURCHARGE_' . $suffix . '_' . $days;
-                $raw = Tools::getValue($name, '');
-                Configuration::updateValue($name, is_numeric($raw) ? (string) (float) $raw : '');
+                $normalized = $this->normalizeTwoSurchargeNumber(Tools::getValue($name, ''));
+                Configuration::updateValue($name, $normalized === null ? '' : (string) (float) $normalized);
             }
         }
     }
@@ -16031,6 +16121,24 @@ class Twopayment extends PaymentModule
         sort($available_terms);
 
         return $available_terms;
+    }
+
+    /**
+     * The deprecated custom term's day count when narrowOfferedTerms() unions
+     * it into the offered set, else 0.
+     *
+     * @return int
+     */
+    protected function getTwoUnionedCustomTermDays()
+    {
+        $custom_days = $this->getTwoCustomPaymentTermDays();
+        if ($custom_days === null) {
+            return 0;
+        }
+
+        return in_array((int) $custom_days, array_map('intval', $this->getOfferableTermSource()), true)
+            ? (int) $custom_days
+            : 0;
     }
 
     /**

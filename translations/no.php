@@ -192,7 +192,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_44fdec47036f482b68b748f9d786801b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_484f5a79672cebe198ebdde45a1d672f'] = 'Gaveinnpakning';
 $_MODULE['<{twopayment}prestashop>twopayment_5a3888e2dc8411b9315151d138a7e8fd'] = 'Ordren er refundert via %s. En kreditnota utstedes til kjøperen umiddelbart. Standard: Refundert';
 $_MODULE['<{twopayment}prestashop>twopayment_4942bc0bc6522799a5aa074673f90664'] = 'Betaling ikke tilgjengelig';
-$_MODULE['<{twopayment}prestashop>twopayment_49adcf16d38223955a24cb4df235fde6'] = 'Tilleggsverdier må være ikke-negative tall.';
 $_MODULE['<{twopayment}prestashop>twopayment_268080635e4033e05865df7fdd177b8e'] = '%s er en Kjøp nå, betal senere-løsning for B2B';
 $_MODULE['<{twopayment}prestashop>twopayment_4b63989fed5f90859fafd6e1f02be539'] = 'Kunne ikke hente betalingsinformasjonen for ordren, kontakt butikkeieren.';
 $_MODULE['<{twopayment}prestashop>twopayment_4b6e94a357f5914cc27795141c380dc1'] = 'Detaljer: %s.';
@@ -559,3 +558,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c3d38f77a364bef3afec146aece7a3b3'] = 'tilbys bare kjøpere i %s';
 $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] = 'skjult for handlekorger i %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'butikkens standardvaluta har ingen ISO-kode.';
+$_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s for betingelsen på %2$d dager må være et ikke-negativt tall, men inneholder "%3$s".';
+$_MODULE['<{twopayment}prestashop>twopayment_c155e5a355e32ad3ceeda1f8e71a93b9'] = 'Ingen betalingsbetingelse er tilgjengelig for tillegg. Listen Betalingsbetingelser over og typen betalingsbetingelse bestemmer hvilke betingelser som vises her.';
