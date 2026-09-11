@@ -41,7 +41,7 @@ function buildForm(ticked) {
         <div class="form-group">
             <select name="PS_TWO_SURCHARGE_TYPE"><option value="percentage" selected>Percentage</option></select>
             <table id="two-surcharge-grid"><thead><tr><th>Term</th><th class="two-col-cap">Cap</th></tr></thead><tbody>${rows}</tbody></table>
-            <p id="two-surcharge-empty">Tick the terms you offer.</p>
+            <p id="two-surcharge-empty" class="help-block">No payment term is available to surcharge.</p>
             <p class="help-block two-col-cap">The cap applies to the whole fee.</p>
         </div>`;
 }

@@ -12,6 +12,7 @@ const { REPO_ROOT, loadAdminConfigScript, loadCompanySearch, releaseWidgets } = 
 
 /** What twopayment.php publishes for the template's own narrowing. */
 const EOM_TERM_DAYS = [30, 45, 60];
+const FALLBACK_TERM_DAYS = 30;
 
 const RENDERED_TERMS = [30, 60, 90];
 
@@ -25,6 +26,13 @@ let $;
  * is already unticked.
  */
 function buildForm(ticked, storedDefault, customDays) {
+    // The legacy custom-term row renders only while a custom term is stored,
+    // and offers exactly keep or Remove.
+    const customSelect = '<div class="form-group">'
+        + '<select name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS">'
+        + '<option value="' + customDays + '" selected>' + customDays + ' days</option>'
+        + '<option value="">Remove</option>'
+        + '</select></div>';
     const checkboxes = RENDERED_TERMS.map((days) => {
         const checked = ticked.indexOf(days) !== -1 ? ' checked="checked"' : '';
         return '<div class="checkbox"><label for="PS_TWO_PAYMENT_TERMS_' + days + '">'
@@ -46,12 +54,7 @@ function buildForm(ticked, storedDefault, customDays) {
             <input type="radio" name="PS_TWO_PAYMENT_TERM_TYPE" value="EOM">
         </div>
         <div class="form-group">${checkboxes}</div>
-        <div class="form-group">
-            <select name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS">
-                <option value="${customDays || ''}" selected>${customDays ? customDays + ' days' : 'Remove'}</option>
-                <option value="">Remove</option>
-            </select>
-        </div>
+        ${customDays ? customSelect : ''}
         <div class="form-group">
             <select name="PS_TWO_DEFAULT_PAYMENT_TERM">${options}</select>
         </div>
@@ -104,6 +107,7 @@ async function start(ticked, storedDefault, customDays) {
     $ = loaded.$;
     global.twoEomTermDays = EOM_TERM_DAYS;
     global.twoCustomTermDays = customDays || 0;
+    global.twoFallbackTermDays = FALLBACK_TERM_DAYS;
     buildForm(ticked, storedDefault, customDays || 0);
     loadAdminConfigScript('updateTwoDefaultTermOptions');
     await awaitInitialPass();
@@ -116,6 +120,7 @@ afterEach(() => {
     document.body.innerHTML = '';
     delete global.twoEomTermDays;
     delete global.twoCustomTermDays;
+    delete global.twoFallbackTermDays;
 });
 
 describe('the values the template narrows by', () => {
@@ -124,6 +129,7 @@ describe('the values the template narrows by', () => {
     test.each([
         ['the EOM day list', 'var twoEomTermDays = {$two_eom_term_days nofilter};'],
         ['the custom term day count', 'var twoCustomTermDays = {$two_custom_term_days|intval};'],
+        ['the fallback term day count', 'var twoFallbackTermDays = {$two_fallback_term_days|intval};'],
     ])('%s comes from the server, outside the literal block', (description, assignment) => {
         const tpl = fs.readFileSync(path.join(REPO_ROOT, 'views/templates/admin/configuration.tpl'), 'utf8');
 
@@ -138,10 +144,10 @@ describe('the options the default-term dropdown offers', () => {
         ['unticking the stored default falls back to Automatic', [90], 'STANDARD', ['', '90'], ''],
         ['a term the term type excludes drops out too', [30, 90], 'EOM', ['', '30'], '30'],
         ['ticking a term the page rendered no option for adds none', [30, 60, 90], 'STANDARD', ['', '30', '90'], '30'],
-        // getConfigurableTermSet() substitutes a fallback term for an empty
-        // narrowing, so the server still renders and accepts an option here.
-        ['no ticked term leaves the rendered options alone', [], 'STANDARD', ['', '30', '90'], '30'],
-        ['a lone tick the term type excludes leaves them alone too', [90], 'EOM', ['', '30', '90'], '30'],
+        // getConfigurableTermSet() substitutes the fallback term for an empty
+        // narrowing, and the save judges the default against that same set.
+        ['no ticked term leaves only the fallback term', [], 'STANDARD', ['', '30'], '30'],
+        ['a lone tick the term type excludes leaves only the fallback term', [90], 'EOM', ['', '30'], '30'],
     ])('%s', async (description, ticked, termType, expectedOptions, expectedSelection) => {
         await start([30, 90], 30);
 
@@ -149,6 +155,17 @@ describe('the options the default-term dropdown offers', () => {
 
         expect(offeredOptions()).toEqual(expectedOptions);
         expect(selectedDefault()).toBe(expectedSelection);
+    });
+
+    // The save stores '' for a default outside getConfigurableTermSet(), so a
+    // screen still showing that term would lose it on an unrelated save.
+    test('a default the save would refuse is withdrawn, not left selected', async () => {
+        await start([90], 90);
+
+        setTicks([90], 'EOM');
+
+        expect(offeredOptions()).toEqual(['']);
+        expect(selectedDefault()).toBe('');
     });
 
     test('a withdrawn term is hidden, not merely unselectable', async () => {

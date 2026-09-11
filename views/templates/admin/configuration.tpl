@@ -79,6 +79,7 @@
     var twoFeeNoFigureText = '{l s='no figure' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoEomTermDays = {$two_eom_term_days nofilter};
     var twoCustomTermDays = {$two_custom_term_days|intval};
+    var twoFallbackTermDays = {$two_fallback_term_days|intval};
 </script>
 {literal}
     <script type="text/javascript">
@@ -278,11 +279,11 @@
                 updateTwoDefaultTermOptions(offered);
             }
 
-            // Default-term dropdown. The pass WITHDRAWS an option whose term
-            // stops being offered and restores it if the term comes back; it
-            // never adds one, because the server rendered the option list. An
-            // explicit default whose term is withdrawn falls back to Automatic,
-            // which is what the save would store for it anyway.
+            // Default-term dropdown. The option set is getConfigurableTermSet()
+            // resolved from the live form, so the screen and the save always
+            // judge the default against the same terms. The pass only WITHDRAWS
+            // an option, and restores it when its term returns; it never adds
+            // one, because the server rendered the option list.
             var twoDefaultTermWanted = null;
 
             function updateTwoDefaultTermOptions(offered) {
@@ -300,16 +301,10 @@
                 if ($custom.length && String($custom.val() || '') === '') {
                     custom = 0;
                 }
+                var fallback = (typeof twoFallbackTermDays !== 'undefined') ? parseInt(twoFallbackTermDays, 10) : 0;
                 var selectable = custom > 0 && offered.indexOf(custom) === -1 ? offered.concat([custom]) : offered;
-                // getConfigurableTermSet() substitutes a fallback term when the
-                // narrowing leaves nothing, so the server renders an option
-                // here that narrowing away would withdraw from a save that
-                // accepts it.
-                if (!selectable.length) {
-                    $select.find('option').prop('disabled', false).show();
-                    $select.val(twoDefaultTermWanted);
-
-                    return;
+                if (!selectable.length && fallback > 0) {
+                    selectable = [fallback];
                 }
                 $select.find('option').each(function () {
                     var $option = $(this);

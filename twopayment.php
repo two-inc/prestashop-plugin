@@ -1232,6 +1232,10 @@ class Twopayment extends PaymentModule
                 // without a tick of its own, so the admin JS must not withdraw
                 // its default-term option (TWO-25705).
                 'two_custom_term_days' => $this->getTwoUnionedCustomTermDays(),
+                // The term getConfigurableTermSet() substitutes when the
+                // narrowing leaves nothing, so the admin JS resolves the same
+                // set the save judges the default against (TWO-25705).
+                'two_fallback_term_days' => (int) self::DEFAULT_PAYMENT_TERM_DAYS,
                 // Dispatched to ajaxProcessRefreshMerchantRecord() by AdminController::postProcess().
                 'two_refresh_merchant_url' => $this->context->link->getAdminLink('AdminModules', false)
                     . '&configure=' . $this->name
