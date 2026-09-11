@@ -15620,7 +15620,7 @@ class Twopayment extends PaymentModule
         $html .= '<p id="two-surcharge-empty" class="help-block" style="margin-bottom:0;'
             . ($visible_rows > 0 ? 'display:none;' : '') . '">'
             . htmlspecialchars(
-                $this->l('No payment term is offered, so there is nothing to surcharge. Tick the terms you offer under Available Payment Terms to set their fees.'),
+                $this->l('No payment term is offered, so there is nothing to surcharge. Tick the terms you offer in the Payment terms list above to set their fees.'),
                 ENT_QUOTES,
                 'UTF-8'
             )
@@ -15636,11 +15636,11 @@ class Twopayment extends PaymentModule
         // admin JS hides it on load, but relying on that alone flashes
         // cap-only copy on every render and leaves it up permanently wherever
         // the JS does not run.
-        $cap_help_style = in_array(
+        $cap_help_style = ($visible_rows > 0 && in_array(
             TwoSurchargeCalculator::normalizeType(Configuration::get('PS_TWO_SURCHARGE_TYPE')),
             array('percentage', 'fixed_and_percentage'),
             true
-        ) ? '' : 'display:none;';
+        )) ? '' : 'display:none;';
         $html .= '<p class="help-block two-col-cap" style="margin-top:8px;' . $cap_help_style . '">'
             . htmlspecialchars(
                 $this->l('The cap applies to the whole fee: the percentage and the fixed fee together, not the percentage alone. Leave it empty for no cap.'),

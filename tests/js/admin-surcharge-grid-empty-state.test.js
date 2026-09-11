@@ -40,8 +40,9 @@ function buildForm(ticked) {
         </div>
         <div class="form-group">
             <select name="PS_TWO_SURCHARGE_TYPE"><option value="percentage" selected>Percentage</option></select>
-            <table id="two-surcharge-grid"><thead><tr><th>Term</th></tr></thead><tbody>${rows}</tbody></table>
+            <table id="two-surcharge-grid"><thead><tr><th>Term</th><th class="two-col-cap">Cap</th></tr></thead><tbody>${rows}</tbody></table>
             <p id="two-surcharge-empty">Tick the terms you offer.</p>
+            <p class="help-block two-col-cap">The cap applies to the whole fee.</p>
         </div>`;
 }
 
@@ -97,6 +98,7 @@ describe('the surcharge grid against the offered terms', () => {
 
         expect(isVisible('#two-surcharge-grid')).toBe(gridVisible);
         expect(isVisible('#two-surcharge-empty')).toBe(instructionVisible);
+        expect(isVisible('p.two-col-cap')).toBe(gridVisible);
     });
 
     test('the instruction never replaces the grid while a row is still offered', () => {

@@ -193,6 +193,10 @@
 
             // Surcharge grid - hide the whole grid when no surcharge is applied,
             // and hide the columns that don't apply to the selected method.
+            // Null until the first row pass, so the column pass that runs
+            // before it leaves the server-rendered visibility alone.
+            var twoVisibleSurchargeRows = null;
+
             function updateSurchargeGridVisibility() {
                 var type = $('select[name="PS_TWO_SURCHARGE_TYPE"]').val();
                 var grid = $('#two-surcharge-grid');
@@ -211,10 +215,14 @@
                 // cannot see (TWO-25289). Falls back to the table if the
                 // form-group does not resolve - the markup nests differently
                 // across PrestaShop majors.
+                // With no row left, the cap help text below the grid would
+                // otherwise describe cells nobody can see - the same reason the
+                // columns carry it.
+                var hasRows = twoVisibleSurchargeRows === null || twoVisibleSurchargeRows > 0;
                 var scope = gridGroup.length ? gridGroup : grid;
-                scope.find('.two-col-percentage').toggle(showPercentage);
-                scope.find('.two-col-fixed').toggle(showFixed);
-                scope.find('.two-col-cap').toggle(showCap);
+                scope.find('.two-col-percentage').toggle(showPercentage && hasRows);
+                scope.find('.two-col-fixed').toggle(showFixed && hasRows);
+                scope.find('.two-col-cap').toggle(showCap && hasRows);
             }
             updateSurchargeGridVisibility();
             $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);
@@ -261,8 +269,10 @@
                         visible += 1;
                     }
                 });
+                twoVisibleSurchargeRows = visible;
                 $('#two-surcharge-grid').toggle(visible > 0);
                 $('#two-surcharge-empty').toggle(visible === 0);
+                updateSurchargeGridVisibility();
                 updateTwoDefaultTermOptions(offered);
             }
 

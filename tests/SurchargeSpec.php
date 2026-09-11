@@ -1612,6 +1612,7 @@ final class SurchargeSpec
 
         foreach ($cases as [$ticked, $termType, $gridVisible, $description]) {
             self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
             foreach (Twopayment::PAYMENT_TERMS_OPTIONS as $days) {
                 Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . (int) $days, in_array((int) $days, $ticked, true) ? 1 : 0);
             }
@@ -1629,6 +1630,12 @@ final class SurchargeSpec
             TinyAssert::true(
                 strpos($html, $instruction) !== false,
                 $description . ': the instruction must be rendered whatever its visibility, so the JS only has to toggle it'
+            );
+            // The cap help text describes cells that are only on screen while
+            // a row is.
+            TinyAssert::true(
+                (strpos($html, '<p class="help-block two-col-cap" style="margin-top:8px;display:none;">') !== false) !== $gridVisible,
+                $description . ' (cap help visibility)'
             );
         }
     }
