@@ -15,6 +15,27 @@ final class EomTermTypeVisibilitySpec
         self::testConfigWriteRestoresTheSelector();
         self::testAbsentPostLeavesTheStoredTypeUntouched();
         self::testSelectorFollowsTheContextRow();
+        self::testEomDayListIsPublishedToTheAdminTemplate();
+    }
+
+    /**
+     * TWO-25705: the admin JS narrows the live term offers by term type, and
+     * core's checkbox template drops the per-option class that used to carry
+     * it, so the eligible day counts have to be published as their own value.
+     */
+    private static function testEomDayListIsPublishedToTheAdminTemplate(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+
+        TinyAssert::true(
+            strpos($source, "'two_eom_term_days' => json_encode(array_map('intval', self::EOM_PAYMENT_TERMS_OPTIONS)),") !== false,
+            'the admin template no longer receives the EOM-eligible day counts'
+        );
+        TinyAssert::same(
+            array(30, 45, 60),
+            array_map('intval', Twopayment::EOM_PAYMENT_TERMS_OPTIONS),
+            'the published day counts are only as right as the constant behind them'
+        );
     }
 
     private static function module(): TwopaymentTestHarness

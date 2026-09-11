@@ -9,18 +9,26 @@
 
 'use strict';
 
-const { loadAdminConfigScript, loadCompanySearch, releaseWidgets } = require('./ps-harness');
+const fs = require('fs');
+const path = require('path');
+const { REPO_ROOT, loadAdminConfigScript, loadCompanySearch, releaseWidgets } = require('./ps-harness');
 
-const EOM_CAPABLE = [30, 45, 60];
+/** What twopayment.php publishes for the template's own EOM narrowing. */
+const EOM_TERM_DAYS = [30, 45, 60];
+
 
 let $;
 
 function buildForm(ticked, storedDefault) {
+    // Core's own checkbox markup: HelperForm's template emits the FIELD's
+    // class and drops the per-option one, so nothing on the input says which
+    // term type the term belongs to.
     const checkboxes = [30, 60, 90].map((days) => {
-        const typeClass = EOM_CAPABLE.indexOf(days) !== -1 ? 'two-term-both' : 'two-term-standard';
-        const checked = ticked.indexOf(days) !== -1 ? ' checked' : '';
-        return '<input type="checkbox" class="two-term-option two-term-' + days + ' ' + typeClass + '"'
-            + ' name="PS_TWO_PAYMENT_TERMS_' + days + '"' + checked + '>';
+        const checked = ticked.indexOf(days) !== -1 ? ' checked="checked"' : '';
+        return '<div class="checkbox"><label for="PS_TWO_PAYMENT_TERMS_' + days + '">'
+            + '<input type="checkbox" name="PS_TWO_PAYMENT_TERMS_' + days + '"'
+            + ' id="PS_TWO_PAYMENT_TERMS_' + days + '" class="" value="1"' + checked + '>'
+            + days + ' days</label></div>';
     }).join('');
     const options = ['', 30, 60, 90].map((value) => {
         const selected = String(value) === String(storedDefault) ? ' selected' : '';
@@ -40,9 +48,9 @@ function buildForm(ticked, storedDefault) {
             <select name="PS_TWO_SURCHARGE_TYPE"><option value="percentage" selected>Percentage</option></select>
             <table id="two-surcharge-grid">
                 <tbody>
-                    <tr class="two-surcharge-row two-term-both" data-term="30"></tr>
-                    <tr class="two-surcharge-row two-term-both" data-term="60"></tr>
-                    <tr class="two-surcharge-row two-term-standard" data-term="90"></tr>
+                    <tr class="two-surcharge-row" data-term="30"></tr>
+                    <tr class="two-surcharge-row" data-term="60"></tr>
+                    <tr class="two-surcharge-row" data-term="90"></tr>
                 </tbody>
             </table>
             <p id="two-surcharge-empty" style="display:none;"></p>
@@ -81,6 +89,7 @@ function tick(days, on) {
 beforeEach(async () => {
     const loaded = loadCompanySearch();
     $ = loaded.$;
+    global.twoEomTermDays = EOM_TERM_DAYS;
     // 60 starts unticked so the initial pass has an observable effect.
     buildForm([30, 90], 30);
     loadAdminConfigScript('updateTwoDefaultTermOptions');
@@ -90,6 +99,18 @@ beforeEach(async () => {
 afterEach(() => {
     releaseWidgets($);
     document.body.innerHTML = '';
+    delete global.twoEomTermDays;
+});
+
+describe('the EOM day list the template narrows by', () => {
+    // Only the server knows it: core's checkbox template drops the per-option
+    // class, so the day counts have to arrive as their own published value.
+    test('the template takes it from the server, outside the literal block', () => {
+        const tpl = fs.readFileSync(path.join(REPO_ROOT, 'views/templates/admin/configuration.tpl'), 'utf8');
+        const outer = tpl.split('{literal}')[0];
+
+        expect(outer).toContain('var twoEomTermDays = {$two_eom_term_days nofilter};');
+    });
 });
 
 describe('the options the default-term dropdown offers', () => {

@@ -77,6 +77,7 @@
     var twoFeesUnavailableText = '{l s='Fees could not be loaded because the pricing service could not be reached. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesNoApiKeyText = '{l s='Fees cannot be shown until an API key is saved on the General tab.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeeNoFigureText = '{l s='no figure' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoEomTermDays = {$two_eom_term_days nofilter};
 </script>
 {literal}
     <script type="text/javascript">
@@ -218,13 +219,13 @@
             updateSurchargeGridVisibility();
             $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);
 
-            // The terms the shop currently offers, read from the live
-            // "Available Payment Terms" ticks and narrowed by the selected term
-            // type - the client-side counterpart of getConfigurableTermSet().
-            // The custom-days input shares the name prefix and carries no day
-            // count, so it drops out here.
+            // The terms the shop currently offers: the live ticks, narrowed by
+            // the term type the same way narrowOfferedTerms() narrows them
+            // server-side. The custom-days input shares the name prefix and
+            // carries no day count, so it drops out here.
             function twoOfferedTermDays() {
                 var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
+                var eomDays = (typeof twoEomTermDays !== 'undefined' && twoEomTermDays) ? twoEomTermDays : [];
                 var offered = [];
                 $('input[name^="PS_TWO_PAYMENT_TERMS_"]').each(function () {
                     var $box = $(this);
@@ -233,7 +234,7 @@
                     if (!days || !$box.is(':checked')) {
                         return;
                     }
-                    if (termType === 'EOM' && !$box.hasClass('two-term-both')) {
+                    if (termType === 'EOM' && eomDays.indexOf(days) === -1) {
                         return;
                     }
                     offered.push(days);

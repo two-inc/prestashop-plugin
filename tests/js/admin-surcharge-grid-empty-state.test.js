@@ -8,20 +8,25 @@
 
 const { loadAdminConfigScript, loadCompanySearch, releaseWidgets } = require('./ps-harness');
 
-const EOM_CAPABLE = [30, 45, 60];
+/** What twopayment.php publishes for the template's own EOM narrowing. */
+const EOM_TERM_DAYS = [30, 45, 60];
+
 
 let $;
 
 function buildForm(ticked) {
+    // Core's own checkbox markup: HelperForm's template emits the FIELD's
+    // class and drops the per-option one, so nothing on the input says which
+    // term type the term belongs to.
     const checkboxes = [30, 60, 90].map((days) => {
-        const typeClass = EOM_CAPABLE.indexOf(days) !== -1 ? 'two-term-both' : 'two-term-standard';
-        const checked = ticked.indexOf(days) !== -1 ? ' checked' : '';
-        return '<input type="checkbox" class="two-term-option two-term-' + days + ' ' + typeClass + '"'
-            + ' name="PS_TWO_PAYMENT_TERMS_' + days + '"' + checked + '>';
+        const checked = ticked.indexOf(days) !== -1 ? ' checked="checked"' : '';
+        return '<div class="checkbox"><label for="PS_TWO_PAYMENT_TERMS_' + days + '">'
+            + '<input type="checkbox" name="PS_TWO_PAYMENT_TERMS_' + days + '"'
+            + ' id="PS_TWO_PAYMENT_TERMS_' + days + '" class="" value="1"' + checked + '>'
+            + days + ' days</label></div>';
     }).join('');
     const rows = [30, 60, 90].map((days) => {
-        const typeClass = EOM_CAPABLE.indexOf(days) !== -1 ? 'two-term-both' : 'two-term-standard';
-        return '<tr class="two-surcharge-row ' + typeClass + '" data-term="' + days + '"></tr>';
+        return '<tr class="two-surcharge-row" data-term="' + days + '"></tr>';
     }).join('');
 
     document.body.innerHTML = `
@@ -62,6 +67,7 @@ function isVisible(selector) {
 beforeEach(async () => {
     const loaded = loadCompanySearch();
     $ = loaded.$;
+    global.twoEomTermDays = EOM_TERM_DAYS;
     // 60 starts unticked so the initial pass has an observable effect.
     buildForm([30, 90]);
     loadAdminConfigScript('two-surcharge-empty');
@@ -71,6 +77,7 @@ beforeEach(async () => {
 afterEach(() => {
     releaseWidgets($);
     document.body.innerHTML = '';
+    delete global.twoEomTermDays;
 });
 
 describe('the surcharge grid against the offered terms', () => {

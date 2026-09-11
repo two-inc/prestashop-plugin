@@ -1223,6 +1223,11 @@ class Twopayment extends PaymentModule
                     . '&configure=' . $this->name
                     . '&token=' . Tools::getAdminTokenLite('AdminModules')
                     . '&ajax=1&action=VerifyApiKeyLive',
+                // The EOM-eligible day counts, for the admin JS's live
+                // narrowing. Core's checkbox template emits the FIELD's class
+                // and drops the per-option one, so the term type a checkbox
+                // belongs to is not readable from the rendered input.
+                'two_eom_term_days' => json_encode(array_map('intval', self::EOM_PAYMENT_TERMS_OPTIONS)),
                 // Dispatched to ajaxProcessRefreshMerchantRecord() by AdminController::postProcess().
                 'two_refresh_merchant_url' => $this->context->link->getAdminLink('AdminModules', false)
                     . '&configure=' . $this->name
