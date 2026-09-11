@@ -5236,10 +5236,9 @@ class Twopayment extends PaymentModule
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 // 0, not a day count, when no term is offered (ABN-544).
                 'default_payment_term' => (int) $this->getDefaultPaymentTerm(),
-                // The term the order will actually be booked on - the retained
-                // cookie selection when there is one, else the default. The
-                // picker selects THIS chip, so a re-entered checkout never
-                // shows a term other than the one buildTermsPayload() sends.
+                // The term the order will actually be booked on, which the
+                // picker selects: a re-entered checkout must never show a term
+                // other than the one buildTermsPayload() sends (TWO-25709).
                 'selected_payment_term' => (int) $this->getSelectedPaymentTerm(),
                 // Enables the checkout JS to mirror the buyer surcharge as a
                 // real PrestaShop cart line on payment-option selection.

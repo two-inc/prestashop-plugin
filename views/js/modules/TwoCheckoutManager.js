@@ -1774,9 +1774,7 @@ class TwoCheckoutManager {
 
         const activeTerm = initialTerm || availableTerms[0];
 
-        // The term the server currently holds. The chips only ever show this,
-        // so a persist that fails cannot leave the buyer looking at a term the
-        // order would not be booked on.
+        // Last server-accepted term, so a failed persist can put the chips back.
         let persistedTerm = activeTerm;
 
         const applySelection = (days) => {

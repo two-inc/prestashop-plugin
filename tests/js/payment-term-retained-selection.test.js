@@ -107,6 +107,18 @@ describe('a term the server did not accept', () => {
         expect(document.getElementById('two-selected-days').textContent).toContain('60');
     });
 
+    test('the revert goes back to the last term the server accepted', () => {
+        render([30, 60, 90], 30, 60);
+
+        document.querySelector('.two-term-chip[data-days="90"]').click();
+        savePaymentTermCalls().pop().succeed({ success: true });
+
+        document.querySelector('.two-term-chip[data-days="30"]').click();
+        savePaymentTermCalls().pop().fail('error');
+
+        expect(selectedDays()).toBe(90);
+    });
+
     test('an aborted persist leaves the newer selection alone', () => {
         render([30, 60, 90], 30, 60);
 
