@@ -1603,7 +1603,7 @@ final class SurchargeSpec
                 }
             };
         };
-        $instruction = 'No payment term is ticked, so there is nothing to surcharge.';
+        $instruction = 'No payment term is available to surcharge.';
 
         // [ticked terms, term type, grid expected visible, description]
         $cases = [

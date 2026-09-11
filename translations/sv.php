@@ -559,4 +559,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_c3d38f77a364bef3afec146aece7a3b3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] = 'döljs för varukorgar i %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'butikens standardvaluta har ingen ISO-kod.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s för villkoret på %2$d dagar måste vara ett icke-negativt tal, men innehåller "%3$s".';
-$_MODULE['<{twopayment}prestashop>twopayment_a4497b38130b1f1e66a076e1a5615c3f'] = 'Inget betalningsvillkor är markerat, så det finns inget att lägga tilläggsavgift på. Markera de villkor du erbjuder i listan Betalningsvillkor ovan för att ange deras avgifter.';
+$_MODULE['<{twopayment}prestashop>twopayment_c155e5a355e32ad3ceeda1f8e71a93b9'] = 'Inget betalningsvillkor är tillgängligt för tilläggsavgift. Listan Betalningsvillkor ovan och typen av betalningsvillkor avgör vilka villkor som visas här.';

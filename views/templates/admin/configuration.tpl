@@ -231,9 +231,7 @@
             // The ticked terms, narrowed by the term type. Narrower than
             // narrowOfferedTerms(), which also unions the deprecated custom
             // term - no live tick governs that one, so it is handled where it
-            // matters, in the default-term options below. This set is what the
-            // surcharge grid renders a row per, which is the same tick/type
-            // pair the server computed the rows from.
+            // matters, in the default-term options below.
             function twoOfferedTermDays() {
                 var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
                 // An absent list means no narrowing rather than no term.
@@ -296,7 +294,23 @@
                     twoDefaultTermWanted = String($select.val() || '');
                 }
                 var custom = (typeof twoCustomTermDays !== 'undefined') ? parseInt(twoCustomTermDays, 10) : 0;
+                // Removing the custom term withdraws it from the offered set
+                // on save, so the option it kept alive goes with it.
+                var $custom = $('select[name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS"]');
+                if ($custom.length && String($custom.val() || '') === '') {
+                    custom = 0;
+                }
                 var selectable = custom > 0 && offered.indexOf(custom) === -1 ? offered.concat([custom]) : offered;
+                // getConfigurableTermSet() substitutes a fallback term when the
+                // narrowing leaves nothing, so the server renders an option
+                // here that narrowing away would withdraw from a save that
+                // accepts it.
+                if (!selectable.length) {
+                    $select.find('option').prop('disabled', false).show();
+                    $select.val(twoDefaultTermWanted);
+
+                    return;
+                }
                 $select.find('option').each(function () {
                     var $option = $(this);
                     var value = String($option.attr('value') || '');
@@ -311,6 +325,7 @@
             $('select[name="PS_TWO_DEFAULT_PAYMENT_TERM"]').on('change', function () {
                 twoDefaultTermWanted = String($(this).val() || '');
             });
+            $('select[name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS"]').on('change', updateSurchargeGridRows);
             $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', updateSurchargeGridRows);
             $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', updateSurchargeGridRows);
             // Run after the checkbox-group and column-visibility passes above,

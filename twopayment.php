@@ -15620,7 +15620,7 @@ class Twopayment extends PaymentModule
         $html .= '<p id="two-surcharge-empty" class="help-block" style="margin-bottom:0;'
             . ($visible_rows > 0 ? 'display:none;' : '') . '">'
             . htmlspecialchars(
-                $this->l('No payment term is ticked, so there is nothing to surcharge. Tick the terms you offer in the Payment terms list above to set their fees.'),
+                $this->l('No payment term is available to surcharge. The Payment terms list above and the payment term type decide which terms appear here.'),
                 ENT_QUOTES,
                 'UTF-8'
             )

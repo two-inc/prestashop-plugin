@@ -47,6 +47,12 @@ function buildForm(ticked, storedDefault, customDays) {
         </div>
         <div class="form-group">${checkboxes}</div>
         <div class="form-group">
+            <select name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS">
+                <option value="${customDays || ''}" selected>${customDays ? customDays + ' days' : 'Remove'}</option>
+                <option value="">Remove</option>
+            </select>
+        </div>
+        <div class="form-group">
             <select name="PS_TWO_DEFAULT_PAYMENT_TERM">${options}</select>
         </div>
         <div class="form-group">
@@ -56,10 +62,7 @@ function buildForm(ticked, storedDefault, customDays) {
         </div>`;
 }
 
-/**
- * The script's initial pass is deferred by jQuery's own ready queue. The row
- * for the one unticked term is what it visibly settles.
- */
+/** The script's initial pass is deferred by jQuery's own ready queue. */
 async function awaitInitialPass() {
     for (let i = 0; i < 50; i += 1) {
         if (document.querySelector('.two-surcharge-row[data-term="60"]').style.display === 'none') {
@@ -134,8 +137,11 @@ describe('the options the default-term dropdown offers', () => {
         ['every rendered option whose term stays ticked keeps its place', [30, 90], 'STANDARD', ['', '30', '90'], '30'],
         ['unticking the stored default falls back to Automatic', [90], 'STANDARD', ['', '90'], ''],
         ['a term the term type excludes drops out too', [30, 90], 'EOM', ['', '30'], '30'],
-        ['no ticked term leaves Automatic alone', [], 'STANDARD', [''], ''],
         ['ticking a term the page rendered no option for adds none', [30, 60, 90], 'STANDARD', ['', '30', '90'], '30'],
+        // getConfigurableTermSet() substitutes a fallback term for an empty
+        // narrowing, so the server still renders and accepts an option here.
+        ['no ticked term leaves the rendered options alone', [], 'STANDARD', ['', '30', '90'], '30'],
+        ['a lone tick the term type excludes leaves them alone too', [90], 'EOM', ['', '30', '90'], '30'],
     ])('%s', async (description, ticked, termType, expectedOptions, expectedSelection) => {
         await start([30, 90], 30);
 
@@ -169,6 +175,17 @@ describe('the deprecated custom term', () => {
 
         expect(offeredOptions()).toEqual(['', '60']);
         expect(selectedDefault()).toBe('60');
+    });
+
+    // Removing it is a live choice in the same tab, and the save withdraws the
+    // term before it reads the default.
+    test('choosing Remove withdraws the option it kept alive', async () => {
+        await start([90], 60, 60);
+
+        $('select[name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS"]').val('').trigger('change');
+
+        expect(offeredOptions()).toEqual(['', '90']);
+        expect(selectedDefault()).toBe('');
     });
 });
 
