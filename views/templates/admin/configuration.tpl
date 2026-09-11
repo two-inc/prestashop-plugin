@@ -228,8 +228,8 @@
 
             // The ticked terms, narrowed by the term type. Narrower than
             // narrowOfferedTerms(), which also unions the deprecated custom
-            // term - no live tick governs that one, so it is handled where it
-            // matters, in the default-term options below.
+            // term - no live tick governs that one, so twoUnionedCustomTermDays()
+            // carries it.
             function twoOfferedTermDays() {
                 var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
                 // An absent list means no narrowing rather than no term.
@@ -267,10 +267,9 @@
                 // The deprecated custom term is offered with no tick of its
                 // own, so it counts here even though no row shows it.
                 var custom = twoUnionedCustomTermDays();
-                var hasOfferedTerm = offered.length > 0 || custom > 0;
-                twoHasOfferedTerm = hasOfferedTerm;
-                $('#two-surcharge-grid').toggle(hasOfferedTerm);
-                $('#two-surcharge-empty').toggle(!hasOfferedTerm);
+                twoHasOfferedTerm = offered.length > 0 || custom > 0;
+                $('#two-surcharge-grid').toggle(twoHasOfferedTerm);
+                $('#two-surcharge-empty').toggle(!twoHasOfferedTerm);
                 updateSurchargeGridVisibility();
                 updateTwoDefaultTermOptions(offered, custom);
             }

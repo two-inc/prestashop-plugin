@@ -1223,18 +1223,14 @@ class Twopayment extends PaymentModule
                     . '&configure=' . $this->name
                     . '&token=' . Tools::getAdminTokenLite('AdminModules')
                     . '&ajax=1&action=VerifyApiKeyLive',
-                // The EOM-eligible day counts, for the admin JS's live
-                // narrowing. Core's checkbox template emits the FIELD's class
-                // and drops the per-option one, so the term type a checkbox
-                // belongs to is not readable from the rendered input.
+                // Core's checkbox template drops the per-option class, so a
+                // checkbox's term type is unreadable from the rendered input.
                 'two_eom_term_days' => json_encode(array_map('intval', self::EOM_PAYMENT_TERMS_OPTIONS)),
-                // The deprecated custom term's day count, or 0. It is offered
-                // without a tick of its own, so the admin JS must not withdraw
-                // its default-term option (TWO-25705).
+                // Offered with no tick of its own, so no live control carries
+                // it (TWO-25705).
                 'two_custom_term_days' => $this->getTwoUnionedCustomTermDays(),
-                // The term getConfigurableTermSet() substitutes when the
-                // narrowing leaves nothing, so the admin JS resolves the same
-                // set the save judges the default against (TWO-25705).
+                // getConfigurableTermSet()'s substitute for an empty
+                // narrowing (TWO-25705).
                 'two_fallback_term_days' => (int) self::DEFAULT_PAYMENT_TERM_DAYS,
                 // Dispatched to ajaxProcessRefreshMerchantRecord() by AdminController::postProcess().
                 'two_refresh_merchant_url' => $this->context->link->getAdminLink('AdminModules', false)

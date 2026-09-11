@@ -1716,14 +1716,12 @@ class TwoCheckoutManager {
             return;
         }
 
-        // The buyer's retained selection wins over the configured default: the
-        // order is booked on the retained term, so selecting the default here
-        // would show a term the submission does not use.
+        // The order is booked on the retained term, so seeding from the
+        // configured default would show a term the submission does not use.
         const preferredTerm = availableTerms.includes(retainedTerm) ? retainedTerm : configuredDefaultTerm;
 
-        // Guard against a preferred term that isn't actually offered — falls back
-        // to the first offered term so the chip UI and "Pay in X days" text never
-        // point at a term with no selectable chip.
+        // Falls back to the first offered term so the chip UI and "Pay in X days"
+        // text never point at a term with no selectable chip.
         const initialTerm = availableTerms.includes(preferredTerm) ? preferredTerm : null;
 
         termsContainer.setAttribute('role', 'radiogroup');
