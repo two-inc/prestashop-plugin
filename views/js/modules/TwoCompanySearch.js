@@ -1104,10 +1104,9 @@ class TwoCompanySearch {
                 if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
                     return;
                 }
-                // Not closeDropdown()'s own focus return: the press's default
-                // action runs AFTER this handler and would blow it away -
-                // focusing whatever it hit, or clearing focus where it hit
-                // nothing focusable.
+                // Deferred instead of closeDropdown()'s own return: the
+                // press's default action runs after this handler and would
+                // undo it.
                 this.closeDropdown(false);
                 this.returnFocusIfDropped();
             });
