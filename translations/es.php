@@ -216,6 +216,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_44fdec47036f482b68b748f9d786801b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_ad390087f94a9a17adaf0b81ad83b2e7'] = 'desde el fin de mes';
 $_MODULE['<{twopayment}prestashop>twopayment_43027795a425292b9d90ba92ee7b69de'] = 'EOM+%s';
 $_MODULE['<{twopayment}prestashop>twopayment_3b2c485f6b1aa49371c9ea4cf16762d5'] = 'EOM+%s: pague %s días después del fin de mes';
+$_MODULE['<{twopayment}prestashop>twopayment_49021580a8968c03b1aade60433a2184'] = 'EOM+%1$s: paga %1$s días después del fin de mes, más un recargo de %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_03ac21a9797a06114f0aedd391a1e2a3'] = 'No se encontraron resultados';
 $_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] = 'Número de teléfono no válido';
 $_MODULE['<{twopayment}prestashop>twopayment_06e96958c3ac68d916db7da58cdbb5c9'] = 'Código de país no válido';

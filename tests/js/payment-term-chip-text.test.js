@@ -164,3 +164,93 @@ describe("what a payment-term chip says", () => {
     });
   });
 });
+
+/**
+ * An aria-label replaces the whole accessible name, so the "+7.25 EUR" rendered
+ * inside an end-of-month chip is announced nowhere unless the name states it
+ * too. The quote lands after the chip does, so the name is restated then.
+ */
+describe("the surcharge in the chip name", () => {
+  const ORDER_INTENT = {
+    order_intent_url: ORDER_INTENT_URL,
+    ajax_token: "test-token",
+    checkout_host: CHECKOUT_HOST,
+  };
+
+  beforeEach(() => {
+    window.twopayment = Object.assign({}, ORDER_INTENT);
+  });
+
+  afterEach(() => {
+    delete window.twopayment;
+  });
+
+  test.each([
+    {
+      termType: "EOM",
+      amounts: { 30: 7.25, 60: 9 },
+      expected: [
+        "EOM+30: pay 30 days after the end of the month, plus a 7.25 EUR surcharge",
+        "EOM+60: pay 60 days after the end of the month, plus a 9.00 EUR surcharge",
+      ],
+      case: "a priced term states the fee the label would otherwise silence",
+    },
+    {
+      termType: "EOM",
+      amounts: { 30: 0, 60: 0 },
+      expected: [
+        "EOM+30: pay 30 days after the end of the month",
+        "EOM+60: pay 60 days after the end of the month",
+      ],
+      case: "a set quoting nothing states no amount",
+    },
+    {
+      termType: "STANDARD",
+      amounts: { 30: 7.25, 60: 9 },
+      expected: [null, null],
+      case: "a standard term is left unnamed whatever it costs",
+    },
+  ])("$case", ({ termType, amounts, expected }) => {
+    makeChips([30, 60], termType);
+    ajax.last().succeed({ success: true, currency: "eur", amounts: amounts });
+
+    expect(chipNames().map((pair) => pair[0])).toEqual(expected);
+    expect(chipNames().map((pair) => pair[1])).toEqual(expected);
+  });
+
+  test("the name picks the fee up when the quote lands", () => {
+    makeChips([30, 60], "EOM");
+
+    expect(chipNames()[0][0]).toBe(
+      "EOM+30: pay 30 days after the end of the month",
+    );
+
+    ajax.last().succeed({ success: true, currency: "eur", amounts: { 30: 7.25, 60: 9 } });
+
+    expect(chipNames()[0][0]).toBe(
+      "EOM+30: pay 30 days after the end of the month, plus a 7.25 EUR surcharge",
+    );
+  });
+
+  test("a failed quote leaves a name claiming no amount", () => {
+    makeChips([30, 60], "EOM");
+    ajax.last().fail("error");
+
+    expect(chipNames()[0][0]).toBe(
+      "EOM+30: pay 30 days after the end of the month",
+    );
+  });
+
+  test("the accessible name contains the visible text and the visible amount", () => {
+    makeChips([1, 30, 120], "EOM");
+    ajax
+      .last()
+      .succeed({ success: true, currency: "eur", amounts: { 1: 1, 30: 7.25, 120: 30 } });
+
+    // WCAG 2.5.3 Label in Name.
+    chipTexts().forEach((text, i) => {
+      expect(chipNames()[i][0]).toContain(text);
+    });
+    expect(chipNames()[1][0]).toContain("7.25 EUR");
+  });
+});
