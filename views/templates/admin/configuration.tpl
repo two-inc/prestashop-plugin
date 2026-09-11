@@ -78,6 +78,7 @@
     var twoFeesNoApiKeyText = '{l s='Fees cannot be shown until an API key is saved on the General tab.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeeNoFigureText = '{l s='no figure' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoEomTermDays = {$two_eom_term_days nofilter};
+    var twoCustomTermDays = {$two_custom_term_days|intval};
 </script>
 {literal}
     <script type="text/javascript">
@@ -193,8 +194,8 @@
 
             // Surcharge grid - hide the whole grid when no surcharge is applied,
             // and hide the columns that don't apply to the selected method.
-            // Null until the first row pass, so the column pass that runs
-            // before it leaves the server-rendered visibility alone.
+            // Null until the first row pass; the column pass decides on the
+            // surcharge type alone until then.
             var twoVisibleSurchargeRows = null;
 
             function updateSurchargeGridVisibility() {
@@ -227,12 +228,15 @@
             updateSurchargeGridVisibility();
             $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);
 
-            // The terms the shop currently offers: the live ticks, narrowed by
-            // the term type the same way narrowOfferedTerms() narrows them
-            // server-side. The custom-days input shares the name prefix and
-            // carries no day count, so it drops out here.
+            // The ticked terms, narrowed by the term type. Narrower than
+            // narrowOfferedTerms(), which also unions the deprecated custom
+            // term - no live tick governs that one, so it is handled where it
+            // matters, in the default-term options below. This set is what the
+            // surcharge grid renders a row per, which is the same tick/type
+            // pair the server computed the rows from.
             function twoOfferedTermDays() {
                 var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
+                // An absent list means no narrowing rather than no term.
                 var eomDays = (typeof twoEomTermDays !== 'undefined' && twoEomTermDays) ? twoEomTermDays : [];
                 var offered = [];
                 $('input[name^="PS_TWO_PAYMENT_TERMS_"]').each(function () {
@@ -242,7 +246,7 @@
                     if (!days || !$box.is(':checked')) {
                         return;
                     }
-                    if (termType === 'EOM' && eomDays.indexOf(days) === -1) {
+                    if (termType === 'EOM' && eomDays.length && eomDays.indexOf(days) === -1) {
                         return;
                     }
                     offered.push(days);
@@ -276,10 +280,11 @@
                 updateTwoDefaultTermOptions(offered);
             }
 
-            // Default-term dropdown - its options follow the same offered set.
-            // An explicit default whose term stops being offered falls back to
-            // Automatic, and is restored if that term is offered again in the
-            // same edit.
+            // Default-term dropdown. The pass WITHDRAWS an option whose term
+            // stops being offered and restores it if the term comes back; it
+            // never adds one, because the server rendered the option list. An
+            // explicit default whose term is withdrawn falls back to Automatic,
+            // which is what the save would store for it anyway.
             var twoDefaultTermWanted = null;
 
             function updateTwoDefaultTermOptions(offered) {
@@ -290,14 +295,16 @@
                 if (twoDefaultTermWanted === null) {
                     twoDefaultTermWanted = String($select.val() || '');
                 }
+                var custom = (typeof twoCustomTermDays !== 'undefined') ? parseInt(twoCustomTermDays, 10) : 0;
+                var selectable = custom > 0 && offered.indexOf(custom) === -1 ? offered.concat([custom]) : offered;
                 $select.find('option').each(function () {
                     var $option = $(this);
                     var value = String($option.attr('value') || '');
-                    var isOffered = value === '' || offered.indexOf(parseInt(value, 10)) !== -1;
+                    var isOffered = value === '' || selectable.indexOf(parseInt(value, 10)) !== -1;
                     $option.prop('disabled', !isOffered).toggle(isOffered);
                 });
                 var wantedOffered = twoDefaultTermWanted === ''
-                    || offered.indexOf(parseInt(twoDefaultTermWanted, 10)) !== -1;
+                    || selectable.indexOf(parseInt(twoDefaultTermWanted, 10)) !== -1;
                 $select.val(wantedOffered ? twoDefaultTermWanted : '');
             }
 

@@ -1228,6 +1228,10 @@ class Twopayment extends PaymentModule
                 // and drops the per-option one, so the term type a checkbox
                 // belongs to is not readable from the rendered input.
                 'two_eom_term_days' => json_encode(array_map('intval', self::EOM_PAYMENT_TERMS_OPTIONS)),
+                // The deprecated custom term's day count, or 0. It is offered
+                // without a tick of its own, so the admin JS must not withdraw
+                // its default-term option (TWO-25705).
+                'two_custom_term_days' => $this->getTwoUnionedCustomTermDays(),
                 // Dispatched to ajaxProcessRefreshMerchantRecord() by AdminController::postProcess().
                 'two_refresh_merchant_url' => $this->context->link->getAdminLink('AdminModules', false)
                     . '&configure=' . $this->name
@@ -15616,7 +15620,7 @@ class Twopayment extends PaymentModule
         $html .= '<p id="two-surcharge-empty" class="help-block" style="margin-bottom:0;'
             . ($visible_rows > 0 ? 'display:none;' : '') . '">'
             . htmlspecialchars(
-                $this->l('No payment term is offered, so there is nothing to surcharge. Tick the terms you offer in the Payment terms list above to set their fees.'),
+                $this->l('No payment term is ticked, so there is nothing to surcharge. Tick the terms you offer in the Payment terms list above to set their fees.'),
                 ENT_QUOTES,
                 'UTF-8'
             )
@@ -16109,6 +16113,24 @@ class Twopayment extends PaymentModule
         sort($available_terms);
 
         return $available_terms;
+    }
+
+    /**
+     * The deprecated custom term's day count when narrowOfferedTerms() unions
+     * it into the offered set, else 0.
+     *
+     * @return int
+     */
+    protected function getTwoUnionedCustomTermDays()
+    {
+        $custom_days = $this->getTwoCustomPaymentTermDays();
+        if ($custom_days === null) {
+            return 0;
+        }
+
+        return in_array((int) $custom_days, array_map('intval', $this->getOfferableTermSource()), true)
+            ? (int) $custom_days
+            : 0;
     }
 
     /**
