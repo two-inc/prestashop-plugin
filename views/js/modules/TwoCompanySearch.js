@@ -1104,7 +1104,12 @@ class TwoCompanySearch {
                 if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
                     return;
                 }
-                this.closeDropdown(true);
+                // Not closeDropdown()'s own focus return: the press's default
+                // action runs AFTER this handler and would blow it away -
+                // focusing whatever it hit, or clearing focus where it hit
+                // nothing focusable.
+                this.closeDropdown(false);
+                this.returnFocusIfDropped();
             });
     }
 
@@ -1490,6 +1495,33 @@ class TwoCompanySearch {
                 this._closingSelf = false;
             }
         }
+    }
+
+    /**
+     * Take focus back only if the pointer press that closed the panel left it
+     * nowhere, which is what a press on anything unfocusable does. Deferred by
+     * one tick so the press's own default action has already settled.
+     */
+    returnFocusIfDropped() {
+        setTimeout(() => {
+            if (this._destroyed || this._dropdownOpen) {
+                return;
+            }
+            const active = document.activeElement;
+            if (active && active !== document.body && active !== document.documentElement) {
+                return;
+            }
+            if (!this.companyField || !this.companyField.length
+                || !document.contains(this.companyField.get(0))) {
+                return;
+            }
+            this._closingSelf = true;
+            try {
+                this.focusQuietly(this.companyField);
+            } finally {
+                this._closingSelf = false;
+            }
+        }, 0);
     }
 
     /**

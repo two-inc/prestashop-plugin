@@ -102,13 +102,6 @@ describe('closing the popover hands focus back to the company-name field', () =>
         },
         {
             drive: () => {
-                openPanel();
-                dispatchMousedown(backdrop());
-            },
-            description: 'a pointer press on a page area that takes no focus of its own'
-        },
-        {
-            drive: () => {
                 const instance = openWithRows();
                 instance.menu.focus(null, instance.menu.element.children('li').eq(0));
                 instance.menu.select($.Event('click'));
@@ -160,6 +153,35 @@ describe('the opener suppression covers the close\'s own focus and nothing after
 
         expect(shown(panelParts().panel)).toBe(true);
         expect($("input[name='company']").attr('aria-expanded')).toBe('true');
+    });
+
+    /**
+     * The press's own default action runs after the panel's handler: it focuses
+     * whatever it hit, or clears focus where it hit nothing focusable. jsdom
+     * performs neither, so each case plays the browser's part explicitly -
+     * which is also what makes the two cases distinguishable at all.
+     */
+    test.each([
+        {
+            settleFocus: () => $("input[name='dni']").get(0).focus(),
+            expected: () => $("input[name='dni']").get(0),
+            description: 'a press on another control leaves focus on that control'
+        },
+        {
+            settleFocus: () => document.activeElement.blur(),
+            expected: () => companyFieldNode(),
+            description: 'a press on anything unfocusable hands focus to the company field'
+        }
+    ])('$description', ({ settleFocus, expected }) => {
+        makeInstance();
+        openPanel();
+
+        dispatchMousedown(backdrop());
+        settleFocus();
+        jest.advanceTimersByTime(1);
+
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(document.activeElement).toBe(expected());
     });
 
     test('focus leaving the panel for another control closes it and leaves that control alone', () => {
