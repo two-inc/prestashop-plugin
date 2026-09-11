@@ -43,11 +43,21 @@ final class EomTermTypeVisibilitySpec
         foreach ($published as list($expression, $description)) {
             TinyAssert::true(strpos($source, $expression) !== false, $description);
         }
+
+        // The browser suite cannot read a PHP constant, so both day counts are
+        // written out in tests/js/admin-default-term-options.test.js and
+        // tests/js/admin-surcharge-grid-empty-state.test.js. Pinned here, or a
+        // change to either constant leaves those fixtures green against a page
+        // that no longer behaves that way.
+        TinyAssert::same(array(30, 45, 60), array_map('intval', Twopayment::EOM_PAYMENT_TERMS_OPTIONS), 'the EOM day counts the browser fixtures hardcode');
+        TinyAssert::same(30, (int) Twopayment::DEFAULT_PAYMENT_TERM_DAYS, 'the fallback day count the browser fixtures hardcode');
     }
 
     /**
-     * The rule the admin JS mirrors, stated here so a change to either side
-     * shows up as a disagreement (TWO-25705).
+     * The rule the admin JS mirrors, stated on the server side so the set the
+     * browser resolves can be read against it (TWO-25705). The browser half is
+     * in tests/js/admin-default-term-options.test.js, over these same
+     * configurations.
      */
     private static function testConfigurableTermSetIsWhatTheAdminJsResolves(): void
     {

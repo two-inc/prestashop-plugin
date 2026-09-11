@@ -217,9 +217,6 @@
                 // cannot see (TWO-25289). Falls back to the table if the
                 // form-group does not resolve - the markup nests differently
                 // across PrestaShop majors.
-                // With no row left, the cap help text below the grid would
-                // otherwise describe cells nobody can see - the same reason the
-                // columns carry it.
                 var hasRows = twoVisibleSurchargeRows === null || twoVisibleSurchargeRows > 0;
                 var scope = gridGroup.length ? gridGroup : grid;
                 scope.find('.two-col-percentage').toggle(showPercentage && hasRows);
@@ -280,10 +277,10 @@
             }
 
             // Default-term dropdown. The option set is getConfigurableTermSet()
-            // resolved from the live form, so the screen and the save always
-            // judge the default against the same terms. The pass only WITHDRAWS
-            // an option, and restores it when its term returns; it never adds
-            // one, because the server rendered the option list.
+            // resolved from the live form, so the screen never offers a term
+            // the save would refuse. The pass only WITHDRAWS an option, and
+            // restores it when its term returns; it never adds one, because the
+            // server rendered the option list.
             var twoDefaultTermWanted = null;
 
             function updateTwoDefaultTermOptions(offered) {
