@@ -10,10 +10,7 @@ declare(strict_types=1);
  * into the checkout ADDRESS step. Once PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS moves the
  * search itself into the payment tile there is no address-area lookup left to
  * govern, so leaving the switch independently settable let a merchant tick a
- * box the module then ignored. woocommerce-plugin's admin.js already disables
- * and unchecks its own `enable_address_lookup` field when company search is
- * off; this is the PrestaShop equivalent, plus the server-side half Woo does
- * not have.
+ * box the module then ignored.
  *
  * The gate has THREE surfaces and each is pinned separately, because each
  * fails differently:

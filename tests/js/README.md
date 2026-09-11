@@ -10,8 +10,7 @@ npm run test:js         # equivalent, if node_modules is already installed
 CI gates this as the `jest` job in `.github/workflows/tests.yml`. It is a real gate, not
 `continue-on-error`.
 
-The layout mirrors `magento-plugin`'s `Test/Js/`: a `package.json` at the repo root whose
-only purpose is to hold JS devDependencies (`package-release.sh` already excluded
+The layout: a `package.json` at the repo root whose only purpose is to hold JS devDependencies (`package-release.sh` already excluded
 `package.json` and `package-lock.json` from the release zip), a jest config sitting next to the tests with `rootDir` pointed back
 at the repo root, and `testEnvironment: 'jsdom'`.
 

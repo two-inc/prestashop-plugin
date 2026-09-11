@@ -166,7 +166,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_8de156561c33cb1a23becce55fdd5c9d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c32ea1da551ff3faf32494a43ce88f6a'] = '%s: Pedido cancelado';
 $_MODULE['<{twopayment}prestashop>twopayment_adc5d048be9b3dee0f30fc0001a9cd1f'] = 'El pedido ha sido cancelado en %s. Esto impide su cumplimiento y detiene el proceso de pago. Predeterminado: Cancelado';
 $_MODULE['<{twopayment}prestashop>twopayment_a17c0739932d30a9f465e3c13ad53215'] = '%s: Pedido reembolsado';
-$_MODULE['<{twopayment}prestashop>twopayment_5a3888e2dc8411b9315151d138a7e8fd'] = 'El pedido ha sido reembolsado a través de %s. Se emite inmediatamente una nota de crédito al comprador. Predeterminado: Reembolsado';
+$_MODULE['<{twopayment}prestashop>twopayment_8f81441778b6e1fb85956f2a908ae8a7'] = 'Mover un pedido a este estado lo reembolsa en su totalidad a través de %s y emite una nota de crédito al comprador. Predeterminado: Reembolsado';
 $_MODULE['<{twopayment}prestashop>twopayment_2b340063734382803d14ef2234a59b46'] = 'Ninguno seleccionado';
 $_MODULE['<{twopayment}prestashop>twopayment_54c42cad3f396fd13c7398fea66fe0e7'] = 'El mapeo de estados de pedido de %s se ha actualizado correctamente.';
 $_MODULE['<{twopayment}prestashop>twopayment_779cdd79fa95885841e60852c8d17b1f'] = 'Estados de activación de cumplimiento actualmente activos:';

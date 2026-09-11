@@ -190,7 +190,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_406bab31038584c0e3135767eb91cf3c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_32ef340374cbaf110f944895c6a6f7d8'] = 'Schakel uitgebreide logging in voor probleemoplossing. Logt btw-berekeningen en andere diagnostische gegevens. Schakel dit alleen in als %s-support daarom vraagt.';
 $_MODULE['<{twopayment}prestashop>twopayment_44fdec47036f482b68b748f9d786801b'] = 'dagen';
 $_MODULE['<{twopayment}prestashop>twopayment_484f5a79672cebe198ebdde45a1d672f'] = 'Cadeauverpakking';
-$_MODULE['<{twopayment}prestashop>twopayment_5a3888e2dc8411b9315151d138a7e8fd'] = 'De bestelling is via %s terugbetaald. De koper ontvangt direct een creditnota. Standaard: Terugbetaald';
+$_MODULE['<{twopayment}prestashop>twopayment_8f81441778b6e1fb85956f2a908ae8a7'] = 'Als je een bestelling naar deze status verplaatst, wordt deze volledig terugbetaald via %s en ontvangt de koper een creditnota. Standaard: Terugbetaald';
 $_MODULE['<{twopayment}prestashop>twopayment_4942bc0bc6522799a5aa074673f90664'] = 'Betaling niet beschikbaar';
 $_MODULE['<{twopayment}prestashop>twopayment_268080635e4033e05865df7fdd177b8e'] = '%s is een B2B Buy Now, Pay Later-oplossing';
 $_MODULE['<{twopayment}prestashop>twopayment_4b63989fed5f90859fafd6e1f02be539'] = 'De betaalgegevens van de bestelling kunnen niet worden opgehaald; neem contact op met de winkeleigenaar.';

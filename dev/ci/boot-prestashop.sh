@@ -4,7 +4,7 @@
 # install-smoke and upgrade-smoke jobs in .github/workflows/smoke.yml.
 #
 # No blind sleeps: every wait is a bounded poll that fails loud on timeout
-# (pattern from woocommerce-plugin upgrade-smoke / magento TWO-24998).
+# (TWO-24998).
 #
 # Required env:
 #   SFX       — namespacing suffix so concurrent runs on a shared runner

@@ -2332,10 +2332,7 @@ class TwoSoleTrader {
     /**
      * Base64 for the signup page's autofillData parameter. UTF-8-safe:
      * a bare btoa() throws on any character outside Latin-1 (e.g. å/ø/æ
-     * in names) - matches the WooCommerce plugin's encoding. Magento's
-     * current code uses a bare btoa() there (verified against its real
-     * source), which is a latent gap in Magento rather than a contract
-     * worth replicating, so this deliberately does not match it.
+     * in names).
      */
     encodeAutofillData(data) {
         return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
