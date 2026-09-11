@@ -9,8 +9,12 @@
  */
 const MIN_SEARCH_LENGTH = 3;
 
-/** Anything inside the panel a press is entitled to take focus to. */
-const PANEL_FOCUS_TARGETS = 'input, button, select, textarea, a[href], [tabindex]';
+/**
+ * The controls inside the panel a press is entitled to focus. Deliberately not
+ * `[tabindex]`: jQuery UI puts one on its own results `<ul>`, whose padding is
+ * dead space the buyer means nothing by.
+ */
+const PANEL_FOCUS_TARGETS = 'input, button, select, textarea, a[href]';
 
 /**
  * @param {object} event mousedown event

@@ -68,6 +68,18 @@ describe('a press on the popover\'s dead space changes nothing', () => {
             description: 'the chip row between two chips'
         },
         {
+            target: () => {
+                // jQuery UI puts a `tabindex` on its own results list, so this
+                // is the one dead space that reads as focusable.
+                const list = document.createElement('ul');
+                list.setAttribute('tabindex', '0');
+                panelParts().results.get(0).appendChild(list);
+                return list;
+            },
+            cancelled: true,
+            description: 'a results list carrying a tabindex of its own'
+        },
+        {
             target: () => panelParts().query.get(0),
             cancelled: false,
             description: 'the query field, which the press must still be able to place the caret in'
