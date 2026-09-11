@@ -19,8 +19,38 @@ final class CheckoutSubtitleSpec
 
     public static function runAll(): void
     {
+        self::testFieldRequiredness();
         self::testAdminSaveAcceptsAnySubtitle();
         self::testTileSubtitleHasNoFallback();
+    }
+
+    /**
+     * `required` is core's own flag, not just decoration: it stars the label
+     * and is what the back office refuses an empty submission on, so relaxing
+     * the validation alone would still leave the field unclearable.
+     */
+    private static function testFieldRequiredness(): void
+    {
+        self::reset();
+        StubStore::$languages = self::LANGUAGES;
+        $module = new TwopaymentTestHarness();
+        $form = (new ReflectionMethod(Twopayment::class, 'getTwoCheckoutFieldsForm'))->invoke($module);
+
+        $byName = [];
+        foreach ($form['form']['input'] as $input) {
+            if (isset($input['name'])) {
+                $byName[$input['name']] = $input;
+            }
+        }
+
+        $cases = [
+            ['PS_TWO_TITLE', true, 'the title is mandatory'],
+            ['PS_TWO_SUB_TITLE', false, 'the subtitle is optional'],
+        ];
+
+        foreach ($cases as list($name, $expected, $description)) {
+            TinyAssert::same($expected, $byName[$name]['required'], $description);
+        }
     }
 
     private static function reset(): void
