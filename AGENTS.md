@@ -187,6 +187,13 @@ read standing in for a schedule that has stopped.
 - A shop where no fetch has ever succeeded has nothing to serve, so a read retries on
   the short backoff until one does.
 
+## State Propagation Runs Plugin To Provider Only
+
+There is no inbound path from the provider or the merchant portal into this module, by design. A
+portal-side action such as a refund leaves the shop's order status untouched, so that status is not
+a reliable indicator of provider-side state. Do not add a one-off bridge for a single status; see
+`.ai/decisions.md` (TWO-25706).
+
 ## Company Search: This Module's Own Implementation
 
 `views/js/modules/TwoCompanySearch.js` is this module's own panel. The Magento and

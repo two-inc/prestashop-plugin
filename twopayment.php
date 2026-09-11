@@ -3947,7 +3947,7 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_REFUNDED_MAP',
                         'label' => sprintf($this->l('%s: Order Refunded'), $this->getTwoBrandConfig('product_name')),
-                        'desc' => sprintf($this->l('Order has been refunded through %s. A credit note is issued to the buyer immediately. Default: Refunded'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('Moving an order into this status refunds it in full with %s and issues a credit note to the buyer. Default: Refunded'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStatesNoTwo,

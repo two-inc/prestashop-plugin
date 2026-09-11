@@ -19,6 +19,27 @@
 
 ---
 
+## [2026-09-11] State Propagation Runs Plugin To Provider Only
+
+**Context**: A state change made in the merchant portal - a refund is the case that surfaces it -
+does not reach the shop, so the shop's own order status keeps whatever it had before (TWO-25706).
+The plugin has no inbound path: the refunded-state mapping is an outbound trigger, moving a shop
+order into the mapped status sends a refund to the provider, and there is no webhook or callback
+controller for the other direction.
+
+**Decision**: This is the intended shape and is not worked around. Propagation is plugin to
+provider; the reverse direction is a project in its own right and is not attempted piecemeal.
+
+**Alternatives Considered**: A callback controller, or polling the provider on admin order views -
+both are a new integration surface with its own authentication, replay and ordering problems, and
+neither is a local fix to one status.
+
+**Rationale**: The gap is the same on every plugin in the family, so closing it belongs in one
+design rather than one platform's order-status hook.
+
+**Consequences**: The shop's order status is not a reliable indicator of provider-side refund
+state; the merchant portal is the authority for that.
+
 ## [2026-08-14] All Three Service URLs Are Independently Dev-Overridable Through One Shared Gate
 
 **Context**: The plugin talks to three Two services - the checkout API, the merchant portal and
