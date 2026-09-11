@@ -2158,3 +2158,26 @@ through.
 
 Write the content match and the role predicate as the portable core, and keep the
 persistence and the reveal detection explicitly platform-local.
+
+# ABN-554 — the payment-term chip label
+
+**A chip states its term type, not just a day count.** An end-of-month term falls due
+that many days after the end of the month, so a bare day count states the wrong due
+date for it. The visible text is `30 days` under standard terms and `EOM+30` under end
+of month.
+
+**Only the end-of-month chip is named.** Its `title` and `aria-label` both read
+`EOM+30: pay 30 days after the end of the month`. A standard chip carries neither: its
+visible text already states the term, and an accessible name that merely restated it
+would risk WCAG 2.5.3.
+
+**The name opens with the visible token, and that ordering is load-bearing.** WCAG 2.5.3
+Label in Name requires the accessible name to contain the visible text. The wording this
+replaced — "Pay in 30 days from end of month" — does not contain `EOM+30`, so the chip
+was non-conformant on end-of-month terms. Putting the explanation first would reintroduce
+that, whatever it says.
+
+**It is one translated sentence, not assembled fragments.** Word order differs by
+language, so a translator needs the whole sentence; the day count is substituted into
+it. The same rule is why the visible end-of-month token is a template rather than a
+concatenation of `EOM+` and the number.
