@@ -16,7 +16,7 @@ if (!defined('_PS_VERSION_')) {
 
 return array(
     // Customer-facing product name (admin captions, checkout copy, order
-    // notes, TWO-25386). An overlay replaces this with its own brand name;
+    // notes) - TWO-25386. An overlay replaces this with its own brand name;
     // getTwoBrandConfig() resolves it wherever the plugin used to hardcode
     // the literal word "Two".
     'product_name' => 'Two',

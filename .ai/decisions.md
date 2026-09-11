@@ -40,6 +40,8 @@ design rather than one platform's order-status hook.
 **Consequences**: The shop's order status is not a reliable indicator of provider-side refund
 state; the merchant portal is the authority for that.
 
+---
+
 ## [2026-08-14] All Three Service URLs Are Independently Dev-Overridable Through One Shared Gate
 
 **Context**: The plugin talks to three Two services - the checkout API, the merchant portal and
