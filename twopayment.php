@@ -1530,9 +1530,9 @@ class Twopayment extends PaymentModule
             array(
                 'type' => 'text',
                 'label' => $this->l('Subtitle'),
-                'desc' => $this->l('Enter a sub title which is appear on checkout page as payment method sub title.'),
+                'desc' => $this->l('Optional. Shown under the payment method title at checkout. Leave empty to show no subtitle at all.'),
                 'name' => 'PS_TWO_SUB_TITLE',
-                'required' => true,
+                'required' => false,
                 'lang' => true,
             ),
             // Checkout sort order (TWO-25386, ported from
@@ -1920,9 +1920,6 @@ class Twopayment extends PaymentModule
         foreach ($this->languages as $language) {
             if (Tools::isEmpty(Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']))) {
                 $this->errors[] = $this->l('Enter a title.');
-            }
-            if (Tools::isEmpty(Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang']))) {
-                $this->errors[] = $this->l('Enter a sub title.');
             }
         }
 
@@ -5584,15 +5581,14 @@ class Twopayment extends PaymentModule
     {
         // Cast and trim rather than Tools::isEmpty(): a language with no row at
         // all reads as `false`, which core does not count as empty, so the
-        // fallbacks below never fired for it and the tile rendered blank.
+        // title fallback below never fired for it and the tile rendered blank.
         $title = trim((string) Configuration::get('PS_TWO_TITLE', $this->context->language->id));
+        // TWO-25711: no fallback. An empty subtitle renders no subtitle element
+        // at all, leaving the brand tagline as the tile's only strapline.
         $subtitle = trim((string) Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id));
 
         if ($title === '') {
             $title = sprintf($this->l('Pay with %s'), $this->getTwoBrandConfig('product_name'));
-        }
-        if ($subtitle === '') {
-            $subtitle = $this->l('Buy now, pay later - instant credit');
         }
 
         $optional_fields = $this->getOptionalCheckoutFieldsForDisplay();

@@ -16,7 +16,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_52f4393e1b52ba63e27310ca92ba098c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Título';
 $_MODULE['<{twopayment}prestashop>twopayment_d34347a5f791b2cecfda204f7a0b575d'] = 'Introduce el título que aparecerá en la página de pago como nombre del método de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_8bc50504c201a3c29db85208d8ce68af'] = 'Subtítulo';
-$_MODULE['<{twopayment}prestashop>twopayment_9ddf0af1d4404e3008c47a8fb8d17d6d'] = 'Introduce el subtítulo que aparecerá en la página de pago como descripción del método de pago.';
+$_MODULE['<{twopayment}prestashop>twopayment_d4ee35ba1c8678bff20f4940810ab53e'] = 'Opcional. Se muestra debajo del título del método de pago en la página de pago. Déjalo vacío para no mostrar ningún subtítulo.';
 $_MODULE['<{twopayment}prestashop>twopayment_62c7594948c1231bbae9f948b1535b7e'] = 'Clave API';
 $_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Introduce tu clave API proporcionada por %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Entorno';
@@ -43,7 +43,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_db6cdf319ae363d1ac5eb9210da27aa9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_ed0c9b5fb2f44a77915d0ce45d0c501c'] = '90 días';
 $_MODULE['<{twopayment}prestashop>twopayment_c9cc8cce247e49bae79f15173ce97354'] = 'Guardar';
 $_MODULE['<{twopayment}prestashop>twopayment_12a62151fbf8218ddf2165d1f23821cd'] = 'Introduce un título.';
-$_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Introduce un subtítulo.';
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Introduce una clave API.';
 $_MODULE['<{twopayment}prestashop>twopayment_c0df38350f764595ec9eb062507f895e'] = 'Selecciona un entorno válido (Producción o Staging).';
 $_MODULE['<{twopayment}prestashop>twopayment_1924a6cb5a7ce6a33e93620792fea964'] = 'Debes seleccionar al menos un plazo de pago.';
@@ -223,7 +222,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_c012e2a8b9e129403f8b93547086500a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b2df7887a34999a0fee743420750a9ec'] = 'Demasiado largo';
 $_MODULE['<{twopayment}prestashop>twopayment_c050bd52ad0af81cf819fbcf2863357f'] = 'El teléfono debe coincidir con el país seleccionado';
 $_MODULE['<{twopayment}prestashop>twopayment_35895cff7df70dab18783453e2bd241f'] = 'Pagar con %s';
-$_MODULE['<{twopayment}prestashop>twopayment_dc9e89dc21fd423f5449d0995f5b9b00'] = 'Compra ahora, paga después - crédito instantáneo';
 $_MODULE['<{twopayment}prestashop>twopayment_7e13e4b7dc934c4f24deede7949d856b'] = 'Reembolso completo emitido desde PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_ea9cf7e47ff33b2be14e6dd07cbcefc6'] = 'Envío';
 $_MODULE['<{twopayment}prestashop>twopayment_2b4ef6e3a316295ab176b9dae7ef46b6'] = 'Coste de envío del pedido';

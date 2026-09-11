@@ -73,7 +73,11 @@
     </div>
     
     <section class="two-payment-info" style="display: none;">
+        {* TWO-25711: an empty admin subtitle emits no element - an empty <p>
+           still carries its bottom margin. *}
+        {if $subtitle != ''}
         <p class="two-subtitle">{$subtitle|escape:'html':'UTF-8'}</p>
+        {/if}
         <p class="two-payment-message"></p>
     </section>
     
