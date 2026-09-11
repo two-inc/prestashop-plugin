@@ -930,10 +930,8 @@ class Twopayment extends PaymentModule
 
     /**
      * Effective value of the "clear settings on deactivation" toggle
-     * (PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION, ported from woocommerce-plugin's
-     * `clear_options_on_deactivation`). An absent/empty row reads as
-     * DISABLED - settings are preserved on uninstall, matching
-     * magento-plugin/woocommerce-plugin's default.
+     * (PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION). An absent/empty row reads as
+     * DISABLED - settings are preserved on uninstall.
      *
      * @return bool
      */
@@ -1287,12 +1285,10 @@ class Twopayment extends PaymentModule
                         'required' => true,
                         'desc' => sprintf($this->l('Enter your api key which is provided by %s.'), $this->getTwoBrandConfig('product_name')),
                     ),
-                    // Multi-site vendor/site name (TWO-25386, ported from
-                    // woocommerce-plugin's `vendor_name` field). Free text, no
+                    // Multi-site vendor/site name (TWO-25386). Free text, no
                     // validation - only meaningful for merchants running Two
-                    // across more than one site/vendor identity. Sent verbatim
-                    // as `vendor_name` in the order-create/edit JSON payload to
-                    // Two's backend - never shown to buyers, not a header.
+                    // across more than one site/vendor identity. Sent as the
+                    // X-Vendor-Name request header, never shown to buyers.
                     // Empty is the normal single-site state and is never sent.
                     array(
                         'type' => 'text',
@@ -1535,17 +1531,15 @@ class Twopayment extends PaymentModule
                 'required' => true,
                 'lang' => true,
             ),
-            // Checkout sort order (TWO-25386, ported from
-            // magento-plugin's Advanced > sort_order). Best-effort:
-            // PrestaShop core has no per-module sort_order config path
-            // for payment methods the way Magento does - the native
-            // mechanism is the hook_module position table, normally
-            // reordered by dragging in Payment > Preferences. Saving
-            // this field asks core to move this module to that
-            // position on the paymentOptions hook (see
-            // applyTwoCheckoutSortOrder()); it is stored regardless so
-            // the value survives even where the move itself cannot be
-            // applied.
+            // Checkout sort order (TWO-25386). Best-effort:
+            // PrestaShop core has no per-module sort_order config
+            // path for payment methods - the native mechanism is the
+            // hook_module position table, normally reordered by
+            // dragging in Payment > Preferences. Saving this field
+            // asks core to move this module to that position on the
+            // paymentOptions hook (see applyTwoCheckoutSortOrder());
+            // it is stored regardless so the value survives even
+            // where the move itself cannot be applied.
             array(
                 'type' => 'text',
                 'label' => $this->l('Sort order'),
@@ -1609,8 +1603,7 @@ class Twopayment extends PaymentModule
                 array('id' => 'PS_TWO_ENABLE_ORDER_INTENT_OFF', 'value' => 0, 'label' => $this->l('No')),
             ),
         );
-        // "What is Two" explainer link (TWO-25386, ported from
-        // woocommerce-plugin's `show_abt_link`): shows/hides the "What is
+        // "What is Two" explainer link (TWO-25386): shows/hides the "What is
         // Two?" info tooltip already rendered in the payment tile
         // (views/templates/hook/paymentinfo.tpl). Default ON, matching the
         // tile's pre-existing always-on behaviour.
@@ -1626,10 +1619,9 @@ class Twopayment extends PaymentModule
                 array('id' => 'PS_TWO_SHOW_ABOUT_LINK_OFF', 'value' => 0, 'label' => $this->l('No')),
             ),
         );
-        // Display input tooltips (TWO-25386, ported from woocommerce-plugin's
-        // `display_tooltips`): whether the optional checkout field inputs
-        // (invoice email, PO number, project, department) show a help tooltip
-        // on their label. Default OFF, matching woocommerce-plugin's default.
+        // Display input tooltips (TWO-25386): whether the optional checkout
+        // field inputs (invoice email, PO number, project, department) show a
+        // help tooltip on their label. Default OFF.
         $inputs[] = array(
             'type' => 'switch',
             'label' => $this->l('Display input tooltips'),
@@ -1643,14 +1635,13 @@ class Twopayment extends PaymentModule
             ),
         );
 
-        // Optional buyer inputs (Magento two_payment > checkout_fields
-        // parity). All four render inside the Two payment tile at the
-        // payment step, NOT in the billing address block. PrestaShop asks
-        // for the SHIPPING address first and only reveals the billing block
-        // when the buyer ticks "Billing address differs from shipping
-        // address", so anything hosted there is invisible to most buyers -
-        // which is exactly what happened to department and project before
-        // this release.
+        // Optional buyer inputs. All four render inside the Two payment
+        // tile at the payment step, NOT in the billing address block.
+        // PrestaShop asks for the SHIPPING address first and only reveals
+        // the billing block when the buyer ticks "Billing address differs
+        // from shipping address", so anything hosted there is invisible to
+        // most buyers - which is exactly what happened to department and
+        // project before this release.
         //
         // ORDER IS LOAD-BEARING (TWO-25263) and must stay in step with
         // self::OPTIONAL_CHECKOUT_FIELDS, which is what the checkout tile
@@ -1932,7 +1923,7 @@ class Twopayment extends PaymentModule
         // at least the platform floor when one is resolved AND expressible in
         // the shop default currency. A floor that cannot be converted (no
         // rate) skips the numeric check - the checkout gate enforces both
-        // minima independently (magento-plugin beforeSave parity).
+        // minima independently.
         $raw_minimum = trim((string) Tools::getValue('PS_TWO_MERCHANT_MIN_ORDER'));
         if ($raw_minimum !== '') {
             $normalised = str_replace(',', '.', $raw_minimum);
@@ -2030,11 +2021,10 @@ class Twopayment extends PaymentModule
      * Best-effort application of the checkout sort order (TWO-25386).
      *
      * PrestaShop core has no per-module sort_order config path for payment
-     * methods (unlike Magento's payment/two_payment/sort_order); the native
-     * mechanism is the hook_module position table that Module::updatePosition()
-     * writes, normally driven by dragging rows in Payment > Preferences. This
-     * asks core to move the module to the configured position on its own
-     * paymentOptions hook registration.
+     * methods; the native mechanism is the hook_module position table that
+     * Module::updatePosition() writes, normally driven by dragging rows in
+     * Payment > Preferences. This asks core to move the module to the
+     * configured position on its own paymentOptions hook registration.
      *
      * Deliberately swallows any failure: the admin field and its stored value
      * are the source of truth this method reads, and updatePosition()
@@ -2102,10 +2092,8 @@ class Twopayment extends PaymentModule
      * Dynamic description for the Minimum Order Value field: shows the
      * platform minimum the merchant's value must meet or exceed, in the shop
      * default currency when a conversion rate is available (with the native
-     * figure alongside when the currencies differ). Mirrors
-     * woocommerce-plugin's get_merchant_minimum_order_description() with
-     * Two's own FX rates (/refdata/v1/fx-rates, TWO-25105) filling the gap
-     * WooCommerce has (TWO-24776).
+     * figure alongside when the currencies differ). Converted with Two's own
+     * FX rates (/refdata/v1/fx-rates, TWO-25105).
      *
      * @return string
      */
@@ -2793,10 +2781,8 @@ class Twopayment extends PaymentModule
                             array('id' => 'PS_TWO_DISABLE_RATE_LIMIT_OFF', 'value' => 0, 'label' => $this->l('No')),
                         ),
                     ),
-                    // Clear settings on deactivation, ported from
-                    // woocommerce-plugin's `clear_options_on_deactivation`.
-                    // Default OFF, matching magento-plugin/woocommerce-plugin
-                    // (see shouldClearTwoSettingsOnUninstall()).
+                    // Clear settings on deactivation. Default OFF (see
+                    // shouldClearTwoSettingsOnUninstall()).
                     array(
                         'type' => 'switch',
                         'label' => $this->l('Clear settings on uninstall'),
@@ -5754,8 +5740,7 @@ class Twopayment extends PaymentModule
             'purchase_order_number' => '',
             'invoice_email' => '',
         );
-        // Display input tooltips (TWO-25386, ported from
-        // woocommerce-plugin's `display_tooltips`): short help text shown on
+        // Display input tooltips (TWO-25386): short help text shown on
         // each optional field's label when the admin toggle is on. Consumed
         // as the label's `title` attribute in paymentinfo.tpl, gated by
         // $display_tooltips there.
@@ -11875,9 +11860,7 @@ class Twopayment extends PaymentModule
      * Project the platform minimum-order tuple out of a GET /v1/merchant
      * response body (TWO-24775). The API omits all three min_order_* fields
      * when no minimum is configured; a partial or malformed tuple is treated
-     * the same way rather than gating on a guess. Mirrors woocommerce-plugin's
-     * get_platform_minimum_order() parsing and magento-plugin's
-     * MinimumOrderProvider::parseMinimum().
+     * the same way rather than gating on a guess.
      *
      * @param mixed $response Decoded response body.
      * @return array{amount: float, currency: string, basis: string}|null
@@ -11943,8 +11926,7 @@ class Twopayment extends PaymentModule
      * The merchant's own optional minimum order value from the admin config,
      * as ['amount','currency','basis'] or null when unset. Interpreted in the
      * SHOP DEFAULT currency on the tax basis the merchant selects, falling
-     * back to the platform minimum's basis when unset, else gross - the same
-     * semantics as woocommerce-plugin's get_merchant_minimum_order()
+     * back to the platform minimum's basis when unset, else gross
      * (TWO-24775).
      *
      * @return array{amount: float, currency: string, basis: string}|null
@@ -12202,7 +12184,7 @@ class Twopayment extends PaymentModule
      * is compared on its own declared tax basis, inclusive (an
      * exactly-minimum basket passes - woocommerce/magento parity).
      *
-     * Failure posture per bar, matching magento-plugin's MinimumOrderGate:
+     * Failure posture per bar:
      * - No minimum resolved (cold cache, API blip, none configured): pass -
      *   the API still enforces the platform minimum at order create.
      * - Cross-currency basket that CANNOT be converted to the platform
@@ -12290,8 +12272,7 @@ class Twopayment extends PaymentModule
      * (decline_reason === ORDER_BELOW_MIN_INVOICE_AMOUNT), with a
      * strictly-below-minimum check on the cart value as fallback while older
      * backends carry only a generic reason. Fail-soft throughout: an
-     * unresolvable FX conversion means no hint, never a blocked message
-     * (mirrors magento-plugin's isBelowMinimum/getMinimumForDisplay).
+     * unresolvable FX conversion means no hint, never a blocked message.
      *
      * @param mixed $response Decoded provider response body (order create or intent).
      * @param Cart $cart
@@ -12581,8 +12562,7 @@ class Twopayment extends PaymentModule
     /**
      * Buyer country stand-in for admin-side rate previews: the shop's default
      * country (PS_COUNTRY_DEFAULT resolved to ISO), since a config page has
-     * no cart/buyer context. Falls back to 'NL' - the same stand-in
-     * magento-plugin's Fees controller uses when no country is configured.
+     * no cart/buyer context. Falls back to 'NL' when no country is configured.
      *
      * @return string Two-letter uppercase ISO country code.
      */
@@ -12776,9 +12756,7 @@ class Twopayment extends PaymentModule
      * All fee decisioning lives here in PHP; templates/JS only render the
      * results (ps_checkout compatibility, TWO-24770). Arithmetic is done
      * server-side by POST /v1/pricing/order/fee — the plugin relays a
-     * buyer_fee_share block via TwoSurchargeCalculator, mirroring Magento's
-     * Service/Order/SurchargeCalculator and the WooCommerce plugin's
-     * WC_Twoinc_Payment_Terms::build_buyer_fee_share.
+     * buyer_fee_share block via TwoSurchargeCalculator.
      * =================================================================== */
 
     /** @var array request-scoped fee-quote cache keyed by term|gross|country|currency */
@@ -12872,7 +12850,7 @@ class Twopayment extends PaymentModule
     /**
      * Read a brand-config value (brands/two.php), cached per request. Returns
      * null for unknown keys. A minimal seam pending the full brand-config
-     * foundation (TWO-24746); mirrors the WooCommerce plugin's WC_Twoinc_Brand.
+     * foundation (TWO-24746).
      *
      * @param string $key
      * @return mixed
@@ -13086,8 +13064,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Resolve the surcharge settings from module Configuration into the shape
-     * TwoSurchargeCalculator expects. Mirrors the WooCommerce plugin's
-     * get_surcharge_settings.
+     * TwoSurchargeCalculator expects.
      *
      * @return array
      */
@@ -14012,10 +13989,9 @@ class Twopayment extends PaymentModule
      * group — the same way PS renders its own surcharge cart line) for the
      * CURRENT cart, replacing
      * each chip's loading indicator when it resolves (the buyer is never
-     * shown the configured rate). Mirrors magento-plugin's
-     * Model/Webapi/Surcharges.php: basis
-     * from the live cart, loop over every offered term, per-term failure
-     * degrades that term to 0.0 while the others keep their quotes.
+     * shown the configured rate). Basis from the live cart, loop over every
+     * offered term, per-term failure degrades that term to 0.0 while the
+     * others keep their quotes.
      *
      * Fail-soft contract (same discipline as fetchTwoMerchantFeeRates), and
      * deliberately RETAINED through TWO-25269's fail-closed sweep: these are
@@ -15394,8 +15370,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Brand-driven rounding-step options for the admin select, formatted to a
-     * canonical two-decimal string so the stored value round-trips. Mirrors the
-     * WooCommerce plugin's get_rounding_step_options and Magento's RoundingStep.
+     * canonical two-decimal string so the stored value round-trips.
      *
      * @return array<string, string>
      */
@@ -15454,8 +15429,6 @@ class Twopayment extends PaymentModule
             'label' => $this->l('Surcharge calculation basis'),
             'name' => 'PS_TWO_SURCHARGE_DIFFERENTIAL',
             'desc' => $this->l('Total fee charges the configured surcharge for the chosen term. Fee difference charges only the difference versus the default payment term.'),
-            // Presented as a dropdown to match Magento's Surcharge Calculation
-            // Basis field (Two\Gateway\Model\Config\Source\SurchargeCalculationBasis).
             // Values keep the original 0/1 boolean semantics: 0 = total fee,
             // 1 = differential — so the stored config and downstream behaviour
             // (getTwoSurchargeSettings 'differential') are unchanged.
@@ -16009,9 +15982,7 @@ class Twopayment extends PaymentModule
             }
         }
 
-        // Custom payment term (TWO-25386, ported from magento-plugin's
-        // payment_terms_duration_days / woocommerce-plugin's
-        // payment_terms_custom_days). UNIONED past the EOM/STANDARD split
+        // Custom payment term (TWO-25386). UNIONED past the EOM/STANDARD split
         // above (neither WC nor Magento have that distinction, and the
         // custom day count is not a preset the merchant is picking FROM), but
         // NOT past the source set: a term Two's backend has withdrawn for this
@@ -16788,8 +16759,7 @@ class Twopayment extends PaymentModule
         // still reaches Two, so it still has to clear the firewall (TWO-25386).
         $headers = array_merge($headers, self::getTwoCustomHeaderLines());
 
-        // Multi-site vendor/site name (TWO-25386, ported from
-        // woocommerce-plugin's `vendor_name` request field). Sent as a header
+        // Multi-site vendor/site name (TWO-25386). Sent as a header
         // rather than in every payload body - PS's request builder has one
         // shared header assembly point but many separate payload builders, so
         // a header keeps this a one-line addition instead of touching each

@@ -5042,12 +5042,10 @@ class TwoCompanySearch {
             return;
         }
 
-        // Build URL with correct API parameters. `limit`/`offset` mirror the
-        // Magento and WooCommerce plugins: bound the response to one page so
-        // a common name in a large country can't return an unbounded list.
-        // Offset is always 0 - there is no load-more/next-page UI here, same
-        // as select2's `pagination: { more: false }` on the other two
-        // platforms.
+        // Build URL with correct API parameters. `limit`/`offset` bound the
+        // response to one page so a common name in a large country can't
+        // return an unbounded list. Offset is always 0 - there is no
+        // load-more/next-page UI here.
         const limit = Number(this.config.companySearchLimit)
             || TwoCompanySearch.DEFAULT_COMPANY_SEARCH_LIMIT;
         if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
