@@ -774,11 +774,23 @@ function buildPaymentTileWithSoleTraderAnswer(answer, countryIso) {
 }
 
 /**
+ * The same tile with the admin-configured subtitle resolved (TWO-25711), so a
+ * test can tell an empty subtitle apart from an unevaluated one.
+ *
+ * @param {string} subtitle the value twopayment.php assigned to `$subtitle`
+ * @returns {HTMLElement} the `.two-payment-container` that was appended
+ */
+function buildPaymentTileWithSubtitle(subtitle) {
+    return renderPaymentTile(null, String(subtitle));
+}
+
+/**
  * @param {{answer: string, country: string}|null} soleTrader null = leave
  *        the sole-trader `{if}` blocks unevaluated, as buildPaymentTile() does
+ * @param {string|null} subtitle null = leave the subtitle `{if}` unevaluated
  * @returns {HTMLElement}
  */
-function renderPaymentTile(soleTrader) {
+function renderPaymentTile(soleTrader, subtitle) {
     const tpl = fs.readFileSync(
         path.join(REPO_ROOT, 'views/templates/hook/paymentinfo.tpl'),
         'utf8'
@@ -803,6 +815,14 @@ function renderPaymentTile(soleTrader) {
             )
             .replace(/\{\$sole_trader_answer\|[^}]*\}/g, soleTrader.answer)
             .replace(/\{\$sole_trader_country\|[^}]*\}/g, soleTrader.country);
+    }
+    if (typeof subtitle === 'string') {
+        html = html
+            .replace(
+                /\{if \$subtitle != ''\}([\s\S]*?)\{\/if\}/g,
+                subtitle === '' ? '' : '$1'
+            )
+            .replace(/\{\$subtitle\|[^}]*\}/g, subtitle);
     }
     html = html
         .replace(/\{if[\s\S]*?\{\/if\}/g, '')
@@ -969,6 +989,7 @@ module.exports = {
     OTHER_DNI_COUNTRY_ID: OTHER_DNI_COUNTRY_ID,
     buildPaymentTile: buildPaymentTile,
     buildPaymentTileWithSoleTraderAnswer: buildPaymentTileWithSoleTraderAnswer,
+    buildPaymentTileWithSubtitle: buildPaymentTileWithSubtitle,
     loadCompanyNumber: loadCompanyNumber,
     loadSoleTrader: loadSoleTrader,
     countGifFrames: countGifFrames,

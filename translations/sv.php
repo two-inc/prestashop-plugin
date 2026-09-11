@@ -99,7 +99,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] 
 $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] = 'Plattformens minimum %1$s, %2$s moms. Ett värde här tolkas i butikens standardvaluta på den momsbasis som väljs nedan och måste vara minst plattformens minimum.';
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Aktiverad';
 $_MODULE['<{twopayment}prestashop>twopayment_00f301094c777099ef21325f575d1c3d'] = 'Momsregelgrupp som tillämpas på avgiften för betalningsvillkor - samma momsregelgrupper som du tilldelar produkter. Land- och delstatsregler, kombinerade satser och nollsats gäller precis som för vilken produkt som helst. Om du vill lämna avgiften obeskattad, skapa och välj här en momsregelgrupp med satsen 0 %. Ett val krävs så länge tilläggsavgifter är aktiverade.';
-$_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Ange en underrubrik.';
 $_MODULE['<{twopayment}prestashop>twopayment_876bf0d6ed002da6532dbb047cd14f4a'] = 'Kunde inte fastställa faktureringslandet för denna order';
 $_MODULE['<{twopayment}prestashop>twopayment_d20922a3a72f62b9a6762066afdb9776'] = 'För att betala med %s, gå tillbaka till din fakturaadress och sök efter ditt företagsnamn. Välj ditt företag bland resultaten för att verifiera din verksamhet.';
 $_MODULE['<{twopayment}prestashop>twopayment_03ac21a9797a06114f0aedd391a1e2a3'] = 'Inget resultat hittades';
@@ -307,7 +306,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_9bc4151431237fc71bc676000348f622'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4568e870a2def0081479b11f806e7d6f'] = '%s kunde inte skapa denna order från din varukorg.';
 $_MODULE['<{twopayment}prestashop>twopayment_9c51eb50fb79bffa2c795ac4773781dc'] = 'Ditt betalningsgodkännande har gått ut. Uppdatera sidan och försök igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_9d8c5a3cd608d5590ab3da22a6855f83'] = 'Kunde inte läsa in varukorgen för detta betalningsförsök.';
-$_MODULE['<{twopayment}prestashop>twopayment_9ddf0af1d4404e3008c47a8fb8d17d6d'] = 'Ange en underrubrik som visas i kassan som betalningsmetodens underrubrik.';
+$_MODULE['<{twopayment}prestashop>twopayment_d4ee35ba1c8678bff20f4940810ab53e'] = 'Valfritt. Visas under betalningsmetodens rubrik i kassan. Lämna tomt för att inte visa någon underrubrik alls.';
 $_MODULE['<{twopayment}prestashop>twopayment_9e727fdd3aec8274f46685441900280d'] = 'Projekt';
 $_MODULE['<{twopayment}prestashop>twopayment_1ffb19c3b99e1f859648eb7a9a7c3ef3'] = 'Ja (rekommenderas inte)';
 $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] = 'Din betalningsperiod börjar när din order levereras';
@@ -385,7 +384,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_7af191b62135c0adab07f2c26940a68a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_da26328af93752b0b89478bfd90627ce'] = 'Order återbetalad → Återbetalad';
 $_MODULE['<{twopayment}prestashop>twopayment_da26aecbab950874dc37e7b30d82b40d'] = 'Minsta ordervärde är %1$s%2$s %3$s moms.';
 $_MODULE['<{twopayment}prestashop>twopayment_dc7d3d42b2b2b79bf2711799b38f2543'] = 'Fast belopp';
-$_MODULE['<{twopayment}prestashop>twopayment_dc9e89dc21fd423f5449d0995f5b9b00'] = 'Köp nu, betala senare - direkt kredit';
 $_MODULE['<{twopayment}prestashop>twopayment_de62177e8fda33fee61addda5ea9eeb3'] = 'Åtgärda betalningsproblemet innan du fortsätter.';
 $_MODULE['<{twopayment}prestashop>twopayment_de68657d5c597fa395ed600a61c98178'] = 'Välj vilka betalningsvillkor du vill erbjuda. EOM-villkor (månadsskifte) beräknas från slutet av den månad då leveransen sker, plus det valda antalet dagar. Endast villkor på 30, 45 och 60 dagar är tillgängliga för EOM.';
 $_MODULE['<{twopayment}prestashop>twopayment_dec67bcfdcf3eaa74a37b13df30c8ce5'] = 'Kunde inte behandla din betalning just nu. Kontakta butiksägaren för hjälp.';

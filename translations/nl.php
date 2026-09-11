@@ -99,7 +99,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] 
 $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] = 'Platformminimum %1$s, %2$s btw. Een waarde hier wordt geïnterpreteerd in de standaardvaluta van de winkel op de hieronder gekozen belastinggrondslag en moet minimaal het platformminimum zijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Ingeschakeld';
 $_MODULE['<{twopayment}prestashop>twopayment_00f301094c777099ef21325f575d1c3d'] = 'De belastingregelgroep die op de vergoeding voor de betaaltermijn wordt toegepast - dezelfde belastingregelgroepen die je aan producten toewijst. Regels per land en staat, gecombineerde tarieven en nultarief werken precies zoals bij elk product. Wil je de vergoeding onbelast laten, maak dan een belastingregelgroep aan met een tarief van 0 procent en selecteer die hier. Zolang toeslagen zijn ingeschakeld, is een keuze verplicht.';
-$_MODULE['<{twopayment}prestashop>twopayment_016e561b39ff316fdf1b182819189cdb'] = 'Vul een subtitel in.';
 $_MODULE['<{twopayment}prestashop>twopayment_876bf0d6ed002da6532dbb047cd14f4a'] = 'Kon het factuurland voor deze bestelling niet bepalen';
 $_MODULE['<{twopayment}prestashop>twopayment_d20922a3a72f62b9a6762066afdb9776'] = 'Wil je met %s betalen? Ga dan terug naar je factuuradres en zoek op je bedrijfsnaam. Selecteer je bedrijf uit de resultaten om je onderneming te verifiëren.';
 $_MODULE['<{twopayment}prestashop>twopayment_03ac21a9797a06114f0aedd391a1e2a3'] = 'Geen resultaat gevonden';
@@ -307,7 +306,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_9bc4151431237fc71bc676000348f622'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4568e870a2def0081479b11f806e7d6f'] = '%s kon deze bestelling niet opbouwen uit je winkelwagen.';
 $_MODULE['<{twopayment}prestashop>twopayment_9c51eb50fb79bffa2c795ac4773781dc'] = 'Je betaalgoedkeuring is verlopen. Vernieuw de pagina en probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_9d8c5a3cd608d5590ab3da22a6855f83'] = 'De winkelwagen voor deze betaalpoging kan niet worden geladen.';
-$_MODULE['<{twopayment}prestashop>twopayment_9ddf0af1d4404e3008c47a8fb8d17d6d'] = 'Vul een subtitel in die op de afrekenpagina wordt weergegeven als subtitel van de betaalmethode.';
+$_MODULE['<{twopayment}prestashop>twopayment_d4ee35ba1c8678bff20f4940810ab53e'] = 'Optioneel. Wordt op de afrekenpagina onder de titel van de betaalmethode weergegeven. Laat leeg om helemaal geen subtitel te tonen.';
 $_MODULE['<{twopayment}prestashop>twopayment_9e727fdd3aec8274f46685441900280d'] = 'Project';
 $_MODULE['<{twopayment}prestashop>twopayment_1ffb19c3b99e1f859648eb7a9a7c3ef3'] = 'Ja (niet aanbevolen)';
 $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] = 'Je betaaltermijn start zodra je bestelling is uitgeleverd';
@@ -385,7 +384,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_7af191b62135c0adab07f2c26940a68a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_da26328af93752b0b89478bfd90627ce'] = 'Bestelling terugbetaald → Terugbetaald';
 $_MODULE['<{twopayment}prestashop>twopayment_da26aecbab950874dc37e7b30d82b40d'] = 'De minimale orderwaarde is %1$s%2$s %3$s btw.';
 $_MODULE['<{twopayment}prestashop>twopayment_dc7d3d42b2b2b79bf2711799b38f2543'] = 'Vast bedrag';
-$_MODULE['<{twopayment}prestashop>twopayment_dc9e89dc21fd423f5449d0995f5b9b00'] = 'Koop nu, betaal later - direct krediet';
 $_MODULE['<{twopayment}prestashop>twopayment_de62177e8fda33fee61addda5ea9eeb3'] = 'Los het betaalprobleem op voordat je verdergaat.';
 $_MODULE['<{twopayment}prestashop>twopayment_de68657d5c597fa395ed600a61c98178'] = 'Selecteer welke betaaltermijnen je wilt aanbieden. EOM-termijnen (einde van de maand) worden berekend vanaf het einde van de maand van uitlevering, plus het gekozen aantal dagen. Voor EOM zijn alleen termijnen van 30, 45 en 60 dagen beschikbaar.';
 $_MODULE['<{twopayment}prestashop>twopayment_dec67bcfdcf3eaa74a37b13df30c8ce5'] = 'Je betaling kan op dit moment niet worden verwerkt. Neem contact op met de winkeleigenaar voor hulp.';

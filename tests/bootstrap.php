@@ -91,6 +91,28 @@ namespace PrestaShop\PrestaShop\Core\Payment {
 }
 
 namespace {
+    /**
+     * Records what the module assigned, so a spec can assert on a template
+     * variable the rendered output never reveals (the stub does not render).
+     */
+    final class StubSmarty
+    {
+        /** @var array<string, mixed> */
+        public array $assigned = [];
+
+        public function assign($vars): void
+        {
+            if (is_array($vars)) {
+                $this->assigned = array_merge($this->assigned, $vars);
+            }
+        }
+
+        public function fetch($template): string
+        {
+            return '';
+        }
+    }
+
     final class StubStore
     {
         /** Global Configuration rows; group and shop rows are keyed by their id first. */
@@ -458,16 +480,7 @@ namespace {
             $context->link = new Link();
             $context->controller = new \stdClass();
             $context->language = (object) ['id' => 1];
-            $context->smarty = new class {
-                public function assign($vars): void
-                {
-                }
-
-                public function fetch($template): string
-                {
-                    return '';
-                }
-            };
+            $context->smarty = new StubSmarty();
 
             if (class_exists('Tools') && method_exists('Tools', 'resetTestValues')) {
                 Tools::resetTestValues();
@@ -667,16 +680,7 @@ namespace {
                 self::$instance->link = new Link();
                 self::$instance->controller = new \stdClass();
                 self::$instance->language = (object) ['id' => 1];
-                self::$instance->smarty = new class {
-                    public function assign($vars): void
-                    {
-                    }
-
-                    public function fetch($template): string
-                    {
-                        return '';
-                    }
-                };
+                self::$instance->smarty = new StubSmarty();
             }
 
             return self::$instance;
@@ -832,6 +836,16 @@ namespace {
                 return false;
             }
 
+            // Core's per-language write: an array value is one row per
+            // id_lang, which is how the title/subtitle settings are saved.
+            if (is_array($value)) {
+                foreach ($value as $idLang => $langValue) {
+                    StubStore::$configurationLang[(int) $idLang][$key] = $langValue;
+                }
+
+                return true;
+            }
+
             list($idShopGroup, $idShop) = self::resolveScope($idShopGroup, $idShop);
             $stored = self::get($key, null, $idShopGroup, $idShop);
             if ((!is_numeric($value) && $value === $stored) || (is_numeric($value) && $value == $stored && self::hasKey($key))) {
@@ -851,6 +865,10 @@ namespace {
 
         public static function hasKey($key, $idLang = null, $idShopGroup = null, $idShop = null): bool
         {
+            if ($idLang !== null) {
+                return isset(StubStore::$configurationLang[(int) $idLang])
+                    && array_key_exists($key, StubStore::$configurationLang[(int) $idLang]);
+            }
             if ($idShop) {
                 return isset(StubStore::$configurationShop[$idShop]) && array_key_exists($key, StubStore::$configurationShop[$idShop]);
             }
@@ -869,6 +887,9 @@ namespace {
             }
 
             unset(StubStore::$configuration[$key]);
+            foreach (array_keys(StubStore::$configurationLang) as $idLang) {
+                unset(StubStore::$configurationLang[$idLang][$key]);
+            }
             foreach (array_keys(StubStore::$configurationGroup) as $idShopGroup) {
                 unset(StubStore::$configurationGroup[$idShopGroup][$key]);
             }
@@ -2669,6 +2690,14 @@ namespace {
         public function exposeTwoPaymentOptionTitle(): string
         {
             return (string) $this->getTwoPaymentOption()->getCallToActionText();
+        }
+
+        /** The tile subtitle as the template receives it (TWO-25711). */
+        public function exposeTwoPaymentOptionSubtitle(): string
+        {
+            $this->getTwoPaymentOption();
+
+            return (string) $this->context->smarty->assigned['subtitle'];
         }
 
         /** This harness skips the constructor, which is what runs the self-heal in production. */
