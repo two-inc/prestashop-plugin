@@ -9,6 +9,31 @@
  */
 const MIN_SEARCH_LENGTH = 3;
 
+/** Anything inside the panel a press is entitled to take focus to. */
+const PANEL_FOCUS_TARGETS = 'input, button, select, textarea, a[href], [tabindex]';
+
+/**
+ * @param {object} event mousedown event
+ * @returns {boolean} whether the press is dead space rather than a control or a
+ *          scrollbar
+ */
+function pressIsDeadSpace(event) {
+    const node = event.target;
+    if (!node || node.nodeType !== 1 || !node.closest) {
+        return false;
+    }
+    if (node.closest(PANEL_FOCUS_TARGETS)) {
+        return false;
+    }
+    const scrollable = node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth;
+    // A press on a native scrollbar lands outside the content box, and
+    // cancelling it would stop the drag scrolling the results.
+    if (scrollable && (event.offsetX >= node.clientWidth || event.offsetY >= node.clientHeight)) {
+        return false;
+    }
+    return true;
+}
+
 class TwoCompanySearch {
     static DEFAULT_COMPANY_SEARCH_LIMIT = 50;
 
@@ -1041,8 +1066,15 @@ class TwoCompanySearch {
         // the focusout close above fires and the panel disappears mid-scroll. A
         // pointer held down anywhere on the panel means the buyer is still
         // using it; the close is re-evaluated when they let go.
-        this._dropdown.on('mousedown.twoDropdown', () => {
+        this._dropdown.on('mousedown.twoDropdown', (event) => {
             this._pointerInPanel = true;
+            // A press on the panel's own dead space is not a gesture: its
+            // default action would blur the caret out of the query field, and
+            // the mouseup below would then place focus the buyer never moved
+            // (ABN-554).
+            if (pressIsDeadSpace(event)) {
+                event.preventDefault();
+            }
             this.freezeResultsHeight();
         });
         $(document).off('mouseup.twoDropdown' + this._instanceNs)
