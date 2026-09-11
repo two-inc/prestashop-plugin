@@ -1775,23 +1775,78 @@ class TwoCheckoutManager {
         // Last server-accepted term, so a failed persist can put the chips back.
         let persistedTerm = activeTerm;
 
+        // One predicate drives the tick, the programmatic state and the tab stop,
+        // so the three cannot drift apart (ABN-554).
         const applySelection = (days) => {
-            termsContainer.querySelectorAll('.two-term-chip').forEach((chip) => {
+            const chips = termsContainer.querySelectorAll('.two-term-chip');
+            let selectedChip = null;
+            chips.forEach((chip) => {
                 const isSelected = Number(chip.dataset.days) === Number(days);
                 chip.classList.toggle('two-term-chip--selected', isSelected);
                 chip.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+                chip.tabIndex = isSelected ? 0 : -1;
+                if (isSelected) {
+                    selectedChip = chip;
+                }
             });
+            // Keeps the group reachable by Tab even if the selection matches no chip.
+            if (!selectedChip && chips.length) {
+                chips[0].tabIndex = 0;
+            }
             if (selectedDays) {
                 selectedDays.textContent = formatPayInLabel(days);
             }
         };
 
+        // Persist the selection in the cookie via the backend (10s timeout). Aborts
+        // any still-in-flight persist so an out-of-order response can't leave the
+        // cookie holding a term the buyer already moved away from.
+        const persistTerm = (days) => {
+            try {
+                if (window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
+                    if (pendingTermRequest && pendingTermRequest.abort) {
+                        pendingTermRequest.abort();
+                    }
+                    pendingTermRequest = $.ajax({
+                        url: window.twopayment.order_intent_url,
+                        type: 'POST',
+                        dataType: 'json',
+                        data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
+                        timeout: 10000
+                    }).done(() => {
+                        persistedTerm = days;
+                        // The surcharge amount is term-dependent: with Two
+                        // selected, re-quote and update the cart line for
+                        // the newly persisted term (idempotent server-side;
+                        // no-op when the amount is unchanged).
+                        if (this.isTwoPaymentSelected()) {
+                            this.syncSurchargeCartLine(true);
+                        }
+                    }).fail((xhr, statusText) => {
+                        if (statusText !== 'abort') {
+                            console.error('Two Payment: Error saving term:', statusText);
+                            applySelection(persistedTerm);
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error('Two Payment: Error saving term:', e);
+            }
+        };
+
+        // Arrow-key traversal moves the selection on every keystroke, so its
+        // persist and the re-quote it triggers are coalesced into one round trip.
+        const KEYBOARD_PERSIST_DELAY_MS = 250;
+        let keyboardPersistTimer = null;
+
         // Create term chips (parity with Magento/WooCommerce chip selector)
-        availableTerms.forEach((days, index) => {
+        availableTerms.forEach((days) => {
             const termChip = document.createElement('button');
             termChip.type = 'button';
             termChip.className = 'two-term-chip' + (singleTerm ? ' two-term-chip--single' : '');
             termChip.setAttribute('role', 'radio');
+            // The visible text is only the day count, so the name supplies the
+            // phrase around it — and contains it, as WCAG 2.5.3 requires.
             termChip.setAttribute('aria-label', formatPayInLabel(days));
 
             const daysLabel = document.createElement('span');
@@ -1826,14 +1881,6 @@ class TwoCheckoutManager {
 
             termChip.dataset.days = days;
 
-            const isInitialTerm = initialTerm ? (days === initialTerm) :
-                                 (singleTerm ? true : index === 0);
-
-            if (isInitialTerm) {
-                termChip.classList.add('two-term-chip--selected');
-            }
-            termChip.setAttribute('aria-checked', isInitialTerm ? 'true' : 'false');
-
             // A single term is non-selectable; skip the click handler and remove it
             // from the tab order so it doesn't present as a dead interactive control.
             if (singleTerm) {
@@ -1844,49 +1891,56 @@ class TwoCheckoutManager {
             }
 
             termChip.addEventListener('click', () => {
+                clearTimeout(keyboardPersistTimer);
                 applySelection(days);
-
-                // Persist selection in cookie via backend (10s timeout). Abort any
-                // still-in-flight persist so an out-of-order response can't leave
-                // the cookie holding a term the buyer already clicked away from.
-                try {
-                    if (window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
-                        if (pendingTermRequest && pendingTermRequest.abort) {
-                            pendingTermRequest.abort();
-                        }
-                        pendingTermRequest = $.ajax({
-                            url: window.twopayment.order_intent_url,
-                            type: 'POST',
-                            dataType: 'json',
-                            data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
-                            timeout: 10000
-                        }).done(() => {
-                            persistedTerm = days;
-                            // The surcharge amount is term-dependent: with Two
-                            // selected, re-quote and update the cart line for
-                            // the newly persisted term (idempotent server-side;
-                            // no-op when the amount is unchanged).
-                            if (this.isTwoPaymentSelected()) {
-                                this.syncSurchargeCartLine(true);
-                            }
-                        }).fail((xhr, statusText) => {
-                            if (statusText !== 'abort') {
-                                console.error('Two Payment: Error saving term:', statusText);
-                                applySelection(persistedTerm);
-                            }
-                        });
-                    }
-                } catch (e) {
-                    console.error('Two Payment: Error saving term:', e);
-                }
+                persistTerm(days);
             });
 
             termsContainer.appendChild(termChip);
         });
-        
-        if (selectedDays && activeTerm) {
-            selectedDays.textContent = formatPayInLabel(activeTerm);
-        }
+
+        applySelection(activeTerm);
+
+        // The keyboard contract the radiogroup and radio roles advertise: one tab
+        // stop, arrow keys moving the selection within it (W3C radio-group pattern,
+        // ABN-554). Modified arrow keys stay with the browser — swallowing Alt+Left
+        // would break navigating back.
+        termsContainer.addEventListener('keydown', (event) => {
+            const chips = Array.prototype.slice.call(
+                termsContainer.querySelectorAll('.two-term-chip:not([disabled])')
+            );
+            if (chips.length < 2 || event.altKey || event.ctrlKey || event.metaKey) {
+                return;
+            }
+
+            const current = Math.max(chips.indexOf(document.activeElement), 0);
+            let next;
+            switch (event.key) {
+                case 'ArrowRight':
+                case 'ArrowDown':
+                    next = (current + 1) % chips.length;
+                    break;
+                case 'ArrowLeft':
+                case 'ArrowUp':
+                    next = (current - 1 + chips.length) % chips.length;
+                    break;
+                case 'Home':
+                    next = 0;
+                    break;
+                case 'End':
+                    next = chips.length - 1;
+                    break;
+                default:
+                    return;
+            }
+
+            event.preventDefault();
+            const days = Number(chips[next].dataset.days);
+            applySelection(days);
+            chips[next].focus();
+            clearTimeout(keyboardPersistTimer);
+            keyboardPersistTimer = setTimeout(() => persistTerm(days), KEYBOARD_PERSIST_DELAY_MS);
+        });
 
         // Resolve each chip's loading indicator to the REAL quoted amount for
         // this cart, asynchronously — or to blank if the quote fails.
