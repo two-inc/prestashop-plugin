@@ -240,6 +240,14 @@ the buyer's own Tab (TWO-25326). The same holds for the closes nothing in the
 buyer's hands reached: a re-render, a country change mid-select, and another
 popover claiming the single open slot.
 
+**A press on the panel's own dead space is a no-op.** Its default action would
+blur the caret out of the query field, and the panel's `mouseup` reclaim — which
+exists for a scrollbar drag, where the browser drops focus with no cancellable
+default — would then place focus the buyer never moved. So the press is
+cancelled, except on a control, which a press is entitled to focus, and except
+on a scrollbar, where cancelling would stop the drag scrolling the results
+(ABN-554).
+
 **A pointer press outside the popover takes focus back only where the press left
 it nowhere**, and one tick later rather than in the handler: the press's own
 default action runs after the handler and either focuses what it hit or clears
