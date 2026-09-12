@@ -227,6 +227,41 @@ Escape-to-close nor the close-on-focus-leave handler can see a keystroke.
 `setupCompanyFieldOpeners()` binds focus, mousedown and keydown to one
 `openDropdown()`.
 
+**In a country the search does not cover, a printable key takes the buyer into
+manual entry and keeps the character.** The panel opens onto a chip there, a chip
+is a `<button>` that swallows text, and this field is a readonly search trigger
+until manual entry takes it over — so every character typed was lost with nothing
+on screen to say so. Manual entry is the only state this field accepts typing in,
+and in that country it is the only route to naming a company at all (ABN-554).
+Space and Enter are excluded: both activate the focused chip.
+
+**Closing the panel puts focus back on the company-name field** — Escape, a
+pointer press outside it, a company adopted from the results, manual entry taking
+the field over, and a sole-trader signup that answers or is abandoned (ABN-554).
+The field's own focus opener is held off for that one programmatic focus alone, so
+any keydown on the field, a pointer press on it, or focus arriving from anywhere
+else brings the popover straight back.
+
+**The close-on-focus-leave path is the exception, and deliberately so.** It only
+fires once focus has settled on another control, so taking focus back would undo
+the buyer's own Tab (TWO-25326). The same holds for the closes nothing in the
+buyer's hands reached: a re-render, a country change mid-select, and another
+popover claiming the single open slot.
+
+**A press on the panel's own dead space is a no-op.** Its default action would
+blur the caret out of the query field, and the panel's `mouseup` reclaim — which
+exists for a scrollbar drag, where the browser drops focus with no cancellable
+default — would then place focus the buyer never moved. So the press is
+cancelled, except on a control, which a press is entitled to focus, and except
+on a scrollbar, where cancelling would stop the drag scrolling the results
+(ABN-554).
+
+**A pointer press outside the popover takes focus back only where the press left
+it nowhere**, and one tick later rather than in the handler: the press's own
+default action runs after the handler and either focuses what it hit or clears
+focus entirely, so focusing the field from the handler is simply undone. Neither
+default action exists in jsdom, which is why this needed a real browser.
+
 **The open panel takes the field's tab stop** — `tabindex="-1"` while it is up, and
 on close the field's PRIOR value restored exactly, which is removal when there was
 none (TWO-25503). Without it the focus opener is a keyboard trap: the opener puts
@@ -297,6 +332,54 @@ Three more traps in the JS suites:
 - **A mutation proves NEW coverage only when re-run against the base ref.** One the
   existing suite already catches proves the suite is sensitive, not that the case
   added covers anything.
+
+## The Payment-Term Chips Owe The Radio-Group Keyboard Contract
+
+The chip row advertises itself as a radio group — a `radiogroup` container, `radio`
+chips, an `aria-checked` state — so it owes the W3C pattern's keyboard behaviour
+(ABN-554). Advertising the role without it is the defect: a screen-reader buyer is
+told "radio group" and finds none of the interaction that implies.
+
+- **One tab stop, on the checked chip.** A roving `tabindex` keeps exactly one chip
+  tabbable. A selection matching no offered chip falls back to the first, so no state
+  drops the group out of the tab order.
+- **The arrow keys move the checked selection**, wrapping at both ends, with Home and
+  End for the first and last term; focus and selection move together, and the handler
+  returns without preventing the default for an arrow carrying alt, ctrl or meta,
+  since swallowing those breaks the browser's own shortcuts.
+- **One predicate sets the selected class, `aria-checked` and the tab stop**, so the
+  visual and programmatic states cannot drift apart.
+- **Selection follows focus, so the persist is coalesced on the keyboard path.** Each
+  arrow key changes the term, which persists it and re-quotes the fee; without
+  coalescing an arrow sweep is one round trip per keystroke. A click persists at once.
+- **A chip's visible text states the term in full**, so a standard-term chip carries
+  no `aria-label` of its own: one restating "30 days" would risk WCAG 2.5.3. Only an
+  end-of-month chip is named, because `EOM+30` needs spelling out — see below.
+- **A single offered term is a `disabled` chip**: `disabled` takes it out of the tab
+  order whatever its `tabindex`, and the arrow handler ignores a group of fewer than
+  two enabled chips. It is therefore not reachable or announceable by keyboard at all.
+
+## A Chip States Its Term Type, Not Just A Day Count
+
+An end-of-month term falls due that many days after the end of the month, so a chip
+reading "30 days" on a shop configured that way states the wrong due date (ABN-554).
+The visible text is `30 days` under standard terms and `EOM+30` under end of month.
+
+Only the end-of-month chip carries a `title` and an `aria-label`, and both read
+`EOM+30: pay 30 days after the end of the month`. The name opens with the visible
+token because WCAG 2.5.3 requires the accessible name to contain the visible text, so
+the phrase may not be reordered to put the explanation first. It is one translated
+sentence with the day count substituted, not a concatenation of translated fragments:
+word order differs by language.
+
+That name states the surcharge too, because an `aria-label` replaces the whole
+accessible name and the amount rendered inside the chip is then announced nowhere:
+`EOM+30: pay 30 days after the end of the month, plus a 7.25 EUR surcharge`. It is a
+second whole sentence rather than the first with a clause appended, and its
+placeholders are numbered because the day count and the amount are different values.
+The quote lands after the chips are built, so each chip keeps both sentences on itself
+and the name is restated when the amounts arrive — a failed or absent quote puts it
+back to the one claiming no amount, alongside the blank it leaves in the chip.
 
 ## The Custom Request-Header Table
 

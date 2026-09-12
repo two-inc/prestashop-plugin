@@ -88,7 +88,7 @@
     
     <div class="two-payment-terms" id="two-payment-terms" style="display: none;">
         <div class="two-terms-header">
-            <h4 class="two-terms-title">{l s='Choose the Buy Now, Pay Later option that works best for you' mod='twopayment'}</h4>
+            <h4 class="two-terms-title" id="two-terms-title">{l s='Choose the Buy Now, Pay Later option that works best for you' mod='twopayment'}</h4>
             <p class="two-terms-description" id="two-terms-description" data-standard-text="{l s='Your payment period starts when your order is fulfilled' mod='twopayment'}" data-eom-text="{l s='Payment due at the end of the current month plus the selected days from when your order is fulfilled' mod='twopayment'}">
                 {l s='Your payment period starts when your order is fulfilled' mod='twopayment'}
             </p>

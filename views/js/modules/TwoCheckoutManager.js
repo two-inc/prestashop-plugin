@@ -1665,7 +1665,7 @@ class TwoCheckoutManager {
         const termsHtml = `
             <div class="two-payment-terms" id="two-payment-terms" style="display: block;">
                 <div class="two-terms-header">
-                    <h4 class="two-terms-title">${this.t('choose_payment_terms', 'Choose the Buy Now, Pay Later option that works best for you')}</h4>
+                    <h4 class="two-terms-title" id="two-terms-title">${this.t('choose_payment_terms', 'Choose the Buy Now, Pay Later option that works best for you')}</h4>
                     <p class="two-terms-description">${this.t('payment_period_starts', 'Your payment period starts when your order is fulfilled')}</p>
                 </div>
                 <div class="two-term-chips">
@@ -1725,6 +1725,17 @@ class TwoCheckoutManager {
         const initialTerm = availableTerms.includes(preferredTerm) ? preferredTerm : null;
 
         termsContainer.setAttribute('role', 'radiogroup');
+        // A chip's text states only the term, so the strip's title is what names
+        // the group — one term or several (ABN-554). A theme-supplied container
+        // may carry no title, hence the fallback to the same wording.
+        if (document.getElementById('two-terms-title')) {
+            termsContainer.setAttribute('aria-labelledby', 'two-terms-title');
+        } else {
+            termsContainer.setAttribute(
+                'aria-label',
+                this.t('choose_payment_terms', 'Choose the Buy Now, Pay Later option that works best for you')
+            );
+        }
         
         // Update description based on term type
         var termsDescription = document.querySelector('#two-terms-description');
@@ -1750,61 +1761,129 @@ class TwoCheckoutManager {
         // lands last rather than whichever the buyer clicked last.
         let pendingTermRequest = null;
 
-        const formatChipLabel = (days) => termType === 'EOM'
-            ? this.t('end_of_month_plus_days', 'End of Month + %s days').replace('%s', days)
+        // An end-of-month term falls due that many days after the end of the
+        // month, so the bare day count states the wrong due date for it.
+        const formatChipText = (days) => termType === 'EOM'
+            ? this.t('eom_plus_days', 'EOM+%s').replace('%s', days)
             : days + ' ' + this.t('days', 'days');
 
-        const formatPayInLabel = (days) => {
-            const payInText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.pay_in
-                ? window.twopayment.i18n.pay_in
-                : 'Pay in';
-            const daysText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.days
-                ? window.twopayment.i18n.days
-                : 'days';
-            const fromEndOfMonthText = window.twopayment && window.twopayment.i18n && window.twopayment.i18n.from_end_of_month
-                ? window.twopayment.i18n.from_end_of_month
-                : 'from end of month';
+        // What EOM+30 means, spelled out, and empty under standard terms where
+        // the visible text already says it.
+        const formatEomExplainer = (days) => termType === 'EOM'
+            ? this.t('eom_chip_explainer', 'EOM+%s: pay %s days after the end of the month')
+                .split('%s')
+                .join(days)
+            : '';
 
-            return termType === 'EOM'
-                ? payInText + ' ' + days + ' ' + daysText + ' ' + fromEndOfMonthText
-                : payInText + ' ' + days + ' ' + daysText;
-        };
+        // The same sentence with the amount left as `%2$s`: the quote lands
+        // after the chip does, so applyTermChipName() substitutes it then.
+        const formatEomExplainerWithFee = (days) => termType === 'EOM'
+            ? this.t(
+                'eom_chip_explainer_fee',
+                'EOM+%1$s: pay %1$s days after the end of the month, plus a %2$s surcharge'
+            )
+                .split('%1$s')
+                .join(days)
+            : '';
+
+        // One translated sentence per term type, never assembled from fragments:
+        // a translator cannot reorder or agree words across a concatenation.
+        const formatPayInLabel = (days) => (termType === 'EOM'
+            ? this.t('pay_in_days_eom', 'Pay in %s days from end of month')
+            : this.t('pay_in_days', 'Pay in %s days')
+        ).replace('%s', days);
 
         const activeTerm = initialTerm || availableTerms[0];
 
         // Last server-accepted term, so a failed persist can put the chips back.
         let persistedTerm = activeTerm;
 
+        // One predicate drives the tick, the programmatic state and the tab stop,
+        // so the three cannot drift apart (ABN-554).
         const applySelection = (days) => {
-            termsContainer.querySelectorAll('.two-term-chip').forEach((chip) => {
+            const chips = termsContainer.querySelectorAll('.two-term-chip');
+            let selectedChip = null;
+            chips.forEach((chip) => {
                 const isSelected = Number(chip.dataset.days) === Number(days);
                 chip.classList.toggle('two-term-chip--selected', isSelected);
                 chip.setAttribute('aria-checked', isSelected ? 'true' : 'false');
+                chip.tabIndex = isSelected ? 0 : -1;
+                if (isSelected) {
+                    selectedChip = chip;
+                }
             });
+            // Keeps the group reachable by Tab even if the selection matches no chip.
+            if (!selectedChip && chips.length) {
+                chips[0].tabIndex = 0;
+            }
             if (selectedDays) {
                 selectedDays.textContent = formatPayInLabel(days);
             }
         };
 
+        // Persist the selection in the cookie via the backend (10s timeout). Aborts
+        // any still-in-flight persist so an out-of-order response can't leave the
+        // cookie holding a term the buyer already moved away from.
+        const persistTerm = (days) => {
+            try {
+                if (window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
+                    if (pendingTermRequest && pendingTermRequest.abort) {
+                        pendingTermRequest.abort();
+                    }
+                    pendingTermRequest = $.ajax({
+                        url: window.twopayment.order_intent_url,
+                        type: 'POST',
+                        dataType: 'json',
+                        data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
+                        timeout: 10000
+                    }).done(() => {
+                        persistedTerm = days;
+                        // The surcharge amount is term-dependent: with Two
+                        // selected, re-quote and update the cart line for
+                        // the newly persisted term (idempotent server-side;
+                        // no-op when the amount is unchanged).
+                        if (this.isTwoPaymentSelected()) {
+                            this.syncSurchargeCartLine(true);
+                        }
+                    }).fail((xhr, statusText) => {
+                        if (statusText !== 'abort') {
+                            console.error('Two Payment: Error saving term:', statusText);
+                            applySelection(persistedTerm);
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error('Two Payment: Error saving term:', e);
+            }
+        };
+
+        // Arrow-key traversal moves the selection on every keystroke, so its
+        // persist and the re-quote it triggers are coalesced into one round trip.
+        const KEYBOARD_PERSIST_DELAY_MS = 250;
+        let keyboardPersistTimer = null;
+
         // Create term chips (parity with Magento/WooCommerce chip selector)
-        availableTerms.forEach((days, index) => {
+        availableTerms.forEach((days) => {
             const termChip = document.createElement('button');
             termChip.type = 'button';
             termChip.className = 'two-term-chip' + (singleTerm ? ' two-term-chip--single' : '');
             termChip.setAttribute('role', 'radio');
-            termChip.setAttribute('aria-label', formatPayInLabel(days));
 
             const daysLabel = document.createElement('span');
             daysLabel.className = 'two-term-chip__days';
-
-            // Format display based on term type (EOM+X for End-of-Month, X for Standard)
-            if (termType === 'EOM') {
-                daysLabel.textContent = 'EOM+' + days;
-            } else {
-                daysLabel.textContent = days;
-            }
-            termChip.title = formatChipLabel(days);
+            daysLabel.textContent = formatChipText(days);
             termChip.appendChild(daysLabel);
+
+            // Only under end-of-month terms: the visible text of a standard
+            // chip already reads as its name, and a second one restating it
+            // risks WCAG 2.5.3. The end-of-month name opens with the visible
+            // token, which that criterion requires it to contain.
+            const explainer = formatEomExplainer(days);
+            if (explainer) {
+                termChip.dataset.chipName = explainer;
+                termChip.dataset.chipNameFee = formatEomExplainerWithFee(days);
+                this.applyTermChipName(termChip, '');
+            }
 
             // Per-term surcharge slot: starts as a loading indicator (three
             // animated dots, Magento gateway_method.html parity) on EVERY
@@ -1826,14 +1905,6 @@ class TwoCheckoutManager {
 
             termChip.dataset.days = days;
 
-            const isInitialTerm = initialTerm ? (days === initialTerm) :
-                                 (singleTerm ? true : index === 0);
-
-            if (isInitialTerm) {
-                termChip.classList.add('two-term-chip--selected');
-            }
-            termChip.setAttribute('aria-checked', isInitialTerm ? 'true' : 'false');
-
             // A single term is non-selectable; skip the click handler and remove it
             // from the tab order so it doesn't present as a dead interactive control.
             if (singleTerm) {
@@ -1844,49 +1915,56 @@ class TwoCheckoutManager {
             }
 
             termChip.addEventListener('click', () => {
+                clearTimeout(keyboardPersistTimer);
                 applySelection(days);
-
-                // Persist selection in cookie via backend (10s timeout). Abort any
-                // still-in-flight persist so an out-of-order response can't leave
-                // the cookie holding a term the buyer already clicked away from.
-                try {
-                    if (window.twopayment && window.twopayment.order_intent_url && window.twopayment.ajax_token) {
-                        if (pendingTermRequest && pendingTermRequest.abort) {
-                            pendingTermRequest.abort();
-                        }
-                        pendingTermRequest = $.ajax({
-                            url: window.twopayment.order_intent_url,
-                            type: 'POST',
-                            dataType: 'json',
-                            data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
-                            timeout: 10000
-                        }).done(() => {
-                            persistedTerm = days;
-                            // The surcharge amount is term-dependent: with Two
-                            // selected, re-quote and update the cart line for
-                            // the newly persisted term (idempotent server-side;
-                            // no-op when the amount is unchanged).
-                            if (this.isTwoPaymentSelected()) {
-                                this.syncSurchargeCartLine(true);
-                            }
-                        }).fail((xhr, statusText) => {
-                            if (statusText !== 'abort') {
-                                console.error('Two Payment: Error saving term:', statusText);
-                                applySelection(persistedTerm);
-                            }
-                        });
-                    }
-                } catch (e) {
-                    console.error('Two Payment: Error saving term:', e);
-                }
+                persistTerm(days);
             });
 
             termsContainer.appendChild(termChip);
         });
-        
-        if (selectedDays && activeTerm) {
-            selectedDays.textContent = formatPayInLabel(activeTerm);
-        }
+
+        applySelection(activeTerm);
+
+        // The keyboard contract the radiogroup and radio roles advertise: one tab
+        // stop, arrow keys moving the selection within it (W3C radio-group pattern,
+        // ABN-554). Modified arrow keys stay with the browser — swallowing Alt+Left
+        // would break navigating back.
+        termsContainer.addEventListener('keydown', (event) => {
+            const chips = Array.prototype.slice.call(
+                termsContainer.querySelectorAll('.two-term-chip:not([disabled])')
+            );
+            if (chips.length < 2 || event.altKey || event.ctrlKey || event.metaKey) {
+                return;
+            }
+
+            const current = Math.max(chips.indexOf(document.activeElement), 0);
+            let next;
+            switch (event.key) {
+                case 'ArrowRight':
+                case 'ArrowDown':
+                    next = (current + 1) % chips.length;
+                    break;
+                case 'ArrowLeft':
+                case 'ArrowUp':
+                    next = (current - 1 + chips.length) % chips.length;
+                    break;
+                case 'Home':
+                    next = 0;
+                    break;
+                case 'End':
+                    next = chips.length - 1;
+                    break;
+                default:
+                    return;
+            }
+
+            event.preventDefault();
+            const days = Number(chips[next].dataset.days);
+            applySelection(days);
+            chips[next].focus();
+            clearTimeout(keyboardPersistTimer);
+            keyboardPersistTimer = setTimeout(() => persistTerm(days), KEYBOARD_PERSIST_DELAY_MS);
+        });
 
         // Resolve each chip's loading indicator to the REAL quoted amount for
         // this cart, asynchronously — or to blank if the quote fails.
@@ -1894,16 +1972,42 @@ class TwoCheckoutManager {
     }
 
     /**
+     * One chip's accessible name, stating the surcharge when the chip shows one.
+     * An aria-label replaces the whole accessible name, so without the amount in
+     * it the amount rendered inside the chip is announced nowhere. A no-op on a
+     * standard chip, which carries no name of its own.
+     *
+     * @param {HTMLElement} chip
+     * @param {string} feeText the formatted amount, unprefixed and empty unless
+     *     the chip displays one
+     */
+    applyTermChipName(chip, feeText) {
+        const base = chip.dataset.chipName;
+        if (!base) {
+            return;
+        }
+        const name = feeText && chip.dataset.chipNameFee
+            ? chip.dataset.chipNameFee.split('%2$s').join(feeText)
+            : base;
+        chip.setAttribute('aria-label', name);
+        chip.title = name;
+    }
+
+    /**
      * Clear every chip's surcharge slot (removes the loading dots) so a
      * failed/absent quote reads as a deliberate empty state, never as a
-     * permanently-animating loader.
+     * permanently-animating loader. The names lose the amount with it.
      */
     clearTermSurchargeLoading(termsContainer) {
         if (!termsContainer) {
             return;
         }
-        termsContainer.querySelectorAll('.two-term-chip .two-term-chip__surcharge').forEach((label) => {
-            label.textContent = '';
+        termsContainer.querySelectorAll('.two-term-chip').forEach((chip) => {
+            this.applyTermChipName(chip, '');
+            const label = chip.querySelector('.two-term-chip__surcharge');
+            if (label) {
+                label.textContent = '';
+            }
         });
     }
 
@@ -1957,14 +2061,14 @@ class TwoCheckoutManager {
                 // parity). A zero, invalid or absent quote counts as zero.
                 const allZero = amounts.every((amount) => amount < 0.005);
                 chips.forEach((chip, index) => {
+                    const feeText = allZero ? '' : amounts[index].toFixed(2) + suffix;
+                    this.applyTermChipName(chip, feeText);
                     const surchargeLabel = chip.querySelector('.two-term-chip__surcharge');
                     if (!surchargeLabel) {
                         return;
                     }
                     // Assigned either way, so the loading dots never survive.
-                    surchargeLabel.textContent = allZero
-                        ? ''
-                        : '+' + amounts[index].toFixed(2) + suffix;
+                    surchargeLabel.textContent = feeText ? '+' + feeText : '';
                 });
             }).fail(() => {
                 this.clearTermSurchargeLoading(termsContainer);

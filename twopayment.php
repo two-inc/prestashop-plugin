@@ -5028,10 +5028,26 @@ class Twopayment extends PaymentModule
             'company_verify_failed' => $this->l('Company information could not be verified. Go back to your billing address and select your company from the search results.'),
             'company_verification_needed' => $this->l('Company Verification Needed'),
             'company_auto_resolve_hint' => $this->l('We found your company name but need you to verify it. Please go back to your billing address and select your company from the search results.'),
-            'pay_in' => $this->l('Pay in'),
             'days' => $this->l('days'),
-            'from_end_of_month' => $this->l('from end of month'),
-            'end_of_month_plus_days' => $this->l('End of Month + %s days'),
+            // One sentence each, the day count substituted: a summary built from
+            // 'Pay in' + N + 'days' + 'from end of month' cannot be reordered or
+            // agreed by a translator.
+            'pay_in_days' => $this->l('Pay in %s days'),
+            'pay_in_days_eom' => $this->l('Pay in %s days from end of month'),
+            'eom_plus_days' => $this->l('EOM+%s'),
+            // Both placeholders are the same day count; the chip renderer
+            // substitutes every one of them. `%s` is deliberately left
+            // UNRESOLVED for the same reason as the placeholders below: the
+            // browser holds the term and interpolates it.
+            'eom_chip_explainer' => $this->l('EOM+%s: pay %s days after the end of the month'),
+            // The same sentence stating the surcharge, because an aria-label
+            // replaces the whole accessible name and the amount rendered inside
+            // the chip is then announced nowhere. Numbered placeholders: `%1$s`
+            // is the day count, `%2$s` the formatted amount, both substituted by
+            // the browser.
+            'eom_chip_explainer_fee' => $this->l(
+                'EOM+%1$s: pay %1$s days after the end of the month, plus a %2$s surcharge'
+            ),
             'company_search_searching' => $this->l('Searching...'),
             'company_search_unavailable' => $this->l('Company search is temporarily unavailable. Please try again.'),
             // Distinct from company_search_unavailable on purpose: nothing is
@@ -5052,7 +5068,7 @@ class Twopayment extends PaymentModule
             // is not duplicated on screen alongside a placeholder that used to
             // just repeat the unclicked field's own watermark wording. `%d` is
             // deliberately left UNRESOLVED here for the same reason as
-            // `end_of_month_plus_days` above: the browser JS holds the one
+            // `eom_chip_explainer` above: the browser JS holds the one
             // threshold constant and interpolates it, so the number this
             // sentence claims cannot drift from the number the search
             // enforces.

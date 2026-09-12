@@ -9,6 +9,35 @@
  */
 const MIN_SEARCH_LENGTH = 3;
 
+/**
+ * The controls inside the panel a press is entitled to focus. Deliberately not
+ * `[tabindex]`: jQuery UI puts one on its own results `<ul>`, whose padding is
+ * dead space the buyer means nothing by.
+ */
+const PANEL_FOCUS_TARGETS = 'input, button, select, textarea, a[href]';
+
+/**
+ * @param {object} event mousedown event
+ * @returns {boolean} whether the press is dead space rather than a control or a
+ *          scrollbar
+ */
+function pressIsDeadSpace(event) {
+    const node = event.target;
+    if (!node || node.nodeType !== 1 || !node.closest) {
+        return false;
+    }
+    if (node.closest(PANEL_FOCUS_TARGETS)) {
+        return false;
+    }
+    const scrollable = node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth;
+    // A press on a native scrollbar lands outside the content box, and
+    // cancelling it would stop the drag scrolling the results.
+    if (scrollable && (event.offsetX >= node.clientWidth || event.offsetY >= node.clientHeight)) {
+        return false;
+    }
+    return true;
+}
+
 class TwoCompanySearch {
     static DEFAULT_COMPANY_SEARCH_LIMIT = 50;
 
@@ -996,6 +1025,14 @@ class TwoCompanySearch {
                 event.stopPropagation();
                 // Escape reverts focus to the company-name field.
                 this.closeDropdown(true);
+                return;
+            }
+            // A chip is a `<button>`, which swallows typing, and a country the
+            // registry search does not cover renders no query row to hold the
+            // caret instead (ABN-554).
+            if (this.isPrintableCapture(event) && !this.isCurrentCountrySupportedForSearch()) {
+                event.preventDefault();
+                this.captureKeyIntoManualEntry(event.key);
             }
         });
 
@@ -1041,8 +1078,15 @@ class TwoCompanySearch {
         // the focusout close above fires and the panel disappears mid-scroll. A
         // pointer held down anywhere on the panel means the buyer is still
         // using it; the close is re-evaluated when they let go.
-        this._dropdown.on('mousedown.twoDropdown', () => {
+        this._dropdown.on('mousedown.twoDropdown', (event) => {
             this._pointerInPanel = true;
+            // A press on the panel's own dead space is not a gesture: its
+            // default action would blur the caret out of the query field, and
+            // the mouseup below would then place focus the buyer never moved
+            // (ABN-554).
+            if (pressIsDeadSpace(event)) {
+                event.preventDefault();
+            }
             this.freezeResultsHeight();
         });
         $(document).off('mouseup.twoDropdown' + this._instanceNs)
@@ -1104,7 +1148,11 @@ class TwoCompanySearch {
                 if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
                     return;
                 }
+                // Deferred instead of closeDropdown()'s own return: the
+                // press's default action runs after this handler and would
+                // undo it.
                 this.closeDropdown(false);
+                this.returnFocusIfDropped();
             });
     }
 
@@ -1203,7 +1251,11 @@ class TwoCompanySearch {
             if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
                 return;
             }
+            // False, then the conditional return: focus that MOVED is the
+            // buyer's own Tab and stays put (TWO-25326), but focus that was
+            // DROPPED leaves them on nothing once the panel goes.
             this.closeDropdown(false);
+            this.returnFocusIfDropped();
         }, 0);
     }
 
@@ -1434,9 +1486,12 @@ class TwoCompanySearch {
     }
 
     /**
-     * @param {boolean} returnFocus Put focus back on the company-name field.
-     *   True for Escape and for a completed selection; false when the
-     *   browser has already moved focus somewhere else of its own accord.
+     * @param {boolean} returnFocus Put focus back on the company-name field -
+     *   what every close the buyer reaches does (ABN-554). False where
+     *   something else already owns focus: a re-render, a country change
+     *   mid-select, another popover claiming the open slot, manual entry,
+     *   and the focus-leave close, which fires only once focus has landed
+     *   elsewhere (TWO-25326).
      */
     closeDropdown(returnFocus) {
         // Every way the panel closes must leave no sole-trader spinner or stray
@@ -1487,6 +1542,33 @@ class TwoCompanySearch {
                 this._closingSelf = false;
             }
         }
+    }
+
+    /**
+     * Take focus back only if the pointer press that closed the panel left it
+     * nowhere, which is what a press on anything unfocusable does. Deferred by
+     * one tick so the press's own default action has already settled.
+     */
+    returnFocusIfDropped() {
+        setTimeout(() => {
+            if (this._destroyed || this._dropdownOpen) {
+                return;
+            }
+            const active = document.activeElement;
+            if (active && active !== document.body && active !== document.documentElement) {
+                return;
+            }
+            if (!this.companyField || !this.companyField.length
+                || !document.contains(this.companyField.get(0))) {
+                return;
+            }
+            this._closingSelf = true;
+            try {
+                this.focusQuietly(this.companyField);
+            } finally {
+                this._closingSelf = false;
+            }
+        }, 0);
     }
 
     /**
@@ -1997,6 +2079,14 @@ class TwoCompanySearch {
                 return;
             }
             event.preventDefault();
+            // A country the registry search does not cover renders no query
+            // field for the character to open into, and this field is a
+            // readonly search trigger until manual entry takes it over, so
+            // anything typed here is otherwise lost (ABN-554).
+            if (key && key.length === 1 && !this.isCurrentCountrySupportedForSearch()) {
+                this.captureKeyIntoManualEntry(key);
+                return;
+            }
             this.openDropdown();
             // The character that opened the panel belongs in the query field.
             // Only for a real printable character - `key` is a single code point
@@ -2010,6 +2100,38 @@ class TwoCompanySearch {
                 this._queryField.trigger('input');
             }
         });
+    }
+
+    /**
+     * Whether this keydown is the buyer typing text rather than working a
+     * control. Space and Enter are excluded: both activate a focused chip.
+     *
+     * @param {Object} event jQuery keydown event
+     * @returns {boolean}
+     */
+    isPrintableCapture(event) {
+        if (event.ctrlKey || event.metaKey || event.altKey) {
+            return false;
+        }
+        return !!event.key && event.key.length === 1 && event.key !== ' ';
+    }
+
+    /**
+     * Take the buyer into manual entry and keep the character that asked for
+     * it. Manual entry is the only state where this field accepts typing at
+     * all, and in a country the registry search does not cover it is the only
+     * route to naming a company (ABN-525).
+     *
+     * @param {string} key a single code point
+     * @returns {void}
+     */
+    captureKeyIntoManualEntry(key) {
+        this.enterManualEntryMode();
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        this.companyField.val(String(this.companyField.val() || '') + key);
+        this.companyField.trigger('input');
     }
 
     normalizeCompanyName(value) {
