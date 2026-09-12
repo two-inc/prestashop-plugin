@@ -1025,6 +1025,14 @@ class TwoCompanySearch {
                 event.stopPropagation();
                 // Escape reverts focus to the company-name field.
                 this.closeDropdown(true);
+                return;
+            }
+            // A chip is a `<button>`, which swallows typing, and a country the
+            // registry search does not cover renders no query row to hold the
+            // caret instead (ABN-554).
+            if (this.isPrintableCapture(event) && !this.isCurrentCountrySupportedForSearch()) {
+                event.preventDefault();
+                this.captureKeyIntoManualEntry(event.key);
             }
         });
 
@@ -2071,6 +2079,14 @@ class TwoCompanySearch {
                 return;
             }
             event.preventDefault();
+            // A country the registry search does not cover renders no query
+            // field for the character to open into, and this field is a
+            // readonly search trigger until manual entry takes it over, so
+            // anything typed here is otherwise lost (ABN-554).
+            if (key && key.length === 1 && !this.isCurrentCountrySupportedForSearch()) {
+                this.captureKeyIntoManualEntry(key);
+                return;
+            }
             this.openDropdown();
             // The character that opened the panel belongs in the query field.
             // Only for a real printable character - `key` is a single code point
@@ -2084,6 +2100,38 @@ class TwoCompanySearch {
                 this._queryField.trigger('input');
             }
         });
+    }
+
+    /**
+     * Whether this keydown is the buyer typing text rather than working a
+     * control. Space and Enter are excluded: both activate a focused chip.
+     *
+     * @param {Object} event jQuery keydown event
+     * @returns {boolean}
+     */
+    isPrintableCapture(event) {
+        if (event.ctrlKey || event.metaKey || event.altKey) {
+            return false;
+        }
+        return !!event.key && event.key.length === 1 && event.key !== ' ';
+    }
+
+    /**
+     * Take the buyer into manual entry and keep the character that asked for
+     * it. Manual entry is the only state where this field accepts typing at
+     * all, and in a country the registry search does not cover it is the only
+     * route to naming a company (ABN-525).
+     *
+     * @param {string} key a single code point
+     * @returns {void}
+     */
+    captureKeyIntoManualEntry(key) {
+        this.enterManualEntryMode();
+        if (!this.companyField || !this.companyField.length) {
+            return;
+        }
+        this.companyField.val(String(this.companyField.val() || '') + key);
+        this.companyField.trigger('input');
     }
 
     normalizeCompanyName(value) {
