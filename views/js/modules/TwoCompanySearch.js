@@ -1027,9 +1027,8 @@ class TwoCompanySearch {
                 this.closeDropdown(true);
                 return;
             }
-            // A chip is a `<button>`, which swallows typing, and any mode that
-            // withdraws the query row leaves nothing else in the panel to hold
-            // the caret (ABN-554).
+            // A chip is a `<button>`, which swallows typing, and a withdrawn
+            // query row leaves nothing else in the panel to hold the caret (ABN-554).
             if (this.isPrintableCapture(event) && this.queryRowIsHidden()) {
                 event.preventDefault();
                 this.captureKeyForWithdrawnRow(event.key);
@@ -1883,9 +1882,8 @@ class TwoCompanySearch {
         const wasHidden = searchRow.is('[hidden]');
         if (suppressed) {
             searchRow.hide().attr('hidden', 'hidden');
-            // Only on the withdrawal itself: a later sync of an already-withdrawn
-            // row would drop the keys captureKeyIntoHiddenQuery() has parked in
-            // it for the row a mode change reveals (ABN-554).
+            // Only on the withdrawal itself: a later sync would drop the keys
+            // captureKeyIntoHiddenQuery() has parked here (ABN-554).
             if (wasHidden) {
                 return;
             }
@@ -2170,9 +2168,8 @@ class TwoCompanySearch {
                 return;
             }
             if (this._dropdownOpen) {
-                // This field is `readonly` in search mode, so a key it takes
-                // while the query row is withdrawn is destroyed outright
-                // (ABN-554).
+                // This field is `readonly` in search mode, so a key it takes with
+                // the query row withdrawn is destroyed outright (ABN-554).
                 if (this.isPrintableCapture(event) && this.queryRowIsHidden()) {
                     event.preventDefault();
                     this.captureKeyForWithdrawnRow(event.key);
@@ -2202,8 +2199,7 @@ class TwoCompanySearch {
             // exactly when the keypress produced text.
             if (key && key.length === 1 && this._queryField && this._queryField.length) {
                 // An adopted sole trader opens into a withdrawn row, where a
-                // `.val()` + `input` would search under markup the buyer cannot
-                // see (ABN-554).
+                // search would paint under markup the buyer cannot see (ABN-554).
                 if (this.queryRowIsHidden()) {
                     this.captureKeyIntoHiddenQuery(key);
                     return;
