@@ -1921,8 +1921,9 @@ class TwoCompanySearch {
     /**
      * Park a printable key in the withdrawn query row, so the row a mode change
      * reveals carries it with the caret behind it (ABN-554). The company-name
-     * field cannot hold it instead: it is PrestaShop's own address field and is
-     * `readonly` outside manual entry.
+     * field cannot hold it instead: it is PrestaShop's own address value,
+     * `readonly` outside manual entry, and text parked there would be painted
+     * on screen and submitted as part of the buyer's address.
      *
      * No `input` event: a search must not run, nor results paint, under a row
      * the buyer cannot see.
