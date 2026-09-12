@@ -26,7 +26,7 @@ let TwoCheckoutManager;
 let $;
 let ajax;
 
-function makeChips(terms, termType) {
+function makeChips(terms, termType, options) {
   const manager = new TwoCheckoutManager({
     checkoutHost: CHECKOUT_HOST,
     orderIntentEnabled: false,
@@ -38,6 +38,9 @@ function makeChips(terms, termType) {
   });
   document.body.innerHTML = [
     '<div class="two-term-chips">',
+    (options && options.withoutTitle
+      ? ""
+      : '  <h4 class="two-terms-title" id="two-terms-title">Choose a term</h4>'),
     '  <div class="two-term-chips__container" id="two-terms-chips"></div>',
     '  <div class="two-terms-selected">',
     '    <span class="two-terms-selected-days" id="two-selected-days"></span>',
@@ -46,6 +49,16 @@ function makeChips(terms, termType) {
   ].join("\n");
   manager.initializePaymentTerms();
   return manager;
+}
+
+/** @returns {string} the summary sentence below the chip strip */
+function summaryText() {
+  return document.querySelector("#two-selected-days").textContent;
+}
+
+/** @returns {HTMLElement} the chip strip's radiogroup */
+function group() {
+  return document.querySelector("#two-terms-chips");
 }
 
 function chips() {
@@ -252,5 +265,118 @@ describe("the surcharge in the chip name", () => {
       expect(chipNames()[i][0]).toContain(text);
     });
     expect(chipNames()[1][0]).toContain("7.25 EUR");
+  });
+});
+
+/**
+ * ABN-554. PrestaShop is the only checkout with a "Pay in N days" summary below
+ * the chip strip. It is ONE translated sentence with the day count substituted:
+ * a sentence assembled from 'Pay in' + N + 'days' + 'from end of month' cannot
+ * be reordered or word-agreed by a translator.
+ */
+describe("the summary sentence below the chips", () => {
+  afterEach(() => {
+    delete window.twopayment;
+  });
+
+  test.each([
+    {
+      termType: "STANDARD",
+      terms: [30, 60],
+      expected: "Pay in 30 days",
+      case: "a standard term",
+    },
+    {
+      termType: "STANDARD",
+      terms: [1],
+      expected: "Pay in 1 days",
+      case: "the shortest standard term",
+    },
+    {
+      termType: "EOM",
+      terms: [30, 60],
+      expected: "Pay in 30 days from end of month",
+      case: "an end-of-month term",
+    },
+    {
+      termType: "EOM",
+      terms: [120],
+      expected: "Pay in 120 days from end of month",
+      case: "a three-digit end-of-month term",
+    },
+  ])("states the term in one sentence: $case", ({ terms, termType, expected }) => {
+    makeChips(terms, termType);
+
+    expect(summaryText()).toBe(expected);
+  });
+
+  test.each([
+    {
+      termType: "STANDARD",
+      i18n: { pay_in_days: "Betaal in %s dagen" },
+      expected: "Betaal in 30 dagen",
+      case: "a standard term",
+    },
+    {
+      termType: "EOM",
+      i18n: { pay_in_days_eom: "Betaal in %s dagen vanaf einde van de maand" },
+      expected: "Betaal in 30 dagen vanaf einde van de maand",
+      case: "an end-of-month term",
+    },
+  ])(
+    "takes the whole sentence from one catalogue key: $case",
+    ({ termType, i18n, expected }) => {
+      // A fragment left hardcoded would survive this: only the substituted day
+      // count may come from outside the translated sentence.
+      window.twopayment = { i18n: i18n };
+      makeChips([30, 60], termType);
+
+      expect(summaryText()).toBe(expected);
+    }
+  );
+});
+
+/**
+ * ABN-554. A chip's visible text states only the term, so nothing inside the
+ * group names it — the strip's title does, one term or several.
+ */
+describe("the chip group's accessible name", () => {
+  afterEach(() => {
+    delete window.twopayment;
+  });
+
+  test.each([
+    { terms: [30, 60], case: "several offered terms" },
+    { terms: [30], case: "one offered term" },
+  ])("is the strip title, with $case", ({ terms }) => {
+    makeChips(terms, "STANDARD");
+
+    expect(group().getAttribute("role")).toBe("radiogroup");
+    expect(group().getAttribute("aria-labelledby")).toBe("two-terms-title");
+    expect(document.getElementById("two-terms-title")).not.toBeNull();
+  });
+
+  // The tests above build their own DOM, so none of them sees the shipped
+  // markup stop emitting the id the group points at.
+  test.each([
+    { file: "views/templates/hook/paymentinfo.tpl", case: "the payment-info template" },
+    { file: "views/js/modules/TwoCheckoutManager.js", case: "the injected fallback strip" },
+  ])("$case emits the id the group points at", ({ file }) => {
+    const source = require("fs").readFileSync(
+      require("path").join(__dirname, "..", "..", file),
+      "utf8",
+    );
+
+    expect(source).toMatch(
+      /<h4 class="two-terms-title" id="two-terms-title">/,
+    );
+  });
+
+  test("falls back to the same wording when a theme supplies no title", () => {
+    window.twopayment = { i18n: { choose_payment_terms: "Kies een termijn" } };
+    makeChips([30], "STANDARD", { withoutTitle: true });
+
+    expect(group().getAttribute("aria-labelledby")).toBeNull();
+    expect(group().getAttribute("aria-label")).toBe("Kies een termijn");
   });
 });

@@ -5028,9 +5028,12 @@ class Twopayment extends PaymentModule
             'company_verify_failed' => $this->l('Company information could not be verified. Go back to your billing address and select your company from the search results.'),
             'company_verification_needed' => $this->l('Company Verification Needed'),
             'company_auto_resolve_hint' => $this->l('We found your company name but need you to verify it. Please go back to your billing address and select your company from the search results.'),
-            'pay_in' => $this->l('Pay in'),
             'days' => $this->l('days'),
-            'from_end_of_month' => $this->l('from end of month'),
+            // One sentence each, the day count substituted: a summary built from
+            // 'Pay in' + N + 'days' + 'from end of month' cannot be reordered or
+            // agreed by a translator.
+            'pay_in_days' => $this->l('Pay in %s days'),
+            'pay_in_days_eom' => $this->l('Pay in %s days from end of month'),
             'eom_plus_days' => $this->l('EOM+%s'),
             // Both placeholders are the same day count; the chip renderer
             // substitutes every one of them. `%s` is deliberately left
