@@ -2297,8 +2297,8 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether the EOM selector renders on the Payment Terms form (TWO-25656): the context's own row is EOM, the
-     * same row the field value and the save use. Exact match, like every other read.
+     * Whether the shop offers its payment terms on the end-of-month basis (TWO-25656): the context's own row is
+     * EOM, the same row the field value and the save use. Exact match, like every other read.
      *
      * @return bool
      */
@@ -15405,7 +15405,8 @@ class Twopayment extends PaymentModule
     /**
      * Buyer-facing label for the surcharge line. A merchant-set description
      * wins (with %s replaced by the term days, Magento/WooCommerce parity);
-     * else the brand label; else a translated default that names the term.
+     * else the brand label; else a translated default that names the term and,
+     * on an end-of-month basis, says the days run from the end of the month.
      *
      * @param int $days
      * @return string
@@ -15424,6 +15425,10 @@ class Twopayment extends PaymentModule
         $brandLabel = $this->getTwoBrandConfig('fee_line_label');
         if (!empty($brandLabel)) {
             return $this->l((string) $brandLabel);
+        }
+
+        if ($this->isTwoEomTermTypeConfigured()) {
+            return sprintf($this->l('Payment terms fee - %d days from end of month'), (int) $days);
         }
 
         return sprintf($this->l('Payment terms fee - %d days'), (int) $days);

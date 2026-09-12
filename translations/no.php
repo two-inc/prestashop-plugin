@@ -196,6 +196,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_4b63989fed5f90859fafd6e1f02be539'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4b6e94a357f5914cc27795141c380dc1'] = 'Detaljer: %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_4c36c4f12553b46df268f9ab2fa753a0'] = '%s (+%d flere)';
 $_MODULE['<{twopayment}prestashop>twopayment_4e48eb7b84e6418738c6548b3c826d94'] = 'Gebyr for betalingsvilkår – %d dager';
+$_MODULE['<{twopayment}prestashop>twopayment_3dfd01dc41ebe6c659f64c1c75b03260'] = 'Gebyr for betalingsvilkår – %d dager fra månedens slutt';
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'Kunne ikke bygge datainnholdet for ordreintensjonen';
 $_MODULE['<{twopayment}prestashop>twopayment_e8eab90af94027d0c5ae97667a307a3e'] = 'Vilkår med slutten av måneden (EOM):';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = 'Denne API-nøkkelen ble avvist av %1$s. Den kan være ugyldig eller utløpt - kontroller nøkkelen i %1$s-portalen din.';

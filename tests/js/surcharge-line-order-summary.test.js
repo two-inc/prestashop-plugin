@@ -92,10 +92,11 @@ function surchargeNode() {
 }
 
 describe.each([
-    [14, 'Payment terms fee - 14 days'],
-    [30, 'Payment terms fee - 30 days'],
-    [60, 'Payment terms fee - 60 days']
-])('order-summary surcharge line for a %i-day term', (days, label) => {
+    'Payment terms fee - 14 days',
+    'Payment terms fee - 30 days',
+    'Payment terms fee - 60 days',
+    'Payment terms fee - 30 days from end of month'
+])('order-summary surcharge line labelled "%s"', (label) => {
     test('renders as plain text with the day-suffixed label, not a link', () => {
         // Given: core has rendered the surcharge line as a product-page link,
         // captioned with the static catalog name (no day count).
