@@ -1027,12 +1027,11 @@ class TwoCompanySearch {
                 this.closeDropdown(true);
                 return;
             }
-            // A chip is a `<button>`, which swallows typing, and a country the
-            // registry search does not cover renders no query row to hold the
-            // caret instead (ABN-554).
-            if (this.isPrintableCapture(event) && !this.isCurrentCountrySupportedForSearch()) {
+            // A chip is a `<button>`, which swallows typing, and a withdrawn
+            // query row leaves nothing else in the panel to hold the caret (ABN-554).
+            if (this.isPrintableCapture(event) && this.queryRowIsHidden()) {
                 event.preventDefault();
-                this.captureKeyIntoManualEntry(event.key);
+                this.captureKeyForWithdrawnRow(event.key);
             }
         });
 
@@ -1880,9 +1879,15 @@ class TwoCompanySearch {
         if (!searchRow.length) {
             return;
         }
+        const wasHidden = searchRow.is('[hidden]');
         if (suppressed) {
-            this._queryField.val('');
             searchRow.hide().attr('hidden', 'hidden');
+            // Only on the withdrawal itself: a later sync would drop the keys
+            // captureKeyIntoHiddenQuery() has parked here (ABN-554).
+            if (wasHidden) {
+                return;
+            }
+            this._queryField.val('');
             // Re-render the panel body for the term that was just dropped.
             // Blanking the field with `.val()` fires no event, so without this
             // the result rows the OLD term produced stay painted and clickable
@@ -1890,6 +1895,51 @@ class TwoCompanySearch {
             this.openSearchForCurrentTerm();
         } else {
             searchRow.removeAttr('hidden').show();
+            // Keys parked while the row was withdrawn have never been searched for (ABN-554).
+            if (wasHidden && String(this._queryField.val() || '') !== '') {
+                this.openSearchForCurrentTerm();
+            }
+        }
+    }
+
+    /**
+     * Whether the free-text query row is currently withdrawn - by sole-trader
+     * mode (syncQueryFieldSuppression()) or by a country the registry search
+     * does not cover (syncSearchRowCountryGate()). Read off the `hidden`
+     * attribute both of those set, rather than restating their conditions.
+     *
+     * @returns {boolean}
+     */
+    queryRowIsHidden() {
+        if (!this._queryField || !this._queryField.length) {
+            return true;
+        }
+        const searchRow = this._queryField.closest('.two-company-dropdown__search');
+        return !searchRow.length || searchRow.is('[hidden]');
+    }
+
+    /**
+     * Park a printable key in the withdrawn query row, so the row a mode change
+     * reveals carries it with the caret behind it (ABN-554). The company-name
+     * field cannot hold it instead: it is PrestaShop's own address value,
+     * `readonly` outside manual entry, and text parked there would be painted
+     * on screen and submitted as part of the buyer's address.
+     *
+     * No `input` event: a search must not run, nor results paint, under a row
+     * the buyer cannot see.
+     *
+     * @param {string} key a single code point
+     */
+    captureKeyIntoHiddenQuery(key) {
+        if (!this._queryField || !this._queryField.length) {
+            return;
+        }
+        const field = this._queryField.get(0);
+        field.value = String(field.value || '') + key;
+        try {
+            field.setSelectionRange(field.value.length, field.value.length);
+        } catch (e) {
+            // Selection API unavailable on this input; the value is what carries.
         }
     }
 
@@ -2119,6 +2169,12 @@ class TwoCompanySearch {
                 return;
             }
             if (this._dropdownOpen) {
+                // This field is `readonly` in search mode, so a key it takes with
+                // the query row withdrawn is destroyed outright (ABN-554).
+                if (this.isPrintableCapture(event) && this.queryRowIsHidden()) {
+                    event.preventDefault();
+                    this.captureKeyForWithdrawnRow(event.key);
+                }
                 return;
             }
             const key = event.key;
@@ -2141,12 +2197,14 @@ class TwoCompanySearch {
             this.openDropdown();
             // The character that opened the panel belongs in the query field.
             // Only for a real printable character - `key` is a single code point
-            // exactly when the keypress produced text. Not forwarded while the
-            // Sole Trader chip is selected: the query field is hidden and
-            // `readonly` in that state, and `.val()` writes through both, so
-            // this has to check the mode explicitly.
-            if (key && key.length === 1 && this._chipMode !== 'sole_trader'
-                && this._queryField && this._queryField.length) {
+            // exactly when the keypress produced text.
+            if (key && key.length === 1 && this._queryField && this._queryField.length) {
+                // An adopted sole trader opens into a withdrawn row, where a
+                // search would paint under markup the buyer cannot see (ABN-554).
+                if (this.queryRowIsHidden()) {
+                    this.captureKeyIntoHiddenQuery(key);
+                    return;
+                }
                 this._queryField.val(key);
                 this._queryField.trigger('input');
             }
@@ -2165,6 +2223,22 @@ class TwoCompanySearch {
             return false;
         }
         return !!event.key && event.key.length === 1 && event.key !== ' ';
+    }
+
+    /**
+     * Where a printable key goes while the query row is withdrawn: manual entry
+     * in a country the registry search does not cover, which is the only route
+     * to naming a company there (ABN-525); the parked query otherwise, which the
+     * next mode change reveals (ABN-554).
+     *
+     * @param {string} key a single code point
+     */
+    captureKeyForWithdrawnRow(key) {
+        if (this.isCurrentCountrySupportedForSearch()) {
+            this.captureKeyIntoHiddenQuery(key);
+            return;
+        }
+        this.captureKeyIntoManualEntry(key);
     }
 
     /**

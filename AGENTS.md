@@ -334,6 +334,9 @@ Three more traps in the JS suites:
 - **A real chip click fires no `focusin`.** The chip's `mousedown` handler calls
   `preventDefault()`, which suppresses the native focus, so a rule written only
   against `focusin` never sees a pointer buyer at all.
+- **A keydown performs no default action.** No character is inserted and no
+  `beforeinput`/`input` follows, so a suite can only assert where a capture PUT
+  the character, never that the browser would have put it there itself.
 - **jsdom's `getElementById` answers with the first-REGISTERED node, not the
   tree-first one**, so a fixture carrying a duplicate id silently resolves to the
   wrong element.

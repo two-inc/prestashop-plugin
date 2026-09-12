@@ -1,11 +1,11 @@
 /**
- * ABN-554 - typing at the company-name field in a country the registry search
- * does not cover.
+ * ABN-554 - typing while the query row is withdrawn.
  *
- * That country renders no query row (ABN-525) and the field itself is a
- * readonly search trigger, so the popover opens with the caret on a mode chip -
- * a `<button>`, which swallows text. Every character the buyer typed was lost
- * with nothing on screen to say so.
+ * Two modes withdraw it: a country the registry search does not cover
+ * (ABN-525), and the sole-trader signup flight. The company-name field is a
+ * readonly search trigger in both, and a mode chip is a `<button>`, which
+ * swallows text - so every character the buyer typed was lost with nothing on
+ * screen to say so.
  *
  * jsdom CAVEAT: a keydown performs no default action, so these cases assert the
  * state the capture produces - manual entry, the field editable and holding the
@@ -110,5 +110,94 @@ describe('a keystroke in a country the search covers', () => {
         expect(panelParts().query.val()).toBe('f');
         expect(panelParts().nameField.val()).toBe('');
         expect(shown(panelParts().panel)).toBe(true);
+    });
+});
+
+describe('a keystroke during the sole-trader signup flight', () => {
+    beforeEach(() => {
+        TwoCompanySearch._supportedSearchCountries = ['GB'];
+        global.window.TwoSoleTrader_Instance = {
+            isAvailableForCurrentCountry: () => true,
+            startEnrollment: () => {},
+            cancelEnrollment: () => {},
+            closeSignupPopup: () => {},
+            abandonEnrollment: () => {},
+            reclaimSignupPopup: () => false,
+            isPopupOpen: () => false
+        };
+    });
+
+    /** Open the popover and take the flight, which withdraws the query row. */
+    function launchFlight() {
+        const search = new TwoCompanySearch({ checkoutHost: CHECKOUT_HOST });
+        openPanel();
+        panelParts().soleTrader.trigger('click');
+        return search;
+    }
+
+    test.each([
+        {
+            target: () => panelParts().nameField.get(0),
+            keys: ['a'],
+            query: 'a',
+            description: 'the company field, where the launch parks the caret'
+        },
+        {
+            target: () => panelParts().soleTrader.get(0),
+            keys: ['a'],
+            query: 'a',
+            description: 'a mode chip holding the caret'
+        },
+        {
+            target: () => panelParts().nameField.get(0),
+            keys: ['a', 'b', 'c'],
+            query: 'abc',
+            description: 'successive characters, which accumulate in order'
+        }
+    ])('$description parks the character in the withdrawn query row', ({ target, keys, query }) => {
+        launchFlight();
+
+        keys.forEach((key) => press(target(), key));
+
+        expect(panelParts().query.val()).toBe(query);
+        // The field is PrestaShop's own address value; a stray character in it would be submitted.
+        expect(panelParts().nameField.val()).toBe('');
+        expect(shown(panelParts().panel)).toBe(true);
+    });
+
+    test.each([
+        { key: ' ', modifiers: {}, description: 'Space, which activates the focused chip' },
+        { key: 'Enter', modifiers: {}, description: 'Enter, which activates the focused chip' },
+        { key: 'f', modifiers: { ctrlKey: true }, description: 'a keyboard shortcut rather than text' }
+    ])('$description is not text and parks nothing', ({ key, modifiers }) => {
+        launchFlight();
+
+        press(panelParts().nameField.get(0), key, modifiers);
+
+        expect(panelParts().query.val()).toBe('');
+    });
+
+    test('a chip repaint while the flight is still up keeps what was parked', () => {
+        const search = launchFlight();
+        press(panelParts().nameField.get(0), 'a');
+
+        // What a late sole-trader availability answer does to an open panel.
+        search.syncModeChipVisibility();
+
+        expect(panelParts().query.val()).toBe('a');
+    });
+
+    test('the mode change that reveals the row keeps what was parked, and searches for it', () => {
+        const search = launchFlight();
+        ['a', 'b', 'c'].forEach((key) => press(panelParts().nameField.get(0), key));
+        const rerun = jest.spyOn(search, 'openSearchForCurrentTerm');
+
+        panelParts().registered.trigger('click');
+
+        expect(panelParts().query.val()).toBe('abc');
+        expect(shown(panelParts().searchRow)).toBe(true);
+        expect(document.activeElement).toBe(panelParts().query.get(0));
+        // Nothing has searched for the parked term, so the revealed row would otherwise sit over an empty body.
+        expect(rerun).toHaveBeenCalledTimes(1);
     });
 });
