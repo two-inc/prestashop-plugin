@@ -194,6 +194,14 @@ portal-side action such as a refund leaves the shop's order status untouched, so
 a reliable indicator of provider-side state. Do not add a one-off bridge for a single status; see
 `.ai/decisions.md` (TWO-25706).
 
+## Brand Values Are Install-Wide: There Is No Overlay Mechanism
+
+`brands/two.php` is the whole brand-config seam. `Twopayment::getTwoBrandConfig()` requires that one
+path and nothing selects a second file, so every value in it - the payment tile's tagline FAQ URL
+`checkout_tagline_faq_url` among them - is install-wide, and a brand wanting its own value has to
+replace the file. Building per-brand resolution is TWO-24746 and has not been done here; do not
+improvise one for a single key.
+
 ## Company Search: This Module's Own Implementation
 
 `views/js/modules/TwoCompanySearch.js` is this module's own panel. The Magento and
