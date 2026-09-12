@@ -196,6 +196,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_4b63989fed5f90859fafd6e1f02be539'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4b6e94a357f5914cc27795141c380dc1'] = 'Details: %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_4c36c4f12553b46df268f9ab2fa753a0'] = '%s (+%d meer)';
 $_MODULE['<{twopayment}prestashop>twopayment_4e48eb7b84e6418738c6548b3c826d94'] = 'Vergoeding betaaltermijn - %d dagen';
+$_MODULE['<{twopayment}prestashop>twopayment_3dfd01dc41ebe6c659f64c1c75b03260'] = 'Vergoeding betaaltermijn - %d dagen vanaf einde van de maand';
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'De payload voor de order intent kon niet worden opgebouwd';
 $_MODULE['<{twopayment}prestashop>twopayment_e8eab90af94027d0c5ae97667a307a3e'] = 'Einde-van-de-maand (EOM) termijnen:';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = 'Deze API-sleutel is geweigerd door %1$s. Mogelijk is de sleutel ongeldig of verlopen - controleer de sleutel in je %1$s-portaal.';

@@ -413,14 +413,58 @@ final class SurchargeSpec
         TinyAssert::same('10.00', $options['10.00']);
     }
 
+    /**
+     * ABN-554. Only the translated default names the basis - a merchant
+     * template and a brand label are the author's own wording.
+     */
     private static function testSurchargeLineLabelTemplateBrandAndDefault(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-        TinyAssert::same('Payment terms fee - 30 days', $module->getTwoSurchargeLineLabel(30));
-        TinyAssert::same('Payment terms fee - 60 days', $module->getTwoSurchargeLineLabel(60));
-        Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', 'Financing fee (%s days)');
-        TinyAssert::same('Financing fee (30 days)', $module->getTwoSurchargeLineLabel(30));
+        // [term type, term days, merchant template, brand label, expected label, description].
+        $cases = array(
+            array('STANDARD', 14, '', null, 'Payment terms fee - 14 days', 'standard, 14-day term'),
+            array('STANDARD', 30, '', null, 'Payment terms fee - 30 days', 'standard, 30-day term'),
+            array('STANDARD', 90, '', null, 'Payment terms fee - 90 days', 'standard, 90-day term'),
+            array('EOM', 30, '', null, 'Payment terms fee - 30 days from end of month', 'EOM, 30-day term'),
+            array('EOM', 45, '', null, 'Payment terms fee - 45 days from end of month', 'EOM, 45-day term'),
+            array('EOM', 60, '', null, 'Payment terms fee - 60 days from end of month', 'EOM, 60-day term'),
+            array('STANDARD', 30, 'Financing fee (%s days)', null, 'Financing fee (30 days)', 'standard, merchant template'),
+            array('EOM', 30, 'Financing fee (%s days)', null, 'Financing fee (30 days)', 'EOM, merchant template'),
+            array('STANDARD', 30, '', 'Credit fee', 'Credit fee', 'standard, brand label'),
+            array('EOM', 30, '', 'Credit fee', 'Credit fee', 'EOM, brand label'),
+        );
+
+        foreach ($cases as $case) {
+            list($termType, $days, $template, $brandLabel, $expected, $description) = $case;
+            self::reset();
+            Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $termType);
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $days, 1);
+            Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', $template);
+            $module = self::moduleWithBrandFeeLineLabel($brandLabel);
+            TinyAssert::same($expected, $module->getTwoSurchargeLineLabel($days), 'surcharge line label: ' . $description);
+        }
+    }
+
+    /** @param string|null $label the brand's 'fee_line_label' */
+    private static function moduleWithBrandFeeLineLabel($label): object
+    {
+        return new class ($label) extends TwopaymentTestHarness {
+            /** @var string|null */
+            private $feeLineLabel;
+
+            /** @param string|null $label */
+            public function __construct($label)
+            {
+                parent::__construct();
+                $this->feeLineLabel = $label;
+            }
+
+            public function getTwoBrandConfig($key)
+            {
+                return $key === 'fee_line_label' && $this->feeLineLabel !== null
+                    ? $this->feeLineLabel
+                    : parent::getTwoBrandConfig($key);
+            }
+        };
     }
 
     /**
