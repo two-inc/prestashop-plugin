@@ -223,7 +223,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_624d960f1513f62685fb2017c0bbc926'] 
 $_MODULE['<{twopayment}prestashop>twopayment_633918382ee5b43840752588882a0496'] = 'Kunne ikke bekrefte at handlekurven stemmer for denne betalingen. Prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_656a6828d7ef1bb791e42087c4b5ee6e'] = 'API-nøkkel';
 $_MODULE['<{twopayment}prestashop>twopayment_65a4e2b7da5e4f1c422b2de7277d8311'] = 'Intervallet tillegget rundes av til (f.eks. 1 = hele enheter, 0,50 = nærmeste halve). Gjelder bare når det er valgt en avrundingsretning.';
-$_MODULE['<{twopayment}prestashop>twopayment_65facdf395107d60a23ce012c2a1c456'] = 'Slutten av måneden + %s dager';
+$_MODULE['<{twopayment}prestashop>twopayment_43027795a425292b9d90ba92ee7b69de'] = 'EOM+%s';
+$_MODULE['<{twopayment}prestashop>twopayment_3b2c485f6b1aa49371c9ea4cf16762d5'] = 'EOM+%s: betal %s dager etter månedens slutt';
+$_MODULE['<{twopayment}prestashop>twopayment_49021580a8968c03b1aade60433a2184'] = 'EOM+%1$s: betal %1$s dager etter månedens slutt, pluss %2$s i tillegg';
 $_MODULE['<{twopayment}prestashop>twopayment_b6ad84289187f5d686fbc5c417f796f6'] = '%s svarkode %d';
 $_MODULE['<{twopayment}prestashop>twopayment_d798878a0be2e5e69e818bd8164c1172'] = 'Kunne ikke oppdatere status til kansellert, kontroller med %1$s-administrasjonen for id %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_6735bd225a891660cc38b49f427acb08'] = 'Dette skyldes vanligvis et frakt- eller rabattbeløp som handlekurven ennå ikke har lagt til. Oppdater handlekurven og prøv igjen, eller kontakt butikken.';
@@ -319,7 +321,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a58a88e252eae380cbcff6421cd5d08c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a7ae6fbd75c4968e5b9c92b908fe824e'] = 'Telefonnummeret i fakturaadressen din ser ut til å være ugyldig. Gå tilbake og kontroller at du har oppgitt et gyldig telefonnummer for landet ditt.';
 $_MODULE['<{twopayment}prestashop>twopayment_ab63d3168928b8331551047a81e5dd32'] = 'Velg land ovenfor for å søke opp firmaet ditt.';
 $_MODULE['<{twopayment}prestashop>twopayment_6ebe8c3878e997b8c76f41aa5db69404'] = 'Grunnlag for tilleggsberegning';
-$_MODULE['<{twopayment}prestashop>twopayment_ad390087f94a9a17adaf0b81ad83b2e7'] = 'fra slutten av måneden';
 $_MODULE['<{twopayment}prestashop>twopayment_b1021ae56c3544e96ea36a7d80e48145'] = 'Kundene må oppgi firmanavnet sitt i fakturaadressen';
 $_MODULE['<{twopayment}prestashop>twopayment_6c00ecbc1163f6b8f6f8f9892b1380b5'] = 'Det oppsto et problem med å behandle %s-betalingsforespørselen din. Prøv igjen eller velg en annen betalingsmåte.';
 $_MODULE['<{twopayment}prestashop>twopayment_b2676a7777337b3c9d44551409210ae7'] = 'Gebyr for betalingsvilkår';
@@ -327,7 +328,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_b2df7887a34999a0fee743420750a9ec'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6cc6a209c9258aa18a263139db725920'] = 'Minste ordreverdi må være minst plattformens minimum på %1$s, %2$s avgift.';
 $_MODULE['<{twopayment}prestashop>twopayment_b4d559d50e616b7eb46089c0734d1b1c'] = 'Gaveinnpakning for denne ordren';
 $_MODULE['<{twopayment}prestashop>twopayment_b4e549c7d1dbcd350dffb942b6e35e37'] = 'Commit:';
-$_MODULE['<{twopayment}prestashop>twopayment_b4fe334d1b7cdcbc01db8426803ebaff'] = 'Betal om';
+$_MODULE['<{twopayment}prestashop>twopayment_777444672172a872fbe496f2f0599660'] = 'Betal om %s dager';
+$_MODULE['<{twopayment}prestashop>twopayment_65112567dfe66bf4a6a4ae4ef0710d89'] = 'Betal om %s dager fra slutten av måneden';
 $_MODULE['<{twopayment}prestashop>twopayment_35895cff7df70dab18783453e2bd241f'] = 'Betal med %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b5f41647401f7d6a7aa511cbd9aa5ecf'] = 'Sporingsnummeret kunne ikke videresendes til fakturaleverandøren; fakturaen sendes uten det.';
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Tittel';

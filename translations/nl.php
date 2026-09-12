@@ -223,7 +223,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_624d960f1513f62685fb2017c0bbc926'] 
 $_MODULE['<{twopayment}prestashop>twopayment_633918382ee5b43840752588882a0496'] = 'De consistentie van de winkelwagen voor deze betaling kan niet worden gevalideerd. Probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_656a6828d7ef1bb791e42087c4b5ee6e'] = 'API-sleutel';
 $_MODULE['<{twopayment}prestashop>twopayment_65a4e2b7da5e4f1c422b2de7277d8311'] = 'Het interval waarop de toeslag wordt afgerond (bijv. 1 = hele eenheden, 0,50 = op een halve). Geldt alleen als er een afrondingsrichting is gekozen.';
-$_MODULE['<{twopayment}prestashop>twopayment_65facdf395107d60a23ce012c2a1c456'] = 'Einde van de maand + %s dagen';
+$_MODULE['<{twopayment}prestashop>twopayment_43027795a425292b9d90ba92ee7b69de'] = 'EOM+%s';
+$_MODULE['<{twopayment}prestashop>twopayment_3b2c485f6b1aa49371c9ea4cf16762d5'] = 'EOM+%s: betaal %s dagen na het einde van de maand';
+$_MODULE['<{twopayment}prestashop>twopayment_49021580a8968c03b1aade60433a2184'] = 'EOM+%1$s: betaal %1$s dagen na het einde van de maand, plus %2$s toeslag';
 $_MODULE['<{twopayment}prestashop>twopayment_b6ad84289187f5d686fbc5c417f796f6'] = '%s-responscode %d';
 $_MODULE['<{twopayment}prestashop>twopayment_d798878a0be2e5e69e818bd8164c1172'] = 'De status kon niet worden bijgewerkt naar geannuleerd; controleer bij het %1$s-beheer voor id %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_6735bd225a891660cc38b49f427acb08'] = 'Meestal gaat het om verzendkosten of een korting die nog niet in de winkelwagen is toegepast. Vernieuw je winkelwagen en probeer het opnieuw, of neem contact op met de winkel.';
@@ -319,7 +321,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a58a88e252eae380cbcff6421cd5d08c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a7ae6fbd75c4968e5b9c92b908fe824e'] = 'Het telefoonnummer in je factuuradres lijkt ongeldig. Ga terug en controleer of je een geldig telefoonnummer voor jouw land hebt ingevuld.';
 $_MODULE['<{twopayment}prestashop>twopayment_ab63d3168928b8331551047a81e5dd32'] = 'Selecteer hierboven je land om je bedrijf te zoeken.';
 $_MODULE['<{twopayment}prestashop>twopayment_6ebe8c3878e997b8c76f41aa5db69404'] = 'Basis voor toeslagberekening';
-$_MODULE['<{twopayment}prestashop>twopayment_ad390087f94a9a17adaf0b81ad83b2e7'] = 'vanaf einde van de maand';
 $_MODULE['<{twopayment}prestashop>twopayment_b1021ae56c3544e96ea36a7d80e48145'] = 'Klanten moeten hun bedrijfsnaam invullen in het factuuradres';
 $_MODULE['<{twopayment}prestashop>twopayment_6c00ecbc1163f6b8f6f8f9892b1380b5'] = 'Er is een probleem opgetreden bij het verwerken van je %s-betaalverzoek. Probeer het opnieuw of kies een andere betaalmethode.';
 $_MODULE['<{twopayment}prestashop>twopayment_b2676a7777337b3c9d44551409210ae7'] = 'Toeslag betaaltermijnen';
@@ -327,7 +328,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_b2df7887a34999a0fee743420750a9ec'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6cc6a209c9258aa18a263139db725920'] = 'De minimale orderwaarde moet minimaal het platformminimum van %1$s, %2$s btw zijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_b4d559d50e616b7eb46089c0734d1b1c'] = 'Cadeauverpakking voor deze bestelling';
 $_MODULE['<{twopayment}prestashop>twopayment_b4e549c7d1dbcd350dffb942b6e35e37'] = 'Commit:';
-$_MODULE['<{twopayment}prestashop>twopayment_b4fe334d1b7cdcbc01db8426803ebaff'] = 'Betaal in';
+$_MODULE['<{twopayment}prestashop>twopayment_777444672172a872fbe496f2f0599660'] = 'Betaal in %s dagen';
+$_MODULE['<{twopayment}prestashop>twopayment_65112567dfe66bf4a6a4ae4ef0710d89'] = 'Betaal in %s dagen vanaf einde van de maand';
 $_MODULE['<{twopayment}prestashop>twopayment_35895cff7df70dab18783453e2bd241f'] = 'Betaal met %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b5f41647401f7d6a7aa511cbd9aa5ecf'] = 'Het trackingnummer kon niet worden doorgegeven aan de factuurprovider; de factuur wordt zonder trackingnummer verzonden.';
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Titel';
