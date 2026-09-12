@@ -331,6 +331,21 @@ describe('the dropdown is a real control, not an in-field autocomplete', () => {
         expect(document.activeElement).toBe(companyField().get(0));
     });
 
+    test('Escape on the company field the signup launch parks focus on', () => {
+        const instance = makeInstance();
+        openPanel();
+        // The popover is held up for the signup's duration with focus on the
+        // field, which sits outside the panel node Escape is bound to.
+        instance.focusQuietly(companyField());
+        const event = $.Event('keydown', { key: 'Escape' });
+
+        companyField().trigger(event);
+
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(document.activeElement).toBe(companyField().get(0));
+        expect(event.isDefaultPrevented()).toBe(true);
+    });
+
     test('a completed selection closes the panel', () => {
         makeInstance();
         openPanel();
