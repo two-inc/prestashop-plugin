@@ -470,7 +470,8 @@ is not persisted here", never to a dropped payment record.
     no `visibilitychange` (a separate window never takes the tab out of `visible`), no
     `document.hasFocus()` gate. A tab or window switch, or a click on the page background,
     focuses no control and changes nothing; a browser re-firing focus at the previously
-    focused control on return is treated as the buyer focusing it. A chip activation for a
+    focused control on return is treated as the buyer focusing it, unless that control is
+    where the plugin itself last quietly put focus and focus has not left it since. A chip activation for a
     buyer already adopted routes to the replacement flow (a fresh popup and a re-mint)
     rather than a fresh enrolment.
     - **Liveness is the handle** — `isPopupOpen()` reads `.closed`, never a mirror: a
@@ -500,9 +501,14 @@ is not persisted here", never to a dropped payment record.
       control captured at its click, never `activeElement` at open, which by then is
       wherever the buyer went during the mint. The blur fires the panel's own focus-out
       close, which must stand down while the launching capture's flight and the popup are
-      both live, or the panel and spinner die at open.
+      both live, or the panel and spinner die at open. **The capture then parks that focus
+      on its own company-name field**, one tick later so the popup module's open-time focus
+      judgement has already run: a panel left on screen with focus on nothing reaches no
+      keystroke (ABN-554).
     - **Focus the plugin moves itself goes through one quiet helper** (panel open, Escape,
-      a re-render restore, validation) so the watch does not read it as the buyer.
+      a re-render restore, validation, the launch park) so the watch does not read it as
+      the buyer — including the window-return re-fire of it, until focus leaves that
+      control.
     - **An in-panel close leaves the flight alone** — spinner and settle listener stay
       until the write lands. The capture records that the buyer came back into the panel,
       and the settle then drops the spinner without closing the panel or moving focus.

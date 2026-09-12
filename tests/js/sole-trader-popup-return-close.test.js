@@ -279,6 +279,8 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
         if (state === 'popup closed') {
             closeFromInside();
         }
+        // The launch parks focus on the company field (ABN-554), and a row whose own target is it fires no focusin.
+        document.activeElement.blur();
         const generation = soleTrader._enrollGeneration;
 
         TARGETS[target]().focus();
@@ -329,6 +331,8 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
         await launchWithPopupOpen();
         const mintsBefore = tokenMints;
 
+        // Off the field the launch parked focus on, so focusing it back is an arrival (ABN-554).
+        document.activeElement.blur();
         panelParts().nameField.get(0).focus();
         expect(popup.closed).toBe(true);
         popup = fakePopup();
@@ -541,7 +545,22 @@ describe('the popup opening', () => {
 
         expect(shown(panelParts().panel)).toBe(true);
         expect(panelParts().nameField.hasClass('two-company-name-loading')).toBe(true);
-        expect(document.activeElement).toBe(document.body);
+        expect(document.activeElement).toBe(panelParts().nameField.get(0));
+    });
+
+    test('the window coming back re-fires focus where the launch parked it, and that is not the buyer returning', async () => {
+        await launchWithPopupOpen();
+        jest.advanceTimersByTime(10);
+        const parked = panelParts().nameField.get(0);
+        expect(document.activeElement).toBe(parked);
+
+        popup.closed = true;
+        parked.dispatchEvent(new global.window.FocusEvent('focusin', { bubbles: true }));
+        jest.advanceTimersByTime(600);
+
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(panelParts().nameField.hasClass('two-company-name-loading')).toBe(false);
+        expect(document.activeElement).toBe(parked);
     });
 
     test('a sibling\'s mode chip taking focus closes the popup; its click does not cancel', async () => {
@@ -778,12 +797,15 @@ describe('the popup opening', () => {
             expect(document.activeElement).toBe(button);
             button.click();
         }]
-    ])('leaves %s holding no focus, so a window return re-focuses nothing', async (launcher, launch) => {
+    ])('takes focus off %s and parks it on the company-name field', async (launcher, launch) => {
         await launch();
         await settle();
-
         expect(global.window.open).toHaveBeenCalledTimes(1);
         expect(document.activeElement).toBe(document.body);
+
+        jest.advanceTimersByTime(1);
+
+        expect(document.activeElement).toBe(panelParts().nameField.get(0));
     });
 });
 

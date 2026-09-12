@@ -63,6 +63,14 @@ class TwoSoleTrader {
     /** True while focusQuietly() runs; the return watch ignores focus moved under it. */
     static _quietFocus = false;
 
+    /**
+     * Where focusQuietly() last put focus. Chrome re-fires `focus`/`focusin` at
+     * the already-focused element when the window comes back, so focus this
+     * module moved arrives a second time - still not the buyer (ABN-554).
+     * Cleared by the first focus that IS theirs.
+     */
+    static _quietFocusTarget = null;
+
     /** Allocator for `_popupId`, the per-launch identity a capture resumes a flight by (TWO-25658). */
     static _popupSeq = 0;
 
@@ -80,6 +88,7 @@ class TwoSoleTrader {
             el.focus();
         } finally {
             TwoSoleTrader._quietFocus = wasQuiet;
+            TwoSoleTrader._quietFocusTarget = el;
         }
     }
 
@@ -382,6 +391,7 @@ class TwoSoleTrader {
         this._popup = null;
         this._launchControl = null;
         this._launchChip = null;
+        TwoSoleTrader._quietFocusTarget = null;
         if (this._countryChangeHandler) {
             document.removeEventListener('change', this._countryChangeHandler);
             this._countryChangeHandler = null;
@@ -2548,12 +2558,22 @@ class TwoSoleTrader {
             return;
         }
         this._returnHandler = (event) => {
+            // Focus that LEAVES is what tells a re-fire apart from a genuine
+            // arrival back on the same control (ABN-554): a window return
+            // re-fires `focusin` with no `focusout` before it.
+            if (event.type === 'focusout') {
+                if (event.target === TwoSoleTrader._quietFocusTarget) {
+                    TwoSoleTrader._quietFocusTarget = null;
+                }
+                return;
+            }
             if (!TwoSoleTrader._quietFocus) {
                 this.settleFocusOn(event.target);
             }
         };
         // Capture phase, so a theme handler stopping propagation cannot hide the focus.
         document.addEventListener('focusin', this._returnHandler, true);
+        document.addEventListener('focusout', this._returnHandler, true);
     }
 
     /** @param {?Element} node @returns {?Element} the Sole trader chip at or above `node` */
@@ -2567,6 +2587,9 @@ class TwoSoleTrader {
     /** @param {?Element} target the control focus landed on */
     settleFocusOn(target) {
         if (!target || target.nodeType !== 1 || target === document.body) {
+            return;
+        }
+        if (target === TwoSoleTrader._quietFocusTarget) {
             return;
         }
         if (this._settlingFocus) {
@@ -2607,6 +2630,7 @@ class TwoSoleTrader {
             return;
         }
         document.removeEventListener('focusin', this._returnHandler, true);
+        document.removeEventListener('focusout', this._returnHandler, true);
         this._returnHandler = null;
     }
 
