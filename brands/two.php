@@ -65,7 +65,8 @@ return array(
     // stays a translated string in paymentinfo.tpl so it can be localised.
     // An http(s) URL renders the tagline; null, absent, empty or any other
     // scheme renders no tagline and no explainer element at all.
-    // Resolved by Twopayment::getTwoTaglineFaqUrl().
+    // Resolved by Twopayment::getTwoTaglineFaqUrl(). Install-wide, like every
+    // value here: a per-brand URL needs the overlay of TWO-24746.
     'checkout_tagline_faq_url' => 'https://www.two.inc/resources/buyers',
     // DECLINED VERDICT notice, contract as above; hides that text only, never the block.
     'intent_declined_notice_enabled' => true,
