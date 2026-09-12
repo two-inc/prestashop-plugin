@@ -1572,6 +1572,39 @@ class TwoCompanySearch {
     }
 
     /**
+     * Put the focus the signup popup took back on the company-name field.
+     *
+     * openPopup() blurs the control that launched the flight so a window return
+     * cannot re-focus it (TWO-25658), which left focus on nothing at all while
+     * this panel stayed on screen: no keystroke reached any control (ABN-554).
+     * The company-name field is where every other close of this panel puts it.
+     *
+     * Deferred one tick because openPopup() judges `document.activeElement` on
+     * its own last line, and a field focused before that runs reads there as the
+     * buyer leaving the launcher - which takes the popup straight back down.
+     */
+    parkFocusDroppedByPopup() {
+        setTimeout(() => {
+            const active = document.activeElement;
+            if (this._destroyed
+                || (active && active !== document.body && active !== document.documentElement)) {
+                return;
+            }
+            if (!this.companyField || !this.companyField.length
+                || !document.contains(this.companyField.get(0))) {
+                return;
+            }
+            // Or the field's own focus opener rebuilds the very panel this flight is waiting in.
+            this._closingSelf = true;
+            try {
+                this.focusQuietly(this.companyField);
+            } finally {
+                this._closingSelf = false;
+            }
+        }, 0);
+    }
+
+    /**
      * Keep `aria-expanded` on the company-name field honest.
      *
      * Only while the field is actually acting as the trigger - in manual-entry
@@ -1954,6 +1987,7 @@ class TwoCompanySearch {
                 if (detail && detail.launcher === this._instanceNs) {
                     this._popupSeenThisFlight = true;
                     this._reopenMemory.soleTraderPopup = detail.id;
+                    this.parkFocusDroppedByPopup();
                 }
             });
         return true;
