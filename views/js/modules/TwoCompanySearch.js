@@ -2071,6 +2071,9 @@ class TwoCompanySearch {
      * it, or a keypress other than Tab and Escape. A Tab arrival opens it exactly
      * as a click does (TWO-25503) - safe only alongside holdCompanyFieldTabStop(),
      * or shift+Tab out of the query field oscillates against it (WCAG 2.1.2).
+     *
+     * Escape on this field CLOSES an open panel instead: the signup launch parks
+     * focus here, outside the panel node the panel's own Escape is bound to.
      */
     setupCompanyFieldOpeners() {
         if (!this.companyField || !this.companyField.length) {
@@ -2101,12 +2104,26 @@ class TwoCompanySearch {
         });
 
         this.companyField.on('keydown.twoCompanyOpen', (event) => {
-            if (this._destroyed || this._manualEntry || this._dropdownOpen) {
+            if (this._destroyed || this._manualEntry) {
+                return;
+            }
+            // Bound here as well: the panel's own Escape sits on a node this
+            // field is only a sibling of, and the signup launch parks focus
+            // here (ABN-554).
+            if (event.key === 'Escape' || event.key === 'Esc') {
+                if (!this._dropdownOpen) {
+                    return;
+                }
+                event.preventDefault();
+                this.closeDropdown(true);
+                return;
+            }
+            if (this._dropdownOpen) {
                 return;
             }
             const key = event.key;
             if (key === 'Tab' || key === 'Shift' || key === 'Control' || key === 'Alt'
-                || key === 'Meta' || key === 'Escape' || key === 'Esc') {
+                || key === 'Meta') {
                 return;
             }
             if (event.ctrlKey || event.metaKey || event.altKey) {
