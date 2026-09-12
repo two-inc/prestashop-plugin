@@ -7,8 +7,9 @@ declare(strict_types=1);
  *
  * The subtitle is optional: a merchant who clears it gets an empty stored row
  * for every language and a tile with no subtitle element at all. There is no
- * brand-default fallback - the tile's strapline in that state is the brand
- * tagline in paymentinfo.tpl, which is not merchant-configurable.
+ * brand-default fallback - the strapline in that state is the brand tagline in
+ * paymentinfo.tpl, which the brand configures and can leave out entirely
+ * (PaymentTileTaglineSpec).
  *
  * The title is a separate field and is still mandatory; the last row of the
  * save table exists so relaxing the subtitle cannot quietly relax it too.
@@ -149,7 +150,7 @@ final class CheckoutSubtitleSpec
             $module = new TwopaymentTestHarness();
             $module->_path = '/modules/twopayment/';
 
-            TinyAssert::same($expected, $module->exposeTwoPaymentOptionSubtitle(), $description);
+            TinyAssert::same($expected, $module->exposeTwoPaymentOptionAssigned('subtitle'), $description);
         }
     }
 }

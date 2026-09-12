@@ -37,6 +37,10 @@
     <div class="two-header">
         <div class="two-logo-container">
             <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="{$two_product_name|escape:'html':'UTF-8'}" class="two-logo" />
+            {* TWO-25711: tagline and explainer both hang off the brand's FAQ URL;
+               a brand declaring none emits no element at all. The sentence stays a
+               translated string - the brand supplies only the link target. *}
+            {if $tagline_faq_url != ''}
             <p class="two-tagline">
                 {l s='Business payments made simple' mod='twopayment'}
                 {* "What is Two" explainer link (TWO-25386). Default ON. *}
@@ -46,13 +50,14 @@
                     <span class="two-tooltip-content">
                         <span class="two-tooltip-title">{l s='What is %s?' mod='twopayment' sprintf=[$two_product_name]}</span>
                         <span class="two-tooltip-text">{l s='%s provides instant trade credit for B2B purchases. Buy now, pay later with no interest or fees.' mod='twopayment' sprintf=[$two_product_name]}</span>
-                        <a href="https://www.two.inc/resources/buyers" target="_blank" rel="noopener noreferrer" class="two-tooltip-link">
+                        <a href="{$tagline_faq_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer" class="two-tooltip-link">
                             {l s='Learn more about %s' mod='twopayment' sprintf=[$two_product_name]} →
                         </a>
                     </span>
                 </span>
                 {/if}
             </p>
+            {/if}
         </div>
     </div>
     

@@ -5691,6 +5691,8 @@ class Twopayment extends PaymentModule
             // suppressed client-side.
             'company_search_tile' => $this->isCompanySearchInAddressArea() !== '1',
             'two_product_name' => $this->getTwoBrandConfig('product_name'),
+            // Gates the tagline element itself, not just its link (TWO-25711).
+            'tagline_faq_url' => $this->getTwoTaglineFaqUrl(),
         ));
 
         $inputs = ['token' => ['name' => 'token', 'type' => 'hidden', 'value' => Tools::getToken(false)]];
@@ -12889,6 +12891,40 @@ class Twopayment extends PaymentModule
         }
 
         return array_key_exists($key, $brand) ? $brand[$key] : null;
+    }
+
+    /**
+     * The brand's FAQ link target for the payment-tile tagline
+     * (brands/two.php 'checkout_tagline_faq_url', TWO-25711), or '' when the
+     * brand declares none - which suppresses the tagline element as well as
+     * the link.
+     *
+     * @return string
+     */
+    public function getTwoTaglineFaqUrl()
+    {
+        return self::normalizeTwoTaglineFaqUrl($this->getTwoBrandConfig('checkout_tagline_faq_url'));
+    }
+
+    /**
+     * Normalize a brand 'checkout_tagline_faq_url' value into the URL the
+     * template renders, or '' for anything unusable.
+     *
+     * The URL reaches buyer-facing markup as an href, so only http(s) passes.
+     *
+     * @param mixed $configured
+     * @return string
+     */
+    public static function normalizeTwoTaglineFaqUrl($configured)
+    {
+        if (!is_string($configured)) {
+            return '';
+        }
+
+        $url = trim($configured);
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+
+        return ($scheme === 'http' || $scheme === 'https') ? $url : '';
     }
 
     /**
