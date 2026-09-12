@@ -333,6 +333,54 @@ Three more traps in the JS suites:
   existing suite already catches proves the suite is sensitive, not that the case
   added covers anything.
 
+## The Payment-Term Chips Owe The Radio-Group Keyboard Contract
+
+The chip row advertises itself as a radio group — a `radiogroup` container, `radio`
+chips, an `aria-checked` state — so it owes the W3C pattern's keyboard behaviour
+(ABN-554). Advertising the role without it is the defect: a screen-reader buyer is
+told "radio group" and finds none of the interaction that implies.
+
+- **One tab stop, on the checked chip.** A roving `tabindex` keeps exactly one chip
+  tabbable. A selection matching no offered chip falls back to the first, so no state
+  drops the group out of the tab order.
+- **The arrow keys move the checked selection**, wrapping at both ends, with Home and
+  End for the first and last term; focus and selection move together, and the handler
+  returns without preventing the default for an arrow carrying alt, ctrl or meta,
+  since swallowing those breaks the browser's own shortcuts.
+- **One predicate sets the selected class, `aria-checked` and the tab stop**, so the
+  visual and programmatic states cannot drift apart.
+- **Selection follows focus, so the persist is coalesced on the keyboard path.** Each
+  arrow key changes the term, which persists it and re-quotes the fee; without
+  coalescing an arrow sweep is one round trip per keystroke. A click persists at once.
+- **A chip's visible text states the term in full**, so a standard-term chip carries
+  no `aria-label` of its own: one restating "30 days" would risk WCAG 2.5.3. Only an
+  end-of-month chip is named, because `EOM+30` needs spelling out — see below.
+- **A single offered term is a `disabled` chip**: `disabled` takes it out of the tab
+  order whatever its `tabindex`, and the arrow handler ignores a group of fewer than
+  two enabled chips. It is therefore not reachable or announceable by keyboard at all.
+
+## A Chip States Its Term Type, Not Just A Day Count
+
+An end-of-month term falls due that many days after the end of the month, so a chip
+reading "30 days" on a shop configured that way states the wrong due date (ABN-554).
+The visible text is `30 days` under standard terms and `EOM+30` under end of month.
+
+Only the end-of-month chip carries a `title` and an `aria-label`, and both read
+`EOM+30: pay 30 days after the end of the month`. The name opens with the visible
+token because WCAG 2.5.3 requires the accessible name to contain the visible text, so
+the phrase may not be reordered to put the explanation first. It is one translated
+sentence with the day count substituted, not a concatenation of translated fragments:
+word order differs by language.
+
+That name states the surcharge too, because an `aria-label` replaces the whole
+accessible name and the amount rendered inside the chip is then announced nowhere:
+`EOM+30: pay 30 days after the end of the month, plus a 7.25 EUR surcharge`. It is a
+second whole sentence rather than the first with a clause appended, and its
+placeholders are numbered because the day count and the amount are different values.
+The quote lands after the chips are built, so each chip keeps both sentences on itself
+and the name is restated when the amounts arrive — a failed or absent quote puts it
+back to the one claiming no amount, alongside the blank it leaves in the chip.
+
 ## The Custom Request-Header Table
 
 Every rule the save enforces — a name in the RFC 7230 token set, reserved names
