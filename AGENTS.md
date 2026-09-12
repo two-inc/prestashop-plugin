@@ -227,6 +227,25 @@ Escape-to-close nor the close-on-focus-leave handler can see a keystroke.
 `setupCompanyFieldOpeners()` binds focus, mousedown and keydown to one
 `openDropdown()`.
 
+**Closing the panel puts focus back on the company-name field** — Escape, a
+pointer press outside it, a company adopted from the results, manual entry taking
+the field over, and a sole-trader signup that answers or is abandoned (ABN-554).
+The field's own focus opener is held off for that one programmatic focus alone, so
+any keydown on the field, a pointer press on it, or focus arriving from anywhere
+else brings the popover straight back.
+
+**The close-on-focus-leave path is the exception, and deliberately so.** It only
+fires once focus has settled on another control, so taking focus back would undo
+the buyer's own Tab (TWO-25326). The same holds for the closes nothing in the
+buyer's hands reached: a re-render, a country change mid-select, and another
+popover claiming the single open slot.
+
+**A pointer press outside the popover takes focus back only where the press left
+it nowhere**, and one tick later rather than in the handler: the press's own
+default action runs after the handler and either focuses what it hit or clears
+focus entirely, so focusing the field from the handler is simply undone. Neither
+default action exists in jsdom, which is why this needed a real browser.
+
 **The open panel takes the field's tab stop** — `tabindex="-1"` while it is up, and
 on close the field's PRIOR value restored exactly, which is removal when there was
 none (TWO-25503). Without it the focus opener is a keyboard trap: the opener puts

@@ -1104,7 +1104,11 @@ class TwoCompanySearch {
                 if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
                     return;
                 }
+                // Deferred instead of closeDropdown()'s own return: the
+                // press's default action runs after this handler and would
+                // undo it.
                 this.closeDropdown(false);
+                this.returnFocusIfDropped();
             });
     }
 
@@ -1203,7 +1207,11 @@ class TwoCompanySearch {
             if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
                 return;
             }
+            // False, then the conditional return: focus that MOVED is the
+            // buyer's own Tab and stays put (TWO-25326), but focus that was
+            // DROPPED leaves them on nothing once the panel goes.
             this.closeDropdown(false);
+            this.returnFocusIfDropped();
         }, 0);
     }
 
@@ -1434,9 +1442,12 @@ class TwoCompanySearch {
     }
 
     /**
-     * @param {boolean} returnFocus Put focus back on the company-name field.
-     *   True for Escape and for a completed selection; false when the
-     *   browser has already moved focus somewhere else of its own accord.
+     * @param {boolean} returnFocus Put focus back on the company-name field -
+     *   what every close the buyer reaches does (ABN-554). False where
+     *   something else already owns focus: a re-render, a country change
+     *   mid-select, another popover claiming the open slot, manual entry,
+     *   and the focus-leave close, which fires only once focus has landed
+     *   elsewhere (TWO-25326).
      */
     closeDropdown(returnFocus) {
         // Every way the panel closes must leave no sole-trader spinner or stray
@@ -1487,6 +1498,33 @@ class TwoCompanySearch {
                 this._closingSelf = false;
             }
         }
+    }
+
+    /**
+     * Take focus back only if the pointer press that closed the panel left it
+     * nowhere, which is what a press on anything unfocusable does. Deferred by
+     * one tick so the press's own default action has already settled.
+     */
+    returnFocusIfDropped() {
+        setTimeout(() => {
+            if (this._destroyed || this._dropdownOpen) {
+                return;
+            }
+            const active = document.activeElement;
+            if (active && active !== document.body && active !== document.documentElement) {
+                return;
+            }
+            if (!this.companyField || !this.companyField.length
+                || !document.contains(this.companyField.get(0))) {
+                return;
+            }
+            this._closingSelf = true;
+            try {
+                this.focusQuietly(this.companyField);
+            } finally {
+                this._closingSelf = false;
+            }
+        }, 0);
     }
 
     /**
