@@ -12913,15 +12913,15 @@ class Twopayment extends PaymentModule
 
     /**
      * The tile subtitle before escaping: the merchant's per-language Subtitle
-     * field, or the brand's tagline carrying a "read more" link to its FAQ
-     * page when that field is blank.
+     * field, or the brand's default sentence carrying a "read more" link to
+     * its FAQ page when that field is blank.
      *
      * A brand declaring no usable FAQ URL renders no subtitle element at all,
      * rather than a sentence whose link points back at the checkout page.
      *
      * @return string
      */
-    public function resolveTwoSubtitle()
+    private function resolveTwoSubtitle()
     {
         $configured = trim((string) Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id));
         if ($configured !== '') {
