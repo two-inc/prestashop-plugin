@@ -37,16 +37,15 @@
     <div class="two-header">
         <div class="two-logo-container">
             <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="{$two_product_name|escape:'html':'UTF-8'}" class="two-logo" />
-            <p class="two-tagline">
-                {l s='Business payments made simple' mod='twopayment'}
-            </p>
             {* ABN-554: the icon IS the link - the tooltip is its sibling and
                carries no anchor, so nothing inside the box is interactive. A
                brand with no about URL renders no control at all, whatever the
                merchant "explainer" setting says. aria-hidden keeps the closed,
                opacity-0 box out of document flow while aria-describedby still
                resolves it: the accessible-description step exempts a directly
-               referenced node. *}
+               referenced node.
+               noopener without noreferrer: the Referer is how the brand's own
+               about page attributes the visit. *}
             {if $show_about_link}
             {if $about_url != ''}
             <span class="two-info-tooltip">
@@ -64,6 +63,9 @@
             </span>
             {/if}
             {/if}
+            <p class="two-tagline">
+                {l s='Business payments made simple' mod='twopayment'}
+            </p>
         </div>
     </div>
 

@@ -171,7 +171,6 @@
 .two-info-tooltip {
     position: relative;
     display: inline-flex;
-    margin-left: 6px;
     vertical-align: middle;
 }
 
@@ -186,8 +185,7 @@
     height: 19px;
 }
 
-/* Opacity rather than display/visibility: aria-describedby only resolves to
-   text the accessibility tree still holds. */
+/* Opacity rather than display/visibility: the open transition needs a fadeable property. */
 .two-tooltip-content {
     position: absolute;
     top: 100%;
