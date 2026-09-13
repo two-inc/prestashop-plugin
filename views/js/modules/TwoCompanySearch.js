@@ -4091,8 +4091,7 @@ class TwoCompanySearch {
                 // the same visual break Mag/WC's select2/selectWoo panel has
                 // below its own combobox.
                 position: { my: 'left top+8', at: 'left bottom', collision: 'none' },
-                // Fires after every repaint, and is the only hook that reaches
-                // the rows on the jQuery UI 1.10 a theme may still ship.
+                // The only per-repaint hook that reaches the rows on jQuery UI 1.10.
                 open: () => {
                     this.applyListboxSemantics();
                 },
@@ -4163,13 +4162,11 @@ class TwoCompanySearch {
                 // (TWO-25326). The list is navigated with the cursor keys from
                 // the query field; it never needs focus of its own.
                 menu.attr('tabindex', '-1');
-                // Autocomplete builds its menu with `role: null`, so the widget
-                // leaves the popup of a combobox with no listbox role at all.
+                // Autocomplete builds its menu with `role: null`, so a combobox's popup has no listbox role.
                 menu.attr('role', 'listbox');
                 menu.attr('id', 'two-company-results-' + this._instanceNs);
                 this._queryField.attr('aria-controls', menu.attr('id'));
-                // The menu marks its highlighted row with a class only; the
-                // combobox's pointer at that row has to be mirrored from it.
+                // The menu marks its highlighted row with a class and nothing else.
                 menu.off('menufocus.twoa11y menublur.twoa11y')
                     .on('menufocus.twoa11y', (event, ui) => this.syncActiveDescendant(ui.item))
                     .on('menublur.twoa11y', () => this.syncActiveDescendant(null));
@@ -4830,8 +4827,7 @@ class TwoCompanySearch {
                     return;
                 }
                 wrapper.attr('role', 'option').attr('aria-selected', 'false');
-                // The widget's own per-row data, not the disabled class: that
-                // class comes from a renderer override 1.10 never reaches.
+                // Per-row widget data, not the disabled class: that class comes from a renderer override 1.10 never reaches.
                 const item = row.data('ui-autocomplete-item');
                 if (item && item.two_unavailable) {
                     wrapper.attr('aria-disabled', 'true');
