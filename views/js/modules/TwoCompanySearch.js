@@ -265,6 +265,11 @@ class TwoCompanySearch {
         this._soleTraderLoading = false;
         // Set while a flight is live once the buyer came back into the panel from its popup (TWO-25658).
         this._panelKeptPastPopup = false;
+        // Suppresses the field's own focus opener until the window return spends its focus pair (ABN-554).
+        this._openerHeld = false;
+        this._heldFocusSeen = false;
+        this._arrivalFocusSeen = false;
+        this._windowReturned = false;
         this._popupSeenThisFlight = false;
         // Per-instance suffix: the `mouseup` guard binds on `document`, where
         // the shared `.twoDropdown` namespace unbinds every instance's.
@@ -1279,6 +1284,9 @@ class TwoCompanySearch {
         this.beginSoleTraderLoading();
         // Cleared by the call above; a resumed flight has its popup in front of the buyer already.
         this._popupSeenThisFlight = true;
+        // Without it the window return's re-fire reads to this replacement as the
+        // buyer coming back, and reopens the popover (ABN-554).
+        this.holdCompanyFieldOpener();
         const soleTrader = this.soleTrader();
         if (soleTrader && typeof soleTrader.readoptEnrollment === 'function') {
             soleTrader.readoptEnrollment();
@@ -1323,6 +1331,28 @@ class TwoCompanySearch {
         } else {
             el.focus();
         }
+    }
+
+    /**
+     * Suppress the company field's focus opener until a `focus`+`focusin` pair
+     * lands on the parked field, or the buyer works the field (ABN-554).
+     *
+     * Unbounded: the browser sends the window return's own pair when the buyer
+     * comes back to this tab, which may be a minute after the popup closed, or
+     * never; a pair with no window return behind it is the buyer arriving by Tab.
+     */
+    holdCompanyFieldOpener() {
+        this._openerHeld = true;
+        this._heldFocusSeen = false;
+        this._arrivalFocusSeen = false;
+        this._windowReturned = false;
+    }
+
+    releaseCompanyFieldOpener() {
+        this._openerHeld = false;
+        this._heldFocusSeen = false;
+        this._arrivalFocusSeen = false;
+        this._windowReturned = false;
     }
 
     /**
@@ -1995,6 +2025,7 @@ class TwoCompanySearch {
         }
         this._soleTraderLoading = true;
         this._panelKeptPastPopup = false;
+        this.releaseCompanyFieldOpener();
         this._popupSeenThisFlight = false;
         this._manualEntryMemory.refusedSoleTrader = false;
         if (this.companyField && this.companyField.length) {
@@ -2010,11 +2041,16 @@ class TwoCompanySearch {
                 }
                 // No panel to close, or the buyer came back to it; closeDropdown() would also blank the query and move focus.
                 this.endSoleTraderLoading();
+                // The hold outlives the flight: the window return that re-fires focus
+                // on the parked field can be minutes away (ABN-554).
             })
             // Rule 3 (TWO-25658): focus outside the panel closes it; back inside from a popup that just closed, it stays for good.
             // The company field counts as inside - its own focus opener would otherwise race this on event order.
             .on('two:sole-trader-focus-settled.twoSoleTraderFlight' + this._instanceNs, (event) => {
                 const detail = (event.originalEvent || event).detail || {};
+                // Focus on the parked field while the opener is held is the window
+                // return, not the buyer choosing this panel (ABN-554).
+                const refire = this._openerHeld && detail.target === this.companyFieldNode();
                 if (!this._dropdownOpen) {
                     return;
                 }
@@ -2028,7 +2064,11 @@ class TwoCompanySearch {
                 // LIMITATION: it takes a focus landing on a control in the panel. A buyer who
                 // closes the popup and touches nothing gets the settle's ordinary close -
                 // panel gone, focus on the company field.
-                if (this._popupSeenThisFlight && (detail.popupClosed || !this.isSoleTraderPopupOpen())) {
+                // Never on the window-return re-fire: it lands on the parked field with the
+                // popup already gone, and is not the buyer coming back (ABN-554).
+                if (!refire
+                    && this._popupSeenThisFlight
+                    && (detail.popupClosed || !this.isSoleTraderPopupOpen())) {
                     this._panelKeptPastPopup = true;
                 }
             })
@@ -2037,6 +2077,10 @@ class TwoCompanySearch {
                 const detail = (event.originalEvent || event).detail;
                 if (detail && detail.launcher === this._instanceNs) {
                     this._popupSeenThisFlight = true;
+                    // Beside the flag it is read against: the park below has early
+                    // returns, and a flight held on one but not the other treats the
+                    // window return as the buyer (ABN-554).
+                    this.holdCompanyFieldOpener();
                     this._reopenMemory.soleTraderPopup = detail.id;
                     this.parkFocusDroppedByPopup();
                 }
@@ -2131,12 +2175,69 @@ class TwoCompanySearch {
             return;
         }
         this.companyField.off('.twoCompanyOpen');
+        const windowNs = '.twoCompanyOpen' + this._instanceNs;
+        $(window).off(windowNs)
+            .on('focus' + windowNs, () => {
+                this._windowReturned = !this._destroyed;
+            });
+
+        // A gesture ON this field is the buyer whatever else is in flight (ABN-554).
+        this.companyField.on(
+            'pointerdown.twoCompanyOpen keydown.twoCompanyOpen click.twoCompanyOpen',
+            () => {
+                this.releaseCompanyFieldOpener();
+            }
+        );
+
+        // jQuery simulates `focusin` from a capture-phase `focus` listener on the document,
+        // so a real focus reaches these handlers as `focusin` then `focus`; a jQuery trigger
+        // on the already-focused field reverses them. Written against the pair's SECOND half
+        // rather than against either name, so neither order changes which one spends the hold
+        // (ABN-554).
+        const spendHeldFocusPair = () => {
+            if (!this._heldFocusSeen) {
+                // The window's return state at the pair's first half is what tells the
+                // return's own re-fire from a buyer arriving on the field by Tab.
+                this._heldFocusSeen = true;
+                this._arrivalFocusSeen = !this._windowReturned;
+                return;
+            }
+            const arrival = this._arrivalFocusSeen;
+            this.releaseCompanyFieldOpener();
+            // A keyboard-only buyer gets the control the hold would otherwise cost them.
+            if (arrival) {
+                this.openDropdown();
+            }
+        };
+
+        // Both halves of the pair carry the same guards: one that refuses a half the other
+        // arms leaves it standing for the window return to spend as an arrival (ABN-554).
+        const focusIsNotTheBuyerArriving = () => {
+            if (!this._manualEntry && !this._closingSelf) {
+                return false;
+            }
+            // Voids any half standing: a refused half is not a half the next pair may spend.
+            this._heldFocusSeen = false;
+            this._arrivalFocusSeen = false;
+            return true;
+        };
 
         this.companyField.on('focus.twoCompanyOpen', () => {
-            if (this._destroyed || this._manualEntry || this._closingSelf) {
+            if (this._destroyed || focusIsNotTheBuyerArriving()) {
+                return;
+            }
+            if (this._openerHeld) {
+                spendHeldFocusPair();
                 return;
             }
             this.openDropdown();
+        });
+
+        this.companyField.on('focusin.twoCompanyOpen', () => {
+            if (this._destroyed || focusIsNotTheBuyerArriving() || !this._openerHeld) {
+                return;
+            }
+            spendHeldFocusPair();
         });
 
         this.companyField.on('mousedown.twoCompanyOpen', (event) => {
@@ -4462,9 +4563,13 @@ class TwoCompanySearch {
 
         this.renderBackToSearchLink();
 
-        // Activating "My company is not on the list" places focus in the
-        // manual company name field. This is the one place that happens.
-        this.focusQuietly(this.companyField);
+        // The invariant `_manualEntry` above does not excuse: every focus this module moves itself is inside `_closingSelf` (ABN-554).
+        this._closingSelf = true;
+        try {
+            this.focusQuietly(this.companyField);
+        } finally {
+            this._closingSelf = false;
+        }
     }
 
     /**
@@ -6299,6 +6404,8 @@ class TwoCompanySearch {
             if (this._widthRefreshHandler) {
                 $(window).off('resize.twoCompanyWidth orientationchange.twoCompanyWidth', this._widthRefreshHandler);
             }
+            // Per-instance namespace, so this removes only this instance's pair.
+            $(window).off('.twoCompanyOpen' + this._instanceNs);
             clearTimeout(this._widthRefreshTimeoutId);
             this._widthRefreshTimeoutId = null;
         } catch (e) {

@@ -250,12 +250,27 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
         }
     };
 
+    /**
+     * Park focus off `node`. jsdom fires a window-targeted `focus` on any element
+     * blur(), which no browser does and which would arm the window-return read, so
+     * the park puts that read back as it found it.
+     */
+    function parkFocus(node) {
+        const returned = instances.map((instance) => instance._windowReturned);
+        node.blur();
+        instances.forEach((instance, index) => {
+            instance._windowReturned = returned[index];
+        });
+    }
+
     /** The popup is gone, the panel kept and its flight live: the buyer came back into the panel. */
     function closeFromInside() {
+        // They came back to the tab to reach it, so the window's own return fires with them.
+        $(global.window).trigger('focus');
         panelParts().query.get(0).focus();
         expect(popup.closed).toBe(true);
         // Park focus off the query field, or a row whose own target is it fires no focusin.
-        panelParts().query.get(0).blur();
+        parkFocus(panelParts().query.get(0));
         popup = fakePopup();
     }
 
@@ -264,14 +279,14 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
         ['popup open', 'the Registered chip', 1, true, false, true, 'closed on focus arrival, the click is still to come'],
         ['popup open', 'the Enter manually chip', 1, true, false, true, 'closed on focus arrival'],
         ['popup open', 'a non-chip control inside the panel', 1, true, false, true, 'closed, panel kept'],
-        ['popup open', 'the company-name field', 1, true, false, true, 'focus closes the popup; the field is the popover\'s own trigger and its focus opener holds the popover open'],
+        ['popup open', 'the company-name field', 1, true, false, true, 'focus closes the popup; the field is the popover\'s own trigger, so landing on it is not focus leaving the panel'],
         ['popup open', 'a control outside the popover', 1, true, false, false, 'popup and panel close'],
         ['popup open', 'a "Select a different sole trader" button', 1, true, false, false, 'a control like any other, its click relaunches'],
         ['popup closed', 'the Sole trader chip', 1, false, false, true, 'a Tab arrival with no popup opens none'],
         ['popup closed', 'the Registered chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'the Enter manually chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'a non-chip control inside the panel', 1, false, false, true, 'nothing to close'],
-        ['popup closed', 'the company-name field', 1, false, false, true, 'the field reopens the popover it triggers'],
+        ['popup closed', 'the company-name field', 1, false, false, false, 'the buyer\'s return to the tab holds the field\'s focus opener, so this focus spends it and opens nothing'],
         ['popup closed', 'a control outside the popover', 1, false, false, false, 'the panel closes'],
         ['popup closed', 'a "Select a different sole trader" button', 1, false, false, false, 'the panel closes']
     ])('%s, focus lands on %s: opens=%s closed=%s raised=%s panelOpen=%s - %s', async (state, target, opens, closed, raised, panelOpen) => {
@@ -280,7 +295,7 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
             closeFromInside();
         }
         // The launch parks focus on the company field (ABN-554), and a row whose own target is it fires no focusin.
-        document.activeElement.blur();
+        parkFocus(document.activeElement);
         const generation = soleTrader._enrollGeneration;
 
         TARGETS[target]().focus();
@@ -332,7 +347,7 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
         const mintsBefore = tokenMints;
 
         // Off the field the launch parked focus on, so focusing it back is an arrival (ABN-554).
-        document.activeElement.blur();
+        parkFocus(document.activeElement);
         panelParts().nameField.get(0).focus();
         expect(popup.closed).toBe(true);
         popup = fakePopup();
