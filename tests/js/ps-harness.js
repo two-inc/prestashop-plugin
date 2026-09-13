@@ -39,15 +39,42 @@ function installJQuery() {
     global.window.jQuery = jQuery;
     // jquery-ui ships no CommonJS branch, so each file must be required in
     // its real dependency order by hand.
-    require('jquery-ui/ui/jquery-patch');
-    require('jquery-ui/ui/version');
-    require('jquery-ui/ui/widget');
-    require('jquery-ui/ui/position');
-    require('jquery-ui/ui/keycode');
-    require('jquery-ui/ui/labels');
-    require('jquery-ui/ui/unique-id');
-    require('jquery-ui/ui/widgets/menu');
-    require('jquery-ui/ui/widgets/autocomplete');
+    //
+    // Two versions, because shop themes ship either: 1.10 is the oldest a
+    // PrestaShop theme still serves and 1.14 the newest, and they differ in
+    // both the API surface and the markup a row is rendered with. The
+    // `JQUERY_UI` project picks which, and the 1.10 package has no `ui/`
+    // directory at all.
+    if (process.env.JQUERY_UI === '1.10') {
+        // 1.10's `$.position` measures its containment by taking `.offset()`
+        // of the window, and jQuery 3 reads a box off `getClientRects()` before
+        // anything else. Neither the jsdom window nor its document has one, so
+        // the menu cannot be positioned at all. An empty list is what jQuery
+        // itself treats as "no box", which is the right answer in a headless
+        // DOM; 1.14 stopped asking.
+        [global.window, global.document].forEach(function (host) {
+            if (typeof host.getClientRects !== 'function') {
+                host.getClientRects = function () {
+                    return [];
+                };
+            }
+        });
+        require('jquery-ui-110/core');
+        require('jquery-ui-110/widget');
+        require('jquery-ui-110/position');
+        require('jquery-ui-110/menu');
+        require('jquery-ui-110/autocomplete');
+    } else {
+        require('jquery-ui/ui/jquery-patch');
+        require('jquery-ui/ui/version');
+        require('jquery-ui/ui/widget');
+        require('jquery-ui/ui/position');
+        require('jquery-ui/ui/keycode');
+        require('jquery-ui/ui/labels');
+        require('jquery-ui/ui/unique-id');
+        require('jquery-ui/ui/widgets/menu');
+        require('jquery-ui/ui/widgets/autocomplete');
+    }
     if (typeof jQuery.fn.autocomplete !== 'function' || !jQuery.ui.autocomplete) {
         throw new Error('harness: jQuery UI autocomplete did not register');
     }

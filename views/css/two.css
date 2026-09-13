@@ -1586,14 +1586,20 @@
  * row including this one. Without it the row resolves to body-text colour with
  * the hover highlight - i.e. it looks clickable while being unselectable - and
  * only a resolved-style assertion catches that, never a class-name one.
+ *
+ * Both wrappers, because the version decides which one ships: jQuery UI 1.12
+ * and later wrap a row in a `<div>`, 1.10 and 1.11 in an `<a>`.
  */
-.ui-autocomplete .two-autocomplete-message.ui-menu-item > div {
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > div,
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > a {
     color: #888 !important;
     cursor: default !important;
 }
 
 /* Never let a message row take jQuery UI's hover/active highlight. */
-.ui-autocomplete .two-autocomplete-message.ui-menu-item > div.ui-state-active {
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > div.ui-state-active,
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > a.ui-state-active,
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > a.ui-state-focus {
     background: none !important;
     border: none !important;
     color: #888 !important;
