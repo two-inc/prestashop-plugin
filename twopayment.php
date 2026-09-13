@@ -6102,10 +6102,11 @@ class Twopayment extends PaymentModule
         // reconcile the cart's surcharge line with the fee this payload will
         // carry BEFORE totals are read, so a missed/failed frontend sync
         // (broken theme JS, raced AJAX) cannot ship a PrestaShop total that
-        // diverges from the Two invoice. The parity gate below then verifies
-        // the result and fails closed on any residual mismatch.
+        // diverges from the Two invoice. ABN-554: on the same predicate the
+        // buyer's own sync obeys, so where it refuses the parity gate below
+        // throws rather than charge a fee the buyer's summary never showed.
         if ($syncSurchargeCartLine) {
-            $this->syncTwoSurchargeCartLine($cart, true);
+            $this->syncTwoSurchargeCartLine($cart, $this->isTwoSurchargeAdmissibleForCart($cart));
         }
 
         $line_items = $this->getTwoProductItems($cart);
@@ -14918,9 +14919,8 @@ class Twopayment extends PaymentModule
      */
     protected function applyTwoSurchargeCartLineSync($cart, $selected)
     {
-        // Read before the mutation: the re-stamp below may only forgive drift
-        // this module is about to cause, so it is conditional on the stored
-        // state still describing the cart as the buyer left it.
+        // Read before the mutation: the re-stamp may only forgive drift this
+        // module is about to cause.
         $restampable = $this->checkoutSessionChecksumMatchesCart($cart);
         $result = $this->reconcileTwoSurchargeCartLine($cart, $selected);
         if (!empty($result['changed']) && $restampable) {
@@ -14934,11 +14934,8 @@ class Twopayment extends PaymentModule
      * Does the cart's persisted checkout state still describe this cart
      * (ABN-554)?
      *
-     * A mismatch means something other than the fee line already diverged - a
-     * quantity edited in another tab, a price or tax change - and that is
-     * core's to invalidate on, not this module's to bless. It doubles as the
-     * version guard: a renamed cart column or checksum key shows up here as a
-     * non-match and the re-stamp simply stands down.
+     * A mismatch is drift the fee line did not cause, which is core's to
+     * invalidate on rather than this module's to bless.
      *
      * @param Cart $cart
      * @return bool
@@ -14998,10 +14995,7 @@ class Twopayment extends PaymentModule
     protected function generateCheckoutSessionChecksum($cart)
     {
         try {
-            if (!Validate::isLoadedObject($cart)
-                || !class_exists('CartChecksum')
-                || !class_exists('AddressChecksum')
-            ) {
+            if (!Validate::isLoadedObject($cart)) {
                 return null;
             }
             $checksum = new CartChecksum(new AddressChecksum());
@@ -15022,19 +15016,14 @@ class Twopayment extends PaymentModule
      * Bring the cart's persisted checkout-step state back in step with the
      * cart the module just mutated (ABN-554).
      *
-     * OrderController only restores the buyer's completed steps while the
-     * stored checksum still matches CartChecksum::generateChecksum(), which
-     * hashes every product line's id, quantity and total_wt. The fee line is
-     * the module's own bookkeeping, not a buyer-driven cart change, so
-     * leaving core to invalidate on it collapses the checkout - and for a
-     * guest that is unrecoverable, since step 1 only completes on a
-     * successful account creation their email already blocks.
+     * Core restores completed steps only while the stored checksum matches the
+     * cart's product lines, so leaving it to invalidate on the module's own fee
+     * line collapses the checkout - unrecoverably for a guest, whose step 1
+     * only completes on an account creation their own email then blocks.
      *
-     * The read and the write are not atomic against core's own
-     * saveDataToPersist(), which rewrites the whole column: a collision loses
-     * one of the two updates. Accepted - the module's own syncs are serialised
-     * by the per-cart lock in syncTwoSurchargeCartLine, and the remaining
-     * window is a buyer completing a step in the same instant.
+     * Not atomic against core's saveDataToPersist(), which rewrites the whole
+     * column; the losing window is a buyer completing a step in the same
+     * instant, and the module's own syncs are serialised by the per-cart lock.
      *
      * @param Cart $cart
      * @return void
@@ -17786,39 +17775,35 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Is the tile currently offering Two to this buyer (ABN-554)?
+     * May a buyer fee line enter this cart (ABN-554)?
      *
-     * The term chips - and with them the per-term buyer fee - only render once
-     * an order intent comes back approved, so this is the condition a
-     * buyer-driven fee sync has to share with them. Deliberately not the
-     * authoritative approval: payment.php re-checks with the provider before
-     * any order is booked, and this only decides whether a fee may enter the
-     * basket the buyer is looking at.
+     * Availability, not the presence of an approval: a shop with the intent
+     * preview switched off records no verdict at all, and withholding the fee
+     * there hands the buyer a summary order create charges past. Only a
+     * refusal stamped with THIS cart closes it - a verdict speaks for the cart
+     * it was given for and no other.
      *
+     * @param Cart|null $cart defaults to the context cart
      * @return bool
      */
-    public function isTwoOrderIntentApprovedForSession()
+    public function isTwoSurchargeAdmissibleForCart($cart = null)
     {
-        if (!isset($this->context->cookie->two_order_intent_approved)
-            || (string)$this->context->cookie->two_order_intent_approved !== '1'
+        if (!isset($this->context->cookie)
+            || !isset($this->context->cookie->two_order_intent_approved)
+            || (string)$this->context->cookie->two_order_intent_approved !== '0'
         ) {
-            return false;
+            return true;
         }
 
-        // An approval vouches for the cart it was given for and no other. The
-        // cart the buyer gets after placing an order is a different one, and
-        // nothing in a manual-entry checkout ever runs an intent to overwrite
-        // the verdict, so without this stamp an approval keeps admitting fee
-        // lines for the rest of the session. An unstamped record predates this
-        // and is refused; the next intent answer restores it.
+        if ($cart === null && isset($this->context->cart)) {
+            $cart = $this->context->cart;
+        }
         $stamped = isset($this->context->cookie->two_order_intent_cart_id)
             ? (int)$this->context->cookie->two_order_intent_cart_id
             : 0;
-        $cartId = isset($this->context->cart) && Validate::isLoadedObject($this->context->cart)
-            ? (int)$this->context->cart->id
-            : 0;
+        $cartId = Validate::isLoadedObject($cart) ? (int)$cart->id : 0;
 
-        return $stamped > 0 && $stamped === $cartId;
+        return !($stamped > 0 && $stamped === $cartId);
     }
 
     /**
