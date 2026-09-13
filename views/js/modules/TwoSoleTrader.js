@@ -2340,6 +2340,75 @@ class TwoSoleTrader {
     }
 
     /**
+     * The company name the checkout has already captured, or ''.
+     *
+     * TwoCheckoutManager.getSelectedCompany(), never a direct read of
+     * `input[name='company']`: in tile mode that field is the SEARCH BOX, so a
+     * direct read would prefill the signup with a half-typed query the buyer
+     * never confirmed as their trading name.
+     *
+     * @returns {string}
+     */
+    capturedCompanyName() {
+        try {
+            const manager = window.TwoCheckoutManager_Instance;
+            const selected = manager && typeof manager.getSelectedCompany === 'function'
+                ? manager.getSelectedCompany()
+                : null;
+
+            return (selected && selected.name) ? String(selected.name) : '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    /**
+     * The address half of the signup prefill, in the hosted page's own shape.
+     *
+     * `building`/`apartment` are deliberately absent even though the hosted page
+     * accepts them: the inbound direction (TwoCompanySearch's
+     * autoFillSoleTraderAddress()) joins them into `address1` with the street
+     * pushed down to `address2`, and that join cannot be undone from the form.
+     *
+     * @returns {Object}
+     */
+    billingAddressPrefill() {
+        const read = function (name) {
+            const field = document.querySelector("input[name='" + name + "']");
+
+            return field ? String(field.value || '') : '';
+        };
+
+        return {
+            street: read('address1'),
+            postal_code: read('postcode'),
+            city: read('city'),
+            region: this.billingRegion()
+        };
+    }
+
+    /**
+     * The state/county NAME, never PrestaShop's state id - ids are shop-local
+     * rows and the hosted page takes a free-text region.
+     *
+     * @returns {string}
+     */
+    billingRegion() {
+        const select = document.querySelector("select[name='id_state'], select[name='state']");
+        if (!select || !select.selectedOptions || !select.selectedOptions.length) {
+            return '';
+        }
+        const option = select.selectedOptions[0];
+        // An empty value is the select's own placeholder row, whose visible text
+        // ("-", "Choose your state") is not a region.
+        if (!option.value) {
+            return '';
+        }
+
+        return String(option.text || '').trim();
+    }
+
+    /**
      * Base64 for the signup page's autofillData parameter. UTF-8-safe:
      * a bare btoa() throws on any character outside Latin-1 (e.g. å/ø/æ
      * in names).
@@ -2388,7 +2457,13 @@ class TwoSoleTrader {
             email: this.checkoutEmail(),
             first_name: (firstName && firstName.value) || customer.firstname || '',
             last_name: (lastName && lastName.value) || customer.lastname || '',
-            phone_number: phone ? phone.value : ''
+            phone_number: phone ? phone.value : '',
+            company_name: this.capturedCompanyName(),
+            // Top-level, not inside `billing_address`: the hosted signup takes
+            // the business country from here and discards the address block's
+            // own `country_code`.
+            country_code: this.billingCountry(),
+            billing_address: this.billingAddressPrefill()
         };
         // PORTING NOTE (future Magento/WooCommerce port of this sole-trader
         // flow): brand resolution here is PrestaShop-only and has NO brand
