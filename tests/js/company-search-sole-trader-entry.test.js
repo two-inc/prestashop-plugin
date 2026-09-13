@@ -229,10 +229,7 @@ describe('activation', () => {
                 expect([shown(panelParts().panel), why]).toEqual([expectedShown, why]);
             });
 
-        test.each([
-            ['focus', 'the hold ends with the flight, and the field opener is alive again'],
-            ['mousedown', 'the pointer opener is never held, so it opens throughout']
-        ])('a real %s on the name field opens the panel after the flight (%s)', (opener, why) => {
+        test('a real mousedown on the name field opens the panel after the flight (the pointer opener is never held)', () => {
             const soleTrader = stubSoleTrader(true);
             const instance = makeInstance();
             launched(instance, soleTrader);
@@ -240,9 +237,64 @@ describe('activation', () => {
             document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
             expect(shown(panelParts().panel)).toBe(false);
 
-            panelParts().nameField.trigger(opener);
+            panelParts().nameField.trigger('mousedown');
 
-            expect([shown(panelParts().panel), why]).toEqual([true, why]);
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        /**
+         * The hold ends on the WINDOW's return, which a browser signals by
+         * re-firing `focus` and `focusin` at whatever was focused when the tab
+         * lost focus - here, the field the launch parked on. jsdom sends none of
+         * that on a tab switch, so every event below is dispatched by hand; and
+         * jsdom fires a window-targeted `focus` on any element `blur()`, so
+         * these fixtures blur nothing after the launch.
+         */
+        function settledWithPanelClosed(soleTrader, instance) {
+            launched(instance, soleTrader);
+            refireFocusOnNameField(soleTrader);
+            document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+            expect(shown(panelParts().panel)).toBe(false);
+        }
+
+        test('a focus pair with no window return behind it leaves the hold in place', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            settledWithPanelClosed(soleTrader, instance);
+
+            panelParts().nameField.trigger('focus');
+            panelParts().nameField.trigger('focusin');
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
+
+        test('the window return spends its focus pair without opening the panel, and the field opens on the next focus', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            settledWithPanelClosed(soleTrader, instance);
+
+            $(global.window).trigger('focus');
+            panelParts().nameField.trigger('focus');
+            panelParts().nameField.trigger('focusin');
+            expect(shown(panelParts().panel)).toBe(false);
+
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        test('a pointerdown on the name field mid-flight ends the hold, so the focus it brings opens the panel', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            launched(instance, soleTrader);
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            panelParts().nameField.trigger('pointerdown');
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(true);
         });
 
         test('a re-render mid-flight leaves the re-fire no way to keep the panel open', () => {
