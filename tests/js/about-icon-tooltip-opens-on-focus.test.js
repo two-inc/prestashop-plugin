@@ -10,6 +10,8 @@
 const fs = require('fs');
 const path = require('path');
 
+const { buildPaymentTileWithAboutControl } = require('./ps-harness');
+
 const STYLESHEET = fs.readFileSync(
     path.join(__dirname, '..', '..', 'views', 'css', 'two.css'),
     'utf8'
@@ -27,6 +29,37 @@ describe('the about tooltip', () => {
         ['sits where it belongs on focus at mobile widths', MOBILE, /\.two-info-tooltip:focus-within\s+\.two-tooltip-content/]
     ])('it %s', (description, source, pattern) => {
         expect(source).toMatch(pattern);
+    });
+
+    test.each(
+        Array.from(STYLESHEET.matchAll(/([^{}]*two-tooltip-content[^{}]*)\{([^}]*)\}/g)).map(
+            (rule) => [rule[1].replace(/\/\*[\s\S]*?\*\//g, '').trim().replace(/\s+/g, ' '), rule[2]]
+        )
+    )('stays in the accessibility tree under `%s`', (selector, body) => {
+        expect(body).not.toMatch(/visibility:\s*hidden|display:\s*none/);
+    });
+
+    test('the closed tooltip is invisible by opacity alone', () => {
+        const closed = BASE.match(/\.two-tooltip-content\s*\{([\s\S]*?)\}/)[1];
+
+        expect(closed).toMatch(/opacity:\s*0;/);
+    });
+
+    test('the link description resolves while the tooltip is closed', () => {
+        const style = global.document.createElement('style');
+        style.textContent = STYLESHEET;
+        global.document.head.appendChild(style);
+        const tile = buildPaymentTileWithAboutControl(true, 'https://brand.example/what-is');
+        const link = tile.querySelector('a.two-info-link');
+
+        const described = global.document.getElementById(link.getAttribute('aria-describedby'));
+
+        expect(described).not.toBeNull();
+        expect(described.textContent.trim()).not.toBe('');
+        expect(global.getComputedStyle(described).visibility).not.toBe('hidden');
+        expect(global.getComputedStyle(described).display).not.toBe('none');
+        style.remove();
+        global.document.body.innerHTML = '';
     });
 
     test('the open tooltip takes the pointer, so a hover can travel into it', () => {
