@@ -41,6 +41,7 @@ final class TwoAnchorOnlyHtmlSpec
             ['<a href="' . $url . '" target="_top">read more</a>', '<a href="' . $url . '">read more</a>', 'only the _blank this module emits is kept'],
             ['<a href="' . $url . '" rel="me">read more</a>', '<a href="' . $url . '">read more</a>', 'only the noopener this module emits is kept'],
             ['<a href="javascript:alert(1)">read more</a>', 'read more', 'a script URL loses the anchor and keeps the text'],
+            ['<a href="javascript:x=\'https://ok.example\'">read more</a>', 'read more', 'a script URL carrying https: later in the string is still not an http(s) target'],
             ['<a href="data:text/html,pwned">read more</a>', 'read more', 'a data URL loses the anchor and keeps the text'],
             ['<b>Bold</b> and <span style="x">span</span>', 'Bold and span', 'every non-anchor tag is dropped and its text kept'],
             ['<a href="' . $url . '">read more', '<a href="' . $url . '">read more</a>', 'an anchor left open is closed rather than swallowing the page'],
@@ -75,9 +76,34 @@ final class TwoAnchorOnlyHtmlSpec
                 'an @ past the authority is ordinary query text',
             ],
             [
+                '<a href="https://faq.example.test?to=a@b">read more</a>',
+                '<a href="https://faq.example.test?to=a@b">read more</a>',
+                'a query opening straight off the authority ends it, so the @ after it is not userinfo',
+            ],
+            [
+                '<a href="https://faq.example.test#@b">read more</a>',
+                '<a href="https://faq.example.test#@b">read more</a>',
+                'a fragment ends the authority the same way',
+            ],
+            [
                 '<a href="' . $url . '" target="_BLANK" rel="NOOPENER">read more</a>',
                 '<a href="' . $url . '" target="_blank" rel="noopener">read more</a>',
                 'browsers read these keywords case-insensitively, so they are matched that way and re-emitted lowercased',
+            ],
+            [
+                '<a href="' . $url . '" target="_blank">read more</a>',
+                '<a href="' . $url . '" target="_blank" rel="noopener">read more</a>',
+                'a new-tab link gets noopener whether or not the copy asked for it',
+            ],
+            [
+                '<a href="' . $url . '" rel="noopener noreferrer">read more</a>',
+                '<a href="' . $url . '" rel="noopener">read more</a>',
+                'rel is read as a token set, so writing the stricter pair does not cost the link its noopener',
+            ],
+            [
+                '<a href="' . $url . '" rel="NOOPENER">read more</a>',
+                '<a href="' . $url . '" rel="noopener">read more</a>',
+                'rel is matched case-insensitively even with no target to pair it with',
             ],
             ["caf\xC3\xA9 \xC0\xAF costs \xE2\x82\xAC5", "caf\u{00E9} \u{FFFD}\u{FFFD} costs \u{20AC}5", 'one malformed byte is substituted, not allowed to blank the whole run'],
             ["safe\x00ish", 'safeish', 'a control character cannot render and is dropped'],
