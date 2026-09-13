@@ -263,10 +263,15 @@ Every focus this module moves itself - the launch's park, a close returning focu
 manual entry taking the field over - is neither half: it moves under `_closingSelf`,
 which the opener skips and which voids any half-pair standing. jQuery delivers
 `focusin` first and defers `focus` behind it, and the rule is written against the
-pair's second half rather than against either name. The
-hold outlives the flight settling; a `pointerdown`, `keydown` or `click` on the
-field ends it at once, and the pointer and keyboard openers are live throughout
-(ABN-554).
+pair's second half rather than against either name; both halves carry the same
+guards, so neither can refuse a half the other armed. The hold outlives the flight
+settling; a `pointerdown`, `keydown` or `click` on the field ends it at once, and
+the pointer and keyboard openers are live throughout (ABN-554).
+
+LIMITATION: focus moved by the theme or by PrestaShop itself - a re-render
+restoring focus, a validation handler - arrives with no window `focus` behind it,
+so the opener reads it as a buyer's Tab arrival and opens the panel.
+`TwoSoleTrader.js` records the same limitation for the popup it takes down.
 
 **The close-on-focus-leave path is the exception, and deliberately so.** It only
 fires once focus has settled on another control, so taking focus back would undo

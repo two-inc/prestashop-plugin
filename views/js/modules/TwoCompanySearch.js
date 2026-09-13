@@ -2208,14 +2208,20 @@ class TwoCompanySearch {
             }
         };
 
-        this.companyField.on('focus.twoCompanyOpen', () => {
-            if (this._destroyed || this._manualEntry) {
-                return;
+        // Both halves of the pair carry the same guards: one that refuses a half the other
+        // arms leaves it standing for the window return to spend as an arrival (ABN-554).
+        const focusIsNotTheBuyerArriving = () => {
+            if (!this._manualEntry && !this._closingSelf) {
+                return false;
             }
-            if (this._closingSelf) {
-                // Focus this module moved is neither half of a pair, and voids any half standing.
-                this._heldFocusSeen = false;
-                this._arrivalFocusSeen = false;
+            // Voids any half standing: a refused half is not a half the next pair may spend.
+            this._heldFocusSeen = false;
+            this._arrivalFocusSeen = false;
+            return true;
+        };
+
+        this.companyField.on('focus.twoCompanyOpen', () => {
+            if (this._destroyed || focusIsNotTheBuyerArriving()) {
                 return;
             }
             if (this._openerHeld) {
@@ -2226,7 +2232,7 @@ class TwoCompanySearch {
         });
 
         this.companyField.on('focusin.twoCompanyOpen', () => {
-            if (this._destroyed || !this._openerHeld || this._closingSelf) {
+            if (this._destroyed || focusIsNotTheBuyerArriving() || !this._openerHeld) {
                 return;
             }
             spendHeldFocusPair();
@@ -4555,11 +4561,7 @@ class TwoCompanySearch {
 
         this.renderBackToSearchLink();
 
-        // Activating "My company is not on the list" places focus in the
-        // manual company name field. This is the one place that happens.
-        // Under `_closingSelf` like every other focus this module moves: unguarded, it
-        // arms a standing signup hold as a buyer's Tab arrival, which the window return
-        // then spends by reopening the popover (ABN-554).
+        // Under `_closingSelf`: unguarded, this focus arms a standing signup hold as a buyer's Tab arrival (ABN-554).
         this._closingSelf = true;
         try {
             this.focusQuietly(this.companyField);

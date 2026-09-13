@@ -355,6 +355,24 @@ describe('activation', () => {
             expect(shown(panelParts().panel)).toBe(false);
         });
 
+        test('a keyboard arrival on the field during manual entry leaves no half for the window return to spend', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            launchedWithParkDeclined(instance, soleTrader);
+
+            panelParts().notListed.trigger('click');
+            // Manual entry refuses this, so it must not leave the pair's first half armed.
+            panelParts().nameField.trigger('focus');
+            $('.two-company-search-back').trigger('click');
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            $(global.window).trigger('focus');
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
+
         test('a pointerdown on the name field mid-flight ends the hold, so the focus it brings opens the panel', () => {
             const soleTrader = stubSoleTrader(true);
             const instance = makeInstance();
