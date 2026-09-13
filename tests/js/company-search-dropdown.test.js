@@ -80,7 +80,7 @@ function companyField() {
  * browser for; this asserts the selection pipeline behind it.
  */
 function pickResult(index) {
-    const instance = panelParts().query.autocomplete('instance');
+    const instance = panelParts().query.data('ui-autocomplete');
     const row = instance.menu.element.children('li').eq(index || 0);
     instance.menu.focus(null, row);
     instance.menu.select($.Event('click'));
@@ -397,7 +397,7 @@ describe('"My company is not on the list"', () => {
         // so "unreachable by cursor keys" is exactly "not an item in that
         // menu". Asserted on the menu's contents rather than by dispatching
         // arrow keys, per the jsdom caveat at the top of this file.
-        const instance = panelParts().query.autocomplete('instance');
+        const instance = panelParts().query.data('ui-autocomplete');
         const items = instance.menu.element.children('li').get();
         expect(items.length).toBe(2);
         expect(items).not.toContain(panelParts().notListed.get(0));
@@ -910,7 +910,10 @@ describe('spacing and stray company displays', () => {
         pickResult(0);
 
         expect($('.two-company-search-reveal').length).toBe(0);
+        // Not jQuery UI's own visually-hidden live region, which speaks the
+        // selection by design and on 1.10 still holds it afterwards.
         const labels = $('.js-address-form').find('span, div, button')
+            .not('.ui-helper-hidden-accessible')
             .filter(function () {
                 return $(this).children().length === 0
                     && $(this).text().trim() === 'Example Trading Ltd';

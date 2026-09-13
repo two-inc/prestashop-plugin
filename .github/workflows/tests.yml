@@ -132,8 +132,9 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       # Real gate, deliberately not continue-on-error: the company-search
-      # regressions these tests pin (stuck spinner, nested _renderItem wrapper,
-      # a destroyed instance writing to the live field) were all invisible to
-      # the PHP suites, so an advisory JS job would have caught none of them.
+      # regressions these tests pin (stuck spinner, a destroyed instance writing
+      # to the live field, a row hook that runs on one jQuery UI and not the
+      # other) were all invisible to the PHP suites, so an advisory JS job would
+      # have caught none of them. Runs both jQuery UI projects.
       - name: Run Jest
         run: npm run test:js

@@ -4146,12 +4146,10 @@ class TwoCompanySearch {
             // this is safe to repeat on every setupAutocomplete() re-run.
             //
             // Wrapped in try/catch: this is cosmetic, not core search
-            // functionality, and
-            // `autocomplete('widget')`/`autocomplete('instance')` below it is
-            // ALREADY documented as capable of throwing on a non-standard jQuery
-            // UI build. An uncaught throw here would escape setupAutocomplete(),
-            // init() and the constructor, aborting company search entirely over a
-            // failed style hook.
+            // functionality, and `autocomplete('widget')` can throw on a
+            // non-standard jQuery UI build. An uncaught throw here would escape
+            // setupAutocomplete(), init() and the constructor, aborting company
+            // search entirely over a failed style hook.
             try {
                 const menu = this._queryField.autocomplete('widget');
                 menu.addClass(TwoCompanySearch.AUTOCOMPLETE_MENU_CLASS);
@@ -4174,61 +4172,7 @@ class TwoCompanySearch {
                 // Degrade to an unstyled (but still functional) dropdown.
             }
 
-            // Render the message rows as non-selectable. `ui-state-disabled`
-            // is what jQuery UI's menu itself checks, so the row is skipped by
-            // keyboard navigation rather than merely being refused on select.
-            //
-            // Company names always go through .text(), matching jQuery UI's own
-            // default renderer, so a name containing markup cannot inject HTML
-            // into the dropdown.
-            //
-            // Wrapped: `autocomplete('instance')` only exists from jQuery UI
-            // 1.11, and an unknown-method call throws. A theme shipping an older
-            // jQuery UI must lose the styling of these rows, not the whole
-            // company search - select/focus above already refuse them without it.
-            //
-            // Patched at most ONCE per widget instance. jQuery UI's widget
-            // bridge does not build a fresh instance when `.autocomplete({...})`
-            // is called on an already-initialised field - it runs option()+
-            // _init() on the existing one - and this method is re-invoked on
-            // every country change and address-form update. Without the guard
-            // each call would capture the previous wrapper and wrap it again,
-            // nesting one layer deeper every time until rendering a row blew the
-            // stack.
-            try {
-                const instance = this._queryField.autocomplete('instance');
-                if (instance && typeof instance._renderItem === 'function'
-                    && !instance._twoRenderItemPatched) {
-                    instance._twoRenderItemPatched = true;
-                    const defaultRenderItem = instance._renderItem.bind(instance);
-                    instance._renderItem = (ul, item) => {
-                        // Normal companies go through jQuery UI's OWN renderer.
-                        // Reimplementing it would hard-code one version's markup:
-                        // 1.11 emits <li><a>, 1.12 emits <li><div>, and the theme
-                        // decides which ships. Overriding both would strip the
-                        // anchor from every row on 1.11 and break its highlight.
-                        if (!item.two_unavailable) {
-                            return defaultRenderItem(ul, item);
-                        }
-                        // `ui-state-disabled` is what jQuery UI's menu checks, so
-                        // the row is skipped by keyboard navigation rather than
-                        // merely refused on select. .text() (as jQuery UI's own
-                        // renderer does) keeps markup out of the dropdown.
-                        // `two_row_class` lets a message row be told apart in the
-                        // DOM ("no country chosen" and "unavailable" are not the
-                        // same cause, and neither is "No matches found") while
-                        // keeping the disabled/keyboard-skip behaviour identical.
-                        return $('<li>')
-                            .addClass('two-autocomplete-message '
-                                + (item.two_row_class || 'two-autocomplete-unavailable') + ' ui-state-disabled')
-                            .attr('aria-disabled', 'true')
-                            .append($('<div>').text(item.label || ''))
-                            .appendTo(ul);
-                    };
-                }
-            } catch (e) {
-                // Older jQuery UI without `instance`; styling only, safe to skip.
-            }
+            this.guardEnterOnDisabledRow();
         } else {
             this.setupCustomAutocomplete();
         }
@@ -4803,12 +4747,66 @@ class TwoCompanySearch {
     }
 
     /**
-     * Stamp the listbox contract onto the rows jQuery UI has just rendered.
+     * Keep Enter on a message row from dismissing the list.
+     *
+     * Autocomplete answers Enter with `menu.select()` rather than the menu's own
+     * `_activate()`, so `ui-state-disabled` never reaches the key and the widget
+     * closes the list over a row that says there is nothing to choose.
+     *
+     * Capture phase: jQuery UI binds its keydown at widget construction, so a
+     * later handler could not stop it.
+     *
+     * @returns {void}
+     */
+    guardEnterOnDisabledRow() {
+        const field = this._queryField && this._queryField.length ? this._queryField.get(0) : null;
+        if (!field) {
+            return;
+        }
+        if (this._enterGuard) {
+            field.removeEventListener('keydown', this._enterGuard, true);
+        }
+        this._enterGuard = (event) => {
+            if (event.key !== 'Enter' && event.keyCode !== 13) {
+                return;
+            }
+            const instance = this.autocompleteInstance();
+            const active = instance && instance.menu ? instance.menu.active : null;
+            if (active && active.length && active.hasClass('ui-state-disabled')) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+            }
+        };
+        field.addEventListener('keydown', this._enterGuard, true);
+    }
+
+    /**
+     * The live autocomplete instance, or null.
+     *
+     * `.data()`, not `autocomplete('instance')`: the method only exists from
+     * jQuery UI 1.11 and throws below it, and shop themes still ship 1.10.
+     *
+     * @returns {object|null}
+     */
+    autocompleteInstance() {
+        if (!this._queryField || !this._queryField.length) {
+            return null;
+        }
+        return this._queryField.data('ui-autocomplete') || null;
+    }
+
+    /**
+     * Stamp the listbox contract and the message-row treatment onto the rows
+     * jQuery UI has just rendered.
      *
      * The widget rebuilds every row on every keystroke and gives none of them a
      * role, so this runs per repaint rather than once at setup. The `<li>` is
      * inert scaffolding: the wrapper the widget ids and takes out of the tab
      * order is the row a screen reader should hear as the option.
+     *
+     * A message row is marked here rather than by overriding the widget's
+     * `_renderItem`, which is only reachable through an API jQuery UI 1.10 does
+     * not have; the `open` callback this runs from fires on every version.
      *
      * @returns {void}
      */
@@ -4827,10 +4825,14 @@ class TwoCompanySearch {
                     return;
                 }
                 wrapper.attr('role', 'option').attr('aria-selected', 'false');
-                // Per-row widget data, not the disabled class: that class comes from a renderer override 1.10 never reaches.
                 const item = row.data('ui-autocomplete-item');
                 if (item && item.two_unavailable) {
                     wrapper.attr('aria-disabled', 'true');
+                    // `ui-state-disabled` is what jQuery UI's own menu checks
+                    // before acting on a click; Enter bypasses it, hence the
+                    // key guard.
+                    row.addClass('two-autocomplete-message ui-state-disabled')
+                        .addClass(item.two_row_class || 'two-autocomplete-unavailable');
                 }
                 if (!wrapper.attr('id')) {
                     wrapper.attr('id', 'two-company-results-' + this._instanceNs + '-row-' + index);
@@ -4891,7 +4893,7 @@ class TwoCompanySearch {
             return;
         }
         try {
-            const widget = this._queryField.autocomplete('instance');
+            const widget = this.autocompleteInstance();
             if (widget && typeof widget._suggest === 'function') {
                 widget._suggest([]);
             }
@@ -6187,6 +6189,10 @@ class TwoCompanySearch {
             // `select[name='id_country']` here missed the listener entirely on a
             // theme that matched one of the others - leaking a live handler per
             // address-form update.
+            if (this._enterGuard && this._queryField && this._queryField.length) {
+                this._queryField.get(0).removeEventListener('keydown', this._enterGuard, true);
+                this._enterGuard = null;
+            }
             if (this.countryListener) {
                 if (this._boundCountrySelector) {
                     this._boundCountrySelector.removeEventListener('change', this.countryListener);
