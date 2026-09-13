@@ -5599,10 +5599,7 @@ class Twopayment extends PaymentModule
         // all reads as `false`, which core does not count as empty, so the
         // title fallback below never fired for it and the tile rendered blank.
         $title = trim((string) Configuration::get('PS_TWO_TITLE', $this->context->language->id));
-        // The template emits this unescaped, so TwoAnchorOnlyHtml is the whole
-        // trust boundary on it: the fallback's "read more" link survives and
-        // nothing else does.
-        $subtitle = TwoAnchorOnlyHtml::escape($this->resolveTwoSubtitle());
+        $subtitle = $this->resolveTwoSubtitle();
 
         if ($title === '') {
             $title = sprintf($this->l('Pay with %s'), $this->getTwoBrandConfig('product_name'));
@@ -12912,9 +12909,13 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The tile subtitle before escaping: the merchant's per-language Subtitle
-     * field, or the brand's default sentence carrying a "read more" link to
-     * its FAQ page when that field is blank.
+     * The tile subtitle, escaped: the merchant's per-language Subtitle field,
+     * or the brand's default sentence carrying a "read more" link to its FAQ
+     * page when that field is blank.
+     *
+     * The template emits the result unescaped, so TwoAnchorOnlyHtml is the
+     * whole trust boundary on it: the "read more" link survives and nothing
+     * else does.
      *
      * A brand declaring no usable FAQ URL renders no subtitle element at all,
      * rather than a sentence whose link points back at the checkout page.
@@ -12923,7 +12924,9 @@ class Twopayment extends PaymentModule
      */
     private function resolveTwoSubtitle()
     {
-        $configured = trim((string) Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id));
+        // Emptiness is judged after escaping: copy that is only markup the
+        // escaper drops would otherwise emit a blank subtitle element.
+        $configured = trim(TwoAnchorOnlyHtml::escape(Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id)));
         if ($configured !== '') {
             return $configured;
         }
@@ -12933,11 +12936,11 @@ class Twopayment extends PaymentModule
             return '';
         }
 
-        return sprintf(
+        return TwoAnchorOnlyHtml::escape(sprintf(
             $this->l('For all companies, %1$sread more%2$s.'),
             '<a href="' . htmlspecialchars($faqUrl, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener">',
             '</a>'
-        );
+        ));
     }
 
     /**

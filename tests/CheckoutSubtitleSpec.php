@@ -148,6 +148,7 @@ final class CheckoutSubtitleSpec
             ['', 'javascript:alert(1)', '', 'a rejected URL is the same as none, never a dead sentence'],
             ['Pay later', null, 'Pay later', 'the merchant field is unaffected by the brand having no URL'],
             ['<b>Pay</b> later', $faqUrl, 'Pay later', 'merchant markup is reduced to what the escaper allows'],
+            ['<b> </b>', $faqUrl, $tagline, 'copy whose only content is markup the escaper drops is emptiness too'],
         ];
 
         foreach ($cases as list($stored, $brandUrl, $expected, $description)) {
