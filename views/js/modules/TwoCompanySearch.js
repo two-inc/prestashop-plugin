@@ -1523,6 +1523,7 @@ class TwoCompanySearch {
         if (this._queryField && this._queryField.length) {
             this._queryField.val('');
             this._queryField.removeClass('ui-autocomplete-loading two-company-search-loading');
+            this._queryField.removeAttr('aria-activedescendant');
             try {
                 if (this._queryField.hasClass('ui-autocomplete-input')) {
                     this._queryField.autocomplete('close');
@@ -4090,6 +4091,11 @@ class TwoCompanySearch {
                 // the same visual break Mag/WC's select2/selectWoo panel has
                 // below its own combobox.
                 position: { my: 'left top+8', at: 'left bottom', collision: 'none' },
+                // Fires after every repaint, and is the only hook that reaches
+                // the rows on the jQuery UI 1.10 a theme may still ship.
+                open: () => {
+                    this.applyListboxSemantics();
+                },
                 select: (event, ui) => {
                     // "My company is not on the list" is not an item in this
                     // list (TWO-25326) - it is a real <button> outside the
@@ -4157,6 +4163,16 @@ class TwoCompanySearch {
                 // (TWO-25326). The list is navigated with the cursor keys from
                 // the query field; it never needs focus of its own.
                 menu.attr('tabindex', '-1');
+                // Autocomplete builds its menu with `role: null`, so the widget
+                // leaves the popup of a combobox with no listbox role at all.
+                menu.attr('role', 'listbox');
+                menu.attr('id', 'two-company-results-' + this._instanceNs);
+                this._queryField.attr('aria-controls', menu.attr('id'));
+                // The menu marks its highlighted row with a class only; the
+                // combobox's pointer at that row has to be mirrored from it.
+                menu.off('menufocus.twoa11y menublur.twoa11y')
+                    .on('menufocus.twoa11y', (event, ui) => this.syncActiveDescendant(ui.item))
+                    .on('menublur.twoa11y', () => this.syncActiveDescendant(null));
             } catch (e) {
                 // Degrade to an unstyled (but still functional) dropdown.
             }
@@ -4787,6 +4803,68 @@ class TwoCompanySearch {
      */
     getQueryAriaLabelText() {
         return this.text('company_search_query_label', 'Search for a company');
+    }
+
+    /**
+     * Stamp the listbox contract onto the rows jQuery UI has just rendered.
+     *
+     * The widget rebuilds every row on every keystroke and gives none of them a
+     * role, so this runs per repaint rather than once at setup. The `<li>` is
+     * inert scaffolding: the wrapper the widget ids and takes out of the tab
+     * order is the row a screen reader should hear as the option.
+     *
+     * @returns {void}
+     */
+    applyListboxSemantics() {
+        if (!this._queryField || !this._queryField.length) {
+            return;
+        }
+        try {
+            // A fresh list highlights nothing, so no row can still be current.
+            this._queryField.removeAttr('aria-activedescendant');
+            this._queryField.autocomplete('widget').children('li').each((index, node) => {
+                const row = $(node);
+                row.attr('role', 'presentation');
+                const wrapper = row.children().first();
+                if (!wrapper.length) {
+                    return;
+                }
+                wrapper.attr('role', 'option').attr('aria-selected', 'false');
+                // The widget's own per-row data, not the disabled class: that
+                // class comes from a renderer override 1.10 never reaches.
+                const item = row.data('ui-autocomplete-item');
+                if (item && item.two_unavailable) {
+                    wrapper.attr('aria-disabled', 'true');
+                }
+                if (!wrapper.attr('id')) {
+                    wrapper.attr('id', 'two-company-results-' + this._instanceNs + '-row-' + index);
+                }
+            });
+        } catch (e) {
+            // Widget absent or a build without `widget()`; the list still works.
+        }
+    }
+
+    /**
+     * Point the query field at the row the menu widget has highlighted.
+     *
+     * @param {object|null} activeItem the highlighted `<li>`, or null for none
+     * @returns {void}
+     */
+    syncActiveDescendant(activeItem) {
+        if (!this._queryField || !this._queryField.length || !this._resultsList) {
+            return;
+        }
+        this._resultsList.find('[role="option"]').attr('aria-selected', 'false');
+        const active = activeItem && activeItem.length
+            ? activeItem.find('[role="option"]').first()
+            : $();
+        if (!active.length || !active.attr('id')) {
+            this._queryField.removeAttr('aria-activedescendant');
+            return;
+        }
+        active.attr('aria-selected', 'true');
+        this._queryField.attr('aria-activedescendant', active.attr('id'));
     }
 
     /**
