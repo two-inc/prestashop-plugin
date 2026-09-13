@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../controllers/front/orderintent.php';
+
 /**
  * Buyer surcharge as a REAL PrestaShop cart line (hidden virtual product).
  */
@@ -50,6 +52,9 @@ final class SurchargeCartLineSpec
         self::testActionPresentCartNoOpsWhenSurchargeNotSelected();
         self::testActionPresentCartNoOpsWhenRowAbsentFromPresentedProducts();
         self::testActionPresentCartSelfHealsOnExistingInstall();
+        self::testSurchargeLineLeavesPersistedCheckoutStateRestorable();
+        self::testUncompletedCheckoutStateIsNotForged();
+        self::testBuyerSyncAppliesFeeOnlyWhileTheTileIsOffering();
     }
 
     /* ---- fixtures ---- */
@@ -1146,5 +1151,123 @@ final class SurchargeCartLineSpec
             $calls = array_filter(StubStore::$registerHookCalls, static fn (string $hook): bool => $hook === 'actionPresentCart');
             TinyAssert::count($expectedCalls, $calls, 'actionPresentCart self-heal: ' . $why);
         }
+    }
+
+    /* ---- ABN-554: the fee line must not invalidate the buyer's checkout steps ---- */
+
+    /**
+     * OrderController restores the buyer's completed steps only while the
+     * stored checksum still matches the cart's product lines, and re-persists
+     * the collapsed state afterwards. A guest never recovers: step 1 only
+     * completes on an account creation their own email now blocks.
+     */
+    private static function testSurchargeLineLeavesPersistedCheckoutStateRestorable(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $checksum = new CartChecksum(new AddressChecksum());
+        StubStore::$checkoutSessionData[self::CART_ID] = (string) json_encode([
+            'checkout-personal-information-step' => ['skipped' => false],
+            'checksum' => $checksum->generateChecksum($cart),
+        ]);
+
+        TinyAssert::true($module->syncTwoSurchargeCartLine($cart, true)['changed']);
+
+        $stored = json_decode(StubStore::$checkoutSessionData[self::CART_ID], true);
+        TinyAssert::same(
+            $checksum->generateChecksum($cart),
+            (string) $stored['checksum'],
+            'the persisted checkout steps must still restore once the fee line is in the cart'
+        );
+        TinyAssert::same(
+            ['skipped' => false],
+            $stored['checkout-personal-information-step'],
+            'the persisted steps themselves must survive the re-stamp'
+        );
+
+        // Removal moves the lines again, so it needs the same treatment.
+        TinyAssert::true($module->syncTwoSurchargeCartLine($cart, false)['changed']);
+        $stored = json_decode(StubStore::$checkoutSessionData[self::CART_ID], true);
+        TinyAssert::same(
+            $checksum->generateChecksum($cart),
+            (string) $stored['checksum'],
+            'removing the fee line must leave the checkout steps restorable too'
+        );
+    }
+
+    /** Steps the buyer never completed must not be forged into existence. */
+    private static function testUncompletedCheckoutStateIsNotForged(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+
+        TinyAssert::true($module->syncTwoSurchargeCartLine($cart, true)['changed']);
+
+        TinyAssert::false(
+            isset(StubStore::$checkoutSessionData[self::CART_ID]),
+            'no persisted checkout state means nothing to re-stamp'
+        );
+    }
+
+    /* ---- ABN-554: no fee for a tile that is refusing ---- */
+
+    /**
+     * The term chips carry the fee and only render on an approved intent, so a
+     * buyer whose company was typed by hand or declined sees no chip - and used
+     * to be charged the default term's fee anyway, because the buyer-driven
+     * sync trusted the payment radio alone.
+     */
+    private static function testBuyerSyncAppliesFeeOnlyWhileTheTileIsOffering(): void
+    {
+        $cases = [
+            ['1', 1, 'an approved intent is the tile genuinely offering Two'],
+            ['0', 0, 'a declined company is refused a fee line'],
+            [null, 0, 'a manual-entry company never reaches an intent, so gets no fee line'],
+        ];
+
+        foreach ($cases as [$intentRecord, $expectedLines, $why]) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $controller = self::makeSurchargeSyncController($module, $intentRecord);
+
+            $controller->ajaxProcessSyncSurchargeLine();
+
+            TinyAssert::count(1, $controller->emitted, 'buyer surcharge sync: ' . $why);
+            TinyAssert::count($expectedLines, self::feeLines(), 'buyer surcharge sync: ' . $why);
+        }
+    }
+
+    /**
+     * @param string|null $intentRecord value of the session's order-intent record, null when absent
+     */
+    private static function makeSurchargeSyncController(Twopayment $module, $intentRecord)
+    {
+        Tools::resetTestValues();
+        Tools::setTestValue('ajax', 1);
+        Tools::setTestValue('action', 'syncSurchargeLine');
+        Tools::setTestValue('token', Tools::getToken(false));
+        Tools::setTestValue('selected', 1);
+        Tools::setTestValue('seq', 1);
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+
+        $cookie = Context::getContext()->cookie;
+        unset($cookie->two_order_intent_approved);
+        if ($intentRecord !== null) {
+            $cookie->two_order_intent_approved = $intentRecord;
+        }
+
+        $controller = new class extends TwopaymentOrderintentModuleFrontController {
+            /** @var array<int,array> */
+            public array $emitted = [];
+
+            public function sendJsonResponse($content)
+            {
+                $decoded = json_decode((string) $content, true);
+                $this->emitted[] = is_array($decoded) ? $decoded : ['raw' => $content];
+            }
+        };
+        $controller->module = $module;
+
+        return $controller;
     }
 }
