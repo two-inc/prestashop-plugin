@@ -1281,6 +1281,9 @@ class TwoCompanySearch {
         this.beginSoleTraderLoading();
         // Cleared by the call above; a resumed flight has its popup in front of the buyer already.
         this._popupSeenThisFlight = true;
+        // With it, or the re-fire the popup's close sends this replacement reads as the
+        // buyer coming back, and the settle leaves the popover it should close (ABN-554).
+        this._openerHeld = true;
         const soleTrader = this.soleTrader();
         if (soleTrader && typeof soleTrader.readoptEnrollment === 'function') {
             soleTrader.readoptEnrollment();

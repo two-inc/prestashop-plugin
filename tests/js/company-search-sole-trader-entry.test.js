@@ -190,13 +190,13 @@ describe('activation', () => {
      */
     describe('the popup closing must not leave the popover open (ABN-554)', () => {
         /** The enrolment up, its popup on screen, and focus parked on the name field. */
-        function launched(instance, soleTrader) {
+        function launched(instance, soleTrader, popupId) {
             openPanel();
             panelParts().soleTrader.trigger('click');
             popupOpen(soleTrader);
             if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
             document.dispatchEvent(new CustomEvent('two:sole-trader-popup-opened', {
-                detail: { id: 'popup-1', launcher: instance._instanceNs }
+                detail: { id: popupId === undefined ? 'popup-1' : popupId, launcher: instance._instanceNs }
             }));
             jest.advanceTimersByTime(0);
         }
@@ -228,6 +228,38 @@ describe('activation', () => {
 
                 expect([shown(panelParts().panel), why]).toEqual([expectedShown, why]);
             });
+
+        test.each([
+            ['focus', 'the hold ends with the flight, and the field opener is alive again'],
+            ['mousedown', 'the pointer opener is never held, so it opens throughout']
+        ])('a real %s on the name field opens the panel after the flight (%s)', (opener, why) => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            launched(instance, soleTrader);
+            refireFocusOnNameField(soleTrader);
+            document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+            expect(shown(panelParts().panel)).toBe(false);
+
+            panelParts().nameField.trigger(opener);
+
+            expect([shown(panelParts().panel), why]).toEqual([true, why]);
+        });
+
+        test('a re-render mid-flight leaves the re-fire no way to keep the panel open', () => {
+            const soleTrader = stubSoleTrader(true);
+            soleTrader.popupLaunchId = jest.fn(() => 7);
+            const launcher = makeInstance();
+            launched(launcher, soleTrader, 7);
+            launcher.armReopen(Date.now() + 1000);
+            // PrestaShop's own destroy + construct, with the popup still up.
+            launcher.destroy();
+            makeInstance();
+
+            refireFocusOnNameField(soleTrader);
+            document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
     });
 
     test('does nothing destructive if TwoSoleTrader_Instance is missing, and still closes (after a paint) rather than dead-ending open', () => {
