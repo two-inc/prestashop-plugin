@@ -46,7 +46,7 @@ describe('payment tile about control', () => {
                 expect(link).not.toBeNull();
                 expect(link.getAttribute('href')).toBe(expectedHref);
                 expect(link.getAttribute('target')).toBe('_blank');
-                expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+                expect(link.getAttribute('rel')).toBe('noopener');
                 expect(link.getAttribute('aria-label')).toContain('What is');
                 expect(link.hasAttribute('tabindex')).toBe(false);
 
@@ -59,11 +59,23 @@ describe('payment tile about control', () => {
                 // The box is the described-by target, and is the link's sibling.
                 const box = wrapper.querySelector(':scope > .two-tooltip-content');
                 expect(box.getAttribute('id')).toBe(ABOUT_TOOLTIP_ID);
+                expect(box.getAttribute('role')).toBe('tooltip');
+                // Closed by opacity alone, so without this the same prose is
+                // read twice: once as the link's description, once in flow.
+                expect(box.getAttribute('aria-hidden')).toBe('true');
                 expect(link.getAttribute('aria-describedby')).toBe(ABOUT_TOOLTIP_ID);
                 expect(box.textContent).toContain('is a payment solution for B2B purchases online');
                 expect(box.textContent).toContain('Buy now, receive your goods, pay your invoice later.');
                 expect(box.textContent).toContain('Click to find out more');
                 expect(box.querySelector('a')).toBeNull();
+
+                const emphasis = box.querySelector('.two-tooltip-text--strong');
+                expect(emphasis.tagName).toBe('STRONG');
+
+                // The header reads [logo] [tagline] [icon], as it does on the
+                // other platforms.
+                expect(tagline.compareDocumentPosition(wrapper))
+                    .toBe(global.Node.DOCUMENT_POSITION_FOLLOWING);
             }
 
             // The rest of the header is untouched either way.
