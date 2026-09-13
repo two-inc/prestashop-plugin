@@ -81,7 +81,7 @@ function makeInstance(extraConfig) {
  * @returns {Object} the jQuery UI autocomplete instance on the query field
  */
 function widget() {
-    return panelParts().query.autocomplete('instance');
+    return panelParts().query.data('ui-autocomplete');
 }
 
 describe('exactly one callback per search', () => {
@@ -602,25 +602,23 @@ describe('class-static result cache', () => {
             });
             widget().search('exa');
 
-            // `value` is the MESSAGE, not the '' the item was built with:
-            // jQuery UI's _normalize() rewrites it as `value || label`. So the
+            // NOTHING but this row: "My company is not on the list" is a real
+            // <button> outside the scroll container (TWO-25326), never a
+            // rendered item. Asserted rather than left implied - "the route out
+            // is still offered" is the property that matters.
+            expect(rendered).toHaveLength(1);
+            expect(rendered[0]).toMatchObject({
+                label: 'Pick a country first.',
+                two_unavailable: true,
+                // Its own row class: nothing is broken, so the row must not
+                // be identified in the DOM as the failure row.
+                two_row_class: 'two-autocomplete-select-country'
+            });
+            // `value` is the version's choice - jQuery UI 1.11+ rewrites it to
+            // the label, 1.10 keeps the '' the item was built with - so the
             // `two_unavailable` flag is the only thing keeping this row out of
-            // the company field — same trap as buildUnavailableItem() documents.
-            expect(rendered).toEqual([
-                {
-                    label: 'Pick a country first.',
-                    value: 'Pick a country first.',
-                    two_unavailable: true,
-                    // Its own row class: nothing is broken, so the row must not
-                    // be identified in the DOM as the failure row.
-                    two_row_class: 'two-autocomplete-select-country'
-                }
-                // ...and NOTHING else: "My company is not on the list" is a
-                // real <button> outside the scroll container (TWO-25326), never
-                // a rendered item. Asserted immediately below rather than left
-                // implied - "the route out is still offered" is the property
-                // that matters.
-            ]);
+            // the company field, same trap as buildUnavailableItem() documents.
+            expect(['', 'Pick a country first.']).toContain(rendered[0].value);
             expect(rendered[0].label).not.toBe(search.getSearchUnavailableText());
             expect(panelParts().notListed.length).toBe(1);
             expect(panelParts().notListed.get(0).tagName).toBe('BUTTON');

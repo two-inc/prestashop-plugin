@@ -67,7 +67,7 @@ function openWithRows() {
     jest.advanceTimersByTime(400);
     ajax.last().succeed(SEARCH_RESPONSE);
     jest.advanceTimersByTime(50);
-    const instance = query.autocomplete('instance');
+    const instance = query.data('ui-autocomplete');
     expect(instance.menu.element.children('li').length).toBeGreaterThan(0);
     return instance;
 }
