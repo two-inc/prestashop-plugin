@@ -40,6 +40,17 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+    // Settle anything still in flight before jsdom goes away: a continuation
+    // that runs after teardown fails whichever suite jest is running by then.
+    ajax.calls.forEach((call) => {
+        if (!call.aborted) {
+            try {
+                call.fail('abort', 'abort');
+            } catch (e) {
+                // some call sites wire .done()/.fail() directly - see other suites
+            }
+        }
+    });
     await flushPromises();
     ajax.restore();
     releaseWidgets($);

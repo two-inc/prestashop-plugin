@@ -1037,8 +1037,11 @@ class TwoCheckoutManager {
         // Saved server-side too so disabling JavaScript can't bypass the client-side block.
         // The fee sync is chained, not parallel: the server reads this same
         // record to decide whether a fee line may enter the cart at all.
+        // Read the selection now, not in the continuation: this verdict belongs
+        // to the checkout as it stood when the intent answered.
+        const twoSelected = this.isTwoPaymentSelected();
         this.saveOrderIntentResultToServer(result.approved).then(() => {
-            this.syncSurchargeCartLine(Boolean(result.approved) && this.isTwoPaymentSelected());
+            this.syncSurchargeCartLine(Boolean(result.approved) && twoSelected);
         });
 
         // Sentence built by TwoOrderIntent.buildCompanyIntentMessage()
