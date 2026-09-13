@@ -979,6 +979,11 @@ class TwoCheckoutManager {
      */
     handleOrderIntentResult(result) {
         if (!result.success) {
+            // No offer, no fee: a refusal leaves no chip to attach one to, and
+            // an earlier approval in this session must stop vouching for it.
+            this.clearOrderIntentResultFromServer();
+            this.syncSurchargeCartLine(false);
+
             const status = result.status || '';
             const err = (result && result.error) ? String(result.error) : '';
             const errLower = err.toLowerCase();
@@ -1030,7 +1035,11 @@ class TwoCheckoutManager {
         }
 
         // Saved server-side too so disabling JavaScript can't bypass the client-side block.
-        this.saveOrderIntentResultToServer(result.approved);
+        // The fee sync is chained, not parallel: the server reads this same
+        // record to decide whether a fee line may enter the cart at all.
+        this.saveOrderIntentResultToServer(result.approved).then(() => {
+            this.syncSurchargeCartLine(Boolean(result.approved) && this.isTwoPaymentSelected());
+        });
 
         // Sentence built by TwoOrderIntent.buildCompanyIntentMessage()
         // (TWO-25326) - the single place that templates name/number into the
@@ -2090,23 +2099,28 @@ class TwoCheckoutManager {
      */
     saveOrderIntentResultToServer(approved) {
         if (!this.config.orderIntentUrl || !window.twopayment || !window.twopayment.ajax_token) {
-            return;
+            return Promise.resolve();
         }
 
-        $.ajax({
-            url: this.config.orderIntentUrl,
-            type: 'POST',
-            data: {
-                ajax: 1,
-                action: 'saveOrderIntentResult',
-                approved: approved ? 1 : 0,
-                token: window.twopayment.ajax_token
-            },
-            success: () => {},
-            error: (xhr, status, error) => {
-                // Non-blocking: client-side blocking still works without the server copy.
-                console.warn('TwoPayment: Failed to save order intent result to server:', error);
-            }
+        // Resolves either way: the surcharge sync chained onto it must still
+        // run after a failed save, where the server gate then keeps the fee out.
+        return new Promise((resolve) => {
+            $.ajax({
+                url: this.config.orderIntentUrl,
+                type: 'POST',
+                data: {
+                    ajax: 1,
+                    action: 'saveOrderIntentResult',
+                    approved: approved ? 1 : 0,
+                    token: window.twopayment.ajax_token
+                },
+                success: () => resolve(),
+                error: (xhr, status, error) => {
+                    // Non-blocking: client-side blocking still works without the server copy.
+                    console.warn('TwoPayment: Failed to save order intent result to server:', error);
+                    resolve();
+                }
+            });
         });
     }
 

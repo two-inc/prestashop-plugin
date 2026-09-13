@@ -290,7 +290,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Only POST requests allowed')]));
             return;
         }
-        $selected = (int) Tools::getValue('selected') === 1;
+        // ABN-554: picking the radio is not the same as being offered Two. The
+        // fee belongs to a term chip, chips need an approved intent, so a tile
+        // that is refusing reconciles to no fee line instead of adding one.
+        $selected = (int) Tools::getValue('selected') === 1
+            && $this->module->isTwoOrderIntentApprovedForSession();
         // The checkout JS sends a monotonically increasing sequence number so a
         // slower, older request (rapid method switches) cannot overwrite a newer
         // one server-side. Absent/invalid seq (legacy cached JS) falls back to

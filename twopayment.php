@@ -14918,6 +14918,69 @@ class Twopayment extends PaymentModule
      */
     protected function applyTwoSurchargeCartLineSync($cart, $selected)
     {
+        $result = $this->reconcileTwoSurchargeCartLine($cart, $selected);
+        if (!empty($result['changed'])) {
+            $this->restampCheckoutSessionChecksum($cart);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Bring the cart's persisted checkout-step state back in step with the
+     * cart the module just mutated (ABN-554).
+     *
+     * OrderController only restores the buyer's completed steps while the
+     * stored checksum still matches CartChecksum::generateChecksum(), which
+     * hashes every product line's id, quantity and total_wt. The fee line is
+     * the module's own bookkeeping, not a buyer-driven cart change, so
+     * leaving core to invalidate on it collapses the checkout - and for a
+     * guest that is unrecoverable, since step 1 only completes on a
+     * successful account creation their email already blocks.
+     *
+     * @param Cart $cart
+     * @return void
+     */
+    protected function restampCheckoutSessionChecksum($cart)
+    {
+        try {
+            if (!Validate::isLoadedObject($cart) || !class_exists('CartChecksum')) {
+                return;
+            }
+            $raw = Db::getInstance()->getValue(
+                'SELECT checkout_session_data FROM `' . _DB_PREFIX_ . 'cart` WHERE id_cart = ' . (int) $cart->id
+            );
+            $data = json_decode((string) $raw, true);
+            // No stored state means core has nothing to invalidate; writing one
+            // here would forge steps the buyer never completed.
+            if (!is_array($data) || !isset($data['checksum'])) {
+                return;
+            }
+            $checksum = new CartChecksum(new AddressChecksum());
+            $data['checksum'] = $checksum->generateChecksum($cart);
+            Db::getInstance()->execute(
+                'UPDATE `' . _DB_PREFIX_ . 'cart` SET checkout_session_data = "' . pSQL(json_encode($data)) . '"'
+                . ' WHERE id_cart = ' . (int) $cart->id
+            );
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Checkout step state checksum re-stamp failed for cart ' . (int) $cart->id
+                . ' - ' . $e->getMessage(),
+                2
+            );
+        }
+    }
+
+    /**
+     * Reconciliation body of applyTwoSurchargeCartLineSync; split out so the
+     * checkout-state re-stamp wraps it without touching the money logic.
+     *
+     * @param Cart $cart
+     * @param bool $selected
+     * @return array{success:bool,changed:bool,present:bool}
+     */
+    protected function reconcileTwoSurchargeCartLine($cart, $selected)
+    {
         $result = array('success' => false, 'changed' => false, 'present' => false);
         try {
             if (!Validate::isLoadedObject($cart)) {
@@ -17630,6 +17693,24 @@ class Twopayment extends PaymentModule
     {
         unset($this->context->cookie->two_order_intent_decision);
         unset($this->context->cookie->two_order_intent_pending_hash);
+    }
+
+    /**
+     * Is the tile currently offering Two to this buyer (ABN-554)?
+     *
+     * The term chips - and with them the per-term buyer fee - only render once
+     * an order intent comes back approved, so this is the condition a
+     * buyer-driven fee sync has to share with them. Deliberately not the
+     * authoritative approval: payment.php re-checks with the provider before
+     * any order is booked, and this only decides whether a fee may enter the
+     * basket the buyer is looking at.
+     *
+     * @return bool
+     */
+    public function isTwoOrderIntentApprovedForSession()
+    {
+        return isset($this->context->cookie->two_order_intent_approved)
+            && (string)$this->context->cookie->two_order_intent_approved === '1';
     }
 
     /**
