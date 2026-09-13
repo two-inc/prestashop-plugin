@@ -250,14 +250,21 @@ The field's own focus opener is held off for that one programmatic focus alone, 
 any keydown on the field, a pointer press on it, or focus arriving from anywhere
 else brings the popover straight back.
 
-**A signup launch holds that FOCUS opener off until the window return spends a
-`focus`+`focusin` pair on the parked field, or the buyer works the field.** A
-browser re-fires that pair on whatever was focused when the window comes back,
-which is the buyer returning to the tab and not the buyer choosing this panel -
-and it is bound to the window's own return, not to the popup's close, so there is
-no bound on how long it takes. The hold outlives the flight settling; a
-`pointerdown`, `keydown` or `click` on the field ends it at once, and the pointer
-and keyboard openers are live throughout (ABN-554).
+**A signup launch holds that FOCUS opener off until a `focus`+`focusin` pair
+lands on the parked field, or the buyer works the field.** The window's own
+`focus` is what the pair is read against: with one behind it the pair is the
+re-fire a browser sends at whatever was focused when the window comes back, which
+is the buyer returning to the tab and not the buyer choosing this panel, so it is
+spent and opens nothing - and it is bound to the window's return, not to the
+popup's close, so there is no bound on how long it takes. With no window `focus`
+behind it the pair is a buyer arriving on the field by Tab, and it ends the hold
+AND opens the panel, so a keyboard-only buyer is never left without the control.
+The launch's own park is neither: it moves focus under `_closingSelf`, which the
+opener skips and which voids any half-pair standing. jQuery delivers the two
+halves in either order, so the hold is spent on whichever arrives second. The
+hold outlives the flight settling; a `pointerdown`, `keydown` or `click` on the
+field ends it at once, and the pointer and keyboard openers are live throughout
+(ABN-554).
 
 **The close-on-focus-leave path is the exception, and deliberately so.** It only
 fires once focus has settled on another control, so taking focus back would undo
