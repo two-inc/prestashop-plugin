@@ -2189,9 +2189,10 @@ class TwoCompanySearch {
             }
         );
 
-        // jQuery delivers `focusin` first and defers `focus` behind it, whatever fired the
-        // focus. Written against the pair's SECOND half rather than against either name,
-        // so a jQuery that stops deferring does not change which one spends the hold (ABN-554).
+        // A native focus delivers `focusin` then `focus`, both synchronously; a jQuery
+        // trigger on the already-focused field reverses them. Written against the pair's
+        // SECOND half rather than against either name, so neither order changes which one
+        // spends the hold (ABN-554).
         const spendHeldFocusPair = () => {
             if (!this._heldFocusSeen) {
                 // The window's return state at the pair's first half is what tells the
@@ -4561,7 +4562,7 @@ class TwoCompanySearch {
 
         this.renderBackToSearchLink();
 
-        // Under `_closingSelf`: unguarded, this focus arms a standing signup hold as a buyer's Tab arrival (ABN-554).
+        // The invariant `_manualEntry` above does not excuse: every focus this module moves itself is inside `_closingSelf` (ABN-554).
         this._closingSelf = true;
         try {
             this.focusQuietly(this.companyField);
