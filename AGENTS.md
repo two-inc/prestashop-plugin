@@ -250,6 +250,38 @@ The field's own focus opener is held off for that one programmatic focus alone, 
 any keydown on the field, a pointer press on it, or focus arriving from anywhere
 else brings the popover straight back.
 
+**A signup launch holds that FOCUS opener off until a `focus`+`focusin` pair
+lands on the parked field, or the buyer works the field.** The window's own
+`focus` is what the pair is read against: with one behind it the pair is the
+re-fire a browser sends at whatever was focused when the window comes back, which
+is the buyer returning to the tab and not the buyer choosing this panel, so it is
+spent and opens nothing - and it is bound to the window's return, not to the
+popup's close, so there is no bound on how long it takes. With no window `focus`
+behind it the pair is a buyer arriving on the field by Tab, and it ends the hold
+AND opens the panel, so a keyboard-only buyer is never left without the control.
+Every focus this module moves itself - the launch's park, a close returning focus,
+manual entry taking the field over - is neither half: it moves under `_closingSelf`,
+which the opener skips and which voids any half-pair standing. jQuery simulates
+`focusin` from a capture-phase `focus` listener on the document, so a real focus
+reaches these handlers as `focusin` then `focus`, and a jQuery `trigger('focus')`
+on the already-focused field reverses them; the rule is written against the pair's
+second half rather than against either name, so neither order changes which half
+spends the hold, and both halves carry the same guards, so neither can refuse a half
+the other armed. The hold outlives the flight settling; a `pointerdown`, `keydown`
+or `click` on the field ends it at once, and the pointer and keyboard openers are
+live throughout (ABN-554).
+
+LIMITATION: focus moved by the theme or by PrestaShop itself - a re-render
+restoring focus, a validation handler - arrives with no window `focus` behind it,
+so the opener reads it as a buyer's Tab arrival and opens the panel.
+`TwoSoleTrader.js` records the same limitation for the popup it takes down.
+
+LIMITATION: a buyer who returns to the tab onto some other control and then Tabs
+to the company field loses that one Tab. Nothing but a gesture on the field clears
+the window's `focus`, so the pair that Tab brings is read as the return's own
+re-fire: it ends the hold and opens nothing. A click or a printable key on the
+field brings the popover straight back.
+
 **The close-on-focus-leave path is the exception, and deliberately so.** It only
 fires once focus has settled on another control, so taking focus back would undo
 the buyer's own Tab (TWO-25326). The same holds for the closes nothing in the

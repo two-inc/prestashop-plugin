@@ -182,6 +182,286 @@ describe('activation', () => {
         expect(shown(panelParts().nameSpinner)).toBe(false);
     });
 
+    /**
+     * ABN-554: a browser re-fires `focus` on the control the opener window
+     * still holds the moment the popup closes, which is the company-name field
+     * the launch parked focus on. jsdom fires nothing on a window return, so
+     * the re-fire is dispatched here by hand.
+     */
+    describe('the popup closing must not leave the popover open (ABN-554)', () => {
+        /** The enrolment up, its popup on screen, and focus parked on the name field. */
+        function launched(instance, soleTrader, popupId) {
+            openPanel();
+            panelParts().soleTrader.trigger('click');
+            popupOpen(soleTrader);
+            if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+            document.dispatchEvent(new CustomEvent('two:sole-trader-popup-opened', {
+                detail: { id: popupId === undefined ? 'popup-1' : popupId, launcher: instance._instanceNs }
+            }));
+            jest.advanceTimersByTime(0);
+        }
+
+        /**
+         * What a browser sends the checkout window when it comes back from the popup: its
+         * own `focus`, then the settle TwoSoleTrader dispatches from its document-capture
+         * `focusin` listener, then the pair re-fired on the field the launch parked on.
+         */
+        function refireFocusOnNameField(soleTrader) {
+            soleTrader.isPopupOpen.mockReturnValue(false);
+            const node = panelParts().nameField[0];
+            $(global.window).trigger('focus');
+            document.dispatchEvent(new CustomEvent('two:sole-trader-focus-settled', {
+                detail: { target: node, popupClosed: true }
+            }));
+            panelParts().nameField.trigger('focus');
+        }
+
+        test.each([
+            [true, false, 'the re-fire is not the buyer coming back, so the settle still closes'],
+            [false, true, 'a popover the buyer clicked back into is theirs to keep']
+        ])('re-fire only=%p -> panel shown=%p afterwards (%s)',
+            (refireOnly, expectedShown, why) => {
+                const soleTrader = stubSoleTrader(true);
+                const instance = makeInstance();
+                launched(instance, soleTrader);
+
+                refireFocusOnNameField(soleTrader);
+                if (!refireOnly) {
+                    panelParts().nameField.trigger('mousedown');
+                }
+                document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+
+                expect([shown(panelParts().panel), why]).toEqual([expectedShown, why]);
+            });
+
+        test('a real mousedown on the name field opens the panel after the flight (the pointer opener is never held)', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            launched(instance, soleTrader);
+            refireFocusOnNameField(soleTrader);
+            document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+            expect(shown(panelParts().panel)).toBe(false);
+
+            panelParts().nameField.trigger('mousedown');
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        /**
+         * The hold ends on the WINDOW's return, which a browser signals by
+         * re-firing `focus` and `focusin` at whatever was focused when the tab
+         * lost focus - here, the field the launch parked on. jsdom sends none of
+         * that on a tab switch, so every event below is dispatched by hand; and
+         * jsdom fires a window-targeted `focus` on any element `blur()`, so
+         * these fixtures blur nothing after the launch.
+         */
+        function settledWithPanelClosed(soleTrader, instance) {
+            launched(instance, soleTrader);
+            refireFocusOnNameField(soleTrader);
+            document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+            expect(shown(panelParts().panel)).toBe(false);
+        }
+
+        /**
+         * The pair in a named order. jQuery's capture-phase `focus` listener on the
+         * document simulates `focusin`, so a real focus reaches these handlers as
+         * `focusin` then `focus`; a jQuery trigger on the already-focused field reverses
+         * them. Both are run so neither can regress unnoticed.
+         *
+         * Three events reach the handlers per row, not two: the `trigger('focus')` half
+         * emits its own simulated `focusin` behind the `focus`. That trailing one lands
+         * with the hold already spent, where the `focusin` handler's `_openerHeld` guard
+         * returns on it. What each row pins is which half spends the hold.
+         */
+        const PAIR_ORDERS = [['focusin then focus'], ['focus then focusin']];
+        function firePair(order) {
+            const halves = order === 'focusin then focus' ? ['focusin', 'focus'] : ['focus', 'focusin'];
+            halves.forEach((half) => panelParts().nameField.trigger(half));
+        }
+
+        /** The panel closed with the hold still standing: the popup is gone, the window has not come back. */
+        function heldWithPanelClosed(soleTrader, instance) {
+            launched(instance, soleTrader);
+            soleTrader.isPopupOpen.mockReturnValue(false);
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+        }
+
+        test.each(PAIR_ORDERS)('a focus pair (%s) with no window return behind it is a buyer arriving by Tab, and opens the panel', (order) => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            heldWithPanelClosed(soleTrader, instance);
+
+            firePair(order);
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        test('that arrival ends the hold, so focus alone opens the panel afterwards', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            heldWithPanelClosed(soleTrader, instance);
+            panelParts().nameField.trigger('focus');
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        test('the park the launch itself performs is not that arrival, and leaves the hold standing', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            // The park runs inside this, on the field, with the hold already set.
+            launched(instance, soleTrader);
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            // The half a buyer's Tab would complete; only an opener the park freed answers it.
+            panelParts().nameField.trigger('focusin');
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
+
+        test.each(PAIR_ORDERS)('the window return spends its focus pair (%s) without opening the panel, and the field opens on the next focus', (order) => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            heldWithPanelClosed(soleTrader, instance);
+
+            $(global.window).trigger('focus');
+            firePair(order);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            firePair(order);
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        /**
+         * The park declines when the launch left focus on another control, so the
+         * flight runs on with the hold standing and the name field unfocused - which
+         * is what makes a later focus of that field a pair the hold can read.
+         */
+        function launchedWithParkDeclined(instance, soleTrader) {
+            openPanel();
+            panelParts().soleTrader.trigger('click');
+            popupOpen(soleTrader);
+            panelParts().notListed[0].focus();
+            document.dispatchEvent(new CustomEvent('two:sole-trader-popup-opened', {
+                detail: { id: 'popup-1', launcher: instance._instanceNs }
+            }));
+            jest.advanceTimersByTime(0);
+        }
+
+        test('manual entry taking the field over is not a Tab arrival, so the window return that follows reopens nothing', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            launchedWithParkDeclined(instance, soleTrader);
+
+            panelParts().notListed.trigger('click');
+            $('.two-company-search-back').trigger('click');
+            // The closes that leave focus where it is: focus leaving the panel, a
+            // re-render, another popover claiming the single open slot.
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            $(global.window).trigger('focus');
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
+
+        test('a keyboard arrival on the field during manual entry leaves no half for the window return to spend', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            launchedWithParkDeclined(instance, soleTrader);
+
+            panelParts().notListed.trigger('click');
+            // Manual entry refuses this, so it must not leave the pair's first half armed.
+            panelParts().nameField.trigger('focus');
+            $('.two-company-search-back').trigger('click');
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            $(global.window).trigger('focus');
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
+
+        /** Each ends the hold and nothing else; a bare keydown on this field opens the panel by itself. */
+        const RELEASING_GESTURES = [['pointerdown'], ['keydown'], ['click']];
+        function gestureEvent(name) {
+            return name === 'keydown' ? $.Event('keydown', { key: 'Tab' }) : name;
+        }
+
+        test.each(RELEASING_GESTURES)('a %s on the name field ends the hold outright, so the window return standing behind it no longer spends the focus that follows', (gesture) => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            heldWithPanelClosed(soleTrader, instance);
+            // With this standing, a hold left in place reads the focus below as the return's own re-fire and opens nothing.
+            $(global.window).trigger('focus');
+
+            panelParts().nameField.trigger(gestureEvent(gesture));
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        test('a half armed before manual entry took the field over is void, not a half the buyer\'s next Tab spends', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            heldWithPanelClosed(soleTrader, instance);
+            // Half a pair, armed in search mode with the hold standing.
+            panelParts().nameField.trigger('focusin');
+
+            instance.enterManualEntryMode();
+            // Manual entry refuses this half, and the half above must not survive that refusal.
+            panelParts().nameField.trigger('focus');
+            instance.exitManualEntryMode();
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            panelParts().nameField.trigger('focusin');
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
+
+        test('a pointerdown on the name field mid-flight ends the hold, so the focus it brings opens the panel', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            launched(instance, soleTrader);
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            panelParts().nameField.trigger('pointerdown');
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        test('a re-render mid-flight leaves the re-fire no way to keep the panel the fresh capture reopened', () => {
+            const soleTrader = stubSoleTrader(true);
+            soleTrader.popupLaunchId = jest.fn(() => 7);
+            const launcher = makeInstance();
+            launched(launcher, soleTrader, 7);
+            launcher.armReopen(Date.now() + 1000);
+            // PrestaShop's own destroy + construct, with the popup still up.
+            launcher.destroy();
+            makeInstance();
+
+            refireFocusOnNameField(soleTrader);
+            // Without this the close below is vacuous: the fresh capture reopens the panel
+            // off its reopen memory, and the re-fire is what must not be able to keep it.
+            expect(shown(panelParts().panel)).toBe(true);
+
+            document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
+    });
+
     test('does nothing destructive if TwoSoleTrader_Instance is missing, and still closes (after a paint) rather than dead-ending open', () => {
         stubSoleTrader(true);
         makeInstance();
