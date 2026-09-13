@@ -14918,12 +14918,104 @@ class Twopayment extends PaymentModule
      */
     protected function applyTwoSurchargeCartLineSync($cart, $selected)
     {
+        // Read before the mutation: the re-stamp below may only forgive drift
+        // this module is about to cause, so it is conditional on the stored
+        // state still describing the cart as the buyer left it.
+        $restampable = $this->checkoutSessionChecksumMatchesCart($cart);
         $result = $this->reconcileTwoSurchargeCartLine($cart, $selected);
-        if (!empty($result['changed'])) {
+        if (!empty($result['changed']) && $restampable) {
             $this->restampCheckoutSessionChecksum($cart);
         }
 
         return $result;
+    }
+
+    /**
+     * Does the cart's persisted checkout state still describe this cart
+     * (ABN-554)?
+     *
+     * A mismatch means something other than the fee line already diverged - a
+     * quantity edited in another tab, a price or tax change - and that is
+     * core's to invalidate on, not this module's to bless. It doubles as the
+     * version guard: a renamed cart column or checksum key shows up here as a
+     * non-match and the re-stamp simply stands down.
+     *
+     * @param Cart $cart
+     * @return bool
+     */
+    protected function checkoutSessionChecksumMatchesCart($cart)
+    {
+        $data = $this->readCheckoutSessionData($cart);
+        if ($data === null) {
+            return false;
+        }
+        $checksum = $this->generateCheckoutSessionChecksum($cart);
+
+        return $checksum !== null && hash_equals((string) $data['checksum'], $checksum);
+    }
+
+    /**
+     * The cart's persisted checkout state, or null when there is none to work
+     * with - which includes core's own `'checksum' => null`, written when a
+     * customer's cart addresses are invalid.
+     *
+     * @param Cart $cart
+     * @return array|null
+     */
+    protected function readCheckoutSessionData($cart)
+    {
+        try {
+            if (!Validate::isLoadedObject($cart)) {
+                return null;
+            }
+            $raw = Db::getInstance()->getValue(
+                'SELECT checkout_session_data FROM `' . _DB_PREFIX_ . 'cart` WHERE id_cart = ' . (int) $cart->id
+            );
+            $data = json_decode((string) $raw, true);
+            if (!is_array($data) || !isset($data['checksum'])) {
+                return null;
+            }
+
+            return $data;
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Checkout step state read failed for cart ' . (int) $cart->id . ' - ' . $e->getMessage(),
+                2
+            );
+
+            return null;
+        }
+    }
+
+    /**
+     * Core's own fingerprint of the cart, or null when this PrestaShop cannot
+     * produce one. Throwable, not Exception: a missing class or a changed
+     * constructor arity raises Error.
+     *
+     * @param Cart $cart
+     * @return string|null
+     */
+    protected function generateCheckoutSessionChecksum($cart)
+    {
+        try {
+            if (!Validate::isLoadedObject($cart)
+                || !class_exists('CartChecksum')
+                || !class_exists('AddressChecksum')
+            ) {
+                return null;
+            }
+            $checksum = new CartChecksum(new AddressChecksum());
+
+            return (string) $checksum->generateChecksum($cart);
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Checkout step state checksum unavailable for cart ' . (int) $cart->id
+                . ' - ' . $e->getMessage(),
+                2
+            );
+
+            return null;
+        }
     }
 
     /**
@@ -14938,31 +15030,29 @@ class Twopayment extends PaymentModule
      * guest that is unrecoverable, since step 1 only completes on a
      * successful account creation their email already blocks.
      *
+     * The read and the write are not atomic against core's own
+     * saveDataToPersist(), which rewrites the whole column: a collision loses
+     * one of the two updates. Accepted - the module's own syncs are serialised
+     * by the per-cart lock in syncTwoSurchargeCartLine, and the remaining
+     * window is a buyer completing a step in the same instant.
+     *
      * @param Cart $cart
      * @return void
      */
     protected function restampCheckoutSessionChecksum($cart)
     {
+        $data = $this->readCheckoutSessionData($cart);
+        $checksum = $this->generateCheckoutSessionChecksum($cart);
+        if ($data === null || $checksum === null) {
+            return;
+        }
         try {
-            if (!Validate::isLoadedObject($cart) || !class_exists('CartChecksum')) {
-                return;
-            }
-            $raw = Db::getInstance()->getValue(
-                'SELECT checkout_session_data FROM `' . _DB_PREFIX_ . 'cart` WHERE id_cart = ' . (int) $cart->id
-            );
-            $data = json_decode((string) $raw, true);
-            // No stored state means core has nothing to invalidate; writing one
-            // here would forge steps the buyer never completed.
-            if (!is_array($data) || !isset($data['checksum'])) {
-                return;
-            }
-            $checksum = new CartChecksum(new AddressChecksum());
-            $data['checksum'] = $checksum->generateChecksum($cart);
+            $data['checksum'] = $checksum;
             Db::getInstance()->execute(
                 'UPDATE `' . _DB_PREFIX_ . 'cart` SET checkout_session_data = "' . pSQL(json_encode($data)) . '"'
                 . ' WHERE id_cart = ' . (int) $cart->id
             );
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Checkout step state checksum re-stamp failed for cart ' . (int) $cart->id
                 . ' - ' . $e->getMessage(),
@@ -14972,8 +15062,8 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Reconciliation body of applyTwoSurchargeCartLineSync; split out so the
-     * checkout-state re-stamp wraps it without touching the money logic.
+     * The money side of the surcharge sync: add, update or remove the fee
+     * line. Knows nothing of the checkout-state re-stamp wrapped around it.
      *
      * @param Cart $cart
      * @param bool $selected
@@ -17709,8 +17799,49 @@ class Twopayment extends PaymentModule
      */
     public function isTwoOrderIntentApprovedForSession()
     {
-        return isset($this->context->cookie->two_order_intent_approved)
-            && (string)$this->context->cookie->two_order_intent_approved === '1';
+        if (!isset($this->context->cookie->two_order_intent_approved)
+            || (string)$this->context->cookie->two_order_intent_approved !== '1'
+        ) {
+            return false;
+        }
+
+        // An approval vouches for the cart it was given for and no other. The
+        // cart the buyer gets after placing an order is a different one, and
+        // nothing in a manual-entry checkout ever runs an intent to overwrite
+        // the verdict, so without this stamp an approval keeps admitting fee
+        // lines for the rest of the session. An unstamped record predates this
+        // and is refused; the next intent answer restores it.
+        $stamped = isset($this->context->cookie->two_order_intent_cart_id)
+            ? (int)$this->context->cookie->two_order_intent_cart_id
+            : 0;
+        $cartId = isset($this->context->cart) && Validate::isLoadedObject($this->context->cart)
+            ? (int)$this->context->cart->id
+            : 0;
+
+        return $stamped > 0 && $stamped === $cartId;
+    }
+
+    /**
+     * Forget the session's order-intent verdict (ABN-554).
+     *
+     * @return void
+     */
+    public function clearTwoOrderIntentSession()
+    {
+        if (!isset($this->context->cookie)) {
+            return;
+        }
+
+        unset($this->context->cookie->two_order_intent_approved);
+        unset($this->context->cookie->two_order_intent_timestamp);
+        unset($this->context->cookie->two_order_intent_cart_id);
+        // TWO-24799: the deduped decision goes with it - a later check runs for
+        // real rather than reviving a verdict the buyer never sees confirmed.
+        $this->clearTwoCachedOrderIntentDecision();
+
+        if (method_exists($this->context->cookie, 'write')) {
+            $this->context->cookie->write();
+        }
     }
 
     /**
