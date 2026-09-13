@@ -3,8 +3,9 @@
 declare(strict_types=1);
 
 /**
- * TWO-25711: the payment-tile tagline and its "What is <brand>?" explainer link
- * are brand-configured through brands/two.php 'checkout_tagline_faq_url'.
+ * TWO-25711 / ABN-554: the payment-tile tagline and the "What is <brand>?"
+ * icon link are brand-configured through brands/two.php, the tagline by
+ * 'checkout_tagline_faq_url' and the icon link by 'about_url'.
  *
  * The key carries the link TARGET only - the tagline sentence stays a
  * translated string in the template, so it is localisable. A brand declaring
@@ -23,6 +24,49 @@ final class PaymentTileTaglineSpec
         self::testOnlyHttpUrlsSurvive();
         self::testShippedTwoBrandKeepsItsTagline();
         self::testTheTemplateReceivesTheResolvedUrlAndTheSettingSeparately();
+        self::testTheAboutUrlReachesTheTemplateSeparately();
+    }
+
+    /**
+     * ABN-554: the "What is <brand>?" icon link has its own brand key, the
+     * canonical /what-is-two target the other platforms use, and a brand
+     * declaring none leaves the template nothing to render.
+     */
+    private static function testTheAboutUrlReachesTheTemplateSeparately(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        $module->_path = '/modules/twopayment/';
+
+        TinyAssert::same(
+            'https://www.two.inc/what-is-two',
+            $module->getTwoAboutUrl(),
+            'the shipped brand declares the canonical about URL'
+        );
+        TinyAssert::same(
+            'https://www.two.inc/what-is-two',
+            $module->exposeTwoPaymentOptionAssigned('about_url'),
+            'the template receives it as its own variable'
+        );
+
+        self::reset();
+        $unset = self::moduleWithoutAboutUrl();
+        $unset->_path = '/modules/twopayment/';
+        TinyAssert::same(
+            '',
+            $unset->exposeTwoPaymentOptionAssigned('about_url'),
+            'a brand declaring no about URL leaves no target to render'
+        );
+    }
+
+    private static function moduleWithoutAboutUrl(): object
+    {
+        return new class extends TwopaymentTestHarness {
+            public function getTwoBrandConfig($key)
+            {
+                return $key === 'about_url' ? null : parent::getTwoBrandConfig($key);
+            }
+        };
     }
 
     private static function testOnlyHttpUrlsSurvive(): void
