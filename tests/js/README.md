@@ -36,19 +36,22 @@ So `ps-harness.js` assembles the real environment rather than mocking it:
 
 **No production code was refactored to make this testable.** The scripts load as-is.
 
-Using the real widget instead of a mock is deliberate. Two of the three company-search
-defects these tests exist to pin are properties *of jQuery UI*, not of our code:
+Using the real widget instead of a mock is deliberate. Some of the company-search defects
+these tests exist to pin are properties *of jQuery UI*, not of our code — it clears
+`ui-autocomplete-loading` only when a search's `response()` callback actually runs,
+because that is where it decrements `pending`, so a dropped callback leaks the spinner for
+the rest of the session. A hand-written mock would have to reproduce that correctly to
+catch the bug, which is precisely the assumption that let it ship in the first place.
 
-- the widget bridge does **not** build a fresh instance when `.autocomplete({...})` is
-  called on an already-initialised field — it runs `option()` + `_init()` on the existing
-  one, so a `_renderItem` wrapper applied on every setup nests a layer deeper per
-  address-form update until rendering a row blows the stack;
-- it clears `ui-autocomplete-loading` only when a search's `response()` callback actually
-  runs, because that is where it decrements `pending` — so a dropped callback leaks the
-  spinner for the rest of the session.
-
-A hand-written mock would have to reproduce both behaviours correctly to catch either bug,
-which is precisely the assumption that let them ship in the first place.
+**Every spec runs twice, once per jQuery UI.** A PrestaShop theme decides which version
+the module runs on, and they differ in both API surface and rendered markup: 1.10 has no
+`autocomplete('instance')` and throws when it is called, and it wraps a row in an `<a>`
+where 1.12 and later use a `<div>`. A suite pinned to one version therefore passes on a
+mechanism every shop serving the other never executes. Jest runs the two as projects —
+`jquery-ui-1.14` and `jquery-ui-1.10`, the latter selected by `setup-jquery-ui-110.js`,
+which the harness reads to pick its `require` list. Write assertions that hold on both:
+read a row's wrapper as `children().first()`, reach the widget with
+`.data('ui-autocomplete')`, and put a per-repaint hook on the `open` callback.
 
 `jquery-ui`'s distributed files are AMD-or-browser-globals with no CommonJS branch, so
 under Jest each falls through to `factory(jQuery)` and does *not* pull its own
@@ -142,11 +145,7 @@ form (which it does for something as ordinary as a country change):
   the unavailable row writes nothing.
 - the spinner always comes back down — success, timeout, empty, degraded — and a
   superseded search leaves it up for the request that replaced it.
-- the `_renderItem` patch is applied once per widget instance and is still the same
-  function *by reference* after 100 re-setups, 20 country changes and 20
-  `updatedAddressForm` events; a genuinely new widget is patched again.
-- the unavailable row renders non-selectable (`ui-state-disabled`, `aria-disabled`) and as
-  text, and `select`/`focus` refuse it.
+- `select`/`focus` refuse the unavailable row.
 - a destroyed instance cannot act: `setupAutocomplete()` leaves the replaced field alone,
   `onCompanySelected()` returns false and writes no `companyid`/`dni`, the
   `updatedAddressForm` handler stands down (asserted on the guard as well as the outcome,
@@ -350,7 +349,7 @@ pre-trimmed values.
 
 ## Adding tests
 
-Prefer driving behaviour through the real widget (`field.autocomplete('instance').search(term)`)
+Prefer driving behaviour through the real widget (`field.data('ui-autocomplete').search(term)`)
 over calling internals, and settle requests explicitly through `stubAjax()` — out-of-order
 responses, aborts and timeouts are the subject matter here, so controlling the timing is
 the point rather than a shortcut.

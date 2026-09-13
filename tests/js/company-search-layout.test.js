@@ -328,7 +328,7 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
         ensureSpy.mockClear();
 
         query.val('Example');
-        query.autocomplete('instance').search('Example');
+        query.data('ui-autocomplete').search('Example');
 
         expect(ensureSpy).toHaveBeenCalled();
     });
@@ -346,7 +346,7 @@ describe('the width-refresh listener on resize/orientationchange (2.1/2.2 harden
         widthSpy.mockClear();
 
         query.val('Some Manually Typed Name');
-        query.autocomplete('instance').search('Some Manually Typed Name');
+        query.data('ui-autocomplete').search('Some Manually Typed Name');
 
         expect(ensureSpy).toHaveBeenCalled();
         expect(widthSpy).toHaveBeenCalled();

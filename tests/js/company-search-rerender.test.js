@@ -4,14 +4,9 @@
  *
  * PrestaShop fires `updatedAddressForm` on ordinary interactions like a
  * country change; TwoCheckoutManager.handleAddressFormUpdate() responds by
- * destroying the TwoCompanySearch instance and building a fresh one. Two
- * defects live on that path:
+ * destroying the TwoCompanySearch instance and building a fresh one. The
+ * defect that lives on that path:
  *
- *   - `_renderItem` was re-wrapped on every setup. jQuery UI's widget bridge
- *     does not build a fresh instance when `.autocomplete({...})` runs on an
- *     already-initialised field — it runs option() + _init() on the existing
- *     one — so each call wrapped the previous wrapper again, nesting deeper
- *     per event until rendering a row blew the stack.
  *   - a destroyed instance kept acting. `prestashop.on` has no `off`, so a
  *     destroyed instance's handler still fires; once setupAutocomplete()
  *     re-resolved the field against the live DOM, the zombie resolved to the
@@ -113,7 +108,7 @@ describe('the real jQuery UI widget is what gets bound', () => {
 
         expect(liveField().hasClass('two-company-search-input')).toBe(true);
         expect(searchInput().hasClass('ui-autocomplete-input')).toBe(true);
-        expect(searchInput().autocomplete('instance')).toBeTruthy();
+        expect(searchInput().data('ui-autocomplete')).toBeTruthy();
         // 0 is deliberate (TWO-25288): jQuery UI skips `source` below
         // `minLength`, so a threshold here would swallow keystrokes before
         // `source` runs. The threshold lives in the `source` guard instead.
@@ -242,8 +237,8 @@ describe('a click and a focus arrival both open the control', () => {
 
 describe('the company-search hints (TWO-25288)', () => {
     /**
-     * Drive the widget's own search so the `source` guard, jQuery UI's menu and
-     * the `_renderItem` patch are all the things under test.
+     * Drive the widget's own search so the `source` guard and jQuery UI's own
+     * menu are the things under test.
      */
     function search(term) {
         // Panel must be open before a query field exists (TWO-25326); its
@@ -253,11 +248,11 @@ describe('the company-search hints (TWO-25288)', () => {
         const field = searchInput();
         // Guard against passing vacuously with no widget bound.
         expect(field.hasClass('ui-autocomplete-input')).toBe(true);
-        expect(field.autocomplete('instance')).toBeTruthy();
+        expect(field.data('ui-autocomplete')).toBeTruthy();
         field.val(term);
         // Driven via the widget's own search() - no fake timers here, so an
         // `input` event would only arm the 300ms debounce and never render.
-        field.autocomplete('instance').search(term);
+        field.data('ui-autocomplete').search(term);
         return field;
     }
 
@@ -450,7 +445,8 @@ describe('the company-search hints (TWO-25288)', () => {
 
             // The wrapper div is where jQuery UI puts the text, and where the
             // module's own generic row rules paint body-text colour `!important`.
-            const wrapper = rows().children('div').get(0);
+            // The wrapper element is the version's choice: 1.12+ a <div>, 1.10 an <a>.
+            const wrapper = rows().children().first().get(0);
             expect(window.getComputedStyle(wrapper).color).toBe('rgb(136, 136, 136)');
             expect(window.getComputedStyle(wrapper).cursor).toBe('default');
 
@@ -476,7 +472,7 @@ describe('the company-search hints (TWO-25288)', () => {
             // `ui-state-active` is what jQuery UI's menu puts on the wrapper of
             // the row under the pointer. On a message row that highlight is a
             // promise the row cannot keep, so the stylesheet has to out-rank it.
-            const wrapper = rows().children('div').addClass('ui-state-active').get(0);
+            const wrapper = rows().children().first().addClass('ui-state-active').get(0);
             const painted = window.getComputedStyle(wrapper);
 
             expect(painted.color).toBe('rgb(136, 136, 136)');
@@ -520,9 +516,9 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
         // Bootstrapped-guard: without the widget bound, every assertion below
         // would pass vacuously against an untouched DOM.
         expect(field.hasClass('ui-autocomplete-input')).toBe(true);
-        expect(field.autocomplete('instance')).toBeTruthy();
+        expect(field.data('ui-autocomplete')).toBeTruthy();
         field.val(term);
-        field.autocomplete('instance').search(term);
+        field.data('ui-autocomplete').search(term);
         return field;
     }
 
@@ -642,10 +638,10 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
         ajax.last().fail('timeout');
 
         // The message row next to it, for contrast: `ui-state-disabled` is what
-        // jQuery UI's own menu checks, so carrying it is what makes a row
-        // keyboard-SKIPPED. The affordance must stay activatable.
+        // jQuery UI's own menu checks before acting on Enter, so carrying it is
+        // what makes a row unselectable. The affordance must stay activatable.
         expect(rows().eq(0).hasClass('ui-state-disabled')).toBe(true);
-        expect(rows().eq(0).attr('aria-disabled')).toBe('true');
+        expect(rows().eq(0).children().first().attr('aria-disabled')).toBe('true');
 
         expect(notListed().hasClass('ui-state-disabled')).toBe(false);
         expect(notListed().attr('aria-disabled')).toBeUndefined();
@@ -919,7 +915,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
          * survived into the order payload unnoticed.
          */
         function selectFirstCompany() {
-            const widget = searchInput().autocomplete('instance');
+            const widget = searchInput().data('ui-autocomplete');
             const row = widget.menu.element.children('li').first();
             widget.menu.focus(null, row);
             widget.menu.select($.Event('click'));
@@ -1190,7 +1186,7 @@ describe('the spinner always comes back down', () => {
         }
         const field = searchInput();
         field.val(term);
-        field.autocomplete('instance').search(term);
+        field.data('ui-autocomplete').search(term);
         return field;
     }
 
@@ -1348,7 +1344,7 @@ describe('selecting a company through the real widget', () => {
      */
     function selectFirstResult(term, response) {
         const query = openPanel();
-        const instance = query.autocomplete('instance');
+        const instance = query.data('ui-autocomplete');
         query.val(term);
         instance.search(term);
         ajax.last().succeed(response);
@@ -1484,111 +1480,7 @@ describe('selecting a company through the real widget', () => {
     });
 });
 
-describe('the _renderItem patch does not nest', () => {
-    test('it is applied once and survives repeated setup unchanged', () => {
-        const search = makeInstance();
-        const instance = searchInput().autocomplete('instance');
-        const patched = instance._renderItem;
-
-        expect(instance._twoRenderItemPatched).toBe(true);
-
-        for (let i = 0; i < 100; i += 1) {
-            search.setupAutocomplete();
-        }
-
-        // Identity is the assertion. Each re-wrap would produce a NEW function
-        // closing over the previous one; that is the nesting that eventually
-        // blew the stack, and nothing else about the widget would look wrong.
-        expect(searchInput().autocomplete('instance')).toBe(instance);
-        expect(instance._renderItem).toBe(patched);
-    });
-
-    test('the country-change listener re-setup does not nest it either', () => {
-        makeInstance();
-        const instance = searchInput().autocomplete('instance');
-        const patched = instance._renderItem;
-        const countrySelect = document.querySelector("select[name='id_country']");
-
-        for (let i = 0; i < 20; i += 1) {
-            countrySelect.dispatchEvent(new window.Event('change'));
-        }
-
-        expect(instance._renderItem).toBe(patched);
-    });
-
-    test('the updatedAddressForm handler does not nest it either', () => {
-        makeInstance();
-        const instance = searchInput().autocomplete('instance');
-        const patched = instance._renderItem;
-
-        for (let i = 0; i < 20; i += 1) {
-            bus.emit('updatedAddressForm');
-        }
-
-        expect(instance._renderItem).toBe(patched);
-    });
-
-    test('rendering still works after many re-setups', () => {
-        const search = makeInstance();
-        for (let i = 0; i < 200; i += 1) {
-            search.setupAutocomplete();
-        }
-        const instance = searchInput().autocomplete('instance');
-        const ul = $('<ul></ul>');
-
-        expect(() => {
-            instance._renderItem(ul, { label: 'Example Trading Ltd', value: 'Example Trading Ltd' });
-            instance._renderItem(ul, search.buildUnavailableItem());
-        }).not.toThrow();
-        expect(ul.children('li')).toHaveLength(2);
-    });
-
-    test('a genuinely new widget is patched again', () => {
-        const first = makeInstance();
-        const firstInstance = searchInput().autocomplete('instance');
-        first.destroy();
-
-        replaceAddressForm();
-        makeInstance();
-        const secondInstance = searchInput().autocomplete('instance');
-
-        // The guard must be per-instance, not a global "already done" latch —
-        // a destroyed-and-recreated widget carries no flag and needs the patch.
-        expect(secondInstance).not.toBe(firstInstance);
-        expect(secondInstance._twoRenderItemPatched).toBe(true);
-    });
-
-    test('the unavailable row is rendered non-selectable and as text', () => {
-        const search = makeInstance();
-        const instance = searchInput().autocomplete('instance');
-        const ul = $('<ul></ul>');
-
-        instance._renderItem(ul, { label: '<img src=x onerror=alert(1)>', two_unavailable: true });
-
-        const li = ul.children('li');
-        expect(li.hasClass('two-autocomplete-unavailable')).toBe(true);
-        // `ui-state-disabled` is what jQuery UI's own menu checks, so the row is
-        // skipped by keyboard navigation rather than merely refused on select.
-        expect(li.hasClass('ui-state-disabled')).toBe(true);
-        expect(li.attr('aria-disabled')).toBe('true');
-        expect(li.find('img')).toHaveLength(0);
-        expect(li.text()).toBe('<img src=x onerror=alert(1)>');
-
-        expect(search.getSearchUnavailableText()).toContain('temporarily unavailable');
-    });
-
-    test('a normal row goes through jQuery UI own renderer', () => {
-        makeInstance();
-        const instance = searchInput().autocomplete('instance');
-        const ul = $('<ul></ul>');
-
-        instance._renderItem(ul, { label: 'Example Trading Ltd', value: 'Example Trading Ltd' });
-
-        const li = ul.children('li');
-        expect(li.hasClass('two-autocomplete-unavailable')).toBe(false);
-        expect(li.text()).toBe('Example Trading Ltd');
-    });
-
+describe('the message-row handlers refuse a row that is not a company', () => {
     test('select and focus refuse the unavailable row', () => {
         makeInstance();
         // The handlers are options of the widget, which lives on the query
@@ -2383,7 +2275,7 @@ describe('a destroyed instance cannot act on the live DOM', () => {
         search.destroy();
 
         expect($(query).hasClass('ui-autocomplete-input')).toBe(false);
-        expect($(query).autocomplete('instance')).toBeUndefined();
+        expect($(query).data('ui-autocomplete')).toBeUndefined();
         // ...and the panel it lived in goes with it.
         expect(panel()).toHaveLength(0);
     });
@@ -2407,7 +2299,7 @@ describe('a destroyed instance cannot act on the live DOM', () => {
         // address-form re-render with nothing left holding a reference that
         // could clean it up.
         expect($(oldQuery).hasClass('ui-autocomplete-input')).toBe(false);
-        expect($(oldQuery).autocomplete('instance')).toBeUndefined();
+        expect($(oldQuery).data('ui-autocomplete')).toBeUndefined();
         expect($(oldField).hasClass('two-company-search-input')).toBe(false);
         // The outgoing panel goes with it, and exactly one live panel - the
         // new field's - is left on the page.
@@ -2516,7 +2408,7 @@ describe('the in-field spinner GIF', () => {
         const field = openPanel();
 
         field.val('exa');
-        field.autocomplete('instance').search('exa');
+        field.data('ui-autocomplete').search('exa');
         expect(field.hasClass(LOADING_CLASS)).toBe(true);
 
         // This is the substantive change. A second, unscoped
@@ -2563,7 +2455,7 @@ describe('the in-field spinner GIF', () => {
         expect(styleOf(gif).display).toBe('none');
 
         field.val('exa');
-        field.autocomplete('instance').search('exa');
+        field.data('ui-autocomplete').search('exa');
 
         // jQuery UI puts `ui-autocomplete-loading` on the input it is bound
         // to - the query field now - and the stylesheet turns that into the
@@ -2655,7 +2547,7 @@ describe('the in-field spinner GIF', () => {
         expect(styleOf(gif).display).toBe('none');
 
         field.val('exa');
-        field.autocomplete('instance').search('exa');
+        field.data('ui-autocomplete').search('exa');
 
         expect(styleOf(gif).display).toBe('block');
         expect(styleOf(gif).backgroundImage).toContain('loader.gif');

@@ -65,8 +65,8 @@ function option(index) {
 
 /** Highlight a row the way a cursor key does, through the widget's own menu. */
 function highlight(index) {
-    const instance = panelParts().query.autocomplete('instance');
-    instance.menu.focus(null, rows().eq(index));
+    // `.data()`, not `autocomplete('instance')`: this file runs against 1.10 too.
+    panelParts().query.data('ui-autocomplete').menu.focus(null, rows().eq(index));
 }
 
 function search(term) {
