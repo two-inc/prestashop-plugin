@@ -2189,10 +2189,11 @@ class TwoCompanySearch {
             }
         );
 
-        // A native focus delivers `focusin` then `focus`, both synchronously; a jQuery
-        // trigger on the already-focused field reverses them. Written against the pair's
-        // SECOND half rather than against either name, so neither order changes which one
-        // spends the hold (ABN-554).
+        // jQuery simulates `focusin` from a capture-phase `focus` listener on the document,
+        // so a real focus reaches these handlers as `focusin` then `focus`; a jQuery trigger
+        // on the already-focused field reverses them. Written against the pair's SECOND half
+        // rather than against either name, so neither order changes which one spends the hold
+        // (ABN-554).
         const spendHeldFocusPair = () => {
             if (!this._heldFocusSeen) {
                 // The window's return state at the pair's first half is what tells the
