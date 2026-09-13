@@ -323,8 +323,6 @@ $_MODULE['<{twopayment}prestashop>displayorderdetail_7acc91e0f8c538bdaf67113dce8
 $_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Empresa';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Pagos empresariales simplificados';
 $_MODULE['<{twopayment}prestashop>paymentinfo_45c6314c990994e3b513337bcffd59f9'] = '¿Qué es %s?';
-$_MODULE['<{twopayment}prestashop>paymentinfo_ce788118f22dd76bda591a4dae15e622'] = '%s proporciona crédito comercial instantáneo para compras B2B. Compra ahora, paga después sin intereses ni comisiones.';
-$_MODULE['<{twopayment}prestashop>paymentinfo_235c023d59a6fb5a752447943af7512e'] = 'Más información sobre %s';
 $_MODULE['<{twopayment}prestashop>paymentinfo_d88d16f67e3b25a0283107c4ace42922'] = 'Sin costes iniciales';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5c920817023991f458e2a248e9367c67'] = 'Verificación de aprobación instantánea';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Comprobando disponibilidad...';
@@ -333,6 +331,9 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_a002c8066738bc8f9d9394abdcef7ea8']
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'El pago vence al final del mes actual más los días seleccionados desde que se cumple tu pedido';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1b98fa92874f5fd75df8fdc59d92022a'] = 'Haz clic aquí para iniciar sesión o registrarte como autónomo con %s.';
 $_MODULE['<{twopayment}prestashop>paymentinfo_b55facd49248ec93ec53edc801dadb08'] = 'Se ha producido un error al configurar el pago como autónomo. Por favor, inténtalo de nuevo.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_79844fc929054773af8d17e837f29f24'] = '%s es una solución de pago para compras B2B en línea que te permite comprar a tus comercios y proveedores favoritos con crédito comercial. Con %s, puedes acceder al instante a crédito comercial flexible para simplificar tus compras.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_c9a4942151f3f04aca175871bc85f862'] = 'Compra ahora, recibe tus productos y paga tu factura más tarde.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_f63939ce5ee9ac8631ebef74efc00c60'] = 'Haz clic para saber más';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_269034f86f996679a6b9d9184df78485'] = 'Pago con %s';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_7de46cb469a9606c3f20c512df2519f3'] = 'Plazos de la factura';
 $_MODULE['<{twopayment}prestashop>displaypaymentreturnbuyer_cdca48ec5dde79b84b395c0c557bb290'] = '%d días';
