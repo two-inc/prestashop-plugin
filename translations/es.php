@@ -16,7 +16,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_52f4393e1b52ba63e27310ca92ba098c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Título';
 $_MODULE['<{twopayment}prestashop>twopayment_d34347a5f791b2cecfda204f7a0b575d'] = 'Introduce el título que aparecerá en la página de pago como nombre del método de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_8bc50504c201a3c29db85208d8ce68af'] = 'Subtítulo';
-$_MODULE['<{twopayment}prestashop>twopayment_d4ee35ba1c8678bff20f4940810ab53e'] = 'Opcional. Se muestra debajo del título del método de pago en la página de pago. Déjalo vacío para no mostrar ningún subtítulo.';
+$_MODULE['<{twopayment}prestashop>twopayment_c4373636b200b27c4edf96fed8ba2a6a'] = 'Subtítulo opcional que se muestra debajo del título en la página de pago. Déjalo vacío para usar el valor predeterminado.';
+$_MODULE['<{twopayment}prestashop>twopayment_0bd1bbf38ae30740b208fa00447e04b2'] = 'Para todas las empresas, %1$sleer más%2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_62c7594948c1231bbae9f948b1535b7e'] = 'Clave API';
 $_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Introduce tu clave API proporcionada por %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Entorno';
@@ -321,7 +322,6 @@ $_MODULE['<{twopayment}prestashop>displayorderdetail_1139855f5319137d6e5eedcd9d3
 $_MODULE['<{twopayment}prestashop>displayorderdetail_f535b1d8c6ee98d69daa1b6988d65bdc'] = 'Portal %s';
 $_MODULE['<{twopayment}prestashop>displayorderdetail_7acc91e0f8c538bdaf67113dce87520c'] = 'Gestiona tu cuenta %s';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Empresa';
-$_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Pagos empresariales simplificados';
 $_MODULE['<{twopayment}prestashop>paymentinfo_45c6314c990994e3b513337bcffd59f9'] = '¿Qué es %s?';
 $_MODULE['<{twopayment}prestashop>paymentinfo_d88d16f67e3b25a0283107c4ace42922'] = 'Sin costes iniciales';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5c920817023991f458e2a248e9367c67'] = 'Verificación de aprobación instantánea';
