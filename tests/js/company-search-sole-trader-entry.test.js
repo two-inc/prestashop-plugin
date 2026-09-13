@@ -182,6 +182,54 @@ describe('activation', () => {
         expect(shown(panelParts().nameSpinner)).toBe(false);
     });
 
+    /**
+     * ABN-554: a browser re-fires `focus` on the control the opener window
+     * still holds the moment the popup closes, which is the company-name field
+     * the launch parked focus on. jsdom fires nothing on a window return, so
+     * the re-fire is dispatched here by hand.
+     */
+    describe('the popup closing must not leave the popover open (ABN-554)', () => {
+        /** The enrolment up, its popup on screen, and focus parked on the name field. */
+        function launched(instance, soleTrader) {
+            openPanel();
+            panelParts().soleTrader.trigger('click');
+            popupOpen(soleTrader);
+            if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+            document.dispatchEvent(new CustomEvent('two:sole-trader-popup-opened', {
+                detail: { id: 'popup-1', launcher: instance._instanceNs }
+            }));
+            jest.advanceTimersByTime(0);
+        }
+
+        /** What a browser sends the checkout when the popup it launched goes away. */
+        function refireFocusOnNameField(soleTrader) {
+            soleTrader.isPopupOpen.mockReturnValue(false);
+            const node = panelParts().nameField[0];
+            panelParts().nameField.trigger('focus');
+            document.dispatchEvent(new CustomEvent('two:sole-trader-focus-settled', {
+                detail: { target: node, popupClosed: true }
+            }));
+        }
+
+        test.each([
+            [true, false, 'the re-fire is not the buyer coming back, so the settle still closes'],
+            [false, true, 'a popover the buyer clicked back into is theirs to keep']
+        ])('re-fire only=%p -> panel shown=%p afterwards (%s)',
+            (refireOnly, expectedShown, why) => {
+                const soleTrader = stubSoleTrader(true);
+                const instance = makeInstance();
+                launched(instance, soleTrader);
+
+                refireFocusOnNameField(soleTrader);
+                if (!refireOnly) {
+                    panelParts().nameField.trigger('mousedown');
+                }
+                document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
+
+                expect([shown(panelParts().panel), why]).toEqual([expectedShown, why]);
+            });
+    });
+
     test('does nothing destructive if TwoSoleTrader_Instance is missing, and still closes (after a paint) rather than dead-ending open', () => {
         stubSoleTrader(true);
         makeInstance();
