@@ -262,6 +262,17 @@ describe('activation', () => {
             expect(shown(panelParts().panel)).toBe(false);
         }
 
+        /**
+         * The pair in a named order: a native focus delivers `focusin` then `focus`,
+         * a jQuery trigger on the already-focused field reverses them. Both are run so
+         * neither can regress unnoticed.
+         */
+        const PAIR_ORDERS = [['focusin then focus'], ['focus then focusin']];
+        function firePair(order) {
+            const halves = order === 'focusin then focus' ? ['focusin', 'focus'] : ['focus', 'focusin'];
+            halves.forEach((half) => panelParts().nameField.trigger(half));
+        }
+
         /** The panel closed with the hold still standing: the popup is gone, the window has not come back. */
         function heldWithPanelClosed(soleTrader, instance) {
             launched(instance, soleTrader);
@@ -270,12 +281,12 @@ describe('activation', () => {
             expect(shown(panelParts().panel)).toBe(false);
         }
 
-        test('a focus pair with no window return behind it is a buyer arriving by Tab, and opens the panel', () => {
+        test.each(PAIR_ORDERS)('a focus pair (%s) with no window return behind it is a buyer arriving by Tab, and opens the panel', (order) => {
             const soleTrader = stubSoleTrader(true);
             const instance = makeInstance();
             heldWithPanelClosed(soleTrader, instance);
 
-            panelParts().nameField.trigger('focus');
+            firePair(order);
 
             expect(shown(panelParts().panel)).toBe(true);
         });
@@ -307,16 +318,16 @@ describe('activation', () => {
             expect(shown(panelParts().panel)).toBe(false);
         });
 
-        test('the window return spends its focus pair without opening the panel, and the field opens on the next focus', () => {
+        test.each(PAIR_ORDERS)('the window return spends its focus pair (%s) without opening the panel, and the field opens on the next focus', (order) => {
             const soleTrader = stubSoleTrader(true);
             const instance = makeInstance();
             heldWithPanelClosed(soleTrader, instance);
 
             $(global.window).trigger('focus');
-            panelParts().nameField.trigger('focus');
+            firePair(order);
             expect(shown(panelParts().panel)).toBe(false);
 
-            panelParts().nameField.trigger('focus');
+            firePair(order);
 
             expect(shown(panelParts().panel)).toBe(true);
         });
@@ -386,7 +397,7 @@ describe('activation', () => {
             expect(shown(panelParts().panel)).toBe(true);
         });
 
-        test('a re-render mid-flight leaves the re-fire no way to keep the panel open', () => {
+        test('a re-render mid-flight leaves the re-fire no way to keep the panel the fresh capture reopened', () => {
             const soleTrader = stubSoleTrader(true);
             soleTrader.popupLaunchId = jest.fn(() => 7);
             const launcher = makeInstance();
@@ -397,6 +408,10 @@ describe('activation', () => {
             makeInstance();
 
             refireFocusOnNameField(soleTrader);
+            // Without this the close below is vacuous: the fresh capture reopens the panel
+            // off its reopen memory, and the re-fire is what must not be able to keep it.
+            expect(shown(panelParts().panel)).toBe(true);
+
             document.dispatchEvent(new CustomEvent('two:sole-trader-flight-settled'));
 
             expect(shown(panelParts().panel)).toBe(false);

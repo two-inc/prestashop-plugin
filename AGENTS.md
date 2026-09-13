@@ -261,10 +261,12 @@ behind it the pair is a buyer arriving on the field by Tab, and it ends the hold
 AND opens the panel, so a keyboard-only buyer is never left without the control.
 Every focus this module moves itself - the launch's park, a close returning focus,
 manual entry taking the field over - is neither half: it moves under `_closingSelf`,
-which the opener skips and which voids any half-pair standing. jQuery delivers
-`focusin` first and defers `focus` behind it, and the rule is written against the
-pair's second half rather than against either name; both halves carry the same
-guards, so neither can refuse a half the other armed. The hold outlives the flight
+which the opener skips and which voids any half-pair standing. A native focus
+delivers `focusin` then `focus`, both synchronously, and a jQuery `trigger('focus')`
+on the already-focused field reverses them; the rule is written against the pair's
+second half rather than against either name, so neither order changes which half
+spends the hold, and both halves carry the same guards, so neither can refuse a half
+the other armed. The hold outlives the flight
 settling; a `pointerdown`, `keydown` or `click` on the field ends it at once, and
 the pointer and keyboard openers are live throughout (ABN-554).
 
@@ -272,6 +274,12 @@ LIMITATION: focus moved by the theme or by PrestaShop itself - a re-render
 restoring focus, a validation handler - arrives with no window `focus` behind it,
 so the opener reads it as a buyer's Tab arrival and opens the panel.
 `TwoSoleTrader.js` records the same limitation for the popup it takes down.
+
+LIMITATION: a buyer who returns to the tab onto some other control and then Tabs
+to the company field loses that one Tab. Nothing but a gesture on the field clears
+the window's `focus`, so the pair that Tab brings is read as the return's own
+re-fire: it ends the hold and opens nothing. A click or a printable key on the
+field brings the popover straight back.
 
 **The close-on-focus-leave path is the exception, and deliberately so.** It only
 fires once focus has settled on another control, so taking focus back would undo
