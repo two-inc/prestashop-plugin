@@ -160,13 +160,6 @@
     width: auto;
 }
 
-.two-tagline {
-    font-size: 13px;
-    color: #6c757d;
-    font-weight: 500;
-    margin: 0;
-}
-
 /* Info Tooltip - Inline Style */
 .two-info-tooltip {
     position: relative;
