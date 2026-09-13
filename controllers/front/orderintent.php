@@ -676,6 +676,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
         $this->context->cookie->two_order_intent_approved = $approved ? '1' : '0';
         $this->context->cookie->two_order_intent_timestamp = (string)$timestamp;
+        // ABN-554: the verdict is only about the cart it was asked for.
+        $this->context->cookie->two_order_intent_cart_id = (string)(
+            Validate::isLoadedObject($this->context->cart) ? (int)$this->context->cart->id : 0
+        );
 
         // TWO-24799: binds to the snapshot hash the server computed when it handed
         // this browser the payload. The hash is never taken from the request.
@@ -705,14 +709,8 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // Clear order intent result from cookie
-        unset($this->context->cookie->two_order_intent_approved);
-        unset($this->context->cookie->two_order_intent_timestamp);
-        // TWO-24799: the buyer switching away from Two is an explicit reset, so
-        // the deduped decision goes with it - a later switch back re-checks for
-        // real rather than reviving a decision the buyer never sees confirmed.
-        $this->module->clearTwoCachedOrderIntentDecision();
-        $this->context->cookie->write();
+        // The buyer switching away from Two is an explicit reset.
+        $this->module->clearTwoOrderIntentSession();
 
         PrestaShopLogger::addLog('TwoPayment: Order intent result cleared from session', 1);
 

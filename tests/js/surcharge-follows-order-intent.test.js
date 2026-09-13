@@ -1,9 +1,10 @@
 /**
  * ABN-554: the per-term buyer fee belongs to the term chips, and the chips
  * only exist once an order intent comes back approved. A buyer whose company
- * was typed by hand, or declined, sees no chip - and used to be charged the
- * default term's fee anyway, because the fee sync fired on the payment radio
- * alone and never looked at what the tile was actually offering.
+ * was typed by hand, or declined, sees no chip, so no fee reaches their cart
+ * either - the sync carries the tile's own verdict, not the payment radio.
+ * The converse matters just as much: an intent that merely errored is not a
+ * refusal, and must leave a fee the buyer is still being shown alone.
  */
 
 'use strict';
@@ -82,6 +83,17 @@ function actions() {
     return ajax.calls.map((call) => (call.settings.data || {}).action);
 }
 
+/** Answer the save/clear the manager chains its fee sync onto, if it made one. */
+function settleIntentRecordWrite() {
+    const write = ajax.calls.find(
+        (call) => call.settings.data
+            && ['saveOrderIntentResult', 'clearOrderIntentResult'].includes(call.settings.data.action)
+    );
+    if (write) {
+        write.succeed({ success: true });
+    }
+}
+
 describe.each([
     [{ success: true, approved: true }, 1, 'an approved intent is the tile genuinely offering Two'],
     [{ success: true, approved: false, message: 'Not available' }, 0, 'a declined company gets no fee'],
@@ -95,12 +107,7 @@ describe.each([
 
         // When: the order intent answers.
         manager.handleOrderIntentResult(result);
-        const save = ajax.calls.find(
-            (call) => call.settings.data && call.settings.data.action === 'saveOrderIntentResult'
-        );
-        if (save) {
-            save.succeed({ success: true });
-        }
+        settleIntentRecordWrite();
         await flushPromises();
 
         // Then: exactly one fee sync fired, carrying the tile's own verdict.
@@ -112,10 +119,47 @@ test('a refused tile also withdraws any approval already recorded server-side', 
     const manager = makeManager();
 
     manager.handleOrderIntentResult({ success: false, status: 'no_company', error: 'no company' });
+    settleIntentRecordWrite();
     await flushPromises();
 
     expect(actions()).toContain('clearOrderIntentResult');
     expect(surchargeSyncs()).toEqual([0]);
+});
+
+test('an intent that errored is not a refusal: fee and approval both stand', async () => {
+    // Given: an approved buyer, fee line in the summary.
+    const manager = makeManager();
+    manager.handleOrderIntentResult({ success: true, approved: true });
+    settleIntentRecordWrite();
+    await flushPromises();
+    expect(surchargeSyncs()).toEqual([1]);
+    ajax.calls.length = 0;
+
+    // When: a re-check dies in transport.
+    manager.handleOrderIntentResult({ success: false, error: 'Network error' });
+    await flushPromises();
+
+    // Then: nothing withdrew the fee the buyer is still looking at, and the
+    // server keeps the approval that admits it at order create.
+    expect(actions()).not.toContain('clearOrderIntentResult');
+    expect(surchargeSyncs()).toEqual([]);
+});
+
+test('a clear issued behind an in-flight approval waits for it', async () => {
+    const manager = makeManager();
+
+    manager.saveOrderIntentResultToServer(true);
+    manager.clearOrderIntentResultFromServer();
+    await flushPromises();
+
+    // Given: the approval has not answered yet.
+    expect(actions()).toEqual(['saveOrderIntentResult']);
+
+    ajax.calls[0].succeed({ success: true });
+    await flushPromises();
+
+    // Then: the clear lands after it, never before.
+    expect(actions()).toEqual(['saveOrderIntentResult', 'clearOrderIntentResult']);
 });
 
 test('the fee sync waits for the approval to reach the server, which gates it', async () => {

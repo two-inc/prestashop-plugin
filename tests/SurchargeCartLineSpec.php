@@ -55,6 +55,8 @@ final class SurchargeCartLineSpec
         self::testSurchargeLineLeavesPersistedCheckoutStateRestorable();
         self::testUncompletedCheckoutStateIsNotForged();
         self::testBuyerSyncAppliesFeeOnlyWhileTheTileIsOffering();
+        self::testApprovalStopsVouchingOnceItsOrderIsPlaced();
+        self::testRestampRefusedWhenTheStoredStateAlreadyDrifted();
     }
 
     /* ---- fixtures ---- */
@@ -1213,22 +1215,24 @@ final class SurchargeCartLineSpec
 
     /**
      * The term chips carry the fee and only render on an approved intent, so a
-     * buyer whose company was typed by hand or declined sees no chip - and used
-     * to be charged the default term's fee anyway, because the buyer-driven
-     * sync trusted the payment radio alone.
+     * buyer whose company was typed by hand or declined sees no chip - and gets
+     * no fee line either. The server decides that, not the browser: the gate
+     * has to hold with the checkout JS switched off.
      */
     private static function testBuyerSyncAppliesFeeOnlyWhileTheTileIsOffering(): void
     {
         $cases = [
-            ['1', 1, 'an approved intent is the tile genuinely offering Two'],
-            ['0', 0, 'a declined company is refused a fee line'],
-            [null, 0, 'a manual-entry company never reaches an intent, so gets no fee line'],
+            ['1', self::CART_ID, 1, 'an approved intent is the tile genuinely offering Two'],
+            ['0', self::CART_ID, 0, 'a declined company is refused a fee line'],
+            [null, null, 0, 'a manual-entry company never reaches an intent, so gets no fee line'],
+            ['1', 7777, 0, 'an approval given for the cart a previous order consumed'],
+            ['1', null, 0, 'an approval with no cart stamp, from before this gate'],
         ];
 
-        foreach ($cases as [$intentRecord, $expectedLines, $why]) {
+        foreach ($cases as [$intentRecord, $stampedCartId, $expectedLines, $why]) {
             $module = self::makeModule();
             $cart = self::makeCart();
-            $controller = self::makeSurchargeSyncController($module, $intentRecord);
+            $controller = self::makeSurchargeSyncController($module, $intentRecord, $stampedCartId);
 
             $controller->ajaxProcessSyncSurchargeLine();
 
@@ -1238,9 +1242,63 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * @param string|null $intentRecord value of the session's order-intent record, null when absent
+     * The cart the buyer gets after placing an order is a new one, and a
+     * manual-entry checkout on it never runs an intent - so an approval that
+     * outlives its own cart is exactly how the fee came back without chips.
      */
-    private static function makeSurchargeSyncController(Twopayment $module, $intentRecord)
+    private static function testApprovalStopsVouchingOnceItsOrderIsPlaced(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        self::makeSurchargeSyncController($module, '1', self::CART_ID);
+
+        TinyAssert::true($module->isTwoOrderIntentApprovedForSession(), 'approved for the cart it was asked for');
+
+        $module->clearTwoOrderIntentSession();
+
+        TinyAssert::false(
+            $module->isTwoOrderIntentApprovedForSession(),
+            'the placed order consumed the verdict'
+        );
+
+        // The buyer's next cart, same session.
+        $cart->id = self::CART_ID + 1;
+        Context::getContext()->cart = $cart;
+        $controller = self::makeSurchargeSyncController($module, '1', self::CART_ID);
+        $controller->ajaxProcessSyncSurchargeLine();
+
+        TinyAssert::count(0, self::feeLines(), 'a stale approval must not admit a fee line to the next cart');
+    }
+
+    /**
+     * Only drift the fee line itself caused may be re-stamped away. Anything
+     * else - a quantity edited in another tab, a price change - is core's to
+     * invalidate on, and blessing it restores steps core meant to collapse.
+     */
+    private static function testRestampRefusedWhenTheStoredStateAlreadyDrifted(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $stale = (string) json_encode([
+            'checkout-personal-information-step' => ['skipped' => false],
+            'checksum' => sha1('a cart this state no longer describes'),
+        ]);
+        StubStore::$checkoutSessionData[self::CART_ID] = $stale;
+
+        TinyAssert::true($module->syncTwoSurchargeCartLine($cart, true)['changed']);
+
+        TinyAssert::same(
+            $stale,
+            StubStore::$checkoutSessionData[self::CART_ID],
+            'pre-existing drift stays core\'s to invalidate on'
+        );
+    }
+
+    /**
+     * @param string|null $intentRecord value of the session's order-intent record, null when absent
+     * @param int|null $stampedCartId cart the record was stamped for, null when unstamped
+     */
+    private static function makeSurchargeSyncController(Twopayment $module, $intentRecord, $stampedCartId = null)
     {
         Tools::resetTestValues();
         Tools::setTestValue('ajax', 1);
@@ -1252,8 +1310,12 @@ final class SurchargeCartLineSpec
 
         $cookie = Context::getContext()->cookie;
         unset($cookie->two_order_intent_approved);
+        unset($cookie->two_order_intent_cart_id);
         if ($intentRecord !== null) {
             $cookie->two_order_intent_approved = $intentRecord;
+        }
+        if ($stampedCartId !== null) {
+            $cookie->two_order_intent_cart_id = (string) $stampedCartId;
         }
 
         $controller = new class extends TwopaymentOrderintentModuleFrontController {
