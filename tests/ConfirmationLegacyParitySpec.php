@@ -30,6 +30,7 @@ final class ConfirmationLegacyParitySpec
     {
         self::testLegacyNoHashAttemptFailsClosedOnGenuineDivergence();
         self::testLegacyNoHashAttemptProceedsWhenParityHolds();
+        self::testPlacedOrderConsumesTheOrderIntentVerdict();
     }
 
     /* ---- fixtures ---- */
@@ -331,5 +332,27 @@ final class ConfirmationLegacyParitySpec
         TinyAssert::same(1, $module->createOrderCalls, 'order creation must proceed when parity holds');
         TinyAssert::same('CONFIRMED', self::lastStatus($module), 'attempt confirmed');
         TinyAssert::true(strpos($redirect->getMessage(), 'order-confirmation') !== false, 'buyer lands on order confirmation');
+    }
+
+    /**
+     * ABN-554: the verdict and the cart it was stamped for both go with the
+     * order that consumed them, or they keep deciding the fee for a cart they
+     * were never asked about.
+     */
+    private static function testPlacedOrderConsumesTheOrderIntentVerdict(): void
+    {
+        $module = self::makeModule();
+        $cart = new Cart(self::CART_ID);
+        Context::getContext()->cart = $cart;
+        $module->syncTwoSurchargeCartLine($cart, true);
+
+        $cookie = Context::getContext()->cookie;
+        $cookie->two_order_intent_approved = '1';
+        $cookie->two_order_intent_cart_id = (string) self::CART_ID;
+
+        self::runConfirmation(self::makeController($module));
+
+        TinyAssert::false(isset($cookie->two_order_intent_approved), 'the verdict went with its order');
+        TinyAssert::false(isset($cookie->two_order_intent_cart_id), 'and so did the cart it spoke for');
     }
 }

@@ -340,6 +340,8 @@ namespace {
         public static array $dbLocks = [];
         /** @var array<int,int> Last-applied surcharge sync seq by cart id */
         public static array $surchargeSyncSeqs = [];
+        /** @var array<int,string> ps_cart.checkout_session_data JSON by cart id */
+        public static array $checkoutSessionData = [];
         /** @var array<string,array{window_start:int,hit_count:int}> TwoRateLimiter's twopayment_rate_limit rows, by rate_key */
         public static array $rateLimitRows = [];
         /** @var array<int,array{id_order:int,product_id:int}> order_detail rows */
@@ -462,6 +464,7 @@ namespace {
             self::$taxRules = [];
             self::$dbLocks = [];
             self::$surchargeSyncSeqs = [];
+            self::$checkoutSessionData = [];
             self::$rateLimitRows = [];
             self::$orderDetails = [];
             self::$orderStates = [];
@@ -1775,6 +1778,58 @@ namespace {
         }
     }
 
+    /**
+     * Core's cart-line fingerprint (classes/checkout/CartChecksum.php). Kept
+     * faithful in the part that matters here - it hashes every cart line's
+     * id, quantity and total_wt, which is why adding the surcharge line
+     * invalidates the buyer's persisted checkout steps.
+     */
+    class AddressChecksum
+    {
+        public function generateChecksum($address)
+        {
+            if (empty($address->id)) {
+                return sha1('No address set');
+            }
+
+            return sha1(implode('_', array_map('strval', get_object_vars($address))));
+        }
+    }
+
+    class CartChecksum
+    {
+        private $addressChecksum;
+
+        public function __construct(AddressChecksum $addressChecksum)
+        {
+            $this->addressChecksum = $addressChecksum;
+        }
+
+        public function generateChecksum($cart)
+        {
+            $uniqId = implode('_', [
+                $cart->id_shop,
+                $cart->id_customer,
+                $cart->id_guest,
+                $cart->id_currency,
+                $cart->id_lang,
+                $this->addressChecksum->generateChecksum(new Address($cart->id_address_delivery)),
+                $this->addressChecksum->generateChecksum(new Address($cart->id_address_invoice)),
+            ]);
+            foreach ($cart->getProducts(true) as $product) {
+                $uniqId .= '_' . implode('-', [
+                    $product['id_shop'] ?? 1,
+                    $product['id_product'],
+                    $product['id_product_attribute'] ?? 0,
+                    $product['cart_quantity'],
+                    $product['total_wt'],
+                ]);
+            }
+
+            return sha1($uniqId);
+        }
+    }
+
     class Cart
     {
         public const ONLY_DISCOUNTS = 1;
@@ -1784,6 +1839,8 @@ namespace {
 
         public bool $loaded = true;
         public int $id = 0;
+        public int $id_shop = 1;
+        public int $id_guest = 0;
         public int $id_customer = 0;
         public int $id_currency = 0;
         public int $id_address_invoice = 0;
@@ -2230,6 +2287,9 @@ namespace {
                     return false;
                 }
             }
+            if (preg_match('/UPDATE `ps_cart` SET checkout_session_data = "(.*)" WHERE id_cart = (\d+)$/s', $sql, $m)) {
+                StubStore::$checkoutSessionData[(int) $m[2]] = stripslashes($m[1]);
+            }
             if (preg_match('/REPLACE INTO `ps_twopayment_surcharge_sync` \(`id_cart`, `seq`, `updated_at`\) VALUES \((\d+), (\d+)/', $sql, $m)) {
                 StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
             }
@@ -2317,6 +2377,9 @@ namespace {
             if (preg_match("/RELEASE_LOCK\\('([^']+)'/", $sql, $m)) {
                 unset(StubStore::$dbLocks[$m[1]]);
                 return '1';
+            }
+            if (preg_match('/SELECT checkout_session_data FROM `ps_cart` WHERE id_cart = (\d+)/', $sql, $m)) {
+                return StubStore::$checkoutSessionData[(int) $m[1]] ?? false;
             }
             if (preg_match('/SELECT `seq` FROM `ps_twopayment_surcharge_sync` WHERE `id_cart` = (\d+)/', $sql, $m)) {
                 return StubStore::$surchargeSyncSeqs[(int) $m[1]] ?? false;

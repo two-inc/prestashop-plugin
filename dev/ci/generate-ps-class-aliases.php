@@ -74,8 +74,11 @@ foreach ($it as $file) {
         continue;
     }
     $name = $m['name'];
-    if ($name !== basename($file->getPathname(), '.php')) {
-        continue; // only alias the file's own primary class, like the autoloader
+    // Only the file's own primary class, like the autoloader. Core names most
+    // of those files <Name>.php but a few (AddressChecksumCore) <Name>Core.php.
+    $basename = basename($file->getPathname(), '.php');
+    if ($basename !== $name && $basename !== $name . 'Core') {
+        continue;
     }
     if (isset($overridden[$name])) {
         continue;

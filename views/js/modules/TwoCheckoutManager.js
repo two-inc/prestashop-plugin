@@ -983,6 +983,17 @@ class TwoCheckoutManager {
             const err = (result && result.error) ? String(result.error) : '';
             const errLower = err.toLowerCase();
 
+            // Enumerated refusals only, never !success: an error says nothing
+            // about what the tile is offering, and withdrawing there hands the
+            // buyer a summary the order-create self-heal then charges past.
+            // 'order_intent_disabled' is deliberately absent - the preview
+            // being off is not this buyer being refused, and the fee is real.
+            if (status === 'no_company' || status === 'incomplete_company'
+                || status === 'buyer_country_not_supported'
+                || status === 'skipped' || errLower.includes('skipped')) {
+                this.withdrawOrderIntentApproval();
+            }
+
             // 'no_company' = no company name entered at all
             // 'incomplete_company' = company name exists but backend couldn't auto-resolve org number
             if (status === 'no_company') {
@@ -1030,7 +1041,14 @@ class TwoCheckoutManager {
         }
 
         // Saved server-side too so disabling JavaScript can't bypass the client-side block.
-        this.saveOrderIntentResultToServer(result.approved);
+        // The fee sync is chained, not parallel: the server reads this same
+        // record to decide whether a fee line may enter the cart at all.
+        // Read the selection now, not in the continuation: this verdict belongs
+        // to the checkout as it stood when the intent answered.
+        const twoSelected = this.isTwoPaymentSelected();
+        this.saveOrderIntentResultToServer(result.approved).then(() => {
+            this.syncSurchargeCartLine(Boolean(result.approved) && twoSelected);
+        });
 
         // Sentence built by TwoOrderIntent.buildCompanyIntentMessage()
         // (TWO-25326) - the single place that templates name/number into the
@@ -2090,44 +2108,90 @@ class TwoCheckoutManager {
      */
     saveOrderIntentResultToServer(approved) {
         if (!this.config.orderIntentUrl || !window.twopayment || !window.twopayment.ajax_token) {
-            return;
+            return Promise.resolve();
         }
 
-        $.ajax({
-            url: this.config.orderIntentUrl,
-            type: 'POST',
-            data: {
-                ajax: 1,
-                action: 'saveOrderIntentResult',
-                approved: approved ? 1 : 0,
-                token: window.twopayment.ajax_token
-            },
-            success: () => {},
-            error: (xhr, status, error) => {
-                // Non-blocking: client-side blocking still works without the server copy.
-                console.warn('TwoPayment: Failed to save order intent result to server:', error);
-            }
-        });
+        // Read now, not when the queue reaches this write: the token belongs to
+        // the checkout that decided on it.
+        const token = window.twopayment.ajax_token;
+
+        // Resolves either way: the surcharge sync chained onto it must still
+        // run after a failed save, where the server gate then keeps the fee out.
+        return this.queueOrderIntentRecordWrite(() => new Promise((resolve) => {
+            $.ajax({
+                url: this.config.orderIntentUrl,
+                type: 'POST',
+                data: {
+                    ajax: 1,
+                    action: 'saveOrderIntentResult',
+                    approved: approved ? 1 : 0,
+                    token: token
+                },
+                success: () => resolve(),
+                error: (xhr, status, error) => {
+                    // Non-blocking: client-side blocking still works without the server copy.
+                    console.warn('TwoPayment: Failed to save order intent result to server:', error);
+                    resolve();
+                }
+            });
+        }));
     }
 
     clearOrderIntentResultFromServer() {
         if (!this.config.orderIntentUrl || !window.twopayment || !window.twopayment.ajax_token) {
-            return;
+            return Promise.resolve();
         }
 
-        $.ajax({
-            url: this.config.orderIntentUrl,
-            type: 'POST',
-            data: {
-                ajax: 1,
-                action: 'clearOrderIntentResult',
-                token: window.twopayment.ajax_token
-            },
-            success: () => {},
-            error: () => {
-                console.warn('TwoPayment: Failed to clear order intent result from server');
+        const token = window.twopayment.ajax_token;
+
+        return this.queueOrderIntentRecordWrite(() => new Promise((resolve) => {
+            $.ajax({
+                url: this.config.orderIntentUrl,
+                type: 'POST',
+                data: {
+                    ajax: 1,
+                    action: 'clearOrderIntentResult',
+                    token: token
+                },
+                success: () => resolve(),
+                error: () => {
+                    console.warn('TwoPayment: Failed to clear order intent result from server');
+                    resolve();
+                }
+            });
+        }));
+    }
+
+    /**
+     * Serialise the writes to the server's single order-intent record: an
+     * approve and the clear that supersedes it must land in the order they
+     * were issued, or the record ends up vouching for a verdict the buyer was
+     * never shown. Issues straight away while nothing is in flight.
+     */
+    queueOrderIntentRecordWrite(run) {
+        const pending = this._orderIntentRecordWrite
+            ? this._orderIntentRecordWrite.then(run, run)
+            : run();
+        this._orderIntentRecordWrite = pending;
+        const settle = () => {
+            if (this._orderIntentRecordWrite === pending) {
+                this._orderIntentRecordWrite = null;
             }
-        });
+        };
+        pending.then(settle, settle);
+
+        return pending;
+    }
+
+    /**
+     * Record the refusal, then drop the fee it admits, in that order: the fee
+     * sync is gated on the record this write is rewriting. Recorded rather
+     * than forgotten, because the gate admits the fee wherever no verdict
+     * refuses it - order create adds it back regardless.
+     */
+    withdrawOrderIntentApproval() {
+        return this.saveOrderIntentResultToServer(false)
+            .then(() => this.syncSurchargeCartLine(false));
     }
 
     disableTwoPayment() {
