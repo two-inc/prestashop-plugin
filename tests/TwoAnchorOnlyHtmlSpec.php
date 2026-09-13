@@ -13,6 +13,7 @@ final class TwoAnchorOnlyHtmlSpec
         self::testOnlyTheLinkThisModuleEmitsSurvives();
         self::testEscapingIsIdempotent();
         self::testAnEmptyAttributeValueRaisesNoWarning();
+        self::testRendersUnchangedIgnoresEntityEncodingOnly();
     }
 
     private static function testOnlyTheLinkThisModuleEmitsSurvives(): void
@@ -156,6 +157,43 @@ final class TwoAnchorOnlyHtmlSpec
      * notice would be written into the middle of the checkout markup on a shop
      * with display_errors on.
      */
+    /**
+     * The admin save gate (ABN-554). A value is rejected exactly when escaping
+     * would change what the buyer sees - entity-encoding plain text is not a
+     * change, so apostrophes and ampersands are not markup.
+     */
+    private static function testRendersUnchangedIgnoresEntityEncodingOnly(): void
+    {
+        $url = 'https://faq.example.test/x';
+
+        $cases = [
+            ['', true, 'an empty subtitle is nothing to strip'],
+            ['Pay later, interest free', true, 'plain copy renders verbatim'],
+            ["Don't wait & save", true, 'an apostrophe and an ampersand are text the escaper only encodes'],
+            ['2 < 3', true, 'a stray < is encoded as text, not treated as markup'],
+            ['Tea &amp; coffee', true, 'copy that already carries an entity is left alone'],
+            ['<a href="' . $url . '">read more</a>', true, 'the anchor the tile allows survives verbatim'],
+            [
+                '<a href="' . $url . '" target="_blank" rel="noopener">read more</a>',
+                true,
+                'so does the new-tab form this module itself emits',
+            ],
+            ['<b>Pay</b> later', false, 'a dropped tag changes what the buyer reads'],
+            ['<a href="javascript:alert(1)">read more</a>', false, 'a link whose target is refused loses its anchor'],
+            [
+                '<a href="' . $url . '" target="_blank">read more</a>',
+                false,
+                'a new-tab link is rewritten to carry noopener, so it is not what was typed',
+            ],
+            ['<a href="' . $url . '" onclick="steal()">read more</a>', false, 'a dropped attribute is a change too'],
+            ["safe\x00ish", false, 'a control character is removed'],
+        ];
+
+        foreach ($cases as list($input, $expected, $description)) {
+            TinyAssert::same($expected, TwoAnchorOnlyHtml::rendersUnchanged($input), $description);
+        }
+    }
+
     private static function testAnEmptyAttributeValueRaisesNoWarning(): void
     {
         $raised = [];
