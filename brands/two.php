@@ -65,6 +65,12 @@ return array(
     // absent, empty or a non-http(s) scheme) renders no icon and no link at all.
     // Resolved by Twopayment::getTwoAboutUrl().
     'about_url' => 'https://www.two.inc/what-is-two',
+    // FAQ link target for the tile subtitle's brand fallback, used only when
+    // the merchant leaves the per-language Subtitle field blank (ABN-554). The
+    // sentence itself stays a translated string in twopayment.php - a brand
+    // owns the URL only. null renders no fallback and so no subtitle at all,
+    // which is what this brand does.
+    'checkout_subtitle_faq_url' => null,
     // DECLINED VERDICT notice, contract as above; hides that text only, never the block.
     'intent_declined_notice_enabled' => true,
     // COPY OVERRIDE ONLY for the declined notice, contract as 'intent_approved_notice' above.
