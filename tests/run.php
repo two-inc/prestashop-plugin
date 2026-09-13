@@ -5796,7 +5796,7 @@ require __DIR__ . '/EomTermTypeVisibilitySpec.php';
 require __DIR__ . '/IntentDeclinedNoticeSpec.php';
 require __DIR__ . '/DeprecatedCustomPaymentTermSpec.php';
 require __DIR__ . '/CheckoutWithholdReasonSpec.php';
-require __DIR__ . '/PaymentTileTaglineSpec.php';
+require __DIR__ . '/PaymentTileAboutControlSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5841,7 +5841,7 @@ $tests = [
     'CheckoutTitleSpec::runAll' => [CheckoutTitleSpec::class, 'runAll'],
     'CheckoutSubtitleSpec::runAll' => [CheckoutSubtitleSpec::class, 'runAll'],
     'TwoAnchorOnlyHtmlSpec::runAll' => [TwoAnchorOnlyHtmlSpec::class, 'runAll'],
-    'PaymentTileTaglineSpec::runAll' => [PaymentTileTaglineSpec::class, 'runAll'],
+    'PaymentTileAboutControlSpec::runAll' => [PaymentTileAboutControlSpec::class, 'runAll'],
     'ConfigFallbackSpec::runAll' => [ConfigFallbackSpec::class, 'runAll'],
     'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],
     'CompanyRefusalMessageSpec::runAll' => [CompanyRefusalMessageSpec::class, 'runAll'],

@@ -10,13 +10,13 @@ declare(strict_types=1);
  * the template, so it is localisable. A brand declaring no usable URL renders
  * no icon and no link, which is how a brand with no about page expresses that;
  * the template asserts the absent element itself
- * (tests/js/payment-tile-tagline.test.js).
+ * (tests/js/payment-tile-about-control.test.js).
  *
  * The merchant "Show What is <brand> explainer link" setting is a narrowing
  * control over the icon and never a source of a link target, so the two
  * compose in one direction only.
  */
-final class PaymentTileTaglineSpec
+final class PaymentTileAboutControlSpec
 {
     public static function runAll(): void
     {
