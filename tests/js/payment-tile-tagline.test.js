@@ -72,10 +72,10 @@ describe('payment tile about control', () => {
                 const emphasis = box.querySelector('.two-tooltip-text--strong');
                 expect(emphasis.tagName).toBe('STRONG');
 
-                // The header reads [logo] [tagline] [icon], as it does on the
-                // other platforms.
+                // The icon sits beside the logo, which is this tile's title,
+                // with the tagline after the pair.
                 expect(tagline.compareDocumentPosition(wrapper))
-                    .toBe(global.Node.DOCUMENT_POSITION_FOLLOWING);
+                    .toBe(global.Node.DOCUMENT_POSITION_PRECEDING);
             }
 
             // The rest of the header is untouched either way.
