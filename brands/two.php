@@ -60,14 +60,18 @@ return array(
     // 'intent_approved_notice_enabled' above and nothing else. An override
     // replaces the company variant only; the no-company copy stays default.
     'intent_approved_notice' => null,
-    // FAQ link target for the payment-tile tagline and its "What is <brand>?"
-    // explainer (TWO-25711). A brand owns this URL only - the tagline sentence
-    // stays a translated string in paymentinfo.tpl so it can be localised.
-    // An http(s) URL renders the tagline; null, absent, empty or any other
-    // scheme renders no tagline and no explainer element at all.
+    // FAQ link target for the payment-tile tagline (TWO-25711). A brand owns
+    // this URL only - the tagline sentence stays a translated string in
+    // paymentinfo.tpl so it can be localised. An http(s) URL renders the
+    // tagline; null, absent, empty or any other scheme renders no tagline.
     // Resolved by Twopayment::getTwoTaglineFaqUrl(). Install-wide, like every
     // value here: a per-brand URL needs the overlay of TWO-24746.
     'checkout_tagline_faq_url' => 'https://www.two.inc/resources/buyers',
+    // "What is <brand>?" explainer target for the payment tile (ABN-554), the
+    // same canonical URL the other platforms use. A brand declaring none (null,
+    // absent, empty or a non-http(s) scheme) renders no icon and no link at all.
+    // Resolved by Twopayment::getTwoAboutUrl().
+    'about_url' => 'https://www.two.inc/what-is-two',
     // DECLINED VERDICT notice, contract as above; hides that text only, never the block.
     'intent_declined_notice_enabled' => true,
     // COPY OVERRIDE ONLY for the declined notice, contract as 'intent_approved_notice' above.

@@ -812,18 +812,22 @@ function buildPaymentTileWithSubtitle(subtitle) {
 }
 
 /**
- * The same tile with the brand's tagline FAQ URL resolved (TWO-25711), so a
- * test can tell a brand that declares no URL apart from an unevaluated block.
+ * The same tile with the brand's tagline FAQ URL and about URL resolved
+ * (TWO-25711, ABN-554), so a test can tell a brand that declares no URL apart
+ * from an unevaluated block.
  *
  * @param {string} faqUrl the value twopayment.php assigned to
  *        `$tagline_faq_url`; '' is a brand declaring none
  * @param {boolean} showAboutLink the merchant "explainer link" setting
+ * @param {string} aboutUrl the value assigned to `$about_url`; '' is a brand
+ *        declaring none
  * @returns {HTMLElement} the `.two-payment-container` that was appended
  */
-function buildPaymentTileWithTagline(faqUrl, showAboutLink) {
+function buildPaymentTileWithTagline(faqUrl, showAboutLink, aboutUrl) {
     return renderPaymentTile(null, null, {
         faqUrl: String(faqUrl),
         showAboutLink: showAboutLink !== false,
+        aboutUrl: String(aboutUrl === undefined ? '' : aboutUrl),
     });
 }
 
@@ -831,8 +835,8 @@ function buildPaymentTileWithTagline(faqUrl, showAboutLink) {
  * @param {{answer: string, country: string}|null} soleTrader null = leave
  *        the sole-trader `{if}` blocks unevaluated, as buildPaymentTile() does
  * @param {string|null} subtitle null = leave the subtitle `{if}` unevaluated
- * @param {{faqUrl: string, showAboutLink: boolean}|null} tagline null = leave
- *        the tagline `{if}` unevaluated
+ * @param {{faqUrl: string, showAboutLink: boolean, aboutUrl: string}|null}
+ *        tagline null = leave the tagline `{if}` unevaluated
  * @returns {HTMLElement}
  */
 function renderPaymentTile(soleTrader, subtitle, tagline) {
@@ -870,9 +874,13 @@ function renderPaymentTile(soleTrader, subtitle, tagline) {
             .replace(/\{\$subtitle\|[^}]*\}/g, subtitle);
     }
     if (tagline) {
-        // The explainer `{if}` nests inside the tagline one and is resolved
-        // first, so the outer non-greedy pattern cannot stop at its `{/if}`.
+        // The about `{if}`s nest, inner first, so the outer non-greedy pattern
+        // cannot stop at the inner `{/if}`.
         html = html
+            .replace(
+                /\{if \$about_url != ''\}([\s\S]*?)\{\/if\}/g,
+                tagline.aboutUrl === '' ? '' : '$1'
+            )
             .replace(
                 /\{if \$show_about_link\}([\s\S]*?)\{\/if\}/g,
                 tagline.showAboutLink ? '$1' : ''
@@ -881,7 +889,8 @@ function renderPaymentTile(soleTrader, subtitle, tagline) {
                 /\{if \$tagline_faq_url != ''\}([\s\S]*?)\{\/if\}/g,
                 tagline.faqUrl === '' ? '' : '$1'
             )
-            .replace(/\{\$tagline_faq_url\|[^}]*\}/g, tagline.faqUrl);
+            .replace(/\{\$tagline_faq_url\|[^}]*\}/g, tagline.faqUrl)
+            .replace(/\{\$about_url\|[^}]*\}/g, tagline.aboutUrl);
     }
     // Innermost `{if}` blocks first, repeatedly: stripped outside-in, a nested
     // block ends at the inner `{/if}` and leaves an orphan tag behind.

@@ -87,14 +87,15 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8']
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Sjekker tilgjengelighet ...';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Bedriftsbetaling gjort enkelt';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5c920817023991f458e2a248e9367c67'] = 'Umiddelbar kredittvurdering';
-$_MODULE['<{twopayment}prestashop>paymentinfo_235c023d59a6fb5a752447943af7512e'] = 'Les mer om %s';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1b98fa92874f5fd75df8fdc59d92022a'] = 'Klikk her for å logge inn eller registrere deg som enkeltpersonforetak hos %s.';
 $_MODULE['<{twopayment}prestashop>paymentinfo_45c6314c990994e3b513337bcffd59f9'] = 'Hva er %s?';
 $_MODULE['<{twopayment}prestashop>paymentinfo_a002c8066738bc8f9d9394abdcef7ea8'] = 'Betalingsperioden din starter når ordren er oppfylt';
 $_MODULE['<{twopayment}prestashop>paymentinfo_b55facd49248ec93ec53edc801dadb08'] = 'Noe gikk galt under oppsettet av utsjekk for enkeltpersonforetak. Prøv igjen.';
 $_MODULE['<{twopayment}prestashop>paymentinfo_c1cf258d03ea6e7a7d9a004d3a017610'] = 'Velg det Kjøp nå, betal senere-alternativet som passer deg best';
 $_MODULE['<{twopayment}prestashop>paymentinfo_d88d16f67e3b25a0283107c4ace42922'] = 'Ingen kostnader på forhånd';
-$_MODULE['<{twopayment}prestashop>paymentinfo_ce788118f22dd76bda591a4dae15e622'] = '%s gir umiddelbar handelskreditt for B2B-kjøp. Kjøp nå, betal senere uten renter eller gebyrer.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_79844fc929054773af8d17e837f29f24'] = '%s er en betalingsløsning for B2B-kjøp på nettet, som lar deg kjøpe fra dine favorittforhandlere og leverandører på handelskreditt. Ved å bruke %s kan du få tilgang til fleksibel handelskreditt umiddelbart for å gjøre kjøp enkelt.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_c9a4942151f3f04aca175871bc85f862'] = 'Kjøp nå, motta varene dine, betal fakturaen senere.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_f63939ce5ee9ac8631ebef74efc00c60'] = 'Klikk for å lese mer';
 $_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] = 'Ugyldig telefonnummer';
 $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] = 'Plattformens minimum er %1$s, %2$s avgift. En verdi her tolkes i butikkens standardvaluta på avgiftsgrunnlaget som er valgt nedenfor, og må være minst plattformens minimum.';
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Aktivert';

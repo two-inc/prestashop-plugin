@@ -37,30 +37,37 @@
     <div class="two-header">
         <div class="two-logo-container">
             <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="{$two_product_name|escape:'html':'UTF-8'}" class="two-logo" />
-            {* TWO-25711: tagline and explainer both hang off the brand's FAQ URL;
-               a brand declaring none emits no element at all. The sentence stays a
-               translated string - the brand supplies only the link target. *}
+            {* ABN-554: the icon IS the link - the tooltip carries no anchor of
+               its own, so nothing inside the box is interactive. A brand with no
+               about URL renders no control at all, whatever the merchant
+               "explainer" setting says. *}
+            {if $show_about_link}
+            {if $about_url != ''}
+            <a class="two-info-tooltip"
+               href="{$about_url|escape:'html':'UTF-8'}"
+               target="_blank"
+               rel="noopener noreferrer"
+               aria-label="{l s='What is %s?' mod='twopayment' sprintf=[$two_product_name]}"
+               aria-describedby="two-about-tooltip">
+                <span class="two-info-icon" aria-hidden="true">?</span>
+                <span class="two-tooltip-content" id="two-about-tooltip" role="tooltip">
+                    <span class="two-tooltip-text">{l s='%s is a payment solution for B2B purchases online, allowing you to buy from your favourite merchants and suppliers on trade credit. Using %s, you can access flexible trade credit instantly to make purchasing simple.' mod='twopayment' sprintf=[$two_product_name, $two_product_name]}</span>
+                    <span class="two-tooltip-text two-tooltip-text--strong">{l s='Buy now, receive your goods, pay your invoice later.' mod='twopayment'}</span>
+                    <span class="two-tooltip-text">{l s='Click to find out more' mod='twopayment'}</span>
+                </span>
+            </a>
+            {/if}
+            {/if}
+            {* TWO-25711: a brand declaring no FAQ URL emits no tagline element
+               at all. The sentence stays a translated string. *}
             {if $tagline_faq_url != ''}
             <p class="two-tagline">
                 {l s='Business payments made simple' mod='twopayment'}
-                {* "What is Two" explainer link (TWO-25386). Default ON. *}
-                {if $show_about_link}
-                <span class="two-info-tooltip">
-                    <span class="two-info-icon">?</span>
-                    <span class="two-tooltip-content">
-                        <span class="two-tooltip-title">{l s='What is %s?' mod='twopayment' sprintf=[$two_product_name]}</span>
-                        <span class="two-tooltip-text">{l s='%s provides instant trade credit for B2B purchases. Buy now, pay later with no interest or fees.' mod='twopayment' sprintf=[$two_product_name]}</span>
-                        <a href="{$tagline_faq_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer" class="two-tooltip-link">
-                            {l s='Learn more about %s' mod='twopayment' sprintf=[$two_product_name]} →
-                        </a>
-                    </span>
-                </span>
-                {/if}
             </p>
             {/if}
         </div>
     </div>
-    
+
     <div class="two-benefits">
         <div class="two-benefit-item">
             <span class="two-benefit-icon">✓</span>
