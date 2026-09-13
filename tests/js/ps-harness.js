@@ -811,19 +811,22 @@ function buildPaymentTileWithSubtitle(subtitle) {
     return renderPaymentTile(null, String(subtitle));
 }
 
+/** The id twopayment.php mints for the about tooltip, keyed by module name. */
+const ABOUT_TOOLTIP_ID = 'two-about-tooltip-twopayment';
+
 /**
- * The same tile with the brand's tagline FAQ URL resolved (TWO-25711), so a
- * test can tell a brand that declares no URL apart from an unevaluated block.
+ * The same tile with the brand's about URL resolved (ABN-554), so a test can
+ * tell a brand that declares no URL apart from an unevaluated block.
  *
- * @param {string} faqUrl the value twopayment.php assigned to
- *        `$tagline_faq_url`; '' is a brand declaring none
  * @param {boolean} showAboutLink the merchant "explainer link" setting
+ * @param {string} aboutUrl the value assigned to `$about_url`; '' is a brand
+ *        declaring none
  * @returns {HTMLElement} the `.two-payment-container` that was appended
  */
-function buildPaymentTileWithTagline(faqUrl, showAboutLink) {
+function buildPaymentTileWithAboutControl(showAboutLink, aboutUrl) {
     return renderPaymentTile(null, null, {
-        faqUrl: String(faqUrl),
         showAboutLink: showAboutLink !== false,
+        aboutUrl: String(aboutUrl === undefined ? '' : aboutUrl),
     });
 }
 
@@ -831,11 +834,11 @@ function buildPaymentTileWithTagline(faqUrl, showAboutLink) {
  * @param {{answer: string, country: string}|null} soleTrader null = leave
  *        the sole-trader `{if}` blocks unevaluated, as buildPaymentTile() does
  * @param {string|null} subtitle null = leave the subtitle `{if}` unevaluated
- * @param {{faqUrl: string, showAboutLink: boolean}|null} tagline null = leave
- *        the tagline `{if}` unevaluated
+ * @param {{showAboutLink: boolean, aboutUrl: string}|null} about null =
+ *        leave the about-control `{if}` unevaluated
  * @returns {HTMLElement}
  */
-function renderPaymentTile(soleTrader, subtitle, tagline) {
+function renderPaymentTile(soleTrader, subtitle, about) {
     const tpl = fs.readFileSync(
         path.join(REPO_ROOT, 'views/templates/hook/paymentinfo.tpl'),
         'utf8'
@@ -869,19 +872,20 @@ function renderPaymentTile(soleTrader, subtitle, tagline) {
             )
             .replace(/\{\$subtitle\|[^}]*\}/g, subtitle);
     }
-    if (tagline) {
-        // The explainer `{if}` nests inside the tagline one and is resolved
-        // first, so the outer non-greedy pattern cannot stop at its `{/if}`.
+    if (about) {
+        // The about `{if}`s nest, inner first, so the outer non-greedy pattern
+        // cannot stop at the inner `{/if}`.
         html = html
             .replace(
-                /\{if \$show_about_link\}([\s\S]*?)\{\/if\}/g,
-                tagline.showAboutLink ? '$1' : ''
+                /\{if \$about_url != ''\}([\s\S]*?)\{\/if\}/g,
+                about.aboutUrl === '' ? '' : '$1'
             )
             .replace(
-                /\{if \$tagline_faq_url != ''\}([\s\S]*?)\{\/if\}/g,
-                tagline.faqUrl === '' ? '' : '$1'
+                /\{if \$show_about_link\}([\s\S]*?)\{\/if\}/g,
+                about.showAboutLink ? '$1' : ''
             )
-            .replace(/\{\$tagline_faq_url\|[^}]*\}/g, tagline.faqUrl);
+            .replace(/\{\$about_url\|[^}]*\}/g, about.aboutUrl)
+            .replace(/\{\$about_tooltip_id\|[^}]*\}/g, ABOUT_TOOLTIP_ID);
     }
     // Innermost `{if}` blocks first, repeatedly: stripped outside-in, a nested
     // block ends at the inner `{/if}` and leaves an orphan tag behind.
@@ -1055,7 +1059,8 @@ module.exports = {
     buildPaymentTile: buildPaymentTile,
     buildPaymentTileWithSoleTraderAnswer: buildPaymentTileWithSoleTraderAnswer,
     buildPaymentTileWithSubtitle: buildPaymentTileWithSubtitle,
-    buildPaymentTileWithTagline: buildPaymentTileWithTagline,
+    buildPaymentTileWithAboutControl: buildPaymentTileWithAboutControl,
+    ABOUT_TOOLTIP_ID: ABOUT_TOOLTIP_ID,
     loadCompanyNumber: loadCompanyNumber,
     loadSoleTrader: loadSoleTrader,
     countGifFrames: countGifFrames,

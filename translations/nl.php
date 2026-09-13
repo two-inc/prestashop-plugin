@@ -87,14 +87,15 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8']
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Beschikbaarheid controleren...';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Zakelijk betalen, eenvoudig gemaakt';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5c920817023991f458e2a248e9367c67'] = 'Directe goedkeuringscheck';
-$_MODULE['<{twopayment}prestashop>paymentinfo_235c023d59a6fb5a752447943af7512e'] = 'Meer over %s';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1b98fa92874f5fd75df8fdc59d92022a'] = 'Klik hier om in te loggen of je aan te melden als eenmanszaak bij %s.';
 $_MODULE['<{twopayment}prestashop>paymentinfo_45c6314c990994e3b513337bcffd59f9'] = 'Wat is %s?';
 $_MODULE['<{twopayment}prestashop>paymentinfo_a002c8066738bc8f9d9394abdcef7ea8'] = 'Je betaaltermijn start zodra je bestelling is uitgeleverd';
 $_MODULE['<{twopayment}prestashop>paymentinfo_b55facd49248ec93ec53edc801dadb08'] = 'Er is iets misgegaan bij het instellen van afrekenen als eenmanszaak. Probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>paymentinfo_c1cf258d03ea6e7a7d9a004d3a017610'] = 'Kies de Buy Now, Pay Later-optie die het beste bij je past';
 $_MODULE['<{twopayment}prestashop>paymentinfo_d88d16f67e3b25a0283107c4ace42922'] = 'Geen kosten vooraf';
-$_MODULE['<{twopayment}prestashop>paymentinfo_ce788118f22dd76bda591a4dae15e622'] = '%s biedt direct handelskrediet voor B2B-aankopen. Koop nu, betaal later, zonder rente of kosten.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_79844fc929054773af8d17e837f29f24'] = '%s is een betaaloplossing voor online B2B-aankopen, waarmee je bij je favoriete winkels en leveranciers op handelskrediet kunt kopen. Met %s krijg je direct toegang tot flexibel handelskrediet, zodat inkopen eenvoudig blijft.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_c9a4942151f3f04aca175871bc85f862'] = 'Koop nu, ontvang je goederen, betaal je factuur later.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_f63939ce5ee9ac8631ebef74efc00c60'] = 'Klik voor meer informatie';
 $_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] = 'Ongeldig telefoonnummer';
 $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] = 'Platformminimum %1$s, %2$s btw. Een waarde hier wordt geïnterpreteerd in de standaardvaluta van de winkel op de hieronder gekozen belastinggrondslag en moet minimaal het platformminimum zijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Ingeschakeld';

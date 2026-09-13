@@ -87,14 +87,15 @@ $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8']
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Kontrollerar tillgänglighet...';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Företagsbetalningar gjorda enkla';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5c920817023991f458e2a248e9367c67'] = 'Direkt kreditbedömning';
-$_MODULE['<{twopayment}prestashop>paymentinfo_235c023d59a6fb5a752447943af7512e'] = 'Läs mer om %s';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1b98fa92874f5fd75df8fdc59d92022a'] = 'Klicka här för att logga in eller registrera dig som enskild firma hos %s.';
 $_MODULE['<{twopayment}prestashop>paymentinfo_45c6314c990994e3b513337bcffd59f9'] = 'Vad är %s?';
 $_MODULE['<{twopayment}prestashop>paymentinfo_a002c8066738bc8f9d9394abdcef7ea8'] = 'Din betalningsperiod börjar när din order levereras';
 $_MODULE['<{twopayment}prestashop>paymentinfo_b55facd49248ec93ec53edc801dadb08'] = 'Något gick fel när kassan för enskild firma skulle förberedas. Försök igen.';
 $_MODULE['<{twopayment}prestashop>paymentinfo_c1cf258d03ea6e7a7d9a004d3a017610'] = 'Välj det Buy Now, Pay Later-alternativ som passar dig bäst';
 $_MODULE['<{twopayment}prestashop>paymentinfo_d88d16f67e3b25a0283107c4ace42922'] = 'Inga kostnader i förskott';
-$_MODULE['<{twopayment}prestashop>paymentinfo_ce788118f22dd76bda591a4dae15e622'] = '%s ger direkt handelskredit för B2B-köp. Köp nu, betala senare utan ränta eller avgifter.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_79844fc929054773af8d17e837f29f24'] = '%s är en betalningslösning för B2B-köp online, som låter dig köpa från dina favorithandlare och leverantörer på handelskredit. Genom att använda %s kan du få tillgång till flexibel handelskredit direkt för att göra inköp enkelt.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_c9a4942151f3f04aca175871bc85f862'] = 'Köp nu, ta emot dina varor, betala din faktura senare.';
+$_MODULE['<{twopayment}prestashop>paymentinfo_f63939ce5ee9ac8631ebef74efc00c60'] = 'Klicka för att läsa mer';
 $_MODULE['<{twopayment}prestashop>twopayment_00589e3bb6d7bbb598f17fe9bfe70052'] = 'Ogiltigt telefonnummer';
 $_MODULE['<{twopayment}prestashop>twopayment_00a48186e87d34e1df0a6484f553bafc'] = 'Plattformens minimum %1$s, %2$s moms. Ett värde här tolkas i butikens standardvaluta på den momsbasis som väljs nedan och måste vara minst plattformens minimum.';
 $_MODULE['<{twopayment}prestashop>twopayment_00d23a76e43b46dae9ec7aa9dcbebb32'] = 'Aktiverad';
