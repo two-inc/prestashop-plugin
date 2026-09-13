@@ -321,6 +321,40 @@ describe('activation', () => {
             expect(shown(panelParts().panel)).toBe(true);
         });
 
+        /**
+         * The park declines when the launch left focus on another control, so the
+         * flight runs on with the hold standing and the name field unfocused - which
+         * is what makes a later focus of that field a pair the hold can read.
+         */
+        function launchedWithParkDeclined(instance, soleTrader) {
+            openPanel();
+            panelParts().soleTrader.trigger('click');
+            popupOpen(soleTrader);
+            panelParts().notListed[0].focus();
+            document.dispatchEvent(new CustomEvent('two:sole-trader-popup-opened', {
+                detail: { id: 'popup-1', launcher: instance._instanceNs }
+            }));
+            jest.advanceTimersByTime(0);
+        }
+
+        test('manual entry taking the field over is not a Tab arrival, so the window return that follows reopens nothing', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            launchedWithParkDeclined(instance, soleTrader);
+
+            panelParts().notListed.trigger('click');
+            $('.two-company-search-back').trigger('click');
+            // The closes that leave focus where it is: focus leaving the panel, a
+            // re-render, another popover claiming the single open slot.
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            $(global.window).trigger('focus');
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
+
         test('a pointerdown on the name field mid-flight ends the hold, so the focus it brings opens the panel', () => {
             const soleTrader = stubSoleTrader(true);
             const instance = makeInstance();

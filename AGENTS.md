@@ -259,9 +259,11 @@ spent and opens nothing - and it is bound to the window's return, not to the
 popup's close, so there is no bound on how long it takes. With no window `focus`
 behind it the pair is a buyer arriving on the field by Tab, and it ends the hold
 AND opens the panel, so a keyboard-only buyer is never left without the control.
-The launch's own park is neither: it moves focus under `_closingSelf`, which the
-opener skips and which voids any half-pair standing. jQuery delivers the two
-halves in either order, so the hold is spent on whichever arrives second. The
+Every focus this module moves itself - the launch's park, a close returning focus,
+manual entry taking the field over - is neither half: it moves under `_closingSelf`,
+which the opener skips and which voids any half-pair standing. jQuery delivers
+`focusin` first and defers `focus` behind it, and the rule is written against the
+pair's second half rather than against either name. The
 hold outlives the flight settling; a `pointerdown`, `keydown` or `click` on the
 field ends it at once, and the pointer and keyboard openers are live throughout
 (ABN-554).
