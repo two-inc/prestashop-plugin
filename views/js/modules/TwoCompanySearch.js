@@ -1624,6 +1624,7 @@ class TwoCompanySearch {
                 || !document.contains(this.companyField.get(0))) {
                 return;
             }
+            // Or the field's own focus opener rebuilds the very panel this flight is waiting in.
             this._closingSelf = true;
             try {
                 this.focusQuietly(this.companyField);
@@ -2178,9 +2179,6 @@ class TwoCompanySearch {
         $(window).off(windowNs)
             .on('focus' + windowNs, () => {
                 this._windowReturned = !this._destroyed;
-            })
-            .on('blur' + windowNs, () => {
-                this._windowReturned = false;
             });
 
         // A gesture ON this field is the buyer whatever else is in flight (ABN-554).
@@ -2191,9 +2189,9 @@ class TwoCompanySearch {
             }
         );
 
-        // jQuery delivers `focus` and `focusin` in either order depending on whether the
-        // focus was native or triggered, so the hold is spent on the pair's SECOND half
-        // whichever that turns out to be (ABN-554).
+        // jQuery delivers `focusin` first and defers `focus` behind it, whatever fired the
+        // focus. Written against the pair's SECOND half rather than against either name,
+        // so a jQuery that stops deferring does not change which one spends the hold (ABN-554).
         const spendHeldFocusPair = () => {
             if (!this._heldFocusSeen) {
                 // The window's return state at the pair's first half is what tells the
@@ -4559,7 +4557,15 @@ class TwoCompanySearch {
 
         // Activating "My company is not on the list" places focus in the
         // manual company name field. This is the one place that happens.
-        this.focusQuietly(this.companyField);
+        // Under `_closingSelf` like every other focus this module moves: unguarded, it
+        // arms a standing signup hold as a buyer's Tab arrival, which the window return
+        // then spends by reopening the popover (ABN-554).
+        this._closingSelf = true;
+        try {
+            this.focusQuietly(this.companyField);
+        } finally {
+            this._closingSelf = false;
+        }
     }
 
     /**
