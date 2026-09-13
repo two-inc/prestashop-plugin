@@ -37,30 +37,33 @@
     <div class="two-header">
         <div class="two-logo-container">
             <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="{$two_product_name|escape:'html':'UTF-8'}" class="two-logo" />
+            <p class="two-tagline">
+                {l s='Business payments made simple' mod='twopayment'}
+            </p>
             {* ABN-554: the icon IS the link - the tooltip is its sibling and
                carries no anchor, so nothing inside the box is interactive. A
                brand with no about URL renders no control at all, whatever the
-               merchant "explainer" setting says. *}
+               merchant "explainer" setting says. aria-hidden keeps the closed,
+               opacity-0 box out of document flow while aria-describedby still
+               resolves it: the accessible-description step exempts a directly
+               referenced node. *}
             {if $show_about_link}
             {if $about_url != ''}
             <span class="two-info-tooltip">
                 <a class="two-info-link"
                    href="{$about_url|escape:'html':'UTF-8'}"
                    target="_blank"
-                   rel="noopener noreferrer"
+                   rel="noopener"
                    aria-label="{l s='What is %s?' mod='twopayment' sprintf=[$two_product_name]}"
                    aria-describedby="{$about_tooltip_id|escape:'html':'UTF-8'}"><img class="two-info-icon" src="{$module_dir|escape:'html':'UTF-8'}views/img/question.svg" alt="" /></a>
-                <span class="two-tooltip-content" id="{$about_tooltip_id|escape:'html':'UTF-8'}" role="tooltip">
+                <span class="two-tooltip-content" id="{$about_tooltip_id|escape:'html':'UTF-8'}" role="tooltip" aria-hidden="true">
                     <span class="two-tooltip-text">{l s='%s is a payment solution for B2B purchases online, allowing you to buy from your favourite merchants and suppliers on trade credit. Using %s, you can access flexible trade credit instantly to make purchasing simple.' mod='twopayment' sprintf=[$two_product_name, $two_product_name]}</span>
-                    <span class="two-tooltip-text two-tooltip-text--strong">{l s='Buy now, receive your goods, pay your invoice later.' mod='twopayment'}</span>
+                    <strong class="two-tooltip-text two-tooltip-text--strong">{l s='Buy now, receive your goods, pay your invoice later.' mod='twopayment'}</strong>
                     <span class="two-tooltip-text">{l s='Click to find out more' mod='twopayment'}</span>
                 </span>
             </span>
             {/if}
             {/if}
-            <p class="two-tagline">
-                {l s='Business payments made simple' mod='twopayment'}
-            </p>
         </div>
     </div>
 
