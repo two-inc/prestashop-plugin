@@ -261,14 +261,15 @@ behind it the pair is a buyer arriving on the field by Tab, and it ends the hold
 AND opens the panel, so a keyboard-only buyer is never left without the control.
 Every focus this module moves itself - the launch's park, a close returning focus,
 manual entry taking the field over - is neither half: it moves under `_closingSelf`,
-which the opener skips and which voids any half-pair standing. A native focus
-delivers `focusin` then `focus`, both synchronously, and a jQuery `trigger('focus')`
+which the opener skips and which voids any half-pair standing. jQuery simulates
+`focusin` from a capture-phase `focus` listener on the document, so a real focus
+reaches these handlers as `focusin` then `focus`, and a jQuery `trigger('focus')`
 on the already-focused field reverses them; the rule is written against the pair's
 second half rather than against either name, so neither order changes which half
 spends the hold, and both halves carry the same guards, so neither can refuse a half
-the other armed. The hold outlives the flight
-settling; a `pointerdown`, `keydown` or `click` on the field ends it at once, and
-the pointer and keyboard openers are live throughout (ABN-554).
+the other armed. The hold outlives the flight settling; a `pointerdown`, `keydown`
+or `click` on the field ends it at once, and the pointer and keyboard openers are
+live throughout (ABN-554).
 
 LIMITATION: focus moved by the theme or by PrestaShop itself - a re-render
 restoring focus, a validation handler - arrives with no window `focus` behind it,

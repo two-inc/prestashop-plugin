@@ -279,7 +279,7 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
         ['popup open', 'the Registered chip', 1, true, false, true, 'closed on focus arrival, the click is still to come'],
         ['popup open', 'the Enter manually chip', 1, true, false, true, 'closed on focus arrival'],
         ['popup open', 'a non-chip control inside the panel', 1, true, false, true, 'closed, panel kept'],
-        ['popup open', 'the company-name field', 1, true, false, true, 'focus closes the popup; the field is the popover\'s own trigger and its focus opener holds the popover open'],
+        ['popup open', 'the company-name field', 1, true, false, true, 'focus closes the popup; the field is the popover\'s own trigger, so landing on it is not focus leaving the panel'],
         ['popup open', 'a control outside the popover', 1, true, false, false, 'popup and panel close'],
         ['popup open', 'a "Select a different sole trader" button', 1, true, false, false, 'a control like any other, its click relaunches'],
         ['popup closed', 'the Sole trader chip', 1, false, false, true, 'a Tab arrival with no popup opens none'],

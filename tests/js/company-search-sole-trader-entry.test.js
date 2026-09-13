@@ -263,9 +263,15 @@ describe('activation', () => {
         }
 
         /**
-         * The pair in a named order: a native focus delivers `focusin` then `focus`,
-         * a jQuery trigger on the already-focused field reverses them. Both are run so
-         * neither can regress unnoticed.
+         * The pair in a named order. jQuery's capture-phase `focus` listener on the
+         * document simulates `focusin`, so a real focus reaches these handlers as
+         * `focusin` then `focus`; a jQuery trigger on the already-focused field reverses
+         * them. Both are run so neither can regress unnoticed.
+         *
+         * Three events reach the handlers per row, not two: the `trigger('focus')` half
+         * emits its own simulated `focusin` behind the `focus`. That trailing one lands
+         * with the hold already spent, where the `focusin` handler's `_openerHeld` guard
+         * returns on it. What each row pins is which half spends the hold.
          */
         const PAIR_ORDERS = [['focusin then focus'], ['focus then focusin']];
         function firePair(order) {
@@ -380,6 +386,44 @@ describe('activation', () => {
 
             $(global.window).trigger('focus');
             panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(false);
+        });
+
+        /** Each ends the hold and nothing else; a bare keydown on this field opens the panel by itself. */
+        const RELEASING_GESTURES = [['pointerdown'], ['keydown'], ['click']];
+        function gestureEvent(name) {
+            return name === 'keydown' ? $.Event('keydown', { key: 'Tab' }) : name;
+        }
+
+        test.each(RELEASING_GESTURES)('a %s on the name field ends the hold outright, so the window return standing behind it no longer spends the focus that follows', (gesture) => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            heldWithPanelClosed(soleTrader, instance);
+            // With this standing, a hold left in place reads the focus below as the return's own re-fire and opens nothing.
+            $(global.window).trigger('focus');
+
+            panelParts().nameField.trigger(gestureEvent(gesture));
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        test('a half armed before manual entry took the field over is void, not a half the buyer\'s next Tab spends', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            heldWithPanelClosed(soleTrader, instance);
+            // Half a pair, armed in search mode with the hold standing.
+            panelParts().nameField.trigger('focusin');
+
+            instance.enterManualEntryMode();
+            // Manual entry refuses this half, and the half above must not survive that refusal.
+            panelParts().nameField.trigger('focus');
+            instance.exitManualEntryMode();
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            panelParts().nameField.trigger('focusin');
 
             expect(shown(panelParts().panel)).toBe(false);
         });
