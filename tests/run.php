@@ -5775,6 +5775,7 @@ require __DIR__ . '/OverrideReinstallSpec.php';
 require __DIR__ . '/EnvironmentUpgradeMigrationSpec.php';
 require __DIR__ . '/CheckoutTitleSpec.php';
 require __DIR__ . '/CheckoutSubtitleSpec.php';
+require __DIR__ . '/TwoAnchorOnlyHtmlSpec.php';
 require __DIR__ . '/ConfigFallbackSpec.php';
 require __DIR__ . '/TranslationCatalogueSpec.php';
 require __DIR__ . '/CompanyRefusalMessageSpec.php';
@@ -5839,6 +5840,7 @@ $tests = [
     'EnvironmentUpgradeMigrationSpec::runAll' => [EnvironmentUpgradeMigrationSpec::class, 'runAll'],
     'CheckoutTitleSpec::runAll' => [CheckoutTitleSpec::class, 'runAll'],
     'CheckoutSubtitleSpec::runAll' => [CheckoutSubtitleSpec::class, 'runAll'],
+    'TwoAnchorOnlyHtmlSpec::runAll' => [TwoAnchorOnlyHtmlSpec::class, 'runAll'],
     'PaymentTileTaglineSpec::runAll' => [PaymentTileTaglineSpec::class, 'runAll'],
     'ConfigFallbackSpec::runAll' => [ConfigFallbackSpec::class, 'runAll'],
     'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],

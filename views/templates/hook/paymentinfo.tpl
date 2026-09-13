@@ -63,9 +63,6 @@
             </span>
             {/if}
             {/if}
-            <p class="two-tagline">
-                {l s='Business payments made simple' mod='twopayment'}
-            </p>
         </div>
     </div>
 
@@ -86,10 +83,11 @@
     </div>
     
     <section class="two-payment-info" style="display: none;">
-        {* TWO-25711: an empty admin subtitle emits no element - an empty <p>
-           still carries its bottom margin. *}
+        {* Sanitised server-side by TwoAnchorOnlyHtml because the brand fallback
+           carries an inline link; an empty subtitle emits no element at all,
+           since an empty <p> still carries its bottom margin. *}
         {if $subtitle != ''}
-        <p class="two-subtitle">{$subtitle|escape:'html':'UTF-8'}</p>
+        <p class="two-subtitle">{$subtitle nofilter}</p>
         {/if}
         <p class="two-payment-message"></p>
     </section>

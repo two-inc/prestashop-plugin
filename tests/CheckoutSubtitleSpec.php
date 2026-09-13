@@ -3,13 +3,16 @@
 declare(strict_types=1);
 
 /**
- * The checkout tile's subtitle (TWO-25711).
+ * The checkout tile's subtitle (ABN-554).
  *
- * The subtitle is optional: a merchant who clears it gets an empty stored row
- * for every language and a tile with no subtitle element at all. There is no
- * brand-default fallback - the strapline in that state is the brand tagline in
- * paymentinfo.tpl, which the brand configures and can leave out entirely
- * (PaymentTileTaglineSpec).
+ * The field is optional and per-language: a merchant who clears it gets an
+ * empty stored row for every language, and the tile then falls back to the
+ * brand's tagline - a translated sentence carrying a "read more" link to the
+ * brand's 'checkout_subtitle_faq_url'. A brand declaring no such URL renders
+ * no subtitle element at all.
+ *
+ * Whatever reaches the template is sanitised by TwoAnchorOnlyHtml
+ * (TwoAnchorOnlyHtmlSpec), since the template emits it unescaped.
  *
  * The title is a separate field and is still mandatory; the last row of the
  * save table exists so relaxing the subtitle cannot quietly relax it too.
@@ -22,7 +25,7 @@ final class CheckoutSubtitleSpec
     {
         self::testFieldRequiredness();
         self::testAdminSaveAcceptsAnySubtitle();
-        self::testTileSubtitleHasNoFallback();
+        self::testTileSubtitleFallsBackToTheBrandTagline();
     }
 
     /**
@@ -129,17 +132,25 @@ final class CheckoutSubtitleSpec
         }
     }
 
-    private static function testTileSubtitleHasNoFallback(): void
+    private static function testTileSubtitleFallsBackToTheBrandTagline(): void
     {
+        $faqUrl = 'https://brand.example/faq';
+        $tagline = 'For all companies, <a href="' . $faqUrl . '" target="_blank" rel="noopener">read more</a>.';
+
+        // [stored subtitle, brand FAQ URL, assigned subtitle, why].
         $cases = [
-            ['Pay later, interest free', 'Pay later, interest free', 'a stored subtitle reaches the template verbatim'],
-            ['0', '0', 'a subtitle of "0" is content, not emptiness'],
-            ['', '', 'an empty subtitle stays empty - no brand default is substituted'],
-            ['   ', '', 'a whitespace-only subtitle resolves to empty'],
-            [null, '', 'a language with no subtitle row at all resolves to empty'],
+            ['Pay later, interest free', $faqUrl, 'Pay later, interest free', 'a stored subtitle wins over the brand tagline'],
+            ['0', $faqUrl, '0', 'a subtitle of "0" is content, not emptiness'],
+            ['', $faqUrl, $tagline, 'an empty subtitle falls back to the brand tagline'],
+            ['   ', $faqUrl, $tagline, 'a whitespace-only subtitle is emptiness and falls back too'],
+            [null, $faqUrl, $tagline, 'a language with no subtitle row at all falls back'],
+            ['', null, '', 'a brand with no FAQ URL renders no subtitle element'],
+            ['', 'javascript:alert(1)', '', 'a rejected URL is the same as none, never a dead sentence'],
+            ['Pay later', null, 'Pay later', 'the merchant field is unaffected by the brand having no URL'],
+            ['<b>Pay</b> later', $faqUrl, 'Pay later', 'merchant markup is reduced to what the escaper allows'],
         ];
 
-        foreach ($cases as list($stored, $expected, $description)) {
+        foreach ($cases as list($stored, $brandUrl, $expected, $description)) {
             self::reset();
             StubStore::$languages = self::LANGUAGES;
             if ($stored !== null) {
@@ -147,10 +158,33 @@ final class CheckoutSubtitleSpec
             }
             StubStore::$configurationLang[2]['PS_TWO_SUB_TITLE'] = 'Another language';
 
-            $module = new TwopaymentTestHarness();
+            $module = self::moduleWithSubtitleFaqUrl($brandUrl);
             $module->_path = '/modules/twopayment/';
 
             TinyAssert::same($expected, $module->exposeTwoPaymentOptionAssigned('subtitle'), $description);
         }
+    }
+
+    /** @param mixed $declared the brand's 'checkout_subtitle_faq_url' */
+    private static function moduleWithSubtitleFaqUrl($declared): object
+    {
+        return new class ($declared) extends TwopaymentTestHarness {
+            /** @var mixed */
+            private $declared;
+
+            /** @param mixed $declared */
+            public function __construct($declared)
+            {
+                parent::__construct();
+                $this->declared = $declared;
+            }
+
+            public function getTwoBrandConfig($key)
+            {
+                return $key === 'checkout_subtitle_faq_url'
+                    ? $this->declared
+                    : parent::getTwoBrandConfig($key);
+            }
+        };
     }
 }

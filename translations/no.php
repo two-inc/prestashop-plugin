@@ -85,7 +85,6 @@ $_MODULE['<{twopayment}prestashop>form_f2a6c498fb90ee345d997f888fce3b18'] = 'Sle
 $_MODULE['<{twopayment}prestashop>paymentinfo_1c76cbfe21c6f44c1d1e59d54f3e4420'] = 'Bedrift';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1ffcb4e0a351d5e143bec6362c0feaf8'] = 'Betalingsfristen er slutten av inneværende måned pluss valgt antall dager, regnet fra ordren er oppfylt';
 $_MODULE['<{twopayment}prestashop>paymentinfo_26615a6d6e63f2904432b8b425ee6e93'] = 'Sjekker tilgjengelighet ...';
-$_MODULE['<{twopayment}prestashop>paymentinfo_5aef0c6f737f3b7048b5e399e9d843a5'] = 'Bedriftsbetaling gjort enkelt';
 $_MODULE['<{twopayment}prestashop>paymentinfo_5c920817023991f458e2a248e9367c67'] = 'Umiddelbar kredittvurdering';
 $_MODULE['<{twopayment}prestashop>paymentinfo_1b98fa92874f5fd75df8fdc59d92022a'] = 'Klikk her for å logge inn eller registrere deg som enkeltpersonforetak hos %s.';
 $_MODULE['<{twopayment}prestashop>paymentinfo_45c6314c990994e3b513337bcffd59f9'] = 'Hva er %s?';
@@ -310,7 +309,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_9bc4151431237fc71bc676000348f622'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4568e870a2def0081479b11f806e7d6f'] = '%s kunne ikke bygge denne ordren fra handlekurven din.';
 $_MODULE['<{twopayment}prestashop>twopayment_9c51eb50fb79bffa2c795ac4773781dc'] = 'Betalingsgodkjenningen din er utløpt. Oppdater siden og prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_9d8c5a3cd608d5590ab3da22a6855f83'] = 'Kunne ikke laste handlekurven for dette betalingsforsøket.';
-$_MODULE['<{twopayment}prestashop>twopayment_d4ee35ba1c8678bff20f4940810ab53e'] = 'Valgfritt. Vises under betalingsmåtens tittel i utsjekken. La den stå tom for å ikke vise noen undertittel i det hele tatt.';
+$_MODULE['<{twopayment}prestashop>twopayment_c4373636b200b27c4edf96fed8ba2a6a'] = 'Valgfri undertittel som vises under tittelen i kassen. La feltet stå tomt for å bruke standardteksten.';
+$_MODULE['<{twopayment}prestashop>twopayment_0bd1bbf38ae30740b208fa00447e04b2'] = 'For alle bedrifter, %1$sles mer%2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_9e727fdd3aec8274f46685441900280d'] = 'Prosjekt';
 $_MODULE['<{twopayment}prestashop>twopayment_1ffb19c3b99e1f859648eb7a9a7c3ef3'] = 'Ja (ikke anbefalt)';
 $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] = 'Betalingsperioden din starter når ordren er oppfylt';

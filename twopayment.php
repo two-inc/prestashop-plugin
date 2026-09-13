@@ -18,6 +18,7 @@ require_once dirname(__FILE__) . '/classes/TwoCheckoutAmountException.php';
 require_once dirname(__FILE__) . '/classes/TwoSurchargeMethodException.php';
 require_once dirname(__FILE__) . '/classes/TwoRateLimiter.php';
 require_once dirname(__FILE__) . '/classes/TwoStoredTerm.php';
+require_once dirname(__FILE__) . '/classes/TwoAnchorOnlyHtml.php';
 
 class Twopayment extends PaymentModule
 {
@@ -1535,7 +1536,7 @@ class Twopayment extends PaymentModule
             array(
                 'type' => 'text',
                 'label' => $this->l('Subtitle'),
-                'desc' => $this->l('Optional. Shown under the payment method title at checkout. Leave empty to show no subtitle at all.'),
+                'desc' => $this->l('Optional subtitle shown beneath the title at checkout. Leave blank to use the default.'),
                 'name' => 'PS_TWO_SUB_TITLE',
                 'required' => false,
                 'lang' => true,
@@ -5598,9 +5599,10 @@ class Twopayment extends PaymentModule
         // all reads as `false`, which core does not count as empty, so the
         // title fallback below never fired for it and the tile rendered blank.
         $title = trim((string) Configuration::get('PS_TWO_TITLE', $this->context->language->id));
-        // TWO-25711: no fallback. An empty subtitle renders no subtitle element
-        // at all, leaving the brand tagline as the tile's only strapline.
-        $subtitle = trim((string) Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id));
+        // The template emits this unescaped, so TwoAnchorOnlyHtml is the whole
+        // trust boundary on it: the fallback's "read more" link survives and
+        // nothing else does.
+        $subtitle = TwoAnchorOnlyHtml::escape($this->resolveTwoSubtitle());
 
         if ($title === '') {
             $title = sprintf($this->l('Pay with %s'), $this->getTwoBrandConfig('product_name'));
@@ -12910,8 +12912,37 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Normalize a brand-declared URL ('about_url') into the URL the template
-     * renders, or '' for anything unusable.
+     * The tile subtitle before escaping: the merchant's per-language Subtitle
+     * field, or the brand's tagline carrying a "read more" link to its FAQ
+     * page when that field is blank.
+     *
+     * A brand declaring no usable FAQ URL renders no subtitle element at all,
+     * rather than a sentence whose link points back at the checkout page.
+     *
+     * @return string
+     */
+    public function resolveTwoSubtitle()
+    {
+        $configured = trim((string) Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id));
+        if ($configured !== '') {
+            return $configured;
+        }
+
+        $faqUrl = self::normalizeTwoBrandUrl($this->getTwoBrandConfig('checkout_subtitle_faq_url'));
+        if ($faqUrl === '') {
+            return '';
+        }
+
+        return sprintf(
+            $this->l('For all companies, %1$sread more%2$s.'),
+            '<a href="' . htmlspecialchars($faqUrl, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener">',
+            '</a>'
+        );
+    }
+
+    /**
+     * Normalize a brand-declared URL into the one the tile renders, or '' for
+     * anything unusable.
      *
      * The URL reaches buyer-facing markup as an href, so only http(s) passes.
      *

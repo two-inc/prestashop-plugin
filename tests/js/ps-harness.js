@@ -801,10 +801,11 @@ function buildPaymentTileWithSoleTraderAnswer(answer, countryIso) {
 }
 
 /**
- * The same tile with the admin-configured subtitle resolved (TWO-25711), so a
- * test can tell an empty subtitle apart from an unevaluated one.
+ * The same tile with the subtitle resolved (ABN-554), so a test can tell an
+ * empty subtitle apart from an unevaluated one.
  *
- * @param {string} subtitle the value twopayment.php assigned to `$subtitle`
+ * @param {string} subtitle the sanitised value twopayment.php assigned to
+ *        `$subtitle`; it may carry the brand fallback's inline link
  * @returns {HTMLElement} the `.two-payment-container` that was appended
  */
 function buildPaymentTileWithSubtitle(subtitle) {
@@ -870,7 +871,7 @@ function renderPaymentTile(soleTrader, subtitle, about) {
                 /\{if \$subtitle != ''\}([\s\S]*?)\{\/if\}/g,
                 subtitle === '' ? '' : '$1'
             )
-            .replace(/\{\$subtitle\|[^}]*\}/g, subtitle);
+            .replace(/\{\$subtitle nofilter\}/g, subtitle);
     }
     if (about) {
         // The about `{if}`s nest, inner first, so the outer non-greedy pattern
