@@ -1536,7 +1536,7 @@ class Twopayment extends PaymentModule
             array(
                 'type' => 'text',
                 'label' => $this->l('Subtitle'),
-                'desc' => $this->l('Optional subtitle shown beneath the title at checkout. Leave blank to use the default.'),
+                'desc' => $this->l('Optional subtitle shown beneath the title at checkout.'),
                 'name' => 'PS_TWO_SUB_TITLE',
                 'required' => false,
                 'lang' => true,
@@ -1921,6 +1921,18 @@ class Twopayment extends PaymentModule
         foreach ($this->languages as $language) {
             if (Tools::isEmpty(Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']))) {
                 $this->errors[] = $this->l('Enter a title.');
+            }
+
+            // Rejected rather than sanitised: the tile emits the subtitle
+            // unescaped through TwoAnchorOnlyHtml, so anything that escaper
+            // would rewrite disappears at checkout with no merchant feedback.
+            $subtitle = (string) Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang']);
+            if (!TwoAnchorOnlyHtml::rendersUnchanged($subtitle)) {
+                $this->errors[] = sprintf(
+                    $this->l('Subtitle accepts plain text and a single link only; "%1$s" would be shown as "%2$s".'),
+                    htmlspecialchars($subtitle, ENT_QUOTES, 'UTF-8'),
+                    htmlspecialchars(TwoAnchorOnlyHtml::escape($subtitle), ENT_QUOTES, 'UTF-8')
+                );
             }
         }
 
