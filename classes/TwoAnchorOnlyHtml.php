@@ -58,6 +58,23 @@ class TwoAnchorOnlyHtml
     }
 
     /**
+     * Whether escaping leaves the value's content alone - the admin
+     * accept/reject boundary, so it is the render boundary (ABN-554).
+     * Entity encoding is not a change; only markup this class drops or
+     * rewrites fails.
+     *
+     * @param mixed $html
+     * @return bool
+     */
+    public static function rendersUnchanged($html)
+    {
+        $html = (string) $html;
+
+        return html_entity_decode(self::escape($html), ENT_QUOTES, 'UTF-8')
+            === html_entity_decode($html, ENT_QUOTES, 'UTF-8');
+    }
+
+    /**
      * @param string $text
      * @return string
      */

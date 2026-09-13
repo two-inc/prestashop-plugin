@@ -24,7 +24,7 @@ final class CheckoutSubtitleSpec
     public static function runAll(): void
     {
         self::testFieldRequiredness();
-        self::testAdminSaveAcceptsAnySubtitle();
+        self::testAdminSaveRejectsWhatTheTileWouldStrip();
         self::testTileSubtitleFallsBackToTheBrandTagline();
     }
 
@@ -82,13 +82,52 @@ final class CheckoutSubtitleSpec
         };
     }
 
-    private static function testAdminSaveAcceptsAnySubtitle(): void
+    /**
+     * Given a subtitle the escaper would rewrite; When the merchant saves;
+     * Then the save is refused with a message naming the rendered form,
+     * rather than the copy vanishing silently at checkout (ABN-554).
+     */
+    private static function testAdminSaveRejectsWhatTheTileWouldStrip(): void
     {
+        $rejection = 'Subtitle accepts plain text and a single link only; "%s" would be shown as "%s".';
+
         $cases = [
             ['Pay by invoice', 'Pay later, interest free', '', 'Pay later, interest free', 'a filled subtitle saves unchanged'],
             ['Pay by invoice', '', '', '', 'a cleared subtitle saves as an empty row'],
             ['Pay by invoice', '   ', '', '   ', 'whitespace saves verbatim; the tile trims it away at render'],
             ['', 'Pay later, interest free', 'Enter a title.', null, 'the title is still mandatory, so the form saves nothing'],
+            [
+                'Pay by invoice',
+                "Don't wait & save",
+                '',
+                "Don't wait & save",
+                'an apostrophe and an ampersand are plain text, not markup to reject',
+            ],
+            [
+                'Pay by invoice',
+                '<a href="https://faq.example.test/x">read more</a>',
+                '',
+                '<a href="https://faq.example.test/x">read more</a>',
+                'the one link the tile allows saves unchanged',
+            ],
+            [
+                'Pay by invoice',
+                '<b>Pay</b> later',
+                sprintf($rejection, '&lt;b&gt;Pay&lt;/b&gt; later', 'Pay later'),
+                null,
+                'a dropped tag is refused, and nothing is stored',
+            ],
+            [
+                'Pay by invoice',
+                '<a href="https://faq.example.test/x" onclick="steal()">read more</a>',
+                sprintf(
+                    $rejection,
+                    '&lt;a href=&quot;https://faq.example.test/x&quot; onclick=&quot;steal()&quot;&gt;read more&lt;/a&gt;',
+                    '&lt;a href=&quot;https://faq.example.test/x&quot;&gt;read more&lt;/a&gt;'
+                ),
+                null,
+                'a link stripped of an attribute is refused rather than quietly rewritten',
+            ],
         ];
 
         foreach ($cases as list($title, $subtitle, $expectedError, $expectedStored, $description)) {
