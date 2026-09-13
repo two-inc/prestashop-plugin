@@ -201,14 +201,19 @@ describe('activation', () => {
             jest.advanceTimersByTime(0);
         }
 
-        /** What a browser sends the checkout when the popup it launched goes away. */
+        /**
+         * What a browser sends the checkout window when it comes back from the popup: its
+         * own `focus`, then the settle TwoSoleTrader dispatches from its document-capture
+         * `focusin` listener, then the pair re-fired on the field the launch parked on.
+         */
         function refireFocusOnNameField(soleTrader) {
             soleTrader.isPopupOpen.mockReturnValue(false);
             const node = panelParts().nameField[0];
-            panelParts().nameField.trigger('focus');
+            $(global.window).trigger('focus');
             document.dispatchEvent(new CustomEvent('two:sole-trader-focus-settled', {
                 detail: { target: node, popupClosed: true }
             }));
+            panelParts().nameField.trigger('focus');
         }
 
         test.each([
@@ -257,14 +262,47 @@ describe('activation', () => {
             expect(shown(panelParts().panel)).toBe(false);
         }
 
-        test('a focus pair with no window return behind it leaves the hold in place', () => {
+        /** The panel closed with the hold still standing: the popup is gone, the window has not come back. */
+        function heldWithPanelClosed(soleTrader, instance) {
+            launched(instance, soleTrader);
+            soleTrader.isPopupOpen.mockReturnValue(false);
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+        }
+
+        test('a focus pair with no window return behind it is a buyer arriving by Tab, and opens the panel', () => {
             const soleTrader = stubSoleTrader(true);
             const instance = makeInstance();
-            settledWithPanelClosed(soleTrader, instance);
+            heldWithPanelClosed(soleTrader, instance);
 
             panelParts().nameField.trigger('focus');
-            panelParts().nameField.trigger('focusin');
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        test('that arrival ends the hold, so focus alone opens the panel afterwards', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            heldWithPanelClosed(soleTrader, instance);
             panelParts().nameField.trigger('focus');
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            panelParts().nameField.trigger('focus');
+
+            expect(shown(panelParts().panel)).toBe(true);
+        });
+
+        test('the park the launch itself performs is not that arrival, and leaves the hold standing', () => {
+            const soleTrader = stubSoleTrader(true);
+            const instance = makeInstance();
+            // The park runs inside this, on the field, with the hold already set.
+            launched(instance, soleTrader);
+            instance.closeDropdown(false);
+            expect(shown(panelParts().panel)).toBe(false);
+
+            // The half a buyer's Tab would complete; only an opener the park freed answers it.
+            panelParts().nameField.trigger('focusin');
 
             expect(shown(panelParts().panel)).toBe(false);
         });
@@ -272,11 +310,10 @@ describe('activation', () => {
         test('the window return spends its focus pair without opening the panel, and the field opens on the next focus', () => {
             const soleTrader = stubSoleTrader(true);
             const instance = makeInstance();
-            settledWithPanelClosed(soleTrader, instance);
+            heldWithPanelClosed(soleTrader, instance);
 
             $(global.window).trigger('focus');
             panelParts().nameField.trigger('focus');
-            panelParts().nameField.trigger('focusin');
             expect(shown(panelParts().panel)).toBe(false);
 
             panelParts().nameField.trigger('focus');

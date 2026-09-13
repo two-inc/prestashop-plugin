@@ -268,6 +268,7 @@ class TwoCompanySearch {
         // Suppresses the field's own focus opener until the window return spends its focus pair (ABN-554).
         this._openerHeld = false;
         this._heldFocusSeen = false;
+        this._arrivalFocusSeen = false;
         this._windowReturned = false;
         this._popupSeenThisFlight = false;
         // Per-instance suffix: the `mouseup` guard binds on `document`, where
@@ -1333,22 +1334,24 @@ class TwoCompanySearch {
     }
 
     /**
-     * Suppress the company field's focus opener until the window return that
-     * re-fires `focus` on the parked field has spent its `focus`+`focusin`
-     * pair, or the buyer works the field (ABN-554).
+     * Suppress the company field's focus opener until a `focus`+`focusin` pair
+     * lands on the parked field, or the buyer works the field (ABN-554).
      *
-     * Unbounded: the browser sends that pair when the buyer comes back to this
-     * tab, which may be a minute after the popup closed, or never.
+     * Unbounded: the browser sends the window return's own pair when the buyer
+     * comes back to this tab, which may be a minute after the popup closed, or
+     * never; a pair with no window return behind it is the buyer arriving by Tab.
      */
     holdCompanyFieldOpener() {
         this._openerHeld = true;
         this._heldFocusSeen = false;
+        this._arrivalFocusSeen = false;
         this._windowReturned = false;
     }
 
     releaseCompanyFieldOpener() {
         this._openerHeld = false;
         this._heldFocusSeen = false;
+        this._arrivalFocusSeen = false;
         this._windowReturned = false;
     }
 
@@ -2188,23 +2191,47 @@ class TwoCompanySearch {
             }
         );
 
+        // jQuery delivers `focus` and `focusin` in either order depending on whether the
+        // focus was native or triggered, so the hold is spent on the pair's SECOND half
+        // whichever that turns out to be (ABN-554).
+        const spendHeldFocusPair = () => {
+            if (!this._heldFocusSeen) {
+                // The window's return state at the pair's first half is what tells the
+                // return's own re-fire from a buyer arriving on the field by Tab.
+                this._heldFocusSeen = true;
+                this._arrivalFocusSeen = !this._windowReturned;
+                return;
+            }
+            const arrival = this._arrivalFocusSeen;
+            this.releaseCompanyFieldOpener();
+            // A keyboard-only buyer gets the control the hold would otherwise cost them.
+            if (arrival) {
+                this.openDropdown();
+            }
+        };
+
         this.companyField.on('focus.twoCompanyOpen', () => {
-            if (this._destroyed || this._manualEntry || this._closingSelf) {
+            if (this._destroyed || this._manualEntry) {
+                return;
+            }
+            if (this._closingSelf) {
+                // Focus this module moved is neither half of a pair, and voids any half standing.
+                this._heldFocusSeen = false;
+                this._arrivalFocusSeen = false;
                 return;
             }
             if (this._openerHeld) {
-                // Swallowed, and half of the window-return pair its `focusin` completes (ABN-554).
-                this._heldFocusSeen = this._windowReturned;
+                spendHeldFocusPair();
                 return;
             }
             this.openDropdown();
         });
 
         this.companyField.on('focusin.twoCompanyOpen', () => {
-            if (this._destroyed || !this._openerHeld || !this._heldFocusSeen) {
+            if (this._destroyed || !this._openerHeld || this._closingSelf) {
                 return;
             }
-            this.releaseCompanyFieldOpener();
+            spendHeldFocusPair();
         });
 
         this.companyField.on('mousedown.twoCompanyOpen', (event) => {
