@@ -344,6 +344,20 @@ Three more traps in the JS suites:
   existing suite already catches proves the suite is sensitive, not that the case
   added covers anything.
 
+## Every JS Spec Runs On Both jQuery UI Versions
+
+A PrestaShop theme decides which jQuery UI the module runs on, so `make test-js` runs
+every spec twice, as the two Jest projects `jquery-ui-1.14` and `jquery-ui-1.10`. The
+1.10 project sets `JQUERY_UI=1.10` through `tests/js/setup-jquery-ui-110.js` and
+`ps-harness.js` installs that widget instead. 1.10 is the oldest version a theme still
+serves, 1.14 the newest.
+
+The two differ in both API surface and the markup a row is rendered with, so a suite
+pinned to one says nothing about shops on the other — a spec written against 1.14 can
+pass with and without the fix it exists to hold. A new company-search spec passes on
+both projects, and a behaviour that differs between the versions is handled in the
+module rather than accommodated in the test (ABN-554).
+
 ## The Payment-Term Chips Owe The Radio-Group Keyboard Contract
 
 The chip row advertises itself as a radio group — a `radiogroup` container, `radio`
