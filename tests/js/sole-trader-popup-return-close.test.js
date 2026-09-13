@@ -271,7 +271,7 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
         ['popup closed', 'the Registered chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'the Enter manually chip', 1, false, false, true, 'nothing to close'],
         ['popup closed', 'a non-chip control inside the panel', 1, false, false, true, 'nothing to close'],
-        ['popup closed', 'the company-name field', 1, false, false, true, 'the field reopens the popover it triggers'],
+        ['popup closed', 'the company-name field', 1, false, false, false, 'the field\'s focus opener is held for the window return, so focus alone reopens nothing'],
         ['popup closed', 'a control outside the popover', 1, false, false, false, 'the panel closes'],
         ['popup closed', 'a "Select a different sole trader" button', 1, false, false, false, 'the panel closes']
     ])('%s, focus lands on %s: opens=%s closed=%s raised=%s panelOpen=%s - %s', async (state, target, opens, closed, raised, panelOpen) => {
