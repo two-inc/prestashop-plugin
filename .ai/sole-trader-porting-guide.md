@@ -263,6 +263,14 @@ pairing on the second address.
    - `region`: write to a state/county field if the address format has one
      (best-effort text→id match, inherently lossy but attempted); otherwise append
      to `city` with a comma (`"Ashford, Kent"`).
+   - **The reverse direction — building the signup popup's `autofillData`** — sends
+     `email`, `first_name`, `last_name`, `phone_number`, `company_name`, a
+     TOP-LEVEL `country_code`, and `billing_address` of
+     `street`/`postal_code`/`city`/`region`. The country goes top-level because
+     the hosted page takes the business country from there and discards the
+     address block's own `country_code`; a `?country=` query parameter is read by
+     nothing. `building`/`apartment` are NOT sent back: the inbound routing above
+     is not reversible from the form.
 7. **Company/org-number requirement scope:** required ONLY on whichever address
    plays the billing/invoice ROLE (the same resolution the payment tile uses) —
    never on a shipping-only address. Reuse the same role-resolution logic; don't
