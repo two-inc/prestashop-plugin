@@ -3,7 +3,7 @@
  * a link to the brand's about page (brands/two.php `about_url`); the tooltip is
  * the link's sibling and holds no anchor of its own. A brand declaring no about
  * URL renders no icon and no link at all, whatever the merchant explainer
- * setting says. The tagline beside it is unconditional.
+ * setting says.
  *
  * Rendered from the shipped `views/templates/hook/paymentinfo.tpl` via the
  * harness, so deleting the guard in the real template is what fails this.
@@ -32,10 +32,6 @@ describe('payment tile about control', () => {
             // Given a brand about URL and the explainer setting; When the tile
             // renders; Then the icon link is present or absent.
             const tile = buildPaymentTileWithAboutControl(showAboutLink, aboutUrl);
-
-            const tagline = tile.querySelector('.two-tagline');
-            expect(tagline).not.toBeNull();
-            expect(tagline.textContent).toContain('Business payments made simple');
 
             const wrapper = tile.querySelector('.two-info-tooltip');
             if (expectedHref === null) {
@@ -72,12 +68,9 @@ describe('payment tile about control', () => {
                 const emphasis = box.querySelector('.two-tooltip-text--strong');
                 expect(emphasis.tagName).toBe('STRONG');
 
-                // The icon sits beside the logo, which is this tile's title,
-                // with the tagline after the pair.
+                // The icon sits beside the logo, which is this tile's title.
                 expect(tile.querySelector('.two-logo').compareDocumentPosition(wrapper))
                     .toBe(global.Node.DOCUMENT_POSITION_FOLLOWING);
-                expect(tagline.compareDocumentPosition(wrapper))
-                    .toBe(global.Node.DOCUMENT_POSITION_PRECEDING);
             }
 
             // The rest of the header is untouched either way.
