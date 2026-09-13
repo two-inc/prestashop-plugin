@@ -137,21 +137,28 @@ final class CheckoutSubtitleSpec
         $faqUrl = 'https://brand.example/faq';
         $tagline = 'For all companies, <a href="' . $faqUrl . '" target="_blank" rel="noopener">read more</a>.';
 
-        // [stored subtitle, brand FAQ URL, assigned subtitle, why].
+        // [stored subtitle, brand FAQ URL, tagline translation (null = shipped), assigned subtitle, why].
         $cases = [
-            ['Pay later, interest free', $faqUrl, 'Pay later, interest free', 'a stored subtitle wins over the brand tagline'],
-            ['0', $faqUrl, '0', 'a subtitle of "0" is content, not emptiness'],
-            ['', $faqUrl, $tagline, 'an empty subtitle falls back to the brand tagline'],
-            ['   ', $faqUrl, $tagline, 'a whitespace-only subtitle is emptiness and falls back too'],
-            [null, $faqUrl, $tagline, 'a language with no subtitle row at all falls back'],
-            ['', null, '', 'a brand with no FAQ URL renders no subtitle element'],
-            ['', 'javascript:alert(1)', '', 'a rejected URL is the same as none, never a dead sentence'],
-            ['Pay later', null, 'Pay later', 'the merchant field is unaffected by the brand having no URL'],
-            ['<b>Pay</b> later', $faqUrl, 'Pay later', 'merchant markup is reduced to what the escaper allows'],
-            ['<b> </b>', $faqUrl, $tagline, 'copy whose only content is markup the escaper drops is emptiness too'],
+            ['Pay later, interest free', $faqUrl, null, 'Pay later, interest free', 'a stored subtitle wins over the brand tagline'],
+            ['0', $faqUrl, null, '0', 'a subtitle of "0" is content, not emptiness'],
+            ['', $faqUrl, null, $tagline, 'an empty subtitle falls back to the brand tagline'],
+            ['   ', $faqUrl, null, $tagline, 'a whitespace-only subtitle is emptiness and falls back too'],
+            [null, $faqUrl, null, $tagline, 'a language with no subtitle row at all falls back'],
+            ['', null, null, '', 'a brand with no FAQ URL renders no subtitle element'],
+            ['', 'javascript:alert(1)', null, '', 'a rejected URL is the same as none, never a dead sentence'],
+            ['Pay later', null, null, 'Pay later', 'the merchant field is unaffected by the brand having no URL'],
+            ['<b>Pay</b> later', $faqUrl, null, 'Pay later', 'merchant markup is reduced to what the escaper allows'],
+            ['<b> </b>', $faqUrl, null, $tagline, 'copy whose only content is markup the escaper drops is emptiness too'],
+            [
+                '',
+                $faqUrl,
+                'For all companies, %1$sread more%2$s.<img src=x onerror=alert(1)>',
+                $tagline,
+                'a translation is copy like any other: markup in it reaches the page only through the escaper',
+            ],
         ];
 
-        foreach ($cases as list($stored, $brandUrl, $expected, $description)) {
+        foreach ($cases as list($stored, $brandUrl, $translated, $expected, $description)) {
             self::reset();
             StubStore::$languages = self::LANGUAGES;
             if ($stored !== null) {
@@ -159,25 +166,36 @@ final class CheckoutSubtitleSpec
             }
             StubStore::$configurationLang[2]['PS_TWO_SUB_TITLE'] = 'Another language';
 
-            $module = self::moduleWithSubtitleFaqUrl($brandUrl);
+            $module = self::moduleWithSubtitleFaqUrl($brandUrl, $translated);
             $module->_path = '/modules/twopayment/';
 
             TinyAssert::same($expected, $module->exposeTwoPaymentOptionAssigned('subtitle'), $description);
         }
     }
 
-    /** @param mixed $declared the brand's 'checkout_subtitle_faq_url' */
-    private static function moduleWithSubtitleFaqUrl($declared): object
+    /**
+     * @param mixed $declared the brand's 'checkout_subtitle_faq_url'
+     * @param string|null $translated stands in for the tagline's translated
+     *                    sentence, null to use the shipped one
+     */
+    private static function moduleWithSubtitleFaqUrl($declared, $translated = null): object
     {
-        return new class ($declared) extends TwopaymentTestHarness {
+        return new class ($declared, $translated) extends TwopaymentTestHarness {
             /** @var mixed */
             private $declared;
 
-            /** @param mixed $declared */
-            public function __construct($declared)
+            /** @var string|null */
+            private $translated;
+
+            /**
+             * @param mixed $declared
+             * @param string|null $translated
+             */
+            public function __construct($declared, $translated = null)
             {
                 parent::__construct();
                 $this->declared = $declared;
+                $this->translated = $translated;
             }
 
             public function getTwoBrandConfig($key)
@@ -185,6 +203,15 @@ final class CheckoutSubtitleSpec
                 return $key === 'checkout_subtitle_faq_url'
                     ? $this->declared
                     : parent::getTwoBrandConfig($key);
+            }
+
+            public function l($string)
+            {
+                if ($this->translated !== null && strpos($string, 'For all companies,') === 0) {
+                    return $this->translated;
+                }
+
+                return parent::l($string);
             }
         };
     }

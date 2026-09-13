@@ -112,6 +112,31 @@ final class TwoAnchorOnlyHtmlSpec
                 'Pay in 30 days &lt; see <a href="' . $url . '">terms</a>',
                 'a stray < is text and does not swallow the copy up to the next >',
             ],
+            [
+                '<a href="HTTPS://faq.example.test/x">read more</a>',
+                '<a href="HTTPS://faq.example.test/x">read more</a>',
+                'schemes are case-insensitive to a browser, so an uppercase one is still a reachable page',
+            ],
+            [
+                '<a href="' . $url . '">read more</a  > and on',
+                '<a href="' . $url . '">read more</a> and on',
+                'a close tag padded before its bracket still closes the link, rather than letting it swallow the rest',
+            ],
+            [
+                '<a href="javascript:alert(1)" href="' . $url . '">read more</a>',
+                'read more',
+                'a browser reads the first href, so a duplicate cannot hide a script URL behind a safe one',
+            ],
+            [
+                '<a href="' . $url . '" rel="nofollow" rel="noopener">read more</a>',
+                '<a href="' . $url . '">read more</a>',
+                'the first rel is the one a browser reads, so a duplicate cannot smuggle a keyword in',
+            ],
+            [
+                '<abbr href="' . $url . '">read more</abbr>',
+                'read more',
+                'only the anchor element is an anchor: a tag merely starting with an a is dropped like any other',
+            ],
         ];
     }
 
