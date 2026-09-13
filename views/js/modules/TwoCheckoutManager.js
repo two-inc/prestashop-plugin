@@ -983,13 +983,13 @@ class TwoCheckoutManager {
             const err = (result && result.error) ? String(result.error) : '';
             const errLower = err.toLowerCase();
 
-            // No offer, no fee: a refusal leaves no chip to attach one to, and
-            // an earlier approval in this session must stop vouching for it.
-            // Gated on the refusal statuses rather than on !success, because a
-            // transport or backend error says nothing about what the tile is
-            // offering - stripping the fee there hands the buyer a summary the
-            // order-create self-heal then charges past.
+            // Enumerated refusals only, never !success: an error says nothing
+            // about what the tile is offering, and withdrawing there hands the
+            // buyer a summary the order-create self-heal then charges past.
+            // 'order_intent_disabled' is deliberately absent - the preview
+            // being off is not this buyer being refused, and the fee is real.
             if (status === 'no_company' || status === 'incomplete_company'
+                || status === 'buyer_country_not_supported'
                 || status === 'skipped' || errLower.includes('skipped')) {
                 this.withdrawOrderIntentApproval();
             }
@@ -2184,11 +2184,13 @@ class TwoCheckoutManager {
     }
 
     /**
-     * Withdraw the server-side approval and the fee it admits, in that order:
-     * the fee sync is gated on the record this clear is rewriting.
+     * Record the refusal, then drop the fee it admits, in that order: the fee
+     * sync is gated on the record this write is rewriting. Recorded rather
+     * than forgotten, because the gate admits the fee wherever no verdict
+     * refuses it - order create adds it back regardless.
      */
     withdrawOrderIntentApproval() {
-        return this.clearOrderIntentResultFromServer()
+        return this.saveOrderIntentResultToServer(false)
             .then(() => this.syncSurchargeCartLine(false));
     }
 

@@ -54,8 +54,9 @@ final class SurchargeCartLineSpec
         self::testActionPresentCartSelfHealsOnExistingInstall();
         self::testSurchargeLineLeavesPersistedCheckoutStateRestorable();
         self::testUncompletedCheckoutStateIsNotForged();
-        self::testBuyerSyncAppliesFeeOnlyWhileTheTileIsOffering();
-        self::testApprovalStopsVouchingOnceItsOrderIsPlaced();
+        self::testBuyerSyncWithholdsTheFeeOnlyWhereThisCartWasRefused();
+        self::testOrderCreateNeverChargesAFeeTheSummaryWithheld();
+        self::testRecordedRefusalIsStampedWithItsOwnCart();
         self::testRestampRefusedWhenTheStoredStateAlreadyDrifted();
     }
 
@@ -1211,27 +1212,40 @@ final class SurchargeCartLineSpec
         );
     }
 
-    /* ---- ABN-554: no fee for a tile that is refusing ---- */
+    /* ---- ABN-554: the summary's fee and the charged fee are one decision ---- */
 
     /**
-     * The term chips carry the fee and only render on an approved intent, so a
-     * buyer whose company was typed by hand or declined sees no chip - and gets
-     * no fee line either. The server decides that, not the browser: the gate
-     * has to hold with the checkout JS switched off.
+     * Every reachable state of the session's order-intent record, and whether a
+     * buyer-driven sync may put the fee in the cart the buyer is looking at.
+     *
+     * @return array<int,array{0:string|null,1:int|null,2:int,3:string}>
      */
-    private static function testBuyerSyncAppliesFeeOnlyWhileTheTileIsOffering(): void
+    private static function intentRecordStates(): array
     {
-        $cases = [
-            ['1', self::CART_ID, 1, 'an approved intent is the tile genuinely offering Two'],
+        return [
+            ['1', self::CART_ID, 1, 'an approved intent is the tile offering Two'],
             ['0', self::CART_ID, 0, 'a declined company is refused a fee line'],
-            [null, null, 0, 'a manual-entry company never reaches an intent, so gets no fee line'],
-            ['1', 7777, 0, 'an approval given for the cart a previous order consumed'],
-            ['1', null, 0, 'an approval with no cart stamp, from before this gate'],
+            [null, null, 1, 'no verdict: the preview is switched off, or has yet to answer'],
+            ['1', 7777, 1, 'an approval given for the cart a previous order consumed'],
+            ['1', null, 1, 'an approval with no cart stamp, from before this gate'],
+            ['0', 7777, 1, 'a refusal given for another cart does not bind this one'],
+            ['0', null, 1, 'a refusal with no cart stamp, from before this gate'],
         ];
+    }
 
-        foreach ($cases as [$intentRecord, $stampedCartId, $expectedLines, $why]) {
+    /**
+     * Order create self-heals the fee in and the parity gate throws on any
+     * residual divergence, so the buyer's summary has to admit the fee
+     * everywhere an order is still reachable - a shop running with the intent
+     * preview off never records a verdict at all. Only the tile telling this
+     * buyer it is refusing withholds it, and it says so against this cart.
+     * The server decides, not the browser: the gate holds with the JS off.
+     */
+    private static function testBuyerSyncWithholdsTheFeeOnlyWhereThisCartWasRefused(): void
+    {
+        foreach (self::intentRecordStates() as [$intentRecord, $stampedCartId, $expectedLines, $why]) {
             $module = self::makeModule();
-            $cart = self::makeCart();
+            self::makeCart();
             $controller = self::makeSurchargeSyncController($module, $intentRecord, $stampedCartId);
 
             $controller->ajaxProcessSyncSurchargeLine();
@@ -1242,32 +1256,57 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * The cart the buyer gets after placing an order is a new one, and a
-     * manual-entry checkout on it never runs an intent - so an approval that
-     * outlives its own cart is exactly how the fee came back without chips.
+     * The invariant the whole gate exists for: in no state does order create
+     * charge a fee the summary the buyer approved did not show. Where the two
+     * would disagree there is no order at all - the parity gate throws.
      */
-    private static function testApprovalStopsVouchingOnceItsOrderIsPlaced(): void
+    private static function testOrderCreateNeverChargesAFeeTheSummaryWithheld(): void
+    {
+        foreach (self::intentRecordStates() as [$intentRecord, $stampedCartId, $expectedLines, $why]) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $controller = self::makeSurchargeSyncController($module, $intentRecord, $stampedCartId);
+            $controller->ajaxProcessSyncSurchargeLine();
+            $summaryLines = count(self::feeLines());
+
+            $threw = false;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-8101', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $threw = true;
+            }
+
+            TinyAssert::count($summaryLines, self::feeLines(), 'order create agrees with the summary: ' . $why);
+            TinyAssert::same($expectedLines === 0, $threw, 'a withheld fee blocks the order instead: ' . $why);
+        }
+    }
+
+    /**
+     * The stamp is what scopes a refusal to the cart it was given for, and the
+     * endpoint that records the verdict is the only thing that writes it.
+     */
+    private static function testRecordedRefusalIsStampedWithItsOwnCart(): void
     {
         $module = self::makeModule();
         $cart = self::makeCart();
-        self::makeSurchargeSyncController($module, '1', self::CART_ID);
+        $controller = self::makeOrderIntentResultController($module, false);
 
-        TinyAssert::true($module->isTwoOrderIntentApprovedForSession(), 'approved for the cart it was asked for');
+        $controller->ajaxProcessSaveOrderIntentResult();
 
-        $module->clearTwoOrderIntentSession();
+        TinyAssert::false($module->isTwoSurchargeAdmissibleForCart($cart), 'this cart was refused');
 
-        TinyAssert::false(
-            $module->isTwoOrderIntentApprovedForSession(),
-            'the placed order consumed the verdict'
-        );
-
-        // The buyer's next cart, same session.
         $cart->id = self::CART_ID + 1;
-        Context::getContext()->cart = $cart;
-        $controller = self::makeSurchargeSyncController($module, '1', self::CART_ID);
-        $controller->ajaxProcessSyncSurchargeLine();
-
-        TinyAssert::count(0, self::feeLines(), 'a stale approval must not admit a fee line to the next cart');
+        TinyAssert::true(
+            $module->isTwoSurchargeAdmissibleForCart($cart),
+            'the refusal says nothing about the buyer\'s next cart'
+        );
     }
 
     /**
@@ -1294,6 +1333,23 @@ final class SurchargeCartLineSpec
         );
     }
 
+    /** Records a verdict the way the checkout JS does, through the real endpoint. */
+    private static function makeOrderIntentResultController(Twopayment $module, bool $approved)
+    {
+        Tools::resetTestValues();
+        Tools::setTestValue('ajax', 1);
+        Tools::setTestValue('action', 'saveOrderIntentResult');
+        Tools::setTestValue('token', Tools::getToken(false));
+        Tools::setTestValue('approved', $approved ? 1 : 0);
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+
+        $cookie = Context::getContext()->cookie;
+        unset($cookie->two_order_intent_approved);
+        unset($cookie->two_order_intent_cart_id);
+
+        return self::makeCapturingOrderIntentController($module);
+    }
+
     /**
      * @param string|null $intentRecord value of the session's order-intent record, null when absent
      * @param int|null $stampedCartId cart the record was stamped for, null when unstamped
@@ -1318,6 +1374,11 @@ final class SurchargeCartLineSpec
             $cookie->two_order_intent_cart_id = (string) $stampedCartId;
         }
 
+        return self::makeCapturingOrderIntentController($module);
+    }
+
+    private static function makeCapturingOrderIntentController(Twopayment $module)
+    {
         $controller = new class extends TwopaymentOrderintentModuleFrontController {
             /** @var array<int,array> */
             public array $emitted = [];

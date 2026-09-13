@@ -1,10 +1,10 @@
 /**
- * ABN-554: the per-term buyer fee belongs to the term chips, and the chips
- * only exist once an order intent comes back approved. A buyer whose company
- * was typed by hand, or declined, sees no chip, so no fee reaches their cart
- * either - the sync carries the tile's own verdict, not the payment radio.
- * The converse matters just as much: an intent that merely errored is not a
- * refusal, and must leave a fee the buyer is still being shown alone.
+ * ABN-554: order create adds the buyer fee back regardless of what the browser
+ * did, so the checkout may only withhold it from the summary where the tile has
+ * told this buyer it is refusing - and it must say so to the server, since that
+ * recorded refusal is the whole gate. Everything that is not an enumerated
+ * refusal - a transport error, the merchant having the preview switched off -
+ * leaves the fee the buyer is being shown alone.
  */
 
 'use strict';
@@ -95,12 +95,15 @@ function settleIntentRecordWrite() {
 }
 
 describe.each([
-    [{ success: true, approved: true }, 1, 'an approved intent is the tile genuinely offering Two'],
-    [{ success: true, approved: false, message: 'Not available' }, 0, 'a declined company gets no fee'],
-    [{ success: false, status: 'no_company', error: 'no company' }, 0, 'no company entered at all'],
-    [{ success: false, status: 'incomplete_company', error: 'incomplete' }, 0, 'a company the backend could not resolve'],
-    [{ success: false, error: 'skipped_no_company' }, 0, 'a legacy skipped check']
-])('order intent result %j', (result, expectedSelected, why) => {
+    [{ success: true, approved: true }, [1], 'an approved intent is the tile genuinely offering Two'],
+    [{ success: true, approved: false, message: 'Not available' }, [0], 'a declined company gets no fee'],
+    [{ success: false, status: 'no_company', error: 'no company' }, [0], 'no company entered at all'],
+    [{ success: false, status: 'incomplete_company', error: 'incomplete' }, [0], 'a company the backend could not resolve'],
+    [{ success: false, status: 'buyer_country_not_supported', error: 'not available' }, [0], 'a billing country Two does not serve'],
+    [{ success: false, error: 'skipped_no_company' }, [0], 'a legacy skipped check'],
+    [{ success: false, status: 'order_intent_disabled', error: 'disabled' }, [], 'the preview switched off is not this buyer being refused'],
+    [{ success: false, error: 'Network error' }, [], 'an intent that died in transport says nothing']
+])('order intent result %j', (result, expectedSyncs, why) => {
     test('reconciles the fee line to what the tile offers: ' + why, async () => {
         // Given: a checkout manager on the payment step with Two selected.
         const manager = makeManager();
@@ -110,19 +113,22 @@ describe.each([
         settleIntentRecordWrite();
         await flushPromises();
 
-        // Then: exactly one fee sync fired, carrying the tile's own verdict.
-        expect(surchargeSyncs()).toEqual([expectedSelected]);
+        // Then: the fee syncs only where the tile has a verdict to carry.
+        expect(surchargeSyncs()).toEqual(expectedSyncs);
     });
 });
 
-test('a refused tile also withdraws any approval already recorded server-side', async () => {
+test('a refused tile records the refusal, rather than forgetting the verdict', async () => {
     const manager = makeManager();
 
     manager.handleOrderIntentResult({ success: false, status: 'no_company', error: 'no company' });
+    const write = ajax.calls.find((call) => call.settings.data.action === 'saveOrderIntentResult');
     settleIntentRecordWrite();
     await flushPromises();
 
-    expect(actions()).toContain('clearOrderIntentResult');
+    // A cleared record reads as 'no verdict', which admits the fee again.
+    expect(actions()).not.toContain('clearOrderIntentResult');
+    expect(write.settings.data.approved).toBe(0);
     expect(surchargeSyncs()).toEqual([0]);
 });
 
@@ -141,7 +147,7 @@ test('an intent that errored is not a refusal: fee and approval both stand', asy
 
     // Then: nothing withdrew the fee the buyer is still looking at, and the
     // server keeps the approval that admits it at order create.
-    expect(actions()).not.toContain('clearOrderIntentResult');
+    expect(actions()).toEqual([]);
     expect(surchargeSyncs()).toEqual([]);
 });
 
