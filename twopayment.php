@@ -5691,10 +5691,11 @@ class Twopayment extends PaymentModule
             // suppressed client-side.
             'company_search_tile' => $this->isCompanySearchInAddressArea() !== '1',
             'two_product_name' => $this->getTwoBrandConfig('product_name'),
-            // Gates the tagline element itself, not just its link (TWO-25711).
-            'tagline_faq_url' => $this->getTwoTaglineFaqUrl(),
             // Gates the "What is <brand>?" control entirely (ABN-554).
             'about_url' => $this->getTwoAboutUrl(),
+            // Keyed by module so a second tile on the page cannot claim the
+            // id its own aria-describedby points at (ABN-554).
+            'about_tooltip_id' => 'two-about-tooltip-' . $this->name,
         ));
 
         $inputs = ['token' => ['name' => 'token', 'type' => 'hidden', 'value' => Tools::getToken(false)]];
@@ -12896,18 +12897,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The brand's FAQ link target for the payment-tile tagline
-     * (brands/two.php 'checkout_tagline_faq_url', TWO-25711), or '' when the
-     * brand declares none - which suppresses the tagline element.
-     *
-     * @return string
-     */
-    public function getTwoTaglineFaqUrl()
-    {
-        return self::normalizeTwoTaglineFaqUrl($this->getTwoBrandConfig('checkout_tagline_faq_url'));
-    }
-
-    /**
      * The brand's "What is <brand>?" link target (brands/two.php 'about_url',
      * ABN-554), or '' when the brand declares none - which suppresses the icon
      * and its link entirely, whatever the merchant setting says.
@@ -12916,20 +12905,19 @@ class Twopayment extends PaymentModule
      */
     public function getTwoAboutUrl()
     {
-        return self::normalizeTwoTaglineFaqUrl($this->getTwoBrandConfig('about_url'));
+        return self::normalizeTwoBrandUrl($this->getTwoBrandConfig('about_url'));
     }
 
     /**
-     * Normalize a brand-declared URL ('checkout_tagline_faq_url',
-     * 'about_url') into the URL the template renders, or '' for anything
-     * unusable.
+     * Normalize a brand-declared URL ('about_url') into the URL the template
+     * renders, or '' for anything unusable.
      *
      * The URL reaches buyer-facing markup as an href, so only http(s) passes.
      *
      * @param mixed $configured
      * @return string
      */
-    public static function normalizeTwoTaglineFaqUrl($configured)
+    public static function normalizeTwoBrandUrl($configured)
     {
         if (!is_string($configured)) {
             return '';

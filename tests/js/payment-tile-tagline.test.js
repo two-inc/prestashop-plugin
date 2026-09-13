@@ -1,9 +1,9 @@
 /**
  * ABN-554. The payment tile's "What is <brand>?" control is one icon wrapped in
- * a link to the brand's about page (brands/two.php `about_url`); the tooltip it
- * shows holds no anchor of its own. A brand declaring no about URL renders no
- * icon and no link at all, whatever the merchant explainer setting says. The
- * tagline beside it is gated separately, on `checkout_tagline_faq_url`.
+ * a link to the brand's about page (brands/two.php `about_url`); the tooltip is
+ * the link's sibling and holds no anchor of its own. A brand declaring no about
+ * URL renders no icon and no link at all, whatever the merchant explainer
+ * setting says. The tagline beside it is unconditional.
  *
  * Rendered from the shipped `views/templates/hook/paymentinfo.tpl` via the
  * harness, so deleting the guard in the real template is what fails this.
@@ -11,43 +11,38 @@
 
 'use strict';
 
-const { buildPaymentTileWithTagline } = require('./ps-harness');
+const { buildPaymentTileWithAboutControl, ABOUT_TOOLTIP_ID } = require('./ps-harness');
 
 describe('payment tile about control', () => {
     afterEach(() => {
         global.document.body.innerHTML = '';
     });
 
-    const FAQ_URL = 'https://brand.example/faq';
     const ABOUT_URL = 'https://brand.example/what-is';
 
     const cases = [
-        [FAQ_URL, true, ABOUT_URL, true, ABOUT_URL, 'a brand about URL renders the icon link and points it there'],
-        [FAQ_URL, false, ABOUT_URL, true, null, 'the merchant explainer setting hides the control only; the tagline stays'],
-        ['', true, ABOUT_URL, false, ABOUT_URL, 'no brand FAQ URL drops the tagline; the control is gated separately'],
-        ['', true, '', false, null, 'a brand declaring no about URL renders no control even with the setting on'],
-        ['', false, '', false, null, 'with no brand URL the merchant setting has nothing left to show'],
+        [true, ABOUT_URL, ABOUT_URL, 'a brand about URL renders the icon link and points it there'],
+        [false, ABOUT_URL, null, 'the merchant explainer setting hides the control'],
+        [true, '', null, 'a brand declaring no about URL renders no control even with the setting on'],
+        [false, '', null, 'with no brand URL the merchant setting has nothing left to show'],
     ];
 
-    cases.forEach(([faqUrl, showAboutLink, aboutUrl, taglinePresent, expectedHref, description]) => {
+    cases.forEach(([showAboutLink, aboutUrl, expectedHref, description]) => {
         test(description, () => {
-            // Given brand URLs and the explainer setting; When the tile
-            // renders; Then the tagline and the icon link are present or absent.
-            const tile = buildPaymentTileWithTagline(faqUrl, showAboutLink, aboutUrl);
+            // Given a brand about URL and the explainer setting; When the tile
+            // renders; Then the icon link is present or absent.
+            const tile = buildPaymentTileWithAboutControl(showAboutLink, aboutUrl);
+
             const tagline = tile.querySelector('.two-tagline');
+            expect(tagline).not.toBeNull();
+            expect(tagline.textContent).toContain('Business payments made simple');
 
-            if (taglinePresent) {
-                expect(tagline).not.toBeNull();
-                expect(tagline.textContent).toContain('Business payments made simple');
-            } else {
-                expect(tagline).toBeNull();
-            }
-
-            const link = tile.querySelector('a.two-info-tooltip');
+            const wrapper = tile.querySelector('.two-info-tooltip');
             if (expectedHref === null) {
-                expect(link).toBeNull();
+                expect(wrapper).toBeNull();
                 expect(tile.querySelector('.two-info-icon')).toBeNull();
             } else {
+                const link = wrapper.querySelector('a.two-info-link');
                 expect(link).not.toBeNull();
                 expect(link.getAttribute('href')).toBe(expectedHref);
                 expect(link.getAttribute('target')).toBe('_blank');
@@ -55,11 +50,16 @@ describe('payment tile about control', () => {
                 expect(link.getAttribute('aria-label')).toContain('What is');
                 expect(link.hasAttribute('tabindex')).toBe(false);
 
-                // The icon is decorative and the box is the described-by target.
-                const icon = link.querySelector('.two-info-icon');
-                expect(icon.getAttribute('aria-hidden')).toBe('true');
-                const box = link.querySelector('.two-tooltip-content');
-                expect(box.getAttribute('id')).toBe(link.getAttribute('aria-describedby'));
+                // The icon is the shared SVG the other platforms ship, and is
+                // decorative: the link carries the name.
+                const icon = link.querySelector('img.two-info-icon');
+                expect(icon.getAttribute('src')).toContain('views/img/question.svg');
+                expect(icon.getAttribute('alt')).toBe('');
+
+                // The box is the described-by target, and is the link's sibling.
+                const box = wrapper.querySelector(':scope > .two-tooltip-content');
+                expect(box.getAttribute('id')).toBe(ABOUT_TOOLTIP_ID);
+                expect(link.getAttribute('aria-describedby')).toBe(ABOUT_TOOLTIP_ID);
                 expect(box.textContent).toContain('is a payment solution for B2B purchases online');
                 expect(box.textContent).toContain('Buy now, receive your goods, pay your invoice later.');
                 expect(box.textContent).toContain('Click to find out more');
