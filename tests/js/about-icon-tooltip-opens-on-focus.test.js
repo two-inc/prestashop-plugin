@@ -35,7 +35,7 @@ describe('the about tooltip', () => {
         Array.from(STYLESHEET.matchAll(/([^{}]*two-tooltip-content[^{}]*)\{([^}]*)\}/g)).map(
             (rule) => [rule[1].replace(/\/\*[\s\S]*?\*\//g, '').trim().replace(/\s+/g, ' '), rule[2]]
         )
-    )('stays in the accessibility tree under `%s`', (selector, body) => {
+    )('stays in the layout when closed under `%s`, so it can transition rather than pop', (selector, body) => {
         expect(body).not.toMatch(/visibility:\s*hidden|display:\s*none/);
     });
 
@@ -45,7 +45,7 @@ describe('the about tooltip', () => {
         expect(closed).toMatch(/opacity:\s*0;/);
     });
 
-    test('the link description resolves while the tooltip is closed', () => {
+    test('the described tooltip stays in the layout when closed, so it can transition rather than pop', () => {
         const style = global.document.createElement('style');
         style.textContent = STYLESHEET;
         global.document.head.appendChild(style);

@@ -74,6 +74,8 @@ describe('payment tile about control', () => {
 
                 // The icon sits beside the logo, which is this tile's title,
                 // with the tagline after the pair.
+                expect(tile.querySelector('.two-logo').compareDocumentPosition(wrapper))
+                    .toBe(global.Node.DOCUMENT_POSITION_FOLLOWING);
                 expect(tagline.compareDocumentPosition(wrapper))
                     .toBe(global.Node.DOCUMENT_POSITION_PRECEDING);
             }
