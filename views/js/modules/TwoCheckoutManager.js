@@ -2111,6 +2111,10 @@ class TwoCheckoutManager {
             return Promise.resolve();
         }
 
+        // Read now, not when the queue reaches this write: the token belongs to
+        // the checkout that decided on it.
+        const token = window.twopayment.ajax_token;
+
         // Resolves either way: the surcharge sync chained onto it must still
         // run after a failed save, where the server gate then keeps the fee out.
         return this.queueOrderIntentRecordWrite(() => new Promise((resolve) => {
@@ -2121,7 +2125,7 @@ class TwoCheckoutManager {
                     ajax: 1,
                     action: 'saveOrderIntentResult',
                     approved: approved ? 1 : 0,
-                    token: window.twopayment.ajax_token
+                    token: token
                 },
                 success: () => resolve(),
                 error: (xhr, status, error) => {
@@ -2138,6 +2142,8 @@ class TwoCheckoutManager {
             return Promise.resolve();
         }
 
+        const token = window.twopayment.ajax_token;
+
         return this.queueOrderIntentRecordWrite(() => new Promise((resolve) => {
             $.ajax({
                 url: this.config.orderIntentUrl,
@@ -2145,7 +2151,7 @@ class TwoCheckoutManager {
                 data: {
                     ajax: 1,
                     action: 'clearOrderIntentResult',
-                    token: window.twopayment.ajax_token
+                    token: token
                 },
                 success: () => resolve(),
                 error: () => {
