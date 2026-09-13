@@ -37,34 +37,30 @@
     <div class="two-header">
         <div class="two-logo-container">
             <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="{$two_product_name|escape:'html':'UTF-8'}" class="two-logo" />
-            {* ABN-554: the icon IS the link - the tooltip carries no anchor of
-               its own, so nothing inside the box is interactive. A brand with no
-               about URL renders no control at all, whatever the merchant
-               "explainer" setting says. *}
+            {* ABN-554: the icon IS the link - the tooltip is its sibling and
+               carries no anchor, so nothing inside the box is interactive. A
+               brand with no about URL renders no control at all, whatever the
+               merchant "explainer" setting says. *}
             {if $show_about_link}
             {if $about_url != ''}
-            <a class="two-info-tooltip"
-               href="{$about_url|escape:'html':'UTF-8'}"
-               target="_blank"
-               rel="noopener noreferrer"
-               aria-label="{l s='What is %s?' mod='twopayment' sprintf=[$two_product_name]}"
-               aria-describedby="two-about-tooltip">
-                <span class="two-info-icon" aria-hidden="true">?</span>
-                <span class="two-tooltip-content" id="two-about-tooltip" role="tooltip">
+            <span class="two-info-tooltip">
+                <a class="two-info-link"
+                   href="{$about_url|escape:'html':'UTF-8'}"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   aria-label="{l s='What is %s?' mod='twopayment' sprintf=[$two_product_name]}"
+                   aria-describedby="{$about_tooltip_id|escape:'html':'UTF-8'}"><img class="two-info-icon" src="{$module_dir|escape:'html':'UTF-8'}views/img/question.svg" alt="" /></a>
+                <span class="two-tooltip-content" id="{$about_tooltip_id|escape:'html':'UTF-8'}" role="tooltip">
                     <span class="two-tooltip-text">{l s='%s is a payment solution for B2B purchases online, allowing you to buy from your favourite merchants and suppliers on trade credit. Using %s, you can access flexible trade credit instantly to make purchasing simple.' mod='twopayment' sprintf=[$two_product_name, $two_product_name]}</span>
                     <span class="two-tooltip-text two-tooltip-text--strong">{l s='Buy now, receive your goods, pay your invoice later.' mod='twopayment'}</span>
                     <span class="two-tooltip-text">{l s='Click to find out more' mod='twopayment'}</span>
                 </span>
-            </a>
+            </span>
             {/if}
             {/if}
-            {* TWO-25711: a brand declaring no FAQ URL emits no tagline element
-               at all. The sentence stays a translated string. *}
-            {if $tagline_faq_url != ''}
             <p class="two-tagline">
                 {l s='Business payments made simple' mod='twopayment'}
             </p>
-            {/if}
         </div>
     </div>
 

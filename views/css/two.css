@@ -170,33 +170,20 @@
 /* Info Tooltip - Inline Style */
 .two-info-tooltip {
     position: relative;
-    display: inline-block;
+    display: inline-flex;
     margin-left: 6px;
     vertical-align: middle;
+}
+
+.two-info-link {
+    display: inline-flex;
+    line-height: 0;
     text-decoration: none;
 }
 
 .two-info-icon {
-    width: 16px;
-    height: 16px;
-    background: #6c757d;
-    color: #fff;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    font-weight: bold;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    user-select: none;
-    vertical-align: middle;
-}
-
-.two-info-tooltip:hover .two-info-icon,
-.two-info-tooltip:focus-visible .two-info-icon {
-    background: #495057;
-    transform: scale(1.1);
+    width: 20px;
+    height: 19px;
 }
 
 .two-tooltip-content {
@@ -220,11 +207,11 @@
 }
 
 .two-info-tooltip:hover .two-tooltip-content,
-.two-info-tooltip:focus-visible .two-tooltip-content,
 .two-info-tooltip:focus-within .two-tooltip-content {
     opacity: 1;
     visibility: visible;
     transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
 }
 
 .two-tooltip-text {
@@ -515,7 +502,8 @@
         transform: translateY(-10px); /* Remove translateX for mobile */
     }
     
-    .two-info-tooltip:hover .two-tooltip-content {
+    .two-info-tooltip:hover .two-tooltip-content,
+    .two-info-tooltip:focus-within .two-tooltip-content {
         transform: translateY(0); /* Remove translateX for mobile */
     }
     
