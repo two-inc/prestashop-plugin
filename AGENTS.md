@@ -250,13 +250,14 @@ The field's own focus opener is held off for that one programmatic focus alone, 
 any keydown on the field, a pointer press on it, or focus arriving from anywhere
 else brings the popover straight back.
 
-**A signup launch holds that FOCUS opener off until the flight settles, or until
-focus lands anywhere but the field it parked on.** A browser re-fires `focus`
-there the moment the popup closes, and that re-fire is not the buyer coming back
-— it read as one, reopening the popover and marking the panel kept so the settle
-skipped its own close. Focus reaching any other control ends the ambiguity and
-releases the hold, and the pointer and keyboard openers are live throughout
-(ABN-554).
+**A signup launch holds that FOCUS opener off until the window return spends a
+`focus`+`focusin` pair on the parked field, or the buyer works the field.** A
+browser re-fires that pair on whatever was focused when the window comes back,
+which is the buyer returning to the tab and not the buyer choosing this panel -
+and it is bound to the window's own return, not to the popup's close, so there is
+no bound on how long it takes. The hold outlives the flight settling; a
+`pointerdown`, `keydown` or `click` on the field ends it at once, and the pointer
+and keyboard openers are live throughout (ABN-554).
 
 **The close-on-focus-leave path is the exception, and deliberately so.** It only
 fires once focus has settled on another control, so taking focus back would undo

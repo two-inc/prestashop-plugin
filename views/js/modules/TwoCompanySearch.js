@@ -265,8 +265,10 @@ class TwoCompanySearch {
         this._soleTraderLoading = false;
         // Set while a flight is live once the buyer came back into the panel from its popup (TWO-25658).
         this._panelKeptPastPopup = false;
-        // Suppresses the field's own focus opener for the flight's whole life (ABN-554).
+        // Suppresses the field's own focus opener until the window return spends its focus pair (ABN-554).
         this._openerHeld = false;
+        this._heldFocusSeen = false;
+        this._windowReturned = false;
         this._popupSeenThisFlight = false;
         // Per-instance suffix: the `mouseup` guard binds on `document`, where
         // the shared `.twoDropdown` namespace unbinds every instance's.
@@ -1281,9 +1283,9 @@ class TwoCompanySearch {
         this.beginSoleTraderLoading();
         // Cleared by the call above; a resumed flight has its popup in front of the buyer already.
         this._popupSeenThisFlight = true;
-        // With it, or the re-fire the popup's close sends this replacement reads as the
-        // buyer coming back, and the settle leaves the popover it should close (ABN-554).
-        this._openerHeld = true;
+        // Without it the window return's re-fire reads to this replacement as the
+        // buyer coming back, and reopens the popover (ABN-554).
+        this.holdCompanyFieldOpener();
         const soleTrader = this.soleTrader();
         if (soleTrader && typeof soleTrader.readoptEnrollment === 'function') {
             soleTrader.readoptEnrollment();
@@ -1328,6 +1330,26 @@ class TwoCompanySearch {
         } else {
             el.focus();
         }
+    }
+
+    /**
+     * Suppress the company field's focus opener until the window return that
+     * re-fires `focus` on the parked field has spent its `focus`+`focusin`
+     * pair, or the buyer works the field (ABN-554).
+     *
+     * Unbounded: the browser sends that pair when the buyer comes back to this
+     * tab, which may be a minute after the popup closed, or never.
+     */
+    holdCompanyFieldOpener() {
+        this._openerHeld = true;
+        this._heldFocusSeen = false;
+        this._windowReturned = false;
+    }
+
+    releaseCompanyFieldOpener() {
+        this._openerHeld = false;
+        this._heldFocusSeen = false;
+        this._windowReturned = false;
     }
 
     /**
@@ -1599,9 +1621,6 @@ class TwoCompanySearch {
                 || !document.contains(this.companyField.get(0))) {
                 return;
             }
-            // For the flight, not just this focus: a browser re-fires `focus` here when
-            // the popup closes, and by then nothing tells that from the buyer (ABN-554).
-            this._openerHeld = true;
             this._closingSelf = true;
             try {
                 this.focusQuietly(this.companyField);
@@ -2002,7 +2021,7 @@ class TwoCompanySearch {
         }
         this._soleTraderLoading = true;
         this._panelKeptPastPopup = false;
-        this._openerHeld = false;
+        this.releaseCompanyFieldOpener();
         this._popupSeenThisFlight = false;
         this._manualEntryMemory.refusedSoleTrader = false;
         if (this.companyField && this.companyField.length) {
@@ -2010,30 +2029,24 @@ class TwoCompanySearch {
         }
         $(document).off('.twoSoleTraderFlight' + this._instanceNs)
             .on('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs, () => {
-                try {
-                    if (this._dropdownOpen && !this._panelKeptPastPopup) {
-                        // closeDropdown() itself calls endSoleTraderLoading() as its
-                        // own first line.
-                        this.closeDropdown(true);
-                        return;
-                    }
-                    // No panel to close, or the buyer came back to it; closeDropdown() would also blank the query and move focus.
-                    this.endSoleTraderLoading();
-                } finally {
-                    // After the close has moved focus, or the field's opener reopens what it just closed.
-                    this._openerHeld = false;
+                if (this._dropdownOpen && !this._panelKeptPastPopup) {
+                    // closeDropdown() itself calls endSoleTraderLoading() as its
+                    // own first line.
+                    this.closeDropdown(true);
+                    return;
                 }
+                // No panel to close, or the buyer came back to it; closeDropdown() would also blank the query and move focus.
+                this.endSoleTraderLoading();
+                // The hold outlives the flight: the window return that re-fires focus
+                // on the parked field can be minutes away (ABN-554).
             })
             // Rule 3 (TWO-25658): focus outside the panel closes it; back inside from a popup that just closed, it stays for good.
             // The company field counts as inside - its own focus opener would otherwise race this on event order.
             .on('two:sole-trader-focus-settled.twoSoleTraderFlight' + this._instanceNs, (event) => {
                 const detail = (event.originalEvent || event).detail || {};
-                // Focus landing anywhere but the parked field is a move only the buyer can
-                // have made, so the window-return re-fire is no longer ambiguous (ABN-554).
+                // Focus on the parked field while the opener is held is the window
+                // return, not the buyer choosing this panel (ABN-554).
                 const refire = this._openerHeld && detail.target === this.companyFieldNode();
-                if (!refire) {
-                    this._openerHeld = false;
-                }
                 if (!this._dropdownOpen) {
                     return;
                 }
@@ -2060,6 +2073,10 @@ class TwoCompanySearch {
                 const detail = (event.originalEvent || event).detail;
                 if (detail && detail.launcher === this._instanceNs) {
                     this._popupSeenThisFlight = true;
+                    // Beside the flag it is read against: the park below has early
+                    // returns, and a flight held on one but not the other treats the
+                    // window return as the buyer (ABN-554).
+                    this.holdCompanyFieldOpener();
                     this._reopenMemory.soleTraderPopup = detail.id;
                     this.parkFocusDroppedByPopup();
                 }
@@ -2154,12 +2171,40 @@ class TwoCompanySearch {
             return;
         }
         this.companyField.off('.twoCompanyOpen');
+        const windowNs = '.twoCompanyOpen' + this._instanceNs;
+        $(window).off(windowNs)
+            .on('focus' + windowNs, () => {
+                this._windowReturned = !this._destroyed;
+            })
+            .on('blur' + windowNs, () => {
+                this._windowReturned = false;
+            });
+
+        // A gesture ON this field is the buyer whatever else is in flight (ABN-554).
+        this.companyField.on(
+            'pointerdown.twoCompanyOpen keydown.twoCompanyOpen click.twoCompanyOpen',
+            () => {
+                this.releaseCompanyFieldOpener();
+            }
+        );
 
         this.companyField.on('focus.twoCompanyOpen', () => {
-            if (this._destroyed || this._manualEntry || this._closingSelf || this._openerHeld) {
+            if (this._destroyed || this._manualEntry || this._closingSelf) {
+                return;
+            }
+            if (this._openerHeld) {
+                // Swallowed, and half of the window-return pair its `focusin` completes (ABN-554).
+                this._heldFocusSeen = this._windowReturned;
                 return;
             }
             this.openDropdown();
+        });
+
+        this.companyField.on('focusin.twoCompanyOpen', () => {
+            if (this._destroyed || !this._openerHeld || !this._heldFocusSeen) {
+                return;
+            }
+            this.releaseCompanyFieldOpener();
         });
 
         this.companyField.on('mousedown.twoCompanyOpen', (event) => {
@@ -6322,6 +6367,8 @@ class TwoCompanySearch {
             if (this._widthRefreshHandler) {
                 $(window).off('resize.twoCompanyWidth orientationchange.twoCompanyWidth', this._widthRefreshHandler);
             }
+            // Per-instance namespace, so this removes only this instance's pair.
+            $(window).off('.twoCompanyOpen' + this._instanceNs);
             clearTimeout(this._widthRefreshTimeoutId);
             this._widthRefreshTimeoutId = null;
         } catch (e) {
