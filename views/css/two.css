@@ -868,8 +868,8 @@
 
 /* Padding absorbs the 1px the border gives up, so the chip does not resize
    when it is pointed at or focused. */
-.two-company-mode-chip:not(.two-company-mode-chip--selected):hover,
-.two-company-mode-chip:not(.two-company-mode-chip--selected):focus {
+.two-company-mode-chip:not(.two-company-mode-chip--selected):not(:disabled):hover,
+.two-company-mode-chip:not(.two-company-mode-chip--selected):not(:disabled):focus {
     padding: 7px 11px;
     border-width: 1px;
     border-color: #091030;
@@ -883,8 +883,10 @@
     color: #fff;
 }
 
-.two-company-mode-chip:focus {
-    outline: none;
+@supports selector(:focus-visible) {
+    .two-company-mode-chip:focus {
+        outline: none;
+    }
 }
 
 /* An interactive control with no visible focus state is worse than no
@@ -934,9 +936,8 @@
     user-select: none;
 }
 
-/* Padding absorbs the 1px the border gives up, so the chip does not resize
-   when it is pointed at or focused. A disabled chip is exempt: the affordance
-   would promise a click that does nothing. */
+/* A disabled chip is exempt: the affordance would promise a click that does
+   nothing. */
 .two-term-chip:not(.two-term-chip--selected):not(:disabled):hover,
 .two-term-chip:not(.two-term-chip--selected):not(:disabled):focus {
     padding: 9px 15px;
@@ -946,8 +947,10 @@
     background: #e3e3e3;
 }
 
-.two-term-chip:focus {
-    outline: none;
+@supports selector(:focus-visible) {
+    .two-term-chip:focus {
+        outline: none;
+    }
 }
 
 .two-term-chip:focus:focus-visible {
@@ -959,7 +962,6 @@
     border-color: #091030;
     background: #091030;
     color: white;
-    font-weight: 500;
 }
 
 .two-term-chip.two-term-chip--single {
@@ -1034,14 +1036,14 @@
         gap: 6px;
     }
     
-    .two-term-chip {
+    .two-term-chip.two-term-chip {
         min-width: 40px;
         padding: 6px 10px;
         font-size: 12px;
     }
 
-    .two-term-chip:not(.two-term-chip--selected):not(:disabled):hover,
-    .two-term-chip:not(.two-term-chip--selected):not(:disabled):focus {
+    .two-term-chip.two-term-chip:not(.two-term-chip--selected):not(:disabled):hover,
+    .two-term-chip.two-term-chip:not(.two-term-chip--selected):not(:disabled):focus {
         padding: 7px 11px;
     }
     
