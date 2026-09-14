@@ -866,8 +866,8 @@
     cursor: pointer;
 }
 
-/* Padding absorbs the 1px the border gives up, so the chip does not resize
-   when it is pointed at or focused. */
+/* Padding absorbs the 1px the border gives up, so the chip does not resize.
+   A disabled chip is exempt: the affordance would promise a dead click. */
 .two-company-mode-chip:not(.two-company-mode-chip--selected):not(:disabled):hover,
 .two-company-mode-chip:not(.two-company-mode-chip--selected):not(:disabled):focus {
     padding: 7px 11px;
@@ -936,8 +936,8 @@
     user-select: none;
 }
 
-/* A disabled chip is exempt: the affordance would promise a click that does
-   nothing. */
+/* Padding absorbs the 1px the border gives up, so the chip does not resize.
+   A disabled chip is exempt: the affordance would promise a dead click. */
 .two-term-chip:not(.two-term-chip--selected):not(:disabled):hover,
 .two-term-chip:not(.two-term-chip--selected):not(:disabled):focus {
     padding: 9px 15px;
