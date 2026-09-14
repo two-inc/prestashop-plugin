@@ -14,20 +14,30 @@
  * specific rule, which is what makes the outcome hold when a theme stacks its
  * own stylesheet over the module's.
  *
- * A rule it cannot model throws rather than being skipped, because a skipped
- * rule reports green on a chip it never saw. Three limits bound that, all by
- * design:
+ * Six conditions throw rather than resolving to a value, because a rule
+ * dropped in silence reports green on a chip it never saw: a pseudo-class
+ * outside :not/:is/:where, or one of those nested inside another, on a
+ * selector that could still reach a chip; a chip-reaching rule inside an
+ * unmodelled @media or an unlisted @supports; @import; any at-rule type
+ * other than style, media, supports, import and keyframes; and a rule
+ * reaching a chip that names keyframes this sheet does not define, or whose
+ * frames set an audited property.
+ *
+ * Known gaps, each confirmed by watching the resolver answer rather than by
+ * reading its intent. This list is what has been found; it is not a proof
+ * that nothing else gets through.
  *
  *  - The probe is a bare detached <button>. A selector depending on the chip's
- *    real position or contents — a child combinator under the strip, :has(),
- *    :nth-child() — simply fails to match and is dropped, not rejected, and
- *    specificity() scores structural pseudo-classes as classes. Modelling the
- *    live DOM is the fix, and it is not in this suite.
+ *    real position or contents — a child combinator under the strip, :has() —
+ *    fails to match and is dropped, not rejected, and specificity() scores
+ *    structural pseudo-classes as classes. The fix is the live chip DOM.
  *  - An at-rule wrapper around an otherwise-correct rule is invisible, so
  *    unwrapping the @supports around the focus-ring reset does not fail here.
  *  - Only the two viewports below are audited. A chip rule in, say,
  *    @media (min-width: 2000px) is modelled, found not to apply at either,
  *    and so never evaluated at all.
+ *  - A ::pseudo-element rule is dropped on the grounds that it paints a
+ *    generated box; one positioned over the chip would not be caught.
  */
 
 "use strict";
@@ -50,6 +60,8 @@ const SUPPORTED_CONDITIONS = ["selector(:focus-visible)"];
  * as a chip that is fine.
  */
 const MODELLED_PSEUDO = /^:(not|is|where)\(/;
+
+const NESTED_FUNCTIONAL = /:(not|is|where)\([^)]*:[a-z][\w-]*\(/i;
 
 /* Anchored: an unanchored ":focus" also eats the ":focus" of ":focus-within". */
 const PSEUDO_CLASSES = [
@@ -162,6 +174,9 @@ function matchWeight(element, selectorText) {
       const unmodelled = (selector.match(/:[a-z][\w-]*\(?/gi) || []).filter(
         (pseudo) => !MODELLED_PSEUDO.test(pseudo)
       );
+      // nwsapi answers a functional pseudo-class nested in another with a flat
+      // false, where a browser matches; treat the whole selector as unmodelled.
+      if (NESTED_FUNCTIONAL.test(selector)) unmodelled.push("nested :is()/:where()/:not()");
       if (unmodelled.length === 0) return element.matches(selector);
       if (reachesUnderAnyState(element, selector)) {
         throw new Error(`unmodelled ${unmodelled[0]} in "${selector}"`);
@@ -184,13 +199,30 @@ function reachesUnderAnyState(element, selector) {
   }
 }
 
-/** @returns {string[]} the animation names a rule's declarations reference */
+/*
+ * Keywords the `animation` shorthand can carry in a name's place. The
+ * `animation-name` longhand takes none of them, so filtering there would hide
+ * a block actually called `linear` or `forwards`.
+ */
+const SHORTHAND_KEYWORDS =
+  /^(infinite|normal|reverse|alternate|alternate-reverse|forwards|backwards|both|running|paused|linear|ease|ease-in|ease-out|ease-in-out|step-start|step-end)$/i;
+
+const NEVER_A_NAME = /^(none|initial|inherit|unset|revert|revert-layer)$/i;
+
+/** @returns {{name: string, ambiguous: boolean}[]} the animations a rule references */
 function animationNames(cssText) {
-  return (cssText.match(/animation(-name)?\s*:[^;]*/gi) || []).flatMap((declaration) =>
-    (declaration.split(":")[1].match(/[a-z_-][\w-]*/gi) || []).filter(
-      (token) => !/^(none|initial|inherit|unset|infinite|normal|reverse|alternate|forwards|backwards|both|running|paused|linear|ease|ease-in|ease-out|ease-in-out|step-start|step-end|steps|cubic-bezier)$/i.test(token)
-    )
-  );
+  return (cssText.match(/animation(-name)?\s*:[^;]*/gi) || []).flatMap((declaration) => {
+    const longhand = /animation-name/i.test(declaration);
+    return declaration
+      .slice(declaration.indexOf(":") + 1)
+      // Durations, delays, counts and timing functions are not identifiers.
+      .replace(/[a-z-]+\([^)]*\)/gi, " ")
+      .replace(/[-+]?\d*\.?\d+(m?s|%)?/gi, " ")
+      .split(",")
+      .flatMap((slot) => slot.match(/-?[a-z_][\w-]*/gi) || [])
+      .filter((token) => !NEVER_A_NAME.test(token))
+      .map((name) => ({ name, ambiguous: !longhand && SHORTHAND_KEYWORDS.test(name) }));
+  });
 }
 
 /** @returns {{rule: CSSStyleRule, order: number, weight: number[]}[]} matches, weakest first */
@@ -251,7 +283,10 @@ function matchingRules(element, width) {
   walk(loadStylesheet().cssRules, true);
 
   for (const match of matches) {
-    for (const name of animationNames(match.rule.style.cssText)) {
+    for (const { name, ambiguous } of animationNames(match.rule.style.cssText)) {
+      // In the shorthand a keyword wins its slot, so such a token is only a
+      // name when the sheet defines one — and then which it is cannot be told.
+      if (ambiguous && !keyframes.has(name)) continue;
       if (!keyframes.has(name)) {
         throw new Error(`chip animation "${name}" has no keyframes in this sheet`);
       }
@@ -411,6 +446,17 @@ describe.each(CONTROLS)("$label", ({ chip }) => {
     const weights = states.map(([classes]) => chipStyle(classes).fontWeight);
 
     expect(new Set(weights).size).toBe(1);
+  });
+
+  test.each(VIEWPORTS)("an unselected label does not change on hover or focus %s", (width) => {
+    const atRest = chipStyle(resting, width).color;
+
+    expect([
+      chipStyle(hovered, width).color,
+      chipStyle(focused, width).color,
+      chipStyle(engaged, width).color,
+      chipStyle(ringed, width).color,
+    ]).toEqual([atRest, atRest, atRest, atRest]);
   });
 
   test("no state carries a colour the palette retired", () => {
