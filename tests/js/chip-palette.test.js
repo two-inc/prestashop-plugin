@@ -14,11 +14,9 @@
  * specific rule, which is what makes the outcome hold when a theme stacks its
  * own stylesheet over the module's.
  *
- * At-rule types, media conditions and interaction pseudo-classes it cannot
- * model throw rather than being skipped, because a skipped rule reports green
- * on a chip it never saw.
- *
- * Two limits it does not cover, both by design:
+ * A rule it cannot model throws rather than being skipped, because a skipped
+ * rule reports green on a chip it never saw. Three limits bound that, all by
+ * design:
  *
  *  - The probe is a bare detached <button>. A selector depending on the chip's
  *    real position or contents — a child combinator under the strip, :has(),
@@ -27,6 +25,9 @@
  *    live DOM is the fix, and it is not in this suite.
  *  - An at-rule wrapper around an otherwise-correct rule is invisible, so
  *    unwrapping the @supports around the focus-ring reset does not fail here.
+ *  - Only the two viewports below are audited. A chip rule in, say,
+ *    @media (min-width: 2000px) is modelled, found not to apply at either,
+ *    and so never evaluated at all.
  */
 
 "use strict";
@@ -42,15 +43,14 @@ const NARROW = 480;
 const SUPPORTED_CONDITIONS = ["selector(:focus-visible)"];
 
 /*
- * Pseudo-classes that depend on interaction state. The four the chips use are
- * rewritten to classes below; any other one is dropped from the selector, and
- * the rule is rejected if what remains can still reach a chip — that residue
- * is the widest thing the full selector could ever match.
+ * The only pseudo-classes carried through to a match. Everything else is
+ * dropped from the selector and the rule rejected if what remains can still
+ * reach a chip — that residue is the widest thing the full selector could ever
+ * match, so a state this resolver does not model fails loud instead of reading
+ * as a chip that is fine.
  */
-const UNMODELLED_STATE =
-  /:(hover|focus|focus-visible|focus-within|active|checked|disabled|enabled|target|link|visited|any-link|valid|invalid|placeholder-shown|autofill)\b/i;
+const MODELLED_PSEUDO = /^:(not|is|where)\(/;
 
-/* Anchored: an unanchored ":focus" also eats the ":focus" of ":focus-within". */
 /* Anchored: an unanchored ":focus" also eats the ":focus" of ":focus-within". */
 const PSEUDO_CLASSES = [
   [/:focus-visible(?![-\w])/g, ".two-state-focus-visible"],
@@ -114,11 +114,12 @@ function loadStylesheet() {
 /** @returns {boolean|undefined} undefined where the query is not modelled */
 function mediaApplies(mediaText, width) {
   let verdict = true;
-  for (const clause of mediaText.toLowerCase().split(/\s+and\s+/)) {
+  const query = mediaText.toLowerCase().replace(/^\s*only\s+/, "");
+  for (const clause of query.split(/\s+and\s+/)) {
     const term = clause.trim();
     const max = term.match(/^\(\s*max-width\s*:\s*(\d+)px\s*\)$/);
     const min = term.match(/^\(\s*min-width\s*:\s*(\d+)px\s*\)$/);
-    if (term === "all" || term === "screen" || term === "only") continue;
+    if (term === "all" || term === "screen") continue;
     else if (max) verdict = verdict && width <= Number(max[1]);
     else if (min) verdict = verdict && width >= Number(min[1]);
     else return undefined;
@@ -158,9 +159,12 @@ function matchWeight(element, selectorText) {
     .filter((selector) => {
       // A ::pseudo-element rule paints a generated box, never the chip's own.
       if (selector.includes("::")) return false;
-      if (!UNMODELLED_STATE.test(selector)) return element.matches(selector);
+      const unmodelled = (selector.match(/:[a-z][\w-]*\(?/gi) || []).filter(
+        (pseudo) => !MODELLED_PSEUDO.test(pseudo)
+      );
+      if (unmodelled.length === 0) return element.matches(selector);
       if (reachesUnderAnyState(element, selector)) {
-        throw new Error(`unmodelled pseudo-class in "${selector}"`);
+        throw new Error(`unmodelled ${unmodelled[0]} in "${selector}"`);
       }
       return false;
     })
@@ -180,9 +184,19 @@ function reachesUnderAnyState(element, selector) {
   }
 }
 
+/** @returns {string[]} the animation names a rule's declarations reference */
+function animationNames(cssText) {
+  return (cssText.match(/animation(-name)?\s*:[^;]*/gi) || []).flatMap((declaration) =>
+    (declaration.split(":")[1].match(/[a-z_-][\w-]*/gi) || []).filter(
+      (token) => !/^(none|initial|inherit|unset|infinite|normal|reverse|alternate|forwards|backwards|both|running|paused|linear|ease|ease-in|ease-out|ease-in-out|step-start|step-end|steps|cubic-bezier)$/i.test(token)
+    )
+  );
+}
+
 /** @returns {{rule: CSSStyleRule, order: number, weight: number[]}[]} matches, weakest first */
 function matchingRules(element, width) {
   const matches = [];
+  const keyframes = new Map();
   let order = 0;
 
   const reject = (rule, description) => {
@@ -217,8 +231,17 @@ function matchingRules(element, width) {
       } else if (rule.type === IMPORT_RULE) {
         // Its sheet is a second cascade this resolver never reads.
         throw new Error(`unmodelled @import of ${rule.href}`);
-      } else if (rule.type !== KEYFRAMES_RULE) {
-        // Keyframes are the one skippable type: they animate, never cascade.
+      } else if (rule.type === KEYFRAMES_RULE) {
+        // An animation outranks every author declaration and `forwards` keeps
+        // its last frame, so a block touching an audited property is only safe
+        // while nothing that reaches a chip names it.
+        const touches = CONTESTED.filter((property) =>
+          Array.from(rule.cssRules).some(
+            (frame) => styleOf(frame.style.cssText)[property] !== ""
+          )
+        );
+        keyframes.set(rule.name, touches);
+      } else {
         reject(rule, rule.cssText.split("{")[0].trim());
         throw new Error(`unmodelled rule type ${rule.type}`);
       }
@@ -226,6 +249,19 @@ function matchingRules(element, width) {
   };
 
   walk(loadStylesheet().cssRules, true);
+
+  for (const match of matches) {
+    for (const name of animationNames(match.rule.style.cssText)) {
+      if (!keyframes.has(name)) {
+        throw new Error(`chip animation "${name}" has no keyframes in this sheet`);
+      }
+      const touches = keyframes.get(name);
+      if (touches.length) {
+        throw new Error(`chip animation "${name}" sets ${touches.join(", ")}`);
+      }
+    }
+  }
+
   return matches.sort(
     (a, b) => compareSpecificity(a.weight, b.weight) || a.order - b.order
   );
