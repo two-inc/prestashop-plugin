@@ -819,6 +819,15 @@
 }
 
 /*
+ * The API marks the matched substring with `mark`, whose UA default is a yellow
+ * highlighter no theme here resets. Scoped to the results, which both engines share.
+ */
+.two-company-dropdown__results mark {
+    background: transparent;
+    color: inherit;
+}
+
+/*
  * The three-chip mode selector (TWO-40 design revision): "Sole Trader",
  * "Registered Company" (default), "Enter Manually". Replaces the old plain
  * link-style ".two-company-not-listed"/".two-company-sole-trader-entry" rows

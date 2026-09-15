@@ -38,6 +38,49 @@ function pressIsDeadSpace(event) {
     return true;
 }
 
+/** Exact, lowercase, attribute-free: every other shape is escaped as text. */
+const HIGHLIGHT_TOKEN = /(<\/?(?:mark|b)>)/;
+const HIGHLIGHT_TAG = /^<(\/?)(mark|b)>$/;
+
+/**
+ * Rebuild a register-sourced label as nodes, keeping only the `<mark>`/`<b>`
+ * pair the search API marks the matched substring with. Nothing is ever parsed
+ * as markup, so a company name carrying angle brackets reads as the register
+ * spells it.
+ *
+ * @param {Document} doc the document the row lives in
+ * @param {string} html
+ * @returns {DocumentFragment}
+ */
+function highlightFragment(doc, html) {
+    const fragment = doc.createDocumentFragment();
+    const open = [fragment];
+    const source = (html === null || html === undefined) ? '' : String(html);
+    source.split(HIGHLIGHT_TOKEN).forEach(function (token) {
+        const host = open[open.length - 1];
+        const tag = HIGHLIGHT_TAG.exec(token);
+        if (!tag) {
+            if (token) {
+                host.appendChild(doc.createTextNode(token));
+            }
+            return;
+        }
+        if (!tag[1]) {
+            const element = doc.createElement(tag[2]);
+            host.appendChild(element);
+            open.push(element);
+            return;
+        }
+        if (open.length > 1 && host.tagName.toLowerCase() === tag[2]) {
+            open.pop();
+            return;
+        }
+        // A close tag that opens nothing closes nothing, and reads as itself.
+        host.appendChild(doc.createTextNode(token));
+    });
+    return fragment;
+}
+
 class TwoCompanySearch {
     static DEFAULT_COMPANY_SEARCH_LIMIT = 50;
 
@@ -4931,6 +4974,11 @@ class TwoCompanySearch {
                 }
                 wrapper.attr('role', 'option').attr('aria-selected', 'false');
                 const item = row.data('ui-autocomplete-item');
+                if (item && !item.two_unavailable && item.two_highlight) {
+                    const host = wrapper[0];
+                    host.textContent = '';
+                    host.appendChild(highlightFragment(host.ownerDocument, item.two_highlight));
+                }
                 if (item && item.two_unavailable) {
                     wrapper.attr('aria-disabled', 'true');
                     // `ui-state-disabled` is what jQuery UI's own menu checks
@@ -5181,9 +5229,13 @@ class TwoCompanySearch {
                     });
                 }
                 const inner = document.createElement('div');
-                // textContent, never innerHTML: company names come from a
-                // third-party register.
-                inner.textContent = row.label || row.value || '';
+                if (!row.message && row.two_highlight) {
+                    inner.appendChild(highlightFragment(document, row.two_highlight));
+                } else {
+                    // Never innerHTML: company names come from a third-party
+                    // register.
+                    inner.textContent = row.label || row.value || '';
+                }
                 li.appendChild(inner);
                 ul.appendChild(li);
             });
@@ -5544,6 +5596,11 @@ class TwoCompanySearch {
                     const displayLabel = this.companyNumber().labelFor(company.name, orgNumber);
                     return {
                         label: displayLabel,
+                        // The same label with the API's markers still in it;
+                        // '' falls every render path back to `label`.
+                        two_highlight: company.highlight
+                            ? this.companyNumber().labelFor(company.highlight, orgNumber)
+                            : '',
                         value: company.name,
                         lookup_id: company.lookup_id,
                         organization_number: orgNumber
