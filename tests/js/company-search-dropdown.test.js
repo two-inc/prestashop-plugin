@@ -445,10 +445,9 @@ describe('"My company is not on the list"', () => {
 
         const buttonColour = window.getComputedStyle(panelParts().notListed.get(0)).color;
         const rowColour = window.getComputedStyle(panelParts().results.find('li').get(0)).color;
-        // TWO-40 design revision: a pill-style chip (dark-grey text, its own
-        // border) rather than a link-blue text link - still visually
-        // distinct from an inert result row either way.
-        expect(buttonColour).toBe('rgb(52, 64, 84)');
+        // A pill-style chip carrying the chip accent and its own border, not a
+        // text link; TWO-25747 owns the accent value.
+        expect(buttonColour).toBe('rgb(9, 16, 48)');
         expect(buttonColour).not.toBe(rowColour);
     });
 
