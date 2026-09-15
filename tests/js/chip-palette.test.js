@@ -29,8 +29,6 @@
  *    generated box; one positioned over the chip would not be caught.
  *  - The chain starts at the chip's own strip, so a selector keyed on a theme
  *    element above it is dropped rather than rejected.
- *  - An attribute value HTML matches case-sensitively is refused rather than
- *    compared, so a rule keyed on one is never resolved here.
  *  - The chip's own state classes are the case under test rather than a render.
  *    Only their disabled/selected combination is checked against the renders.
  */
@@ -475,7 +473,7 @@ const ATTRIBUTE =
 
 /* The attributes whose values HTML matches ASCII case-insensitively. Folding
    any other would report a match the browser refuses. */
-const CASE_INSENSITIVE_VALUES = new Set([
+const CASE_INSENSITIVE_FOLD = new Set([
   "accept", "accept-charset", "align", "alink", "axis", "bgcolor", "charset",
   "checked", "clear", "codetype", "color", "compact", "declare", "defer", "dir",
   "direction", "disabled", "enctype", "face", "frame", "hreflang", "http-equiv",
@@ -486,9 +484,9 @@ const CASE_INSENSITIVE_VALUES = new Set([
 ]);
 
 function compareValue(operator, key, held, quoted) {
-  if (!CASE_INSENSITIVE_VALUES.has(key)) return `case-sensitive value of "${key}"`;
-  const value = held.toLowerCase();
-  const wanted = quoted.replace(/^["']|["']$/g, "").toLowerCase();
+  const fold = (text) => (CASE_INSENSITIVE_FOLD.has(key) ? text.toLowerCase() : text);
+  const value = fold(held);
+  const wanted = fold(quoted.replace(/^["']|["']$/g, ""));
   if (operator === "=") return value === wanted;
   if (operator === "~=") return value.split(/\s+/).includes(wanted);
   if (operator === "^=") return value.startsWith(wanted);
