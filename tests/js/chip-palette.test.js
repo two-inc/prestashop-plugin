@@ -29,8 +29,8 @@
  *    generated box; one positioned over the chip would not be caught.
  *  - The chain starts at the chip's own strip, so a selector keyed on a theme
  *    element above it is dropped rather than rejected.
- *  - Attribute values are compared case-insensitively whichever attribute they
- *    belong to, so a rule keyed on a case-sensitive one can be over-applied.
+ *  - An attribute value HTML matches case-sensitively is refused rather than
+ *    compared, so a rule keyed on one is never resolved here.
  *  - The chip's own state classes are the case under test rather than a render.
  *    Only their disabled/selected combination is checked against the renders.
  */
@@ -473,9 +473,20 @@ function complexParts(selector) {
 const ATTRIBUTE =
   /^\[\s*([\w-]+)\s*(?:([~^$*|]?=)\s*("[^"]*"|'[^']*'|[^\s\]]+)\s*([isIS])?\s*)?\]$/;
 
-/* Folded on both sides: `type` is one of the attributes HTML matches
-   case-insensitively, and ruling such a rule out silently drops it. */
-function compareValue(operator, held, quoted) {
+/* The attributes whose values HTML matches ASCII case-insensitively. Folding
+   any other would report a match the browser refuses. */
+const CASE_INSENSITIVE_VALUES = new Set([
+  "accept", "accept-charset", "align", "alink", "axis", "bgcolor", "charset",
+  "checked", "clear", "codetype", "color", "compact", "declare", "defer", "dir",
+  "direction", "disabled", "enctype", "face", "frame", "hreflang", "http-equiv",
+  "lang", "language", "link", "media", "method", "multiple", "nohref",
+  "noresize", "noshade", "nowrap", "readonly", "rel", "rev", "rules", "scope",
+  "scrolling", "selected", "shape", "target", "text", "type", "valign",
+  "valuetype", "vlink",
+]);
+
+function compareValue(operator, key, held, quoted) {
+  if (!CASE_INSENSITIVE_VALUES.has(key)) return `case-sensitive value of "${key}"`;
   const value = held.toLowerCase();
   const wanted = quoted.replace(/^["']|["']$/g, "").toLowerCase();
   if (operator === "=") return value === wanted;
@@ -500,10 +511,10 @@ function matchesAttribute(simple, node) {
   if (key === "class") {
     return node.varying.size
       ? `value of "class"`
-      : compareValue(operator, node.classes.join(" "), quoted);
+      : compareValue(operator, key, node.classes.join(" "), quoted);
   }
   if (held.values.size > 1) return `value of "${key}"`;
-  return compareValue(operator, Array.from(held.values)[0], quoted);
+  return compareValue(operator, key, Array.from(held.values)[0], quoted);
 }
 
 function matchesPseudo(simple, chain, index) {
