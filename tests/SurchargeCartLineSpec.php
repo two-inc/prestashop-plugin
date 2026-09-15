@@ -34,6 +34,7 @@ final class SurchargeCartLineSpec
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
         self::testStaleGuardRemovesLineWhenSessionMarkerLost();
         self::testStaleGuardKeepsLegitimateLine();
+        self::testStaleGuardLeavesGuestCheckoutStateRestorable();
         self::testHiddenProductShapeAndLazyCreation();
         self::testStaleSequencedSyncRequestIsIgnoredServerSide();
         self::testAuthoritativeSyncBypassesSequenceGuard();
@@ -601,6 +602,62 @@ final class SurchargeCartLineSpec
         $ownController->module = (object) ['name' => 'twopayment'];
         $module->hookActionFrontControllerInitAfter(['controller' => $ownController]);
         TinyAssert::count(1, self::feeLines());
+    }
+
+    /**
+     * Every terms on which the stale-guard's own removal may re-stamp the
+     * guest's persisted checkout state (TWO-25763). Its removal moves the
+     * cart's product lines exactly as the buyer-driven sync does, and a guest
+     * who loses step 1 cannot complete it again - it only completes on an
+     * account creation their own email now blocks.
+     *
+     * @return array<int,array{0:string|null,1:bool,2:bool,3:string}>
+     */
+    private static function staleGuardCheckoutStateCases(): array
+    {
+        return [
+            ['matching', true, true, "a line stripped for another module's controller leaves the guest's steps restorable"],
+            ['matching', false, true, 'a line stripped on a lost session marker leaves them restorable too'],
+            ['foreign', true, false, 'drift this module did not cause stays core\'s to invalidate on'],
+            [null, true, false, 'no persisted checkout state means nothing to re-stamp'],
+        ];
+    }
+
+    private static function testStaleGuardLeavesGuestCheckoutStateRestorable(): void
+    {
+        foreach (self::staleGuardCheckoutStateCases() as [$seed, $otherModuleController, $expectRestorable, $why]) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $checksum = new CartChecksum(new AddressChecksum());
+            $module->syncTwoSurchargeCartLine($cart, true);
+
+            unset(StubStore::$checkoutSessionData[self::CART_ID]);
+            if ($seed !== null) {
+                StubStore::$checkoutSessionData[self::CART_ID] = (string) json_encode([
+                    'checkout-personal-information-step' => ['skipped' => false],
+                    'checksum' => $seed === 'matching'
+                        ? $checksum->generateChecksum($cart)
+                        : sha1('a cart this persisted state never described'),
+                ]);
+            }
+
+            $controller = new \stdClass();
+            if ($otherModuleController) {
+                $controller->module = (object) ['name' => 'ps_wirepayment'];
+            } else {
+                Context::getContext()->cookie = new Cookie();
+            }
+
+            $module->hookActionFrontControllerInitAfter(['controller' => $controller]);
+
+            TinyAssert::count(0, self::feeLines(), 'the stale-guard still strips the fee line: ' . $why);
+
+            $stored = json_decode(StubStore::$checkoutSessionData[self::CART_ID] ?? '', true);
+            $restorable = is_array($stored)
+                && isset($stored['checksum'])
+                && $stored['checksum'] === $checksum->generateChecksum($cart);
+            TinyAssert::same($expectRestorable, $restorable, $why);
+        }
     }
 
     /* ---- server-side request-ordering guard (rapid method switches) ---- */
