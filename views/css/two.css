@@ -1040,8 +1040,8 @@
         font-size: 12px;
     }
 
-    .two-term-chip.two-term-chip:not(.two-term-chip--selected):not(:disabled):hover,
-    .two-term-chip.two-term-chip:not(.two-term-chip--selected):not(:disabled):focus {
+    .two-term-chip.two-term-chip:not(.two-term-chip--selected):hover,
+    .two-term-chip.two-term-chip:not(.two-term-chip--selected):focus {
         padding: 7px 11px;
     }
     
