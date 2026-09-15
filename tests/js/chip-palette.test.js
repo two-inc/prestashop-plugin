@@ -203,11 +203,18 @@ function renderTermChips(control) {
 }
 
 function renderModeChips(control) {
-  buildAddressForm({ country: "GB" });
-  new window.TwoCompanySearch({ checkoutHost: CHECKOUT_HOST }).init();
-  const closed = snapshotChips(control);
-  openPanel();
-  return closed.concat(snapshotChips(control));
+  const chains = [];
+  // Two measured sizes: the wrapper pins the field's own pixels, which a theme,
+  // a viewport or a font changes and jsdom would otherwise report as constant.
+  for (const size of [null, "height: 40px; width: 320px;"]) {
+    buildAddressForm({ country: "GB" });
+    if (size) document.querySelector("input[name='company']").setAttribute("style", size);
+    new window.TwoCompanySearch({ checkoutHost: CHECKOUT_HOST }).init();
+    chains.push(...snapshotChips(control));
+    openPanel();
+    chains.push(...snapshotChips(control));
+  }
+  return chains;
 }
 
 /** @returns {object} one node answering for every render it was seen in */
