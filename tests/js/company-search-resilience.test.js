@@ -111,6 +111,7 @@ describe('exactly one callback per search', () => {
         expect(rec.calls[0].results).toEqual([
             {
                 label: 'Example Trading Ltd (12345678)',
+                two_highlight: '',
                 value: 'Example Trading Ltd',
                 lookup_id: 'lookup-abc-123',
                 organization_number: '12345678'
