@@ -14,14 +14,15 @@
  * specific rule, which is what makes the outcome hold when a theme stacks its
  * own stylesheet over the module's.
  *
- * Six conditions throw rather than resolving to a value, because a rule
+ * Seven conditions throw rather than resolving to a value, because a rule
  * dropped in silence reports green on a chip it never saw: a pseudo-class
  * outside :not/:is/:where, or one of those nested inside another, on a
  * selector that could still reach a chip; a chip-reaching rule inside an
  * unmodelled @media or an unlisted @supports; @import; any at-rule type
- * other than style, media, supports, import and keyframes; and a rule
- * reaching a chip that names keyframes this sheet does not define, or whose
- * frames set an audited property.
+ * other than style, media, supports, import and keyframes; a rule reaching a
+ * chip that names keyframes this sheet does not define, or whose frames set
+ * an audited property; and an animation on such a rule whose name arrives
+ * through var(), which nothing here can resolve.
  *
  * Known gaps, each confirmed by watching the resolver answer rather than by
  * reading its intent. This list is what has been found; it is not a proof
@@ -213,6 +214,9 @@ const NEVER_A_NAME = /^(none|initial|inherit|unset|revert|revert-layer)$/i;
 function animationNames(cssText) {
   return (cssText.match(/animation(-name)?\s*:[^;]*/gi) || []).flatMap((declaration) => {
     const longhand = /animation-name/i.test(declaration);
+    if (/var\s*\(/i.test(declaration)) {
+      throw new Error(`chip animation resolves through var(): ${declaration.trim()}`);
+    }
     return declaration
       .slice(declaration.indexOf(":") + 1)
       // Durations, delays, counts and timing functions are not identifiers.
@@ -448,14 +452,15 @@ describe.each(CONTROLS)("$label", ({ chip }) => {
     expect(new Set(weights).size).toBe(1);
   });
 
-  test.each(VIEWPORTS)("an unselected label does not change on hover or focus %s", (width) => {
-    const atRest = chipStyle(resting, width).color;
+  test.each(VIEWPORTS)("an unselected label is the accent in every state %s", (width) => {
+    const atRest = toRgb(chipStyle(resting, width).color);
 
+    expect(atRest).toBe(ACCENT);
     expect([
-      chipStyle(hovered, width).color,
-      chipStyle(focused, width).color,
-      chipStyle(engaged, width).color,
-      chipStyle(ringed, width).color,
+      toRgb(chipStyle(hovered, width).color),
+      toRgb(chipStyle(focused, width).color),
+      toRgb(chipStyle(engaged, width).color),
+      toRgb(chipStyle(ringed, width).color),
     ]).toEqual([atRest, atRest, atRest, atRest]);
   });
 
