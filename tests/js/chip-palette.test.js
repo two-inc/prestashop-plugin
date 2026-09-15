@@ -2,43 +2,24 @@
  * TWO-25747. The visual states of both chip controls — the payment-term chips
  * and the company-mode chips — which share one palette.
  *
- * The shipped stylesheet is parsed by jsdom's CSS parser and the cascade is
- * resolved here, so a declaration that is commented out or deleted is gone
- * before the assertion runs. jsdom cannot put an element into :hover, so the
- * state pseudo-classes are rewritten to equivalent classes in the parsed
- * selector text — same specificity weight, so the winning rule is unchanged.
- *
- * jsdom's own getComputedStyle resolves by source order and ignores
- * specificity, so it cannot answer which rule wins. The tie audit covers that:
- * for every contested property in every state it asserts one strictly most
- * specific rule, which is what makes the outcome hold when a theme stacks its
- * own stylesheet over the module's.
- *
- * Seven conditions throw rather than resolving to a value, because a rule
- * dropped in silence reports green on a chip it never saw: a pseudo-class
- * outside :not/:is/:where, or one of those nested inside another, on a
- * selector that could still reach a chip; a chip-reaching rule inside an
- * unmodelled @media or an unlisted @supports; @import; any at-rule type
- * other than style, media, supports, import and keyframes; a rule reaching a
- * chip that names keyframes this sheet does not define, or whose frames set
- * an audited property; and an animation on such a rule whose name arrives
- * through var(), which nothing here can resolve.
+ * jsdom cannot put an element into :hover and its getComputedStyle ignores
+ * specificity, so states are rewritten to classes and the cascade resolved here.
  *
  * Known gaps, each confirmed by watching the resolver answer rather than by
- * reading its intent. This list is what has been found; it is not a proof
- * that nothing else gets through.
+ * reading its intent. This list is what has been found; it is not a proof that
+ * nothing else gets through.
  *
- *  - The probe is a bare detached <button>. A selector depending on the chip's
- *    real position or contents — a child combinator under the strip, :has() —
- *    fails to match and is dropped, not rejected, and specificity() scores
- *    structural pseudo-classes as classes. The fix is the live chip DOM.
  *  - An at-rule wrapper around an otherwise-correct rule is invisible, so
  *    unwrapping the @supports around the focus-ring reset does not fail here.
  *  - Only the two viewports below are audited. A chip rule in, say,
- *    @media (min-width: 2000px) is modelled, found not to apply at either,
- *    and so never evaluated at all.
+ *    @media (min-width: 2000px) is modelled, found not to apply at either, and
+ *    so never evaluated at all.
  *  - A ::pseudo-element rule is dropped on the grounds that it paints a
  *    generated box; one positioned over the chip would not be caught.
+ *  - The probe strip holds one chip, so a sibling combinator matches nothing
+ *    and is dropped rather than rejected.
+ *  - A mode chip carries one of three identity classes alongside the shared
+ *    one; the probe carries only the shared one.
  */
 
 "use strict";
@@ -53,13 +34,6 @@ const NARROW = 480;
 
 const SUPPORTED_CONDITIONS = ["selector(:focus-visible)"];
 
-/*
- * The only pseudo-classes carried through to a match. Everything else is
- * dropped from the selector and the rule rejected if what remains can still
- * reach a chip — that residue is the widest thing the full selector could ever
- * match, so a state this resolver does not model fails loud instead of reading
- * as a chip that is fine.
- */
 const MODELLED_PSEUDO = /^:(not|is|where)\(/;
 
 const NESTED_FUNCTIONAL = /:(not|is|where)\([^)]*:[a-z][\w-]*\(/i;
@@ -104,10 +78,41 @@ const CONTESTED = [
   "cursor",
 ];
 
+/* A selector keyed on an ancestor or an attribute reaches the probe only if
+   the probe mirrors the shipped DOM. */
 const CONTROLS = [
-  { label: "payment-term chip", chip: "two-term-chip" },
-  { label: "company-mode chip", chip: "two-company-mode-chip" },
+  {
+    label: "payment-term chip",
+    chip: "two-term-chip",
+    strip:
+      '<div class="two-payment-terms" id="two-payment-terms">' +
+      '<div class="two-term-chips">' +
+      '<div class="two-term-chips__container" id="two-terms-chips" role="radiogroup"' +
+      ' aria-labelledby="two-terms-title"></div>' +
+      "</div></div>",
+    slot: ".two-term-chips__container",
+    attributes: { type: "button", role: "radio", "data-days": "30" },
+    contents:
+      '<span class="two-term-chip__days">30 days</span>' +
+      '<span class="two-term-chip__surcharge">' +
+      '<span class="two-term-chip__loading" aria-hidden="true">' +
+      "<span>.</span><span>.</span><span>.</span></span></span>",
+  },
+  {
+    label: "company-mode chip",
+    chip: "two-company-mode-chip",
+    strip:
+      '<div class="two-company-field-wrap">' +
+      '<div class="two-company-dropdown">' +
+      '<div class="two-company-mode-chips"></div>' +
+      "</div></div>",
+    slot: ".two-company-mode-chips",
+    attributes: { type: "button" },
+    contents: "Registered company",
+  },
 ];
+
+const CONTROL_BY_CHIP = new Map(CONTROLS.map((control) => [control.chip, control]));
 
 const VIEWPORTS = [
   [WIDE, "at full width"],
@@ -147,16 +152,73 @@ function rewritePseudoClasses(selector) {
   );
 }
 
+function closingParen(text, open) {
+  let depth = 0;
+  for (let index = open; index < text.length; index += 1) {
+    if (text[index] === "(") depth += 1;
+    else if (text[index] === ")" && (depth -= 1) === 0) return index;
+  }
+  return text.length;
+}
+
+/** @returns {string[]} `text` split on its top-level commas */
+function splitArguments(text) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "(") depth += 1;
+    else if (text[index] === ")") depth -= 1;
+    else if (text[index] === "," && depth === 0) {
+      parts.push(text.slice(start, index));
+      start = index + 1;
+    }
+  }
+  return parts.concat(text.slice(start));
+}
+
+function addWeights(a, b) {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+/** @returns {number[]} the triple for a selector carrying no :is/:where/:not */
+function simpleSpecificity(selector) {
+  const attributes = /\[[^\]]*\]/g;
+  const bare = selector.replace(attributes, " ");
+  return [
+    (selector.match(/#[\w-]+/g) || []).length,
+    (selector.match(/\.[\w-]+/g) || []).length +
+      (selector.match(attributes) || []).length +
+      (bare.match(/:[a-z][\w-]*/gi) || []).length,
+    (bare.replace(/[.#:][\w-]+/g, " ").match(/[a-z][\w-]*/gi) || []).length,
+  ];
+}
+
 /** @returns {number[]} the (id, class, type) triple CSS orders selectors by */
 function specificity(selector) {
-  const flat = selector.replace(/:not\(|\)/g, " ");
-  const attributes = /\[[^\]]*\]/g;
-  return [
-    (flat.match(/#[\w-]+/g) || []).length,
-    (flat.match(/\.[\w-]+/g) || []).length + (flat.match(attributes) || []).length,
-    (flat.replace(/[.#][\w-]+/g, " ").replace(attributes, " ").match(/[a-z][\w-]*/gi) || [])
-      .length,
-  ];
+  let rest = selector;
+  let total = [0, 0, 0];
+  let functional = /:(is|where|not)\(/i.exec(rest);
+  // :is() and :not() contribute their most specific argument and :where()
+  // contributes nothing, so neither list may be counted where it stands.
+  while (functional) {
+    const open = functional.index + functional[0].length - 1;
+    const close = closingParen(rest, open);
+    if (functional[1].toLowerCase() !== "where") {
+      total = addWeights(
+        total,
+        splitArguments(rest.slice(open + 1, close))
+          .map(specificity)
+          .reduce(
+            (best, weight) => (compareSpecificity(best, weight) >= 0 ? best : weight),
+            [0, 0, 0]
+          )
+      );
+    }
+    rest = `${rest.slice(0, functional.index)} ${rest.slice(close + 1)}`;
+    functional = /:(is|where|not)\(/i.exec(rest);
+  }
+  return addWeights(total, simpleSpecificity(rest));
 }
 
 function compareSpecificity(a, b) {
@@ -175,8 +237,7 @@ function matchWeight(element, selectorText) {
       const unmodelled = (selector.match(/:[a-z][\w-]*\(?/gi) || []).filter(
         (pseudo) => !MODELLED_PSEUDO.test(pseudo)
       );
-      // nwsapi answers a functional pseudo-class nested in another with a flat
-      // false, where a browser matches; treat the whole selector as unmodelled.
+      // nwsapi answers a nested functional pseudo-class with a flat false.
       if (NESTED_FUNCTIONAL.test(selector)) unmodelled.push("nested :is()/:where()/:not()");
       if (unmodelled.length === 0) return element.matches(selector);
       if (reachesUnderAnyState(element, selector)) {
@@ -190,8 +251,7 @@ function matchWeight(element, selectorText) {
 
 /** @returns {boolean} whether the selector could reach the element in some unmodelled state */
 function reachesUnderAnyState(element, selector) {
-  // Every pseudo-class left after the rewrite, argument and all: dropping a
-  // constraint only widens what the selector could reach.
+  // Dropping a constraint only widens what the selector could reach.
   const residue = selector.replace(/:[a-z][\w-]*(\([^)]*\))?/gi, "").trim();
   try {
     return residue === "" || element.matches(residue);
@@ -200,11 +260,8 @@ function reachesUnderAnyState(element, selector) {
   }
 }
 
-/*
- * Keywords the `animation` shorthand can carry in a name's place. The
- * `animation-name` longhand takes none of them, so filtering there would hide
- * a block actually called `linear` or `forwards`.
- */
+/* Keywords the `animation` shorthand carries in a name's place; the
+   `animation-name` longhand takes none of them. */
 const SHORTHAND_KEYWORDS =
   /^(infinite|normal|reverse|alternate|alternate-reverse|forwards|backwards|both|running|paused|linear|ease|ease-in|ease-out|ease-in-out|step-start|step-end)$/i;
 
@@ -269,14 +326,12 @@ function matchingRules(element, width) {
         throw new Error(`unmodelled @import of ${rule.href}`);
       } else if (rule.type === KEYFRAMES_RULE) {
         // An animation outranks every author declaration and `forwards` keeps
-        // its last frame, so a block touching an audited property is only safe
-        // while nothing that reaches a chip names it.
-        const touches = CONTESTED.filter((property) =>
-          Array.from(rule.cssRules).some(
-            (frame) => styleOf(frame.style.cssText)[property] !== ""
-          )
-        );
-        keyframes.set(rule.name, touches);
+        // its last frame, so a block a chip rule names may declare nothing.
+        const declared = new Set();
+        for (const frame of Array.from(rule.cssRules)) {
+          for (const property of Array.from(frame.style)) declared.add(property);
+        }
+        keyframes.set(rule.name, Array.from(declared));
       } else {
         reject(rule, rule.cssText.split("{")[0].trim());
         throw new Error(`unmodelled rule type ${rule.type}`);
@@ -307,9 +362,30 @@ function matchingRules(element, width) {
 }
 
 function chipElement(classes) {
+  const control = CONTROL_BY_CHIP.get(classes[0]);
+  const holder = document.createElement("div");
+  holder.innerHTML = control.strip;
+  const strip = holder.firstElementChild;
+  document.body.appendChild(strip);
+
   const element = document.createElement("button");
   element.className = classes.join(" ");
-  document.body.appendChild(element);
+  for (const [name, value] of Object.entries(control.attributes)) {
+    element.setAttribute(name, value);
+  }
+  element.innerHTML = control.contents;
+
+  const selected = classes.includes(`${control.chip}--selected`);
+  if (element.getAttribute("role") === "radio") {
+    element.setAttribute("aria-checked", String(selected));
+    element.tabIndex = selected ? 0 : -1;
+  }
+  if (classes.includes(DISABLED)) {
+    element.disabled = true;
+    element.setAttribute("aria-disabled", "true");
+  }
+
+  strip.querySelector(control.slot).appendChild(element);
   return element;
 }
 
@@ -328,11 +404,7 @@ function toRgb(value) {
   return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
 }
 
-/**
- * Resolves the cascade for a chip carrying `classes` at viewport `width`.
- *
- * @returns {CSSStyleDeclaration} the chip's declared style
- */
+/** @returns {CSSStyleDeclaration} the chip's declared style */
 function chipStyle(classes, width) {
   const winners = matchingRules(chipElement(classes), width || WIDE);
   return styleOf(winners.map((match) => match.rule.style.cssText).join(" "));
@@ -351,6 +423,8 @@ function outerBox(classes, width) {
   ];
 }
 
+const dashed = (property) => property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+
 /** @returns {string[]} `${property} @ ${weight}` for every property two rules contest */
 function positionalTies(classes, width) {
   const matches = matchingRules(chipElement(classes), width || WIDE);
@@ -358,11 +432,18 @@ function positionalTies(classes, width) {
     const declaring = matches.filter(
       (match) => styleOf(match.rule.style.cssText)[property] !== ""
     );
-    if (declaring.length < 2) return [];
-    const top = declaring
+    // !important outranks specificity outright, so where one is declared the
+    // contest is among the important declarations alone.
+    const important = declaring.filter(
+      (match) =>
+        styleOf(match.rule.style.cssText).getPropertyPriority(dashed(property)) === "important"
+    );
+    const tier = important.length ? important : declaring;
+    if (tier.length < 2) return [];
+    const top = tier
       .map((match) => match.weight)
       .reduce((best, weight) => (compareSpecificity(best, weight) >= 0 ? best : weight));
-    const contenders = declaring.filter(
+    const contenders = tier.filter(
       (match) => compareSpecificity(match.weight, top) === 0
     );
     return contenders.length > 1
@@ -504,11 +585,6 @@ describe.each(CONTROLS)("$label", ({ chip }) => {
   });
 });
 
-/*
- * Guards the viewport modelling itself: a media query this resolver stopped
- * selecting would drop every narrow assertion above to a duplicate of its
- * full-width twin, silently.
- */
 test("the narrow breakpoint reaches the payment-term chip", () => {
   const chip = ["two-term-chip"];
 
