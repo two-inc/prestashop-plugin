@@ -47,6 +47,7 @@ services:
       TWO_CHECKOUT_BASE_URL: ${TWO_CHECKOUT_BASE_URL:-}
     volumes:
       - .:/var/www/html/modules/twopayment
+      - ./dev/apache-admin-alias.conf:/etc/apache2/conf-enabled/admin-alias.conf:ro
     networks:
       - prestashop
 

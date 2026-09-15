@@ -82,10 +82,10 @@ install: clean
 	echo ""; \
 	echo "========================================="; \
 	echo " PrestaShop store: $(URL)"; \
-	echo " Admin panel:      $(URL)admin-dev"; \
+	echo " Admin panel:      $(URL)admin"; \
 	if [ -n "$$PROXY_URL" ]; then \
 		echo " Proxy store:     $$PROXY_URL/"; \
-		echo " Proxy admin:     $$PROXY_URL/admin-dev"; \
+		echo " Proxy admin:     $$PROXY_URL/admin"; \
 	fi; \
 	echo " Credentials:      $(ADMIN_MAIL) / $(ADMIN_PASSWD)"; \
 	dev/print-resolved-hosts.sh $(CONTAINER) $(MODULE_NAME); \
@@ -113,10 +113,10 @@ run:
 	echo ""; \
 	echo "========================================="; \
 	echo " PrestaShop store: $(URL)"; \
-	echo " Admin panel:      $(URL)admin-dev"; \
+	echo " Admin panel:      $(URL)admin"; \
 	if [ -n "$$PROXY_URL" ]; then \
 		echo " Proxy store:     $$PROXY_URL/"; \
-		echo " Proxy admin:     $$PROXY_URL/admin-dev"; \
+		echo " Proxy admin:     $$PROXY_URL/admin"; \
 	fi; \
 	echo " Credentials:      $(ADMIN_MAIL) / $(ADMIN_PASSWD)"; \
 	dev/print-resolved-hosts.sh $(CONTAINER) $(MODULE_NAME); \
@@ -187,7 +187,7 @@ carrierless-shop:
 	@echo ""
 	@echo "========================================="
 	@echo " Carrier-less shipping is set up."
-	@echo " Admin field:  $(URL)admin-dev -> Modules -> Two -> Configure -> Advanced settings"
+	@echo " Admin field:  $(URL)admin -> Modules -> Two -> Configure -> Advanced settings"
 	@echo "               -> 'Default shipping tax code'"
 	@echo " Probe it:     make test-integration"
 	@echo " Undo:         make carrierless-off"
