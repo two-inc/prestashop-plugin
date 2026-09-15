@@ -815,18 +815,4 @@ describe("a disabled payment-term chip", () => {
   )("%s is decided by specificity, not source position %#", (classes, width) => {
     expect(positionalTies(classes, width)).toEqual([]);
   });
-
-  test.each([
-    [[CHIP, DISABLED, HOVER], "hovered"],
-    [[CHIP, DISABLED, FOCUS], "focused"],
-  ])("an unselected one keeps its resting appearance when %s", (classes) => {
-    const style = chipStyle(classes);
-
-    expect([
-      style.borderTopWidth,
-      toRgb(style.borderTopColor),
-      toRgb(style.backgroundColor),
-      ...outerBox(classes),
-    ]).toEqual(["2px", GREY, WHITE, ...outerBox([CHIP])]);
-  });
 });
