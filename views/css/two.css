@@ -853,38 +853,52 @@
     flex: 1 1 auto;
     min-width: 84px;
     padding: 6px 10px;
-    border: 1px solid #d0d5dd;
+    border: 2px solid #e3e3e3;
     border-radius: 6px;
     background: #fff;
     font: inherit;
     font-size: 13px;
     line-height: 1.3;
-    color: #344054;
+    color: #091030;
     text-align: center;
     white-space: normal;
     word-break: break-word;
     cursor: pointer;
+    transition: all 0.15s ease;
 }
 
-.two-company-mode-chip--selected {
-    background: #1a1a1a;
-    border-color: #1a1a1a;
+/* Padding absorbs the 1px the border gives up, so the chip does not resize. */
+.two-company-mode-chip:not(.two-company-mode-chip--selected):hover,
+.two-company-mode-chip:not(.two-company-mode-chip--selected):focus {
+    padding: 7px 11px;
+    border-width: 1px;
+    border-color: #091030;
+    background: #e3e3e3;
+    color: #091030;
+}
+
+.two-company-mode-chip.two-company-mode-chip--selected {
+    background: #091030;
+    border-color: #091030;
     color: #fff;
+}
+
+@supports selector(:focus-visible) {
+    .two-company-mode-chip:focus {
+        outline: none;
+    }
 }
 
 /* An interactive control with no visible focus state is worse than no
    keyboard support at all. */
-.two-company-mode-chip:focus {
-    outline: 2px solid #1976d2;
+.two-company-mode-chip:focus:focus-visible {
+    outline: 2px solid #091030;
     outline-offset: 2px;
 }
 
 /*
- * Payment terms chip selector (TWO-24752). Replaces the previous slider.
- * Structure/behaviour mirrors the Magento (Hyva) and WooCommerce chip
- * selectors; the palette keeps PrestaShop's existing slate accent
- * (#374151) so the chips stay consistent with the rest of this checkout.
- * The column layout leaves room for a per-chip surcharge sub-label.
+ * Payment terms chip selector (TWO-24752). The column layout leaves room for
+ * a per-chip surcharge sub-label.
  */
 .two-term-chips {
     display: flex;
@@ -910,10 +924,10 @@
     justify-content: center;
     min-width: 44px;
     padding: 8px 14px;
-    border: 1px solid #d1d5db;
+    border: 2px solid #e3e3e3;
     border-radius: 8px;
     background: white;
-    color: #6b7280;
+    color: #091030;
     font-size: 12px;
     font-weight: 400;
     font-family: inherit;
@@ -922,31 +936,33 @@
     user-select: none;
 }
 
-.two-term-chip:hover {
-    border-color: #9ca3af;
-    color: #374151;
-    background: #f9fafb;
+.two-term-chip:not(.two-term-chip--selected):hover,
+.two-term-chip:not(.two-term-chip--selected):focus {
+    padding: 9px 15px;
+    border-width: 1px;
+    border-color: #091030;
+    background: #e3e3e3;
+    color: #091030;
 }
 
-.two-term-chip:focus {
-    outline: none;
+@supports selector(:focus-visible) {
+    .two-term-chip:focus {
+        outline: none;
+    }
 }
 
-.two-term-chip:focus-visible {
-    outline: 2px solid #374151;
+.two-term-chip:focus:focus-visible {
+    outline: 2px solid #091030;
     outline-offset: 2px;
 }
 
-.two-term-chip--selected,
-.two-term-chip--selected:hover,
-.two-term-chip--selected:focus {
-    border-color: #374151;
-    background: #374151;
+.two-term-chip.two-term-chip--selected {
+    border-color: #091030;
+    background: #091030;
     color: white;
-    font-weight: 500;
 }
 
-.two-term-chip--single {
+.two-term-chip.two-term-chip--single {
     cursor: default;
 }
 
@@ -1018,10 +1034,15 @@
         gap: 6px;
     }
     
-    .two-term-chip {
+    .two-term-chip.two-term-chip {
         min-width: 40px;
         padding: 6px 10px;
         font-size: 12px;
+    }
+
+    .two-term-chip.two-term-chip:not(.two-term-chip--selected):hover,
+    .two-term-chip.two-term-chip:not(.two-term-chip--selected):focus {
+        padding: 7px 11px;
     }
     
     .two-terms-title {
