@@ -9,9 +9,7 @@ declare(strict_types=1);
  * for is not the key in the file, so the lookup misses and PrestaShop falls
  * back to the English source. There is no error, no warning and no log line —
  * the shop simply renders English, and a catalogue full of perfectly good
- * translations looks identical to one that works. `translations/es.php` has
- * been in that state for a long time without anyone noticing (see the
- * deliberate exclusion below), which is the whole reason this spec exists.
+ * translations looks identical to one that works.
  *
  * HOW THE KEY IS BUILT. `Translate::getModuleTranslation()` looks up
  *
@@ -34,21 +32,11 @@ declare(strict_types=1);
  * both cases, so saving from it rewrites every PHP string to a key nothing
  * looks up. Do not regenerate these files from the back office; see the i18n
  * section of AGENTS.md.
- *
- * WHY es.php IS NOT GATED. It is known-drifted and predates this spec: only
- * part of it is reachable, some rows are keyed to controller filenames, and it
- * is missing strings that exist in the source today. Gating it would make the
- * build red on pre-existing content and would say nothing about the change
- * that turned it red. Repairing it is its own ticket; when that lands, add
- * 'es' to self::GATED_LOCALES and delete this paragraph.
  */
 final class TranslationCatalogueSpec
 {
-    /**
-     * Locales whose catalogues must be exactly in step with the source.
-     * See the class comment before adding 'es'.
-     */
-    private const GATED_LOCALES = ['nl', 'no', 'sv'];
+    /** Locales whose catalogues must be exactly in step with the source. */
+    private const GATED_LOCALES = ['es', 'nl', 'no', 'sv'];
 
     private const PREFIX = '<{twopayment}prestashop>';
 
