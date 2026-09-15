@@ -877,15 +877,6 @@
     color: #091030;
 }
 
-/* Hover and focus exempt a disabled chip - the affordance would promise a dead
-   click - so only this pins it above a host theme's own `button:hover`. */
-.two-company-mode-chip.two-company-mode-chip:disabled:not(.two-company-mode-chip--selected) {
-    border-width: 2px;
-    border-color: #e3e3e3;
-    background: #fff;
-    color: #091030;
-}
-
 .two-company-mode-chip.two-company-mode-chip--selected {
     background: #091030;
     border-color: #091030;
