@@ -5,6 +5,14 @@
  * jsdom cannot put an element into :hover and its getComputedStyle ignores
  * specificity, so states are rewritten to classes and the cascade resolved here.
  *
+ * Whether a rule reaches a chip is decided from the selector's own vocabulary,
+ * evaluated against a declared model of the chip and its ancestors. Nothing is
+ * built and asked what it matches, so no gap between a built element and the
+ * shipped one can quietly drop a rule. A simple selector the resolver cannot
+ * answer — an attribute key outside MODELLED_ATTRIBUTES, an unmodelled
+ * pseudo-class, a sibling combinator — is rejected, unless another simple
+ * selector in the same compound has already ruled the chip out.
+ *
  * Known gaps, each confirmed by watching the resolver answer rather than by
  * reading its intent. This list is what has been found; it is not a proof that
  * nothing else gets through.
@@ -16,10 +24,10 @@
  *    so never evaluated at all.
  *  - A ::pseudo-element rule is dropped on the grounds that it paints a
  *    generated box; one positioned over the chip would not be caught.
- *  - The probe strip holds one chip, so a sibling combinator matches nothing
- *    and is dropped rather than rejected.
+ *  - The chain starts at the chip's own strip, so a selector keyed on a theme
+ *    element above it is dropped rather than rejected.
  *  - A mode chip carries one of three identity classes alongside the shared
- *    one; the probe carries only the shared one.
+ *    one; the chain declares only the shared one.
  */
 
 "use strict";
@@ -34,9 +42,27 @@ const NARROW = 480;
 
 const SUPPORTED_CONDITIONS = ["selector(:focus-visible)"];
 
-const MODELLED_PSEUDO = /^:(not|is|where)\(/;
+const FUNCTIONAL_PSEUDO = /^:(not|is|where)\((.*)\)$/i;
 
-const NESTED_FUNCTIONAL = /:(not|is|where)\([^)]*:[a-z][\w-]*\(/i;
+const COMBINATORS = new Set([">", "+", "~"]);
+
+/* Attribute keys the chain below answers for every node it holds. A selector
+   keyed on any other is rejected, never assumed absent. */
+const MODELLED_ATTRIBUTES = new Set([
+  "aria-checked",
+  "aria-disabled",
+  "aria-labelledby",
+  "class",
+  "data-days",
+  "disabled",
+  "id",
+  "role",
+  "tabindex",
+  "type",
+]);
+
+/** A modelled attribute the shipped markup gives no single value. */
+const ANY_VALUE = Symbol("value not modelled");
 
 /* Anchored: an unanchored ":focus" also eats the ":focus" of ":focus-within". */
 const PSEUDO_CLASSES = [
@@ -78,37 +104,34 @@ const CONTESTED = [
   "cursor",
 ];
 
-/* A selector keyed on an ancestor or an attribute reaches the probe only if
-   the probe mirrors the shipped DOM. */
 const CONTROLS = [
   {
     label: "payment-term chip",
     chip: "two-term-chip",
-    strip:
-      '<div class="two-payment-terms" id="two-payment-terms">' +
-      '<div class="two-term-chips">' +
-      '<div class="two-term-chips__container" id="two-terms-chips" role="radiogroup"' +
-      ' aria-labelledby="two-terms-title"></div>' +
-      "</div></div>",
-    slot: ".two-term-chips__container",
-    attributes: { type: "button", role: "radio", "data-days": "30" },
-    contents:
-      '<span class="two-term-chip__days">30 days</span>' +
-      '<span class="two-term-chip__surcharge">' +
-      '<span class="two-term-chip__loading" aria-hidden="true">' +
-      "<span>.</span><span>.</span><span>.</span></span></span>",
+    ancestors: [
+      { tag: "div", classes: ["two-payment-terms", "show"], attributes: { id: "two-payment-terms" } },
+      { tag: "div", classes: ["two-term-chips"], attributes: {} },
+      {
+        tag: "div",
+        classes: ["two-term-chips__container"],
+        attributes: {
+          id: "two-terms-chips",
+          role: "radiogroup",
+          "aria-labelledby": "two-terms-title",
+        },
+      },
+    ],
+    attributes: { type: "button", role: "radio", "data-days": ANY_VALUE },
   },
   {
     label: "company-mode chip",
     chip: "two-company-mode-chip",
-    strip:
-      '<div class="two-company-field-wrap">' +
-      '<div class="two-company-dropdown">' +
-      '<div class="two-company-mode-chips"></div>' +
-      "</div></div>",
-    slot: ".two-company-mode-chips",
+    ancestors: [
+      { tag: "div", classes: ["two-company-field-wrap"], attributes: {} },
+      { tag: "div", classes: ["two-company-dropdown"], attributes: {} },
+      { tag: "div", classes: ["two-company-mode-chips"], attributes: {} },
+    ],
     attributes: { type: "button" },
-    contents: "Registered company",
   },
 ];
 
@@ -161,18 +184,32 @@ function closingParen(text, open) {
   return text.length;
 }
 
+function closingBracket(text, open) {
+  let quote = "";
+  for (let index = open + 1; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote) {
+      if (character === quote) quote = "";
+    } else if (character === '"' || character === "'") quote = character;
+    else if (character === "]") return index;
+  }
+  return text.length;
+}
+
 /** @returns {string[]} `text` split on its top-level commas */
 function splitArguments(text) {
   const parts = [];
-  let depth = 0;
   let start = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    if (text[index] === "(") depth += 1;
-    else if (text[index] === ")") depth -= 1;
-    else if (text[index] === "," && depth === 0) {
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index];
+    if (character === "(") index = closingParen(text, index);
+    else if (character === "[") index = closingBracket(text, index);
+    else if (character === ",") {
       parts.push(text.slice(start, index));
       start = index + 1;
     }
+    index += 1;
   }
   return parts.concat(text.slice(start));
 }
@@ -225,39 +262,180 @@ function compareSpecificity(a, b) {
   return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
-/** @returns {number[]|null} the winning triple, or null where nothing matches */
-function matchWeight(element, selectorText) {
-  return selectorText
-    .split(",")
-    .map(rewritePseudoClasses)
-    .map((selector) => selector.trim())
-    .filter((selector) => {
-      // A ::pseudo-element rule paints a generated box, never the chip's own.
-      if (selector.includes("::")) return false;
-      const unmodelled = (selector.match(/:[a-z][\w-]*\(?/gi) || []).filter(
-        (pseudo) => !MODELLED_PSEUDO.test(pseudo)
-      );
-      // nwsapi answers a nested functional pseudo-class with a flat false.
-      if (NESTED_FUNCTIONAL.test(selector)) unmodelled.push("nested :is()/:where()/:not()");
-      if (unmodelled.length === 0) return element.matches(selector);
-      if (reachesUnderAnyState(element, selector)) {
-        throw new Error(`unmodelled ${unmodelled[0]} in "${selector}"`);
-      }
-      return false;
-    })
-    .map(specificity)
-    .reduce((best, weight) => (best && compareSpecificity(best, weight) >= 0 ? best : weight), null);
+/* A verdict is true, false, or the reason the resolver cannot answer. */
+const unanswered = (verdict) => typeof verdict === "string";
+
+function conjunction(verdicts) {
+  let reason = null;
+  for (const verdict of verdicts) {
+    if (verdict === false) return false;
+    if (unanswered(verdict)) reason = reason || verdict;
+  }
+  return reason || true;
 }
 
-/** @returns {boolean} whether the selector could reach the element in some unmodelled state */
-function reachesUnderAnyState(element, selector) {
-  // Dropping a constraint only widens what the selector could reach.
-  const residue = selector.replace(/:[a-z][\w-]*(\([^)]*\))?/gi, "").trim();
-  try {
-    return residue === "" || element.matches(residue);
-  } catch (invalidResidue) {
-    return true;
+function disjunction(verdicts) {
+  let reason = null;
+  for (const verdict of verdicts) {
+    if (verdict === true) return true;
+    if (unanswered(verdict)) reason = reason || verdict;
   }
+  return reason || false;
+}
+
+/** @returns {string[]} the simple selectors of one compound, in source order */
+function simpleSelectors(compound) {
+  const parts = [];
+  let index = 0;
+  while (index < compound.length) {
+    const start = index;
+    const head = compound[index];
+    if (head === "[") index = closingBracket(compound, index) + 1;
+    else if (head === ":") {
+      index += compound[index + 1] === ":" ? 2 : 1;
+      while (index < compound.length && /[\w-]/.test(compound[index])) index += 1;
+      if (compound[index] === "(") index = closingParen(compound, index) + 1;
+    } else {
+      if (head === "." || head === "#" || head === "*") index += 1;
+      while (index < compound.length && /[\w-]/.test(compound[index])) index += 1;
+    }
+    index = Math.max(index, start + 1);
+    parts.push(compound.slice(start, index));
+  }
+  return parts;
+}
+
+/** @returns {{combinator: string, compound: string}[]} compounds, leftmost first */
+function complexParts(selector) {
+  const parts = [];
+  let compound = "";
+  let combinator = "";
+  let descendant = false;
+  let index = 0;
+  const flush = () => {
+    if (compound !== "") parts.push({ combinator, compound });
+    compound = "";
+  };
+  const text = selector.trim();
+  while (index < text.length) {
+    const character = text[index];
+    let chunk = character;
+    if (character === "(") chunk = text.slice(index, closingParen(text, index) + 1);
+    else if (character === "[") chunk = text.slice(index, closingBracket(text, index) + 1);
+    index += chunk.length;
+    if (chunk.length === 1 && /\s/.test(character)) {
+      descendant = compound !== "";
+    } else if (chunk.length === 1 && COMBINATORS.has(character)) {
+      flush();
+      combinator = character;
+      descendant = false;
+    } else {
+      if (descendant) {
+        flush();
+        combinator = " ";
+        descendant = false;
+      }
+      compound += chunk;
+    }
+  }
+  flush();
+  return parts;
+}
+
+function attributeOf(node, key) {
+  if (key === "class") return node.classes.join(" ");
+  return Object.prototype.hasOwnProperty.call(node.attributes, key)
+    ? node.attributes[key]
+    : null;
+}
+
+const ATTRIBUTE = /^\[\s*([\w-]+)\s*(?:([~^$*|]?=)\s*("[^"]*"|'[^']*'|[^\s\]]+)\s*[isIS]?\s*)?\]$/;
+
+function matchesAttribute(simple, node) {
+  const parsed = ATTRIBUTE.exec(simple);
+  if (!parsed) return `attribute selector "${simple}"`;
+  const [, key, operator, quoted] = parsed;
+  if (!MODELLED_ATTRIBUTES.has(key.toLowerCase())) return `attribute key "${key}"`;
+  const value = attributeOf(node, key.toLowerCase());
+  if (value === null) return false;
+  if (!operator) return true;
+  if (value === ANY_VALUE) return `value of "${key}"`;
+  const wanted = quoted.replace(/^["']|["']$/g, "");
+  if (operator === "=") return value === wanted;
+  if (operator === "~=") return value.split(/\s+/).includes(wanted);
+  if (operator === "^=") return value.startsWith(wanted);
+  if (operator === "$=") return value.endsWith(wanted);
+  if (operator === "*=") return value.includes(wanted);
+  return value === wanted || value.startsWith(`${wanted}-`);
+}
+
+function matchesPseudo(simple, chain, index) {
+  const functional = FUNCTIONAL_PSEUDO.exec(simple);
+  if (!functional) return `pseudo-class "${simple}"`;
+  const any = disjunction(
+    splitArguments(functional[2]).map((argument) => matchesComplex(argument, chain, index))
+  );
+  return functional[1].toLowerCase() === "not" && !unanswered(any) ? !any : any;
+}
+
+function matchesSimple(simple, chain, index) {
+  const node = chain[index];
+  if (simple === "*") return true;
+  if (simple.startsWith(".")) return node.classes.includes(simple.slice(1));
+  if (simple.startsWith("#")) return attributeOf(node, "id") === simple.slice(1);
+  if (simple.startsWith("[")) return matchesAttribute(simple, node);
+  if (simple.startsWith(":")) return matchesPseudo(simple, chain, index);
+  if (/^[a-z][\w-]*$/i.test(simple)) return node.tag === simple.toLowerCase();
+  return `simple selector "${simple}"`;
+}
+
+function matchesCompound(compound, chain, index) {
+  return conjunction(
+    simpleSelectors(compound).map((simple) => matchesSimple(simple, chain, index))
+  );
+}
+
+/** @returns {boolean|string} whether parts[0..position] reaches chain[index] */
+function matchesParts(parts, position, chain, index) {
+  const here = matchesCompound(parts[position].compound, chain, index);
+  // A compound ruled out settles the selector whatever the rest of it says.
+  if (here === false || position === 0) return here;
+  const { combinator } = parts[position];
+  let left;
+  if (combinator === ">") {
+    left = index > 0 && matchesParts(parts, position - 1, chain, index - 1);
+  } else if (combinator === " ") {
+    const ancestors = [];
+    for (let up = index - 1; up >= 0; up -= 1) {
+      ancestors.push(matchesParts(parts, position - 1, chain, up));
+    }
+    left = disjunction(ancestors);
+  } else {
+    left = `combinator "${combinator}"`;
+  }
+  return conjunction([here, left]);
+}
+
+function matchesComplex(selector, chain, index) {
+  const parts = complexParts(selector);
+  if (parts.length === 0) return `empty selector "${selector}"`;
+  return matchesParts(parts, parts.length - 1, chain, index);
+}
+
+/** @returns {number[]|null} the winning triple, or null where nothing reaches */
+function matchWeight(chain, selectorText) {
+  let best = null;
+  for (const raw of splitArguments(selectorText)) {
+    const selector = rewritePseudoClasses(raw.trim());
+    // A ::pseudo-element rule paints a generated box, never the chip's own.
+    if (selector === "" || selector.includes("::")) continue;
+    const verdict = matchesComplex(selector, chain, chain.length - 1);
+    if (unanswered(verdict)) throw new Error(`unmodelled ${verdict} in "${selector}"`);
+    if (!verdict) continue;
+    const weight = specificity(selector);
+    if (!best || compareSpecificity(best, weight) < 0) best = weight;
+  }
+  return best;
 }
 
 /* Keywords the `animation` shorthand carries in a name's place; the
@@ -287,7 +465,7 @@ function animationNames(cssText) {
 }
 
 /** @returns {{rule: CSSStyleRule, order: number, weight: number[]}[]} matches, weakest first */
-function matchingRules(element, width) {
+function matchingRules(chain, width) {
   const matches = [];
   const keyframes = new Map();
   let order = 0;
@@ -299,14 +477,14 @@ function matchingRules(element, width) {
   };
 
   const reachesChip = (rule) => {
-    if (rule.selectorText) return Boolean(matchWeight(element, rule.selectorText));
+    if (rule.selectorText) return Boolean(matchWeight(chain, rule.selectorText));
     return rule.cssRules ? Array.from(rule.cssRules).some(reachesChip) : false;
   };
 
   const walk = (rules, live) => {
     for (const rule of Array.from(rules)) {
       if (rule.type === STYLE_RULE) {
-        const weight = live ? matchWeight(element, rule.selectorText) : null;
+        const weight = live ? matchWeight(chain, rule.selectorText) : null;
         if (weight) matches.push({ rule, order: (order += 1), weight });
       } else if (rule.type === MEDIA_RULE) {
         const applies = mediaApplies(rule.media.mediaText, width);
@@ -361,32 +539,20 @@ function matchingRules(element, width) {
   );
 }
 
-function chipElement(classes) {
+/** @returns {object[]} the chip's ancestors and the chip itself, outermost first */
+function chipChain(classes) {
   const control = CONTROL_BY_CHIP.get(classes[0]);
-  const holder = document.createElement("div");
-  holder.innerHTML = control.strip;
-  const strip = holder.firstElementChild;
-  document.body.appendChild(strip);
-
-  const element = document.createElement("button");
-  element.className = classes.join(" ");
-  for (const [name, value] of Object.entries(control.attributes)) {
-    element.setAttribute(name, value);
-  }
-  element.innerHTML = control.contents;
-
-  const selected = classes.includes(`${control.chip}--selected`);
-  if (element.getAttribute("role") === "radio") {
-    element.setAttribute("aria-checked", String(selected));
-    element.tabIndex = selected ? 0 : -1;
+  const attributes = { ...control.attributes };
+  if (attributes.role === "radio") {
+    const selected = classes.includes(`${control.chip}--selected`);
+    attributes["aria-checked"] = String(selected);
+    attributes.tabindex = selected ? "0" : "-1";
   }
   if (classes.includes(DISABLED)) {
-    element.disabled = true;
-    element.setAttribute("aria-disabled", "true");
+    attributes.disabled = "";
+    attributes["aria-disabled"] = "true";
   }
-
-  strip.querySelector(control.slot).appendChild(element);
-  return element;
+  return [...control.ancestors, { tag: "button", classes, attributes }];
 }
 
 function styleOf(cssText) {
@@ -406,7 +572,7 @@ function toRgb(value) {
 
 /** @returns {CSSStyleDeclaration} the chip's declared style */
 function chipStyle(classes, width) {
-  const winners = matchingRules(chipElement(classes), width || WIDE);
+  const winners = matchingRules(chipChain(classes), width || WIDE);
   return styleOf(winners.map((match) => match.rule.style.cssText).join(" "));
 }
 
@@ -427,7 +593,7 @@ const dashed = (property) => property.replace(/[A-Z]/g, (letter) => `-${letter.t
 
 /** @returns {string[]} `${property} @ ${weight}` for every property two rules contest */
 function positionalTies(classes, width) {
-  const matches = matchingRules(chipElement(classes), width || WIDE);
+  const matches = matchingRules(chipChain(classes), width || WIDE);
   return CONTESTED.flatMap((property) => {
     const declaring = matches.filter(
       (match) => styleOf(match.rule.style.cssText)[property] !== ""
@@ -454,7 +620,6 @@ function positionalTies(classes, width) {
 
 afterEach(() => {
   document.head.innerHTML = "";
-  document.body.innerHTML = "";
 });
 
 describe.each(CONTROLS)("$label", ({ chip }) => {
