@@ -12,7 +12,7 @@
  * seen to vary rather than frozen from one render. Nothing about the chain is
  * written down here, so it cannot drift from the markup it stands for. A fact
  * the chain does not hold is rejected, never assumed: an attribute key no
- * render carried, a presence or a value that varies, an unmodelled
+ * render put on that node, a presence or a value that varies, an unmodelled
  * pseudo-class, a sibling combinator — unless another simple selector in the
  * same compound has already ruled the chip out.
  *
@@ -153,13 +153,14 @@ function snapshotChips(control) {
   );
 }
 
-function checkoutManager(terms) {
+function checkoutManager(terms, termType) {
   return new window.TwoCheckoutManager({
     checkoutHost: CHECKOUT_HOST,
     orderIntentEnabled: false,
     ajaxToken: "test-token",
     available_payment_terms: terms,
     default_payment_term: terms[0],
+    payment_term_type: termType,
   });
 }
 
@@ -191,6 +192,11 @@ function renderTermChips(control) {
     strip.querySelector("#two-terms-title").remove();
     document.body.appendChild(strip);
     checkoutManager([14, 30, 45, 60]).initializePaymentTerms();
+    chains.push(...snapshotChips(control));
+
+    // End-of-month terms name every chip, which standard terms leave off.
+    document.body.innerHTML = '<div class="two-payment-info"></div>';
+    checkoutManager([14, 30, 45, 60], "EOM").injectPaymentTermsIfMissing();
     chains.push(...snapshotChips(control));
   } finally {
     window.TwoCheckoutManager.prototype.initializePaymentTerms = initialize;
@@ -236,13 +242,9 @@ function modelOf(control) {
       throw new Error(`${control.label}: renders ${chain.length} deep and ${depth} deep`);
     }
   }
-  // An attribute key no render carried is unknown, not absent.
-  const vocabulary = new Set(
-    chains.flatMap((chain) => chain.flatMap((node) => Object.keys(node.attributes)))
-  );
   return {
     chain: chains[0].map((_, depthIndex) =>
-      Object.assign(mergeNodes(chains.map((chain) => chain[depthIndex])), { vocabulary })
+      mergeNodes(chains.map((chain) => chain[depthIndex]))
     ),
     states: new Set(
       chains.map((chain) => chipState(chain[depth - 1], control.chip))
@@ -490,9 +492,9 @@ function matchesAttribute(simple, node) {
   const [, name, operator, quoted, flag] = parsed;
   const key = name.toLowerCase();
   if (flag && flag.toLowerCase() === "s") return `case-sensitive flag in "${simple}"`;
-  if (!node.vocabulary.has(key)) return `attribute key "${key}"`;
   const held = node.attributes.get(key);
-  if (!held) return false;
+  // Only this node's own renders speak for it; another node's key licenses nothing.
+  if (!held) return `attribute key "${key}"`;
   if (!held.everywhere) return `presence of "${key}"`;
   if (!operator) return true;
   if (key === "class") {
