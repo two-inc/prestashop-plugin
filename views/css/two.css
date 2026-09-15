@@ -936,8 +936,8 @@
     user-select: none;
 }
 
-.two-term-chip:not(.two-term-chip--selected):not(:disabled):hover,
-.two-term-chip:not(.two-term-chip--selected):not(:disabled):focus {
+.two-term-chip:not(.two-term-chip--selected):hover,
+.two-term-chip:not(.two-term-chip--selected):focus {
     padding: 9px 15px;
     border-width: 1px;
     border-color: #091030;
