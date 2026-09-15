@@ -754,20 +754,6 @@ describe.each(CONTROLS)("$label", ({ chip }) => {
     expect(seen.filter((colour) => retired.includes(colour))).toEqual([]);
   });
 
-  test.each([
-    [[chip, DISABLED, HOVER], "hovered"],
-    [[chip, DISABLED, FOCUS], "focused"],
-  ])("a disabled chip keeps its resting appearance when %s", (classes) => {
-    const style = chipStyle(classes);
-
-    expect([
-      style.borderTopWidth,
-      toRgb(style.borderTopColor),
-      toRgb(style.backgroundColor),
-      ...outerBox(classes),
-    ]).toEqual(["2px", GREY, WHITE, ...outerBox(resting)]);
-  });
-
   test("a chip focused by pointer shows no ring", () => {
     expect(chipStyle(focused).outline).toBe("none");
   });
@@ -828,5 +814,19 @@ describe("a disabled payment-term chip", () => {
     VIEWPORTS.flatMap(([width]) => states.map(([classes]) => [classes, width]))
   )("%s is decided by specificity, not source position %#", (classes, width) => {
     expect(positionalTies(classes, width)).toEqual([]);
+  });
+
+  test.each([
+    [[CHIP, DISABLED, HOVER], "hovered"],
+    [[CHIP, DISABLED, FOCUS], "focused"],
+  ])("an unselected one keeps its resting appearance when %s", (classes) => {
+    const style = chipStyle(classes);
+
+    expect([
+      style.borderTopWidth,
+      toRgb(style.borderTopColor),
+      toRgb(style.backgroundColor),
+      ...outerBox(classes),
+    ]).toEqual(["2px", GREY, WHITE, ...outerBox([CHIP])]);
   });
 });
