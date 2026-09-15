@@ -570,10 +570,42 @@ function toRgb(value) {
   return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
 }
 
+/** @returns {string[]} one declaration per entry, in source order */
+function declarations(cssText) {
+  const parts = [];
+  let current = "";
+  let depth = 0;
+  let quote = "";
+  for (const character of cssText) {
+    if (quote) {
+      if (character === quote) quote = "";
+    } else if (character === '"' || character === "'") quote = character;
+    else if (character === "(") depth += 1;
+    else if (character === ")") depth -= 1;
+    else if (character === ";" && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  return parts.concat(current).map((part) => part.trim()).filter(Boolean);
+}
+
+const IMPORTANT = /!\s*important\s*$/i;
+
 /** @returns {CSSStyleDeclaration} the chip's declared style */
 function chipStyle(classes, width) {
   const winners = matchingRules(chipChain(classes), width || WIDE);
-  return styleOf(winners.map((match) => match.rule.style.cssText).join(" "));
+  const declared = winners.flatMap((match) => declarations(match.rule.style.cssText));
+  // !important outranks specificity outright, so the important declarations are
+  // re-laid after the whole normal tier rather than left in cascade order.
+  return styleOf(
+    []
+      .concat(declared.filter((entry) => !IMPORTANT.test(entry)))
+      .concat(declared.filter((entry) => IMPORTANT.test(entry)))
+      .join("; ")
+  );
 }
 
 /** @returns {number[]} the chip's outer width and height, in px, sans content */
