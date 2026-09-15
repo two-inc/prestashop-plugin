@@ -15497,7 +15497,13 @@ class Twopayment extends PaymentModule
             $markerValid = $cookieCartId === (int) $cart->id;
 
             if ($isOtherModuleController || !$markerValid) {
+                // Read before the mutation: the re-stamp may only forgive
+                // drift this module is about to cause (TWO-25763).
+                $restampable = $this->checkoutSessionChecksumMatchesCart($cart);
                 $this->removeTwoSurchargeCartLineInternal($cart, $productId);
+                if ($restampable) {
+                    $this->restampCheckoutSessionChecksum($cart);
+                }
                 PrestaShopLogger::addLog(
                     'TwoPayment: Removed stale surcharge line from cart ' . (int) $cart->id .
                     ($isOtherModuleController ? ' (other module controller: ' . $controllerModuleName . ')' : ' (session marker mismatch)'),
