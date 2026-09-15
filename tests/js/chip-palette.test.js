@@ -6,12 +6,15 @@
  * specificity, so states are rewritten to classes and the cascade resolved here.
  *
  * Whether a rule reaches a chip is decided from the selector's own vocabulary,
- * evaluated against a declared model of the chip and its ancestors. Nothing is
- * built and asked what it matches, so no gap between a built element and the
- * shipped one can quietly drop a rule. A simple selector the resolver cannot
- * answer — an attribute key outside MODELLED_ATTRIBUTES, an unmodelled
- * pseudo-class, a sibling combinator — is rejected, unless another simple
- * selector in the same compound has already ruled the chip out.
+ * evaluated against a chain of the chip and its ancestors. That chain is READ
+ * OFF the markup the shipped renderers produce under jsdom, over several
+ * document shapes each, so a tag, class or attribute those renderers vary is
+ * seen to vary rather than frozen from one render. Nothing about the chain is
+ * written down here, so it cannot drift from the markup it stands for. A fact
+ * the chain does not hold is rejected, never assumed: an attribute key no
+ * render carried, a presence or a value that varies, an unmodelled
+ * pseudo-class, a sibling combinator — unless another simple selector in the
+ * same compound has already ruled the chip out.
  *
  * Known gaps, each confirmed by watching the resolver answer rather than by
  * reading its intent. This list is what has been found; it is not a proof that
@@ -26,8 +29,10 @@
  *    generated box; one positioned over the chip would not be caught.
  *  - The chain starts at the chip's own strip, so a selector keyed on a theme
  *    element above it is dropped rather than rejected.
- *  - A mode chip carries one of three identity classes alongside the shared
- *    one; the chain declares only the shared one.
+ *  - Attribute values are compared case-insensitively whichever attribute they
+ *    belong to, so a rule keyed on a case-sensitive one can be over-applied.
+ *  - The chip's own state classes are the case under test rather than a render.
+ *    Only their disabled/selected combination is checked against the renders.
  */
 
 "use strict";
@@ -35,7 +40,19 @@
 const fs = require("fs");
 const path = require("path");
 
+const {
+  buildAddressForm,
+  loadCompanySearch,
+  loadOrderIntent,
+  loadScript,
+  openPanel,
+  releaseWidgets,
+  stubAjax,
+} = require("./ps-harness");
+
 const STYLESHEET = path.resolve(__dirname, "../../views/css/two.css");
+
+const CHECKOUT_HOST = "https://api.example.test";
 
 const WIDE = 1024;
 const NARROW = 480;
@@ -45,24 +62,6 @@ const SUPPORTED_CONDITIONS = ["selector(:focus-visible)"];
 const FUNCTIONAL_PSEUDO = /^:(not|is|where)\((.*)\)$/i;
 
 const COMBINATORS = new Set([">", "+", "~"]);
-
-/* Attribute keys the chain below answers for every node it holds. A selector
-   keyed on any other is rejected, never assumed absent. */
-const MODELLED_ATTRIBUTES = new Set([
-  "aria-checked",
-  "aria-disabled",
-  "aria-labelledby",
-  "class",
-  "data-days",
-  "disabled",
-  "id",
-  "role",
-  "tabindex",
-  "type",
-]);
-
-/** A modelled attribute the shipped markup gives no single value. */
-const ANY_VALUE = Symbol("value not modelled");
 
 /* Anchored: an unanchored ":focus" also eats the ":focus" of ":focus-within". */
 const PSEUDO_CLASSES = [
@@ -108,34 +107,16 @@ const CONTROLS = [
   {
     label: "payment-term chip",
     chip: "two-term-chip",
-    ancestors: [
-      { tag: "div", classes: ["two-payment-terms", "show"], attributes: { id: "two-payment-terms" } },
-      { tag: "div", classes: ["two-term-chips"], attributes: {} },
-      {
-        tag: "div",
-        classes: ["two-term-chips__container"],
-        attributes: {
-          id: "two-terms-chips",
-          role: "radiogroup",
-          "aria-labelledby": "two-terms-title",
-        },
-      },
-    ],
-    attributes: { type: "button", role: "radio", "data-days": ANY_VALUE },
+    strip: "two-payment-terms",
+    render: renderTermChips,
   },
   {
     label: "company-mode chip",
     chip: "two-company-mode-chip",
-    ancestors: [
-      { tag: "div", classes: ["two-company-field-wrap"], attributes: {} },
-      { tag: "div", classes: ["two-company-dropdown"], attributes: {} },
-      { tag: "div", classes: ["two-company-mode-chips"], attributes: {} },
-    ],
-    attributes: { type: "button" },
+    strip: "two-company-field-wrap",
+    render: renderModeChips,
   },
 ];
-
-const CONTROL_BY_CHIP = new Map(CONTROLS.map((control) => [control.chip, control]));
 
 const VIEWPORTS = [
   [WIDE, "at full width"],
@@ -143,6 +124,151 @@ const VIEWPORTS = [
 ];
 
 const ACCENT_ON_GREY = [ACCENT, GREY];
+
+/** Per chip class: the merged chain, and the chip states the renders showed. */
+const MODEL = new Map();
+
+/** @returns {object[]} the chip and its ancestors up to `strip`, outermost first */
+function snapshotChain(chip, strip) {
+  const chain = [];
+  for (let node = chip; node; node = node.parentElement) {
+    const attributes = {};
+    for (const attribute of Array.from(node.attributes)) {
+      attributes[attribute.name] = attribute.value;
+    }
+    chain.unshift({
+      tag: node.tagName.toLowerCase(),
+      classes: Array.from(node.classList),
+      attributes,
+    });
+    if (node.classList.contains(strip)) return chain;
+  }
+  throw new Error(`no .${strip} above the chip`);
+}
+
+/** @returns {object[][]} a chain per chip now on the page */
+function snapshotChips(control) {
+  return Array.from(document.querySelectorAll(`.${control.chip}`)).map((chip) =>
+    snapshotChain(chip, control.strip)
+  );
+}
+
+function checkoutManager(terms) {
+  return new window.TwoCheckoutManager({
+    checkoutHost: CHECKOUT_HOST,
+    orderIntentEnabled: false,
+    ajaxToken: "test-token",
+    available_payment_terms: terms,
+    default_payment_term: terms[0],
+  });
+}
+
+function renderTermChips(control) {
+  const chains = [];
+  // The strip as injectPaymentTermsIfMissing() leaves it, taken before
+  // initializePaymentTerms() writes the group's own attributes onto it, so the
+  // title can be removed and the theme-supplied-container branch driven.
+  let strip = null;
+  const initialize = window.TwoCheckoutManager.prototype.initializePaymentTerms;
+  window.TwoCheckoutManager.prototype.initializePaymentTerms = function () {
+    const built = document.querySelector(`.${control.strip}`);
+    if (built && !strip) strip = built.cloneNode(true);
+    return initialize.apply(this, arguments);
+  };
+  try {
+    document.body.innerHTML = '<div class="two-payment-info"></div>';
+    const several = checkoutManager([14, 30, 45, 60]);
+    several.injectPaymentTermsIfMissing();
+    chains.push(...snapshotChips(control));
+    several.showPaymentTerms();
+    chains.push(...snapshotChips(control));
+
+    document.body.innerHTML = '<div class="two-payment-info"></div>';
+    checkoutManager([30]).injectPaymentTermsIfMissing();
+    chains.push(...snapshotChips(control));
+
+    document.body.innerHTML = "";
+    strip.querySelector("#two-terms-title").remove();
+    document.body.appendChild(strip);
+    checkoutManager([14, 30, 45, 60]).initializePaymentTerms();
+    chains.push(...snapshotChips(control));
+  } finally {
+    window.TwoCheckoutManager.prototype.initializePaymentTerms = initialize;
+  }
+  return chains;
+}
+
+function renderModeChips(control) {
+  buildAddressForm({ country: "GB" });
+  new window.TwoCompanySearch({ checkoutHost: CHECKOUT_HOST }).init();
+  const closed = snapshotChips(control);
+  openPanel();
+  return closed.concat(snapshotChips(control));
+}
+
+/** @returns {object} one node answering for every render it was seen in */
+function mergeNodes(nodes) {
+  const always = nodes[0].classes.filter((name) =>
+    nodes.every((node) => node.classes.includes(name))
+  );
+  const ever = new Set(nodes.flatMap((node) => node.classes));
+  const attributes = new Map();
+  for (const key of new Set(nodes.flatMap((node) => Object.keys(node.attributes)))) {
+    const held = nodes.filter((node) => key in node.attributes);
+    attributes.set(key, {
+      everywhere: held.length === nodes.length,
+      values: new Set(held.map((node) => node.attributes[key])),
+    });
+  }
+  return {
+    tags: new Set(nodes.map((node) => node.tag)),
+    classes: always,
+    varying: new Set(Array.from(ever).filter((name) => !always.includes(name))),
+    attributes,
+  };
+}
+
+function modelOf(control) {
+  const chains = control.render(control);
+  const depth = chains[0].length;
+  for (const chain of chains) {
+    if (chain.length !== depth) {
+      throw new Error(`${control.label}: renders ${chain.length} deep and ${depth} deep`);
+    }
+  }
+  // An attribute key no render carried is unknown, not absent.
+  const vocabulary = new Set(
+    chains.flatMap((chain) => chain.flatMap((node) => Object.keys(node.attributes)))
+  );
+  return {
+    chain: chains[0].map((_, depthIndex) =>
+      Object.assign(mergeNodes(chains.map((chain) => chain[depthIndex])), { vocabulary })
+    ),
+    states: new Set(
+      chains.map((chain) => chipState(chain[depth - 1], control.chip))
+    ),
+  };
+}
+
+function chipState(chip, chipClass) {
+  const disabled = "disabled" in chip.attributes || chip.classes.includes(DISABLED);
+  return `${disabled}/${chip.classes.includes(`${chipClass}--selected`)}`;
+}
+
+beforeAll(() => {
+  const { $ } = loadCompanySearch();
+  const ajax = stubAjax($);
+  try {
+    loadOrderIntent();
+    loadScript("views/js/modules/TwoCheckoutManager.js");
+    for (const control of CONTROLS) MODEL.set(control.chip, modelOf(control));
+  } finally {
+    ajax.restore();
+    releaseWidgets($);
+    document.body.innerHTML = "";
+    document.head.innerHTML = "";
+  }
+});
 
 /** @returns {CSSStyleSheet} the shipped stylesheet, parsed */
 function loadStylesheet() {
@@ -342,31 +468,40 @@ function complexParts(selector) {
   return parts;
 }
 
-function attributeOf(node, key) {
-  if (key === "class") return node.classes.join(" ");
-  return Object.prototype.hasOwnProperty.call(node.attributes, key)
-    ? node.attributes[key]
-    : null;
-}
+const ATTRIBUTE =
+  /^\[\s*([\w-]+)\s*(?:([~^$*|]?=)\s*("[^"]*"|'[^']*'|[^\s\]]+)\s*([isIS])?\s*)?\]$/;
 
-const ATTRIBUTE = /^\[\s*([\w-]+)\s*(?:([~^$*|]?=)\s*("[^"]*"|'[^']*'|[^\s\]]+)\s*[isIS]?\s*)?\]$/;
-
-function matchesAttribute(simple, node) {
-  const parsed = ATTRIBUTE.exec(simple);
-  if (!parsed) return `attribute selector "${simple}"`;
-  const [, key, operator, quoted] = parsed;
-  if (!MODELLED_ATTRIBUTES.has(key.toLowerCase())) return `attribute key "${key}"`;
-  const value = attributeOf(node, key.toLowerCase());
-  if (value === null) return false;
-  if (!operator) return true;
-  if (value === ANY_VALUE) return `value of "${key}"`;
-  const wanted = quoted.replace(/^["']|["']$/g, "");
+/* Folded on both sides: `type` is one of the attributes HTML matches
+   case-insensitively, and ruling such a rule out silently drops it. */
+function compareValue(operator, held, quoted) {
+  const value = held.toLowerCase();
+  const wanted = quoted.replace(/^["']|["']$/g, "").toLowerCase();
   if (operator === "=") return value === wanted;
   if (operator === "~=") return value.split(/\s+/).includes(wanted);
   if (operator === "^=") return value.startsWith(wanted);
   if (operator === "$=") return value.endsWith(wanted);
   if (operator === "*=") return value.includes(wanted);
   return value === wanted || value.startsWith(`${wanted}-`);
+}
+
+function matchesAttribute(simple, node) {
+  const parsed = ATTRIBUTE.exec(simple);
+  if (!parsed) return `attribute selector "${simple}"`;
+  const [, name, operator, quoted, flag] = parsed;
+  const key = name.toLowerCase();
+  if (flag && flag.toLowerCase() === "s") return `case-sensitive flag in "${simple}"`;
+  if (!node.vocabulary.has(key)) return `attribute key "${key}"`;
+  const held = node.attributes.get(key);
+  if (!held) return false;
+  if (!held.everywhere) return `presence of "${key}"`;
+  if (!operator) return true;
+  if (key === "class") {
+    return node.varying.size
+      ? `value of "class"`
+      : compareValue(operator, node.classes.join(" "), quoted);
+  }
+  if (held.values.size > 1) return `value of "${key}"`;
+  return compareValue(operator, Array.from(held.values)[0], quoted);
 }
 
 function matchesPseudo(simple, chain, index) {
@@ -378,14 +513,24 @@ function matchesPseudo(simple, chain, index) {
   return functional[1].toLowerCase() === "not" && !unanswered(any) ? !any : any;
 }
 
+function matchesClass(node, name) {
+  if (node.classes.includes(name)) return true;
+  return node.varying.has(name) ? `class "${name}"` : false;
+}
+
+function matchesTag(node, tag) {
+  if (!node.tags.has(tag)) return false;
+  return node.tags.size === 1 ? true : `tag "${tag}"`;
+}
+
 function matchesSimple(simple, chain, index) {
   const node = chain[index];
   if (simple === "*") return true;
-  if (simple.startsWith(".")) return node.classes.includes(simple.slice(1));
-  if (simple.startsWith("#")) return attributeOf(node, "id") === simple.slice(1);
+  if (simple.startsWith(".")) return matchesClass(node, simple.slice(1));
+  if (simple.startsWith("#")) return matchesAttribute(`[id="${simple.slice(1)}"]`, node);
   if (simple.startsWith("[")) return matchesAttribute(simple, node);
   if (simple.startsWith(":")) return matchesPseudo(simple, chain, index);
-  if (/^[a-z][\w-]*$/i.test(simple)) return node.tag === simple.toLowerCase();
+  if (/^[a-z][\w-]*$/i.test(simple)) return matchesTag(node, simple.toLowerCase());
   return `simple selector "${simple}"`;
 }
 
@@ -541,18 +686,20 @@ function matchingRules(chain, width) {
 
 /** @returns {object[]} the chip's ancestors and the chip itself, outermost first */
 function chipChain(classes) {
-  const control = CONTROL_BY_CHIP.get(classes[0]);
-  const attributes = { ...control.attributes };
-  if (attributes.role === "radio") {
-    const selected = classes.includes(`${control.chip}--selected`);
-    attributes["aria-checked"] = String(selected);
-    attributes.tabindex = selected ? "0" : "-1";
+  const chipClass = classes[0];
+  const { chain, states } = MODEL.get(chipClass);
+  const state = chipState({ classes, attributes: {} }, chipClass);
+  if (!states.has(state)) {
+    throw new Error(`no render of .${chipClass} is disabled/selected ${state}`);
   }
-  if (classes.includes(DISABLED)) {
-    attributes.disabled = "";
-    attributes["aria-disabled"] = "true";
-  }
-  return [...control.ancestors, { tag: "button", classes, attributes }];
+  const chip = chain[chain.length - 1];
+  // The state classes are the case under test; the rest of the chip's are not.
+  const owned = new Set([...classes, `${chipClass}--selected`, `${chipClass}--single`]);
+  return chain.slice(0, -1).concat({
+    ...chip,
+    classes: classes.concat(chip.classes.filter((name) => !owned.has(name))),
+    varying: new Set(Array.from(chip.varying).filter((name) => !owned.has(name))),
+  });
 }
 
 function styleOf(cssText) {
