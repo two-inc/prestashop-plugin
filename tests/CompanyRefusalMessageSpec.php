@@ -20,6 +20,7 @@ final class CompanyRefusalMessageSpec
 
     /** @var array<int, array{0: string, 1: string}> iso code, description for the assertion message */
     private const GATED_LOCALES = [
+        ['es', 'Spanish'],
         ['nl', 'Dutch'],
         ['no', 'Norwegian'],
         ['sv', 'Swedish'],
