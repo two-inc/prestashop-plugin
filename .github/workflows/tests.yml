@@ -69,6 +69,25 @@ jobs:
       - name: Run offline test suite
         run: php tests/run.php
 
+  # Separate from the offline suite so a catalogue that has drifted from the
+  # source reports as an i18n failure rather than one red line among sixty.
+  i18n-audit:
+    name: i18n audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: Catalogues agree with the source
+        run: dev/i18n-audit.sh
+
   phpstan:
     name: phpstan
     runs-on: ubuntu-latest
