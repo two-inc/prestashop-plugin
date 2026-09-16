@@ -52,6 +52,9 @@ For every user-facing string change:
 - Update every locale in `translations/`: `es.php`, `nl.php`, `no.php`, `sv.php` — natural
   phrasing, not literal machine output. Dutch uses the informal `je`/`jouw` register.
 - Avoid hardcoded English UI fallback where module i18n is available
+- Check the result with `dev/i18n-audit.sh`. CI runs it as its own job; a new
+  locale also needs adding to `GATED_LOCALES` in `tests/TranslationCatalogueSpec.php`,
+  or the audit fails on a catalogue nothing gates.
 
 **Never regenerate a `translations/*.php` file from the PrestaShop back office**
 (Translations > Module translations). Its writer derives the key's source segment from the
