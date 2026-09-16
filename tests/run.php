@@ -5069,10 +5069,11 @@ final class OrderBuilderSpec
 
             $module->getMerchantAvailableTerms();
 
-            TinyAssert::same(
-                0,
-                (int) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS) - time(),
-                'clock: ' . $description
+            // The stamp and this time() can straddle a one-second boundary.
+            $age = time() - (int) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+            TinyAssert::true(
+                $age >= 0 && $age <= 1,
+                'clock: ' . $description . ' (stamp ' . $age . 's old)'
             );
             TinyAssert::same($expectedFetched, $module->hasFetchedMerchantRecord(), 'fetched: ' . $description);
         }
