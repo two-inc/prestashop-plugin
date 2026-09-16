@@ -87,6 +87,7 @@ final class TranslationCatalogueSpec
         // Before the per-locale checks: an nb.php would otherwise surface only as
         // a generic "missing translations/no.php", which does not say why.
         self::assertNorwegianUsesIsoCodeFilename();
+        self::assertEveryCatalogueIsGated();
 
         foreach (self::GATED_LOCALES as $iso) {
             self::assertCatalogueMatches($iso, $expected);
@@ -525,6 +526,41 @@ final class TranslationCatalogueSpec
 
         if (!is_file($dir . '/no.php')) {
             throw new RuntimeException('Missing translations/no.php (Norwegian, by PrestaShop iso_code).');
+        }
+    }
+
+    /**
+     * Every check above iterates GATED_LOCALES, so a catalogue whose filename
+     * is not on that list is checked by nothing at all — including one named
+     * for a locale tag PrestaShop never resolves to an iso_code, which the
+     * runtime then never reads. Walk the directory instead of the list.
+     */
+    private static function assertEveryCatalogueIsGated(): void
+    {
+        $dir = dirname(__DIR__) . '/translations';
+        $found = [];
+
+        foreach ((array) scandir($dir) as $name) {
+            // PrestaShop's directory-listing guard, in every module directory.
+            if (!is_string($name) || $name === 'index.php' || substr($name, -4) !== '.php') {
+                continue;
+            }
+
+            $found[] = basename($name, '.php');
+        }
+
+        sort($found);
+        $gated = self::GATED_LOCALES;
+        sort($gated);
+
+        if ($found !== $gated) {
+            throw new RuntimeException(sprintf(
+                'translations/ holds catalogues for [%s] but this spec gates [%s]. A catalogue it does not '
+                . 'gate is checked by nothing, and one named for a tag PrestaShop never resolves to an '
+                . 'iso_code is read by nothing. Add the locale to GATED_LOCALES, or remove the file.',
+                implode(', ', $found),
+                implode(', ', $gated)
+            ));
         }
     }
 
