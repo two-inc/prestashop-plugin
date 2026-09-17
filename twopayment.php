@@ -1955,6 +1955,32 @@ class Twopayment extends PaymentModule
         return $fields_values;
     }
 
+    /**
+     * The product-message switch accepts its two known values and nothing
+     * else (TWO-25799).
+     *
+     * A bare boolean cast would store any non-empty crafted value as enabled,
+     * which publishes the message under a configuration the merchant never
+     * chose. Unset is the default and stays valid.
+     *
+     * @return void
+     */
+    protected function validTwoProductMessageEnabledValue()
+    {
+        $raw = Tools::getValue('PS_TWO_PRODUCT_MESSAGE_ENABLED');
+
+        if ($raw === false || $raw === null || $raw === '') {
+            return;
+        }
+
+        if (!in_array((string) $raw, array('0', '1'), true)) {
+            $this->errors[] = sprintf(
+                $this->l('Show message on product pages accepts only on or off; "%s" is not a value it understands.'),
+                htmlspecialchars((string) $raw, ENT_QUOTES, 'UTF-8')
+            );
+        }
+    }
+
     protected function validTwoCheckoutFieldsFormValues()
     {
         foreach ($this->languages as $language) {
@@ -1974,6 +2000,8 @@ class Twopayment extends PaymentModule
                 );
             }
         }
+
+        $this->validTwoProductMessageEnabledValue();
 
         $this->validTwoCheckoutSortOrderValue();
 
@@ -18961,8 +18989,14 @@ class Twopayment extends PaymentModule
         if (isset($this->context->controller) && method_exists($this->context->controller, 'registerStylesheet')) {
             $this->context->controller->registerStylesheet(
                 'module-twopayment-product-promo',
-                'modules/' . $this->name . '/views/css/product-promo.css',
-                array('media' => 'all', 'priority' => 200)
+                $this->getTwoModuleAssetPath('views/css/product-promo.css'),
+                array(
+                    'media' => 'all',
+                    'priority' => 200,
+                    // Without a version a later upgrade to this file is served
+                    // from cache, because its URL never changes.
+                    'version' => $this->getTwoAssetVersion('views/css/product-promo.css'),
+                )
             );
         }
     }
@@ -18992,16 +19026,16 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        // Quick View sets this on the request that renders the modal body.
-        if ((int) Tools::getValue('quickview') === 1) {
-            return false;
-        }
-
-        if (isset($this->context->controller->ajax) && $this->context->controller->ajax) {
-            return false;
-        }
-
-        return true;
+        // Quick View sets this on the request that renders the modal body. It
+        // is the fragment case that matters: its markup lands on a category
+        // page that never loaded this stylesheet.
+        //
+        // A combination refresh is ALSO an ajax product request, and it
+        // re-renders the additional-info block the theme swaps in — excluding
+        // every ajax request made the badge vanish as soon as a buyer picked a
+        // variant, on a page whose stylesheet was already loaded. So the
+        // exclusion names Quick View, not ajax.
+        return (int) Tools::getValue('quickview') !== 1;
     }
 
     /**
@@ -19055,7 +19089,7 @@ class Twopayment extends PaymentModule
      * every other buyer-facing surface asks, through the same one definition
      * of the set (isDefinitiveFailureStatus) - so only a key Two rejected, or
      * no key at all, withholds it. A transient blip does not, exactly as it
-     * does not withhold the tile itself (ABN-533).
+     * does not withhold the tile itself (TWO-25799).
      *
      * Read cache-only. This is a render path on the highest-traffic page in
      * the shop, so it may never make an HTTP call of its own.
@@ -19068,7 +19102,11 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        if (!(bool) Configuration::get('PS_TWO_PRODUCT_MESSAGE_ENABLED')) {
+        // Strict: only the stored '1' enables it. A corrupt row left by an
+        // import or a hand edit reads as off rather than being coerced into
+        // publishing the message.
+        $enabled = Configuration::get('PS_TWO_PRODUCT_MESSAGE_ENABLED');
+        if ($enabled === false || (string) $enabled !== '1') {
             return false;
         }
 
