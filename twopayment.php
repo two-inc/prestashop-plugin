@@ -18954,10 +18954,7 @@ class Twopayment extends PaymentModule
      */
     private function registerTwoProductPromoMedia($controllerName)
     {
-        $isProductPage = $controllerName === 'product'
-            || (isset($this->context->controller->php_self) && $this->context->controller->php_self === 'product');
-
-        if (!$isProductPage || !$this->isTwoProductMessageWarranted()) {
+        if (!$this->isTwoProductPromoPage($controllerName) || !$this->isTwoProductMessageWarranted()) {
             return;
         }
 
@@ -18968,6 +18965,43 @@ class Twopayment extends PaymentModule
                 array('media' => 'all', 'priority' => 200)
             );
         }
+    }
+
+    /**
+     * The full product page, and nothing else.
+     *
+     * Quick View renders through the same hook from a fragment request, where
+     * a stylesheet registered now never reaches the page the shopper is
+     * looking at. One predicate answers for both the asset and the markup so
+     * a badge is never drawn somewhere its styling cannot follow.
+     *
+     * @param string|null $controllerName
+     *
+     * @return bool
+     */
+    private function isTwoProductPromoPage($controllerName = null)
+    {
+        if ($controllerName === null && isset($this->context->controller)) {
+            $controllerName = Tools::getValue('controller');
+        }
+
+        $isProductController = $controllerName === 'product'
+            || (isset($this->context->controller->php_self) && $this->context->controller->php_self === 'product');
+
+        if (!$isProductController) {
+            return false;
+        }
+
+        // Quick View sets this on the request that renders the modal body.
+        if ((int) Tools::getValue('quickview') === 1) {
+            return false;
+        }
+
+        if (isset($this->context->controller->ajax) && $this->context->controller->ajax) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -18983,6 +19017,15 @@ class Twopayment extends PaymentModule
      */
     public function hookDisplayProductAdditionalInfo($params)
     {
+        // Quick View calls this hook too, from a fragment request whose
+        // stylesheet registration never reaches the originating category
+        // page — the badge would render there unstyled. Rendering is scoped
+        // to the same place the stylesheet is registered, so the two cannot
+        // disagree.
+        if (!$this->isTwoProductPromoPage()) {
+            return '';
+        }
+
         if (!$this->isTwoProductMessageWarranted()) {
             return '';
         }
