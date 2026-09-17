@@ -568,3 +568,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] = 'Melding på produktsiden';
 $_MODULE['<{twopayment}prestashop>twopayment_520ef901e639941eb2ca17a0425d40f0'] = 'Viser en kort kampanjelinje på produktsider, under knappen for å legge i handlekurven. Av som standard. Nøyaktig hvor den havner avhenger av temaet ditt.';
 $_MODULE['<{twopayment}prestashop>twopayment_a0256ed4b51769a1870a4ef18e840bd8'] = 'Valgfritt. La feltet stå tomt for å bruke standardteksten. Unngå å oppgi et antall dager med mindre du er sikker på betalingsbetingelsene du tilbyr: betalingsfrister løper fra utlevering, og betingelsene som faktisk er tilgjengelige kommer fra merchant-oppføringen din.';
+$_MODULE['<{twopayment}prestashop>twopayment_f45f18a5f256c8384d55cc90c57fa750'] = 'Vis melding på produktsider godtar bare på eller av; "%s" er ikke en verdi den forstår.';

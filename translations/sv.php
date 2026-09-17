@@ -568,3 +568,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] = 'Meddelande på produktsidan';
 $_MODULE['<{twopayment}prestashop>twopayment_520ef901e639941eb2ca17a0425d40f0'] = 'Visar en kort kampanjrad på produktsidor, under knappen för att lägga i varukorgen. Av som standard. Exakt var den hamnar beror på ditt tema.';
 $_MODULE['<{twopayment}prestashop>twopayment_a0256ed4b51769a1870a4ef18e840bd8'] = 'Valfritt. Lämna tomt för att använda standardtexten. Undvik att ange ett antal dagar om du inte är säker på de betalningsvillkor du erbjuder: betalningsvillkoren löper från utleverans, och de villkor som faktiskt är tillgängliga kommer från din merchant-post.';
+$_MODULE['<{twopayment}prestashop>twopayment_f45f18a5f256c8384d55cc90c57fa750'] = 'Visa meddelande på produktsidor accepterar bara på eller av; "%s" är inte ett värde det förstår.';
