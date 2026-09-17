@@ -18995,6 +18995,10 @@ class Twopayment extends PaymentModule
         $this->context->smarty->assign(array(
             'two_product_message' => $message,
             'two_product_name' => $this->getTwoBrandConfig('product_name'),
+            // Resolved from the brand, never hardcoded: the mark and the name
+            // beside it must identify the same brand, and a brand shipping no
+            // mark falls back to its name as text rather than to Two's logo.
+            'two_product_logo' => $this->getTwoBrandConfig('logo'),
             'module_dir' => $this->_path,
         ));
 
