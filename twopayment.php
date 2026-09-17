@@ -19072,9 +19072,14 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        return !self::isDefinitiveFailureStatus(
-            $this->getTwoApiKeyVerificationStatus(false)['status']
-        );
+        // isTwoApiKeyDefinitelyUnusable(), not the raw status: the cached
+        // verdict reverts to "verifying" once the one-minute failure TTL
+        // lapses, so reading the status directly let a key Two had
+        // definitively rejected start advertising again a minute later. That
+        // method reads past the TTL for the definitive categories only, which
+        // is exactly this question, and still ignores transient ones so an
+        // outage does not withhold.
+        return !$this->isTwoApiKeyDefinitelyUnusable();
     }
 
     /**
