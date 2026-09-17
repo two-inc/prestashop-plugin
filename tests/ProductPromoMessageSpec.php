@@ -76,7 +76,7 @@ final class ProductPromoMessageSpec
     }
 
     /**
-     * ABN-533: only the definitive categories withhold. A 500 or an
+     * TWO-25799: only the definitive categories withhold. A 500 or an
      * unreachable host says nothing about the key, and withholding on one
      * would take the message off every product page for the length of an
      * outage.
