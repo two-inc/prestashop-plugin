@@ -563,3 +563,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'butikkens standardvaluta har ingen ISO-kode.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s for betingelsen på %2$d dager må være et ikke-negativt tall, men inneholder "%3$s".';
 $_MODULE['<{twopayment}prestashop>twopayment_c155e5a355e32ad3ceeda1f8e71a93b9'] = 'Ingen betalingsbetingelse er tilgjengelig for tillegg. Listen Betalingsbetingelser over og typen betalingsbetingelse bestemmer hvilke betingelser som vises her.';
+$_MODULE['<{twopayment}prestashop>twopayment_c9a4942151f3f04aca175871bc85f862'] = 'Kjøp nå, motta varene dine, betal fakturaen senere.';
+$_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] = 'Vis melding på produktsider';
+$_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] = 'Melding på produktsiden';
+$_MODULE['<{twopayment}prestashop>twopayment_520ef901e639941eb2ca17a0425d40f0'] = 'Viser en kort kampanjelinje på produktsider, under knappen for å legge i handlekurven. Av som standard. Nøyaktig hvor den havner avhenger av temaet ditt.';
+$_MODULE['<{twopayment}prestashop>twopayment_a0256ed4b51769a1870a4ef18e840bd8'] = 'Valgfritt. La feltet stå tomt for å bruke standardteksten. Unngå å oppgi et antall dager med mindre du er sikker på betalingsbetingelsene du tilbyr: betalingsfrister løper fra utlevering, og betingelsene som faktisk er tilgjengelige kommer fra merchant-oppføringen din.';

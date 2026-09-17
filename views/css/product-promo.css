@@ -1,0 +1,36 @@
+/**
+ * TWO-25799: the product-page promotional message.
+ *
+ * Neutral palette deliberately: brands/two.php is install-wide, so a
+ * white-label install replaces the logo and the product name but renders this
+ * same rule.
+ */
+
+.two-product-promo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 20px 0 25px;
+    padding: 14px 16px;
+    border: 1px solid #d4d4d4;
+    border-left: 4px solid #1a1a1a;
+    border-radius: 4px;
+    background: #fff;
+}
+
+.two-product-promo__mark {
+    flex: 0 0 auto;
+    width: 44px;
+    height: auto;
+}
+
+/* A flex child will not wrap without min-width, so a long unbroken override -
+   a pasted URL, say - would otherwise overflow the column. */
+.two-product-promo__text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #1a1a1a;
+}

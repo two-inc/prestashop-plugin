@@ -563,3 +563,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'de standaardvaluta van de winkel heeft geen ISO-code.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s voor de termijn van %2$d dagen moet een niet-negatief getal zijn, maar bevat "%3$s".';
 $_MODULE['<{twopayment}prestashop>twopayment_c155e5a355e32ad3ceeda1f8e71a93b9'] = 'Er is geen betaaltermijn beschikbaar om een toeslag over te berekenen. De lijst Betaaltermijnen hierboven en het type betaaltermijn bepalen welke termijnen hier verschijnen.';
+$_MODULE['<{twopayment}prestashop>twopayment_c9a4942151f3f04aca175871bc85f862'] = 'Koop nu, ontvang je goederen, betaal je factuur later.';
+$_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] = 'Bericht tonen op productpagina’s';
+$_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] = 'Bericht op de productpagina';
+$_MODULE['<{twopayment}prestashop>twopayment_520ef901e639941eb2ca17a0425d40f0'] = 'Toont een korte promotionele regel op productpagina’s, onder de knop om aan de winkelwagen toe te voegen. Standaard uitgeschakeld. Waar de regel precies terechtkomt, hangt af van je thema.';
+$_MODULE['<{twopayment}prestashop>twopayment_a0256ed4b51769a1870a4ef18e840bd8'] = 'Optioneel. Laat leeg om de standaardtekst te gebruiken. Vermeld geen aantal dagen tenzij je zeker bent van de termijnen die je aanbiedt: betaaltermijnen lopen vanaf de uitlevering, en de termijnen die echt beschikbaar zijn komen uit je merchant-record.';

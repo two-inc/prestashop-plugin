@@ -510,6 +510,10 @@ class Twopayment extends PaymentModule
             'actionFrontControllerInitAfter',
             'actionObjectOrderDetailAddBefore',
             'actionPresentCart',
+            // TWO-25799: the product-page promotional message. Existing
+            // installs predate it, so the self-heal is what turns it on for
+            // them - the setting alone would render nothing.
+            'displayProductAdditionalInfo',
         );
 
         foreach ($required_hooks as $hook_name) {
@@ -643,6 +647,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionFrontControllerInitAfter') &&
             $this->registerHook('actionObjectOrderDetailAddBefore') &&
             $this->registerHook('actionPresentCart') &&
+            $this->registerHook('displayProductAdditionalInfo') &&
             $this->installTwoInvoiceAdminTab() &&
             $this->installTwoErrorLogAdminTab() &&
             $this->installTwoSettings() &&
@@ -656,10 +661,17 @@ class Twopayment extends PaymentModule
         foreach ($this->languages as $language) {
             $installData['PS_TWO_TITLE'][(int) $language['id_lang']] = 'Business invoice';
             $installData['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = 'Buy now, pay later - instant credit';
+            $installData['PS_TWO_PRODUCT_MESSAGE'][(int) $language['id_lang']] = '';
         }
         Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
         Configuration::updateValue('PS_TWO_TITLE', $installData['PS_TWO_TITLE']);
         Configuration::updateValue('PS_TWO_SUB_TITLE', $installData['PS_TWO_SUB_TITLE']);
+        // TWO-25799: opt-in. OFF by default, so no storefront starts
+        // advertising on its product pages after an upgrade. The wording
+        // override is a separate key and is empty: empty means "use the
+        // default copy", never "off".
+        Configuration::updateValue('PS_TWO_PRODUCT_MESSAGE_ENABLED', 0);
+        Configuration::updateValue('PS_TWO_PRODUCT_MESSAGE', $installData['PS_TWO_PRODUCT_MESSAGE']);
         // Default to staging (TWO-25455) - 'development' was removed as a
         // decorative option that always silently fell back to sandbox hosts.
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
@@ -946,6 +958,8 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_TAB_VALUE');
         Configuration::deleteByName('PS_TWO_TITLE');
         Configuration::deleteByName('PS_TWO_SUB_TITLE');
+        Configuration::deleteByName('PS_TWO_PRODUCT_MESSAGE_ENABLED');
+        Configuration::deleteByName('PS_TWO_PRODUCT_MESSAGE');
         Configuration::deleteByName('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::deleteByName('PS_TWO_MERCHANT_API_KEY');
         Configuration::deleteByName(self::CONFIG_CUSTOM_HEADERS);
@@ -1541,6 +1555,29 @@ class Twopayment extends PaymentModule
                 'required' => false,
                 'lang' => true,
             ),
+            // TWO-25799: the product-page promotional message. Two keys, never
+            // one - the switch decides whether it renders, the text decides
+            // only its wording. An empty wording field is inert.
+            array(
+                'type' => 'switch',
+                'label' => $this->l('Show message on product pages'),
+                'name' => 'PS_TWO_PRODUCT_MESSAGE_ENABLED',
+                'is_bool' => true,
+                'desc' => $this->l('Shows a short promotional line on product pages, beneath the add to cart button. Off by default. Where exactly it lands depends on your theme.'),
+                'required' => false,
+                'values' => array(
+                    array('id' => 'PS_TWO_PRODUCT_MESSAGE_ENABLED_ON', 'value' => 1, 'label' => $this->l('Yes')),
+                    array('id' => 'PS_TWO_PRODUCT_MESSAGE_ENABLED_OFF', 'value' => 0, 'label' => $this->l('No')),
+                ),
+            ),
+            array(
+                'type' => 'text',
+                'label' => $this->l('Product page message'),
+                'desc' => $this->l('Optional. Leave empty to use the default wording. Avoid naming a number of days unless you are certain of the terms you offer: payment terms run from fulfilment, and the terms actually available come from your merchant record.'),
+                'name' => 'PS_TWO_PRODUCT_MESSAGE',
+                'required' => false,
+                'lang' => true,
+            ),
             // Checkout sort order (TWO-25386). Best-effort:
             // PrestaShop core has no per-module sort_order config
             // path for payment methods - the native mechanism is the
@@ -1885,7 +1922,9 @@ class Twopayment extends PaymentModule
         foreach ($this->languages as $language) {
             $fields_values['PS_TWO_TITLE'][$language['id_lang']] = Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_TITLE', (int) $language['id_lang']));
             $fields_values['PS_TWO_SUB_TITLE'][$language['id_lang']] = Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_SUB_TITLE', (int) $language['id_lang']));
+            $fields_values['PS_TWO_PRODUCT_MESSAGE'][$language['id_lang']] = Tools::getValue('PS_TWO_PRODUCT_MESSAGE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_PRODUCT_MESSAGE', (int) $language['id_lang']));
         }
+        $fields_values['PS_TWO_PRODUCT_MESSAGE_ENABLED'] = Tools::getValue('PS_TWO_PRODUCT_MESSAGE_ENABLED', Configuration::get('PS_TWO_PRODUCT_MESSAGE_ENABLED'));
         $fields_values['PS_TWO_CHECKOUT_SORT_ORDER'] = Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER', Configuration::get('PS_TWO_CHECKOUT_SORT_ORDER'));
 
         $fields_values['PS_TWO_MERCHANT_MIN_ORDER'] = Tools::getValue(
@@ -1981,9 +2020,12 @@ class Twopayment extends PaymentModule
         foreach ($this->languages as $language) {
             $values['PS_TWO_TITLE'][(int) $language['id_lang']] = Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']);
             $values['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang']);
+            $values['PS_TWO_PRODUCT_MESSAGE'][(int) $language['id_lang']] = Tools::getValue('PS_TWO_PRODUCT_MESSAGE_' . (int) $language['id_lang']);
         }
         Configuration::updateValue('PS_TWO_TITLE', $values['PS_TWO_TITLE']);
         Configuration::updateValue('PS_TWO_SUB_TITLE', $values['PS_TWO_SUB_TITLE']);
+        Configuration::updateValue('PS_TWO_PRODUCT_MESSAGE', $values['PS_TWO_PRODUCT_MESSAGE']);
+        Configuration::updateValue('PS_TWO_PRODUCT_MESSAGE_ENABLED', (int) (bool) Tools::getValue('PS_TWO_PRODUCT_MESSAGE_ENABLED'));
 
         // Checkout sort order (TWO-25386). Passed validTwoCheckoutSortOrderValue
         // above (empty, or a plain integer).
@@ -4948,6 +4990,13 @@ class Twopayment extends PaymentModule
                               $this->context->controller->module->name === $this->name);
         
         if (!$is_checkout_page && !$is_two_module_page) {
+            // TWO-25799: the product page gets the promotional message's own
+            // stylesheet and NOTHING else - none of the checkout JS stack
+            // below. Registering the hook is not enough on its own: this
+            // fence is why the checkout CSS never reaches a product page, and
+            // the badge would render unstyled without its own branch here.
+            $this->registerTwoProductPromoMedia($controller_name);
+
             // Don't load Two assets on non-checkout pages
             return;
         }
@@ -18889,6 +18938,159 @@ class Twopayment extends PaymentModule
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayPaymentReturnBuyer.tpl');
         }
+    }
+
+    /**
+     * The promotional message's stylesheet, on the product page only.
+     *
+     * Registered from the non-checkout branch of the media hook, so it never
+     * competes with the checkout bundle. Nothing is queued when the message
+     * would not render anyway, which keeps a shop that never switched it on
+     * paying nothing for it.
+     *
+     * @param string $controllerName
+     *
+     * @return void
+     */
+    private function registerTwoProductPromoMedia($controllerName)
+    {
+        $isProductPage = $controllerName === 'product'
+            || (isset($this->context->controller->php_self) && $this->context->controller->php_self === 'product');
+
+        if (!$isProductPage || !$this->isTwoProductMessageWarranted()) {
+            return;
+        }
+
+        if (isset($this->context->controller) && method_exists($this->context->controller, 'registerStylesheet')) {
+            $this->context->controller->registerStylesheet(
+                'module-twopayment-product-promo',
+                'modules/' . $this->name . '/views/css/product-promo.css',
+                array('media' => 'all', 'priority' => 200)
+            );
+        }
+    }
+
+    /**
+     * The product-page promotional message (TWO-25799).
+     *
+     * Says the method EXISTS, so a buyer meets it before committing to a
+     * basket. It never says this buyer will be offered it: the minimum order
+     * value, the buyer country and the currency all need a cart, and a product
+     * page has not got one. That is why the copy carries no day count and no
+     * approval language.
+     *
+     * @return string
+     */
+    public function hookDisplayProductAdditionalInfo($params)
+    {
+        if (!$this->isTwoProductMessageWarranted()) {
+            return '';
+        }
+
+        $message = $this->resolveTwoProductMessage();
+        if ($message === '') {
+            return '';
+        }
+
+        $this->context->smarty->assign(array(
+            'two_product_message' => $message,
+            'two_product_name' => $this->getTwoBrandConfig('product_name'),
+            'module_dir' => $this->_path,
+        ));
+
+        return $this->context->smarty->fetch('module:twopayment/views/templates/hook/productpromo.tpl');
+    }
+
+    /**
+     * Whether the product-page message may render at all.
+     *
+     * Three conditions, all required. The api-key verdict is the same question
+     * every other buyer-facing surface asks, through the same one definition
+     * of the set (isDefinitiveFailureStatus) - so only a key Two rejected, or
+     * no key at all, withholds it. A transient blip does not, exactly as it
+     * does not withhold the tile itself (ABN-533).
+     *
+     * Read cache-only. This is a render path on the highest-traffic page in
+     * the shop, so it may never make an HTTP call of its own.
+     *
+     * @return bool
+     */
+    public function isTwoProductMessageWarranted()
+    {
+        if (!$this->active) {
+            return false;
+        }
+
+        if (!(bool) Configuration::get('PS_TWO_PRODUCT_MESSAGE_ENABLED')) {
+            return false;
+        }
+
+        return !self::isDefinitiveFailureStatus(
+            $this->getTwoApiKeyVerificationStatus(false)['status']
+        );
+    }
+
+    /**
+     * The merchant's wording, else the sentence the checkout tile already
+     * shows.
+     *
+     * Reusing that source string rather than writing new copy keeps the two
+     * surfaces saying the same thing, and the phrase is already translated in
+     * every locale this module carries.
+     *
+     * @return string
+     */
+    public function resolveTwoProductMessage()
+    {
+        $configured = self::trimTwoUnicodeWhitespace(
+            self::scalarTwoConfigValue(
+                Configuration::get('PS_TWO_PRODUCT_MESSAGE', $this->context->language->id)
+            )
+        );
+
+        if ($configured !== '') {
+            return $configured;
+        }
+
+        return $this->l('Buy now, receive your goods, pay your invoice later.');
+    }
+
+    /**
+     * A stored config value that is safe to treat as a string, else ''.
+     *
+     * Configuration::get() can hand back an array - a multilang row read
+     * without a language id, an import, a hand-edited row - and casting one to
+     * string is a PHP warning. On a render path that warning becomes a notice
+     * in the page or, with a strict error handler, an exception that takes the
+     * product page down over a promotional line. Non-scalar reads as absent.
+     *
+     * @param mixed $stored
+     *
+     * @return string
+     */
+    private static function scalarTwoConfigValue($stored)
+    {
+        return is_scalar($stored) ? (string) $stored : '';
+    }
+
+    /**
+     * trim() for copy, including the Unicode spaces it leaves behind.
+     *
+     * trim() strips ASCII whitespace only, so an override of two nonbreaking
+     * spaces survives it and passes an "is it empty" test - rendering a
+     * bordered badge with no readable message in it. Inner spacing is left
+     * exactly as the merchant typed it.
+     *
+     * @param string $value
+     *
+     * @return string
+     */
+    private static function trimTwoUnicodeWhitespace($value)
+    {
+        $pattern = '/^[\s\x{00A0}\x{1680}\x{2000}-\x{200A}\x{202F}\x{205F}\x{3000}\x{FEFF}]+'
+            . '|[\s\x{00A0}\x{1680}\x{2000}-\x{200A}\x{202F}\x{205F}\x{3000}\x{FEFF}]+$/u';
+
+        return (string) preg_replace($pattern, '', $value);
     }
 
     public function hookDisplayOrderDetail($params)
