@@ -27,6 +27,7 @@ final class ProductPromoMessageSpec
         self::testANonScalarStoredValueIsAbsentRatherThanFatal();
         self::testTheProductHookIsSelfHealedOntoExistingInstalls();
         self::testTheAdminFieldsArePresentAndOptional();
+        self::testQuickViewIsExcludedButACombinationRefreshIsNot();
     }
 
     private static function reset(): void
@@ -206,5 +207,44 @@ final class ProductPromoMessageSpec
             !empty($byName['PS_TWO_PRODUCT_MESSAGE']['lang']),
             'and it is per-language, as the subtitle beside it is'
         );
+    }
+
+    /**
+     * Quick View renders this hook from a fragment request whose markup lands
+     * on a category page that never registered the stylesheet, so the badge
+     * would appear there unstyled. The classic theme dispatches it as
+     * action=quickview; quickview=1 is the direct-URL form core also honours.
+     *
+     * A combination refresh is the same controller over ajax and DOES get the
+     * badge: its page already carries the stylesheet.
+     */
+    private static function testQuickViewIsExcludedButACombinationRefreshIsNot(): void
+    {
+        foreach (
+            array(
+                array(array('action' => 'quickview'), false, 'the theme\'s Quick View request'),
+                array(array('quickview' => '1'), false, 'the direct-URL Quick View form'),
+                array(array('action' => 'refresh'), true, 'a combination refresh'),
+                array(array(), true, 'an ordinary product page view'),
+            ) as $case
+        ) {
+            list($request, $expected, $why) = $case;
+
+            self::reset();
+            $module = new TwopaymentTestHarness();
+            Configuration::updateValue('PS_TWO_PRODUCT_MESSAGE_ENABLED', 1);
+            Tools::setTestValue('controller', 'product');
+            foreach ($request as $key => $value) {
+                Tools::setTestValue($key, $value);
+            }
+
+            // The stub smarty renders nothing, so the assignment is the
+            // evidence that the hook got as far as drawing the badge.
+            $module->context->smarty->assigned = array();
+            $module->hookDisplayProductAdditionalInfo(array());
+            $rendered = isset($module->context->smarty->assigned['two_product_message']);
+
+            TinyAssert::same($expected, $rendered, $why . ' renders the badge: ' . var_export($expected, true));
+        }
     }
 }
