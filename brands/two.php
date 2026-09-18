@@ -20,6 +20,12 @@ return array(
     // getTwoBrandConfig() resolves it wherever the plugin used to hardcode
     // the literal word "Two".
     'product_name' => 'Two',
+    // Module-relative path to the brand's mark, or null where a brand ships
+    // none. TWO-25799 resolves the product-page badge's image through this
+    // rather than hardcoding Two's asset: a hardcoded mark would put Two's
+    // logo on an overlay's storefront the day one exists, and it would
+    // disagree with the configurable product_name beside it.
+    'logo' => 'views/img/TwoLogo.svg',
     // Legal/company name the merchant is told to contact (ABN-518).
     'provider_full_name' => 'Two',
     // Increments the buyer surcharge line may be rounded to, offered in the
