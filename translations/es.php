@@ -563,3 +563,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_f962210107c086dcb022c580cdd04c72'] 
 $_MODULE['<{twopayment}prestashop>twopayment_fa24a3fec77d9e03aadbda8138637fce'] = 'Tratamiento fiscal del recargo';
 $_MODULE['<{twopayment}prestashop>twopayment_fb3ff8dd49a6e7ecf023f6941320801c'] = 'No se ha podido procesar tu pedido con el pago %s. Elige otro método de pago o ponte en contacto con la tienda.';
 $_MODULE['<{twopayment}prestashop>twopayment_fe24567972432f23380c0c9ced6566a4'] = '-- Sin definir: rechazar el pedido --';
+$_MODULE['<{twopayment}prestashop>twopayment_c9a4942151f3f04aca175871bc85f862'] = 'Compra ahora, recibe tus productos y paga tu factura más tarde.';
+$_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] = 'Mostrar mensaje en las páginas de producto';
+$_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] = 'Mensaje de la página de producto';
+$_MODULE['<{twopayment}prestashop>twopayment_520ef901e639941eb2ca17a0425d40f0'] = 'Muestra una breve línea promocional en las páginas de producto, debajo del botón de añadir a la cesta. Desactivado de forma predeterminada. El lugar exacto donde aparece depende de tu plantilla.';
+$_MODULE['<{twopayment}prestashop>twopayment_a0256ed4b51769a1870a4ef18e840bd8'] = 'Opcional. Déjalo vacío para usar el texto predeterminado. Evita indicar un número de días salvo que tengas la certeza de los plazos que ofreces: los plazos de pago cuentan desde la preparación del pedido, y los plazos realmente disponibles proceden de tu registro de comerciante.';
+$_MODULE['<{twopayment}prestashop>twopayment_f45f18a5f256c8384d55cc90c57fa750'] = 'Mostrar mensaje en las páginas de producto solo acepta activado o desactivado; "%s" no es un valor que entienda.';

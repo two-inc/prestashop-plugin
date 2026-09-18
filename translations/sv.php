@@ -563,3 +563,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'butikens standardvaluta har ingen ISO-kod.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s för villkoret på %2$d dagar måste vara ett icke-negativt tal, men innehåller "%3$s".';
 $_MODULE['<{twopayment}prestashop>twopayment_c155e5a355e32ad3ceeda1f8e71a93b9'] = 'Inget betalningsvillkor är tillgängligt för tilläggsavgift. Listan Betalningsvillkor ovan och typen av betalningsvillkor avgör vilka villkor som visas här.';
+$_MODULE['<{twopayment}prestashop>twopayment_c9a4942151f3f04aca175871bc85f862'] = 'Köp nu, ta emot dina varor, betala din faktura senare.';
+$_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] = 'Visa meddelande på produktsidor';
+$_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] = 'Meddelande på produktsidan';
+$_MODULE['<{twopayment}prestashop>twopayment_520ef901e639941eb2ca17a0425d40f0'] = 'Visar en kort kampanjrad på produktsidor, under knappen för att lägga i varukorgen. Av som standard. Exakt var den hamnar beror på ditt tema.';
+$_MODULE['<{twopayment}prestashop>twopayment_a0256ed4b51769a1870a4ef18e840bd8'] = 'Valfritt. Lämna tomt för att använda standardtexten. Undvik att ange ett antal dagar om du inte är säker på de betalningsvillkor du erbjuder: betalningsvillkoren löper från utleverans, och de villkor som faktiskt är tillgängliga kommer från din merchant-post.';
+$_MODULE['<{twopayment}prestashop>twopayment_f45f18a5f256c8384d55cc90c57fa750'] = 'Visa meddelande på produktsidor accepterar bara på eller av; "%s" är inte ett värde det förstår.';
