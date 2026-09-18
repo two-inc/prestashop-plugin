@@ -20,6 +20,12 @@ dist/
 # Log files
 *.log
 
+# Scratch files. A commit message written to a file and passed to `commit -F`
+# is staged by `git add -A` before the commit reads it, so it lands in the tree
+# and ships in the module archive, which rsyncs the working tree rather than
+# the index.
+*.tmp
+
 # Package files
 *.jar
 

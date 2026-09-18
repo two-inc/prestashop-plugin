@@ -99,6 +99,7 @@ if command -v rsync &> /dev/null; then
         --exclude='*.log' \
         --exclude='node_modules' \
         --exclude='.idea' \
+        --exclude='*.tmp' \
         --exclude='*.swp' \
         --exclude='*.swo' \
         --exclude='*~' \
@@ -124,6 +125,7 @@ else
         ! -name '*.log' \
         ! -path '*/node_modules/*' \
         ! -path '*/.idea/*' \
+        ! -name '*.tmp' \
         ! -name '*.swp' \
         ! -name '*.swo' \
         ! -name '*~' \

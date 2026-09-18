@@ -569,3 +569,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_520ef901e639941eb2ca17a0425d40f0'] = 'Visar en kort kampanjrad på produktsidor, under knappen för att lägga i varukorgen. Av som standard. Exakt var den hamnar beror på ditt tema.';
 $_MODULE['<{twopayment}prestashop>twopayment_a0256ed4b51769a1870a4ef18e840bd8'] = 'Valfritt. Lämna tomt för att använda standardtexten. Undvik att ange ett antal dagar om du inte är säker på de betalningsvillkor du erbjuder: betalningsvillkoren löper från utleverans, och de villkor som faktiskt är tillgängliga kommer från din merchant-post.';
 $_MODULE['<{twopayment}prestashop>twopayment_f45f18a5f256c8384d55cc90c57fa750'] = 'Visa meddelande på produktsidor accepterar bara på eller av; "%s" är inte ett värde det förstår.';
+$_MODULE['<{twopayment}prestashop>twopayment_b63f118411f3e32350cac7a5b296608a'] = 'Visa köpknapp på produktsidor';
+$_MODULE['<{twopayment}prestashop>twopayment_aed5d9ab8bcba45120413823ecd4c5bb'] = 'Lägger till en knapp bredvid lägg i varukorgen som lägger varan i korgen och tar köparen till kassan med denna betalningsmetod redan vald. Av som standard. Exakt var den hamnar beror på ditt tema.';
+$_MODULE['<{twopayment}prestashop>twopayment_97dd4467b7e52981c915692e40e3c6b6'] = 'Visa köpknapp på produktsidor accepterar bara på eller av; "%s" är inte ett värde den förstår.';
+$_MODULE['<{twopayment}prestashop>twopayment_fb240641c0e8815c516e341934b1e5da'] = 'Köp med %s';
+$_MODULE['<{twopayment}prestashop>twopayment_0592fff84c41da1f5de791af5d35bb18'] = 'Köp med';
+$_MODULE['<{twopayment}prestashop>twopayment_17ff44377a631de2e9afb533c9a34063'] = 'Tyvärr, vi kunde inte lägga detta i varukorgen. Försök igen.';
