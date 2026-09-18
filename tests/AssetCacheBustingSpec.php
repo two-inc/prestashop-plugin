@@ -258,7 +258,11 @@ final class AssetCacheBustingSpec
         // mode TWO-53PS caused. These numbers are the real current count of
         // register*() calls in each hook; update them deliberately if a call
         // site is ever added or removed on purpose.
-        TinyAssert::same(8, count($frontStatements), 'expected exactly 8 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 7 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
+        // 9 since TWO-25800: the checkout preselect script is registered here
+        // too, for a buyer who arrived through the product-page button. The
+        // product page's own message and button assets are NOT counted - they
+        // live in registerTwoProductPageMedia().
+        TinyAssert::same(9, count($frontStatements), 'expected exactly 9 register*() call sites in hookActionFrontControllerSetMedia() (1 CSS + 8 JS), found ' . count($frontStatements) . ' - a call site was added, removed, or renamed');
         TinyAssert::same(1, count($adminStatements), 'expected exactly 1 registerStylesheet() call site in hookActionAdminControllerSetMedia(), found ' . count($adminStatements) . ' - it was added, removed, or renamed');
 
         // Identity, not just count: a count-only check passes if one real
@@ -302,6 +306,10 @@ final class AssetCacheBustingSpec
             'two-optional-fields' => 'views/js/modules/TwoOptionalFields.js',
             'two-checkout-manager' => 'views/js/modules/TwoCheckoutManager.js',
             'two-script' => 'views/js/twopayment.js',
+            // TWO-25800: registered only where the merchant runs the
+            // product-page button; the script itself decides whether THIS
+            // buyer arrived through it.
+            'two-checkout-preselect' => 'views/js/modules/TwoCheckoutPreselect.js',
         );
         $expectedAdminPathsById = array(
             'module-twopayment-admin-css' => 'views/css/two.css',

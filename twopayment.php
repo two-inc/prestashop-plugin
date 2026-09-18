@@ -672,6 +672,9 @@ class Twopayment extends PaymentModule
         // default copy", never "off".
         Configuration::updateValue('PS_TWO_PRODUCT_MESSAGE_ENABLED', 0);
         Configuration::updateValue('PS_TWO_PRODUCT_MESSAGE', $installData['PS_TWO_PRODUCT_MESSAGE']);
+        // TWO-25800: the product-page buy button, opt-in and independent of the
+        // message above. A shop may run either, both or neither.
+        Configuration::updateValue('PS_TWO_PRODUCT_BUTTON_ENABLED', 0);
         // Default to staging (TWO-25455) - 'development' was removed as a
         // decorative option that always silently fell back to sandbox hosts.
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
@@ -960,6 +963,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName('PS_TWO_SUB_TITLE');
         Configuration::deleteByName('PS_TWO_PRODUCT_MESSAGE_ENABLED');
         Configuration::deleteByName('PS_TWO_PRODUCT_MESSAGE');
+        Configuration::deleteByName('PS_TWO_PRODUCT_BUTTON_ENABLED');
         Configuration::deleteByName('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::deleteByName('PS_TWO_MERCHANT_API_KEY');
         Configuration::deleteByName(self::CONFIG_CUSTOM_HEADERS);
@@ -1570,6 +1574,21 @@ class Twopayment extends PaymentModule
                     array('id' => 'PS_TWO_PRODUCT_MESSAGE_ENABLED_OFF', 'value' => 0, 'label' => $this->l('No')),
                 ),
             ),
+            // TWO-25800: the product-page buy button. Its own switch, never
+            // shared with the message above: a shop may want the button
+            // without the line of copy, or the line without the button.
+            array(
+                'type' => 'switch',
+                'label' => $this->l('Show buy button on product pages'),
+                'name' => 'PS_TWO_PRODUCT_BUTTON_ENABLED',
+                'is_bool' => true,
+                'desc' => $this->l('Adds a button beside add to cart that puts the item in the basket and takes the buyer to checkout with this payment method already chosen. Off by default. Where exactly it lands depends on your theme.'),
+                'required' => false,
+                'values' => array(
+                    array('id' => 'PS_TWO_PRODUCT_BUTTON_ENABLED_ON', 'value' => 1, 'label' => $this->l('Yes')),
+                    array('id' => 'PS_TWO_PRODUCT_BUTTON_ENABLED_OFF', 'value' => 0, 'label' => $this->l('No')),
+                ),
+            ),
             array(
                 'type' => 'text',
                 'label' => $this->l('Product page message'),
@@ -1925,6 +1944,7 @@ class Twopayment extends PaymentModule
             $fields_values['PS_TWO_PRODUCT_MESSAGE'][$language['id_lang']] = Tools::getValue('PS_TWO_PRODUCT_MESSAGE_' . (int) $language['id_lang'], Configuration::get('PS_TWO_PRODUCT_MESSAGE', (int) $language['id_lang']));
         }
         $fields_values['PS_TWO_PRODUCT_MESSAGE_ENABLED'] = Tools::getValue('PS_TWO_PRODUCT_MESSAGE_ENABLED', Configuration::get('PS_TWO_PRODUCT_MESSAGE_ENABLED'));
+        $fields_values['PS_TWO_PRODUCT_BUTTON_ENABLED'] = Tools::getValue('PS_TWO_PRODUCT_BUTTON_ENABLED', Configuration::get('PS_TWO_PRODUCT_BUTTON_ENABLED'));
         $fields_values['PS_TWO_CHECKOUT_SORT_ORDER'] = Tools::getValue('PS_TWO_CHECKOUT_SORT_ORDER', Configuration::get('PS_TWO_CHECKOUT_SORT_ORDER'));
 
         $fields_values['PS_TWO_MERCHANT_MIN_ORDER'] = Tools::getValue(
@@ -1981,6 +2001,29 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /**
+     * The buy-button switch, judged on the RAW submission (TWO-25800), so a
+     * crafted POST cannot store a value nothing understands. Same standard as
+     * the message switch above.
+     *
+     * @return void
+     */
+    protected function validTwoProductButtonEnabledValue()
+    {
+        $raw = Tools::getValue('PS_TWO_PRODUCT_BUTTON_ENABLED');
+
+        if ($raw === false || $raw === null || $raw === '') {
+            return;
+        }
+
+        if (!in_array((string) $raw, array('0', '1'), true)) {
+            $this->errors[] = sprintf(
+                $this->l('Show buy button on product pages accepts only on or off; "%s" is not a value it understands.'),
+                htmlspecialchars((string) $raw, ENT_QUOTES, 'UTF-8')
+            );
+        }
+    }
+
     protected function validTwoCheckoutFieldsFormValues()
     {
         foreach ($this->languages as $language) {
@@ -2002,6 +2045,8 @@ class Twopayment extends PaymentModule
         }
 
         $this->validTwoProductMessageEnabledValue();
+
+        $this->validTwoProductButtonEnabledValue();
 
         $this->validTwoCheckoutSortOrderValue();
 
@@ -2054,6 +2099,7 @@ class Twopayment extends PaymentModule
         Configuration::updateValue('PS_TWO_SUB_TITLE', $values['PS_TWO_SUB_TITLE']);
         Configuration::updateValue('PS_TWO_PRODUCT_MESSAGE', $values['PS_TWO_PRODUCT_MESSAGE']);
         Configuration::updateValue('PS_TWO_PRODUCT_MESSAGE_ENABLED', (int) (bool) Tools::getValue('PS_TWO_PRODUCT_MESSAGE_ENABLED'));
+        Configuration::updateValue('PS_TWO_PRODUCT_BUTTON_ENABLED', (int) (bool) Tools::getValue('PS_TWO_PRODUCT_BUTTON_ENABLED'));
 
         // Checkout sort order (TWO-25386). Passed validTwoCheckoutSortOrderValue
         // above (empty, or a plain integer).
@@ -5018,12 +5064,13 @@ class Twopayment extends PaymentModule
                               $this->context->controller->module->name === $this->name);
         
         if (!$is_checkout_page && !$is_two_module_page) {
-            // TWO-25799: the product page gets the promotional message's own
-            // stylesheet and NOTHING else - none of the checkout JS stack
-            // below. Registering the hook is not enough on its own: this
-            // fence is why the checkout CSS never reaches a product page, and
-            // the badge would render unstyled without its own branch here.
-            $this->registerTwoProductPromoMedia($controller_name);
+            // TWO-25799, TWO-25800: the product page gets the message's and
+            // the button's own assets and NOTHING else - none of the checkout
+            // JS stack below. Registering the hook is not enough on its own:
+            // this fence is why the checkout CSS never reaches a product page,
+            // and either control would render unstyled without its own branch
+            // here.
+            $this->registerTwoProductPageMedia($controller_name);
 
             // Don't load Two assets on non-checkout pages
             return;
@@ -5406,6 +5453,34 @@ class Twopayment extends PaymentModule
         // Phone validation removed - Two API handles phone number validation
         $this->context->controller->registerJavascript('two-checkout-manager', $this->getTwoModuleAssetPath('views/js/modules/TwoCheckoutManager.js'), array('priority' => 205, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/modules/TwoCheckoutManager.js')));
         $this->context->controller->registerJavascript('two-script', $this->getTwoModuleAssetPath('views/js/twopayment.js'), array('priority' => 206, 'async' => false, 'version' => $this->getTwoAssetVersion('views/js/twopayment.js')));
+
+        // TWO-25800: on EVERY checkout, deliberately, not only where the
+        // button is currently switched on. A marker is written while the
+        // feature is enabled and consumed on a later request, and between the
+        // two the merchant can switch the button off or the api key can be
+        // definitively rejected - either of which would leave that buyer's tab
+        // holding a marker with nothing left to consume it, to be applied to
+        // some unrelated checkout later. It is consumed exactly once and
+        // always, so what consumes it cannot be conditional on the thing that
+        // wrote it.
+        //
+        // Costs a shop that never enabled the button one small script whose
+        // first act is to read an absent key and stop.
+        //
+        // Last in the stack, so the payment tile it selects has already been
+        // mounted by the scripts above. The marker lives in the tab rather
+        // than a cookie because PrestaShop advances each checkout step as its
+        // own request, so no destination chosen at add time reaches the render
+        // where the payment step finally mounts.
+        $this->context->controller->registerJavascript(
+            'two-checkout-preselect',
+            $this->getTwoModuleAssetPath('views/js/modules/TwoCheckoutPreselect.js'),
+            array(
+                'priority' => 207,
+                'async' => false,
+                'version' => $this->getTwoAssetVersion('views/js/modules/TwoCheckoutPreselect.js'),
+            )
+        );
     }
 
     /**
@@ -18980,13 +19055,19 @@ class Twopayment extends PaymentModule
      *
      * @return void
      */
-    private function registerTwoProductPromoMedia($controllerName)
+    private function registerTwoProductPageMedia($controllerName)
     {
-        if (!$this->isTwoProductPromoPage($controllerName) || !$this->isTwoProductMessageWarranted()) {
+        if (!$this->isTwoProductPage($controllerName)) {
             return;
         }
 
-        if (isset($this->context->controller) && method_exists($this->context->controller, 'registerStylesheet')) {
+        if (!isset($this->context->controller) || !method_exists($this->context->controller, 'registerStylesheet')) {
+            return;
+        }
+
+        // Each feature queues only its own asset, so a shop running one pays
+        // nothing for the other.
+        if ($this->isTwoProductMessageWarranted()) {
             $this->context->controller->registerStylesheet(
                 'module-twopayment-product-promo',
                 $this->getTwoModuleAssetPath('views/css/product-promo.css'),
@@ -18999,6 +19080,30 @@ class Twopayment extends PaymentModule
                 )
             );
         }
+
+        if ($this->isTwoProductButtonWarranted()) {
+            $this->context->controller->registerStylesheet(
+                'module-twopayment-product-button',
+                $this->getTwoModuleAssetPath('views/css/product-button.css'),
+                array(
+                    'media' => 'all',
+                    'priority' => 200,
+                    'version' => $this->getTwoAssetVersion('views/css/product-button.css'),
+                )
+            );
+
+            if (method_exists($this->context->controller, 'registerJavascript')) {
+                $this->context->controller->registerJavascript(
+                    'module-twopayment-product-button',
+                    $this->getTwoModuleAssetPath('views/js/product-button.js'),
+                    array(
+                        'position' => 'bottom',
+                        'priority' => 200,
+                        'version' => $this->getTwoAssetVersion('views/js/product-button.js'),
+                    )
+                );
+            }
+        }
     }
 
     /**
@@ -19006,14 +19111,15 @@ class Twopayment extends PaymentModule
      *
      * Quick View renders through the same hook from a fragment request, where
      * a stylesheet registered now never reaches the page the shopper is
-     * looking at. One predicate answers for both the asset and the markup so
-     * a badge is never drawn somewhere its styling cannot follow.
+     * looking at. ONE predicate answers for the message, the button and both
+     * of their stylesheets, so nothing is ever drawn somewhere its styling
+     * cannot follow, and the Quick View rule cannot drift between them.
      *
      * @param string|null $controllerName
      *
      * @return bool
      */
-    private function isTwoProductPromoPage($controllerName = null)
+    private function isTwoProductPage($controllerName = null)
     {
         if ($controllerName === null && isset($this->context->controller)) {
             $controllerName = Tools::getValue('controller');
@@ -19061,10 +19167,51 @@ class Twopayment extends PaymentModule
         // page — the badge would render there unstyled. Rendering is scoped
         // to the same place the stylesheet is registered, so the two cannot
         // disagree.
-        if (!$this->isTwoProductPromoPage()) {
+        if (!$this->isTwoProductPage()) {
             return '';
         }
 
+        // Two independent features sharing one hook (TWO-25799, TWO-25800).
+        // Each is gated on its own switch and renders on its own, so a shop
+        // may show the button without the line of copy, or either alone.
+        // A throw in one must not take the other or the product page, so each
+        // is contained.
+        return $this->renderTwoProductFragment('renderTwoProductMessage')
+            . $this->renderTwoProductFragment('renderTwoProductButton');
+    }
+
+    /**
+     * One product-page fragment, or nothing at all.
+     *
+     * The product page is the busiest page in the shop and this hook runs on
+     * every render of it. Anything unexpected costs the fragment, never the
+     * page, and says why in ps_log for the one person who will ask.
+     *
+     * @param string $renderer
+     *
+     * @return string
+     */
+    private function renderTwoProductFragment($renderer)
+    {
+        try {
+            return (string) $this->{$renderer}();
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: product page fragment withheld (' . $renderer . ') - ' . $e->getMessage(),
+                2
+            );
+
+            return '';
+        }
+    }
+
+    /**
+     * The product-page promotional message (TWO-25799).
+     *
+     * @return string
+     */
+    private function renderTwoProductMessage()
+    {
         if (!$this->isTwoProductMessageWarranted()) {
             return '';
         }
@@ -19085,6 +19232,204 @@ class Twopayment extends PaymentModule
         ));
 
         return $this->context->smarty->fetch('module:twopayment/views/templates/hook/productpromo.tpl');
+    }
+
+    /**
+     * The product-page buy button (TWO-25800).
+     *
+     * The hand-off it starts holds to one contract, and every finding against
+     * it so far has been a violation of one of these rather than a new idea:
+     * the button owns exactly one add-to-cart attempt and decides from that
+     * attempt's own response; the marker is written only after a confirmed
+     * add, lives in the tab and dies with it; it is consumed exactly once, by
+     * the first checkout that can say whether the method is on offer; and what
+     * it preselects is a default the buyer can change, never an override of a
+     * choice they already made. Nothing on this page may promise availability.
+     *
+     * Adds this item to the basket and sends the buyer to the cart with this
+     * method remembered for the payment step. It never claims the method will
+     * be offered: minimum order value, buyer country and currency all need a
+     * cart, and a product page has not got one. If the buyer arrives at
+     * checkout and the gates withhold Two, the payment step simply lists the
+     * other methods and the remembered choice finds nothing to select.
+     *
+     * @return string
+     */
+    private function renderTwoProductButton()
+    {
+        if (!$this->isTwoProductButtonWarranted()) {
+            return '';
+        }
+
+        $brandName = $this->getTwoBrandConfig('product_name');
+        $brandName = is_scalar($brandName) ? trim((string) $brandName) : '';
+
+        // A button nobody can attribute is worse than no button: it would ask
+        // a buyer to commit to a payment method it does not name.
+        //
+        // Once per request, like every other reason this feature withholds
+        // something: a brand shipping no product name is a static fact about
+        // the shop, so a catalogue's worth of product views would otherwise
+        // write the same line until the log is useless.
+        if ($brandName === '') {
+            static $brandNameLogged = false;
+
+            if (!$brandNameLogged) {
+                $brandNameLogged = true;
+
+                PrestaShopLogger::addLog(
+                    'TwoPayment: product page button withheld - the brand declares no usable product name',
+                    2
+                );
+            }
+
+            return '';
+        }
+
+        $this->warnIfTwoCheckoutIsAnotherOrigin();
+
+        $this->context->smarty->assign(array(
+            'two_button_brand' => $brandName,
+            'two_button_logo' => $this->getTwoBrandConfig('logo'),
+            // sprintf in the template would put the brand inside the
+            // translated string; keeping it a separate var lets a translator
+            // move it without touching the markup.
+            // Two strings, because the mark replaces the brand WORD only where
+            // there is a mark to replace it with.
+            //
+            // A fragment, not a sentence: the brand's mark follows it and
+            // carries the name, so the control still reads "Buy with <brand>"
+            // to a screen reader. Translators need a word order that survives
+            // a logo being appended.
+            'two_button_label_lead' => $this->l('Buy with'),
+            // The fallback for a brand shipping no mark, where the name has to
+            // be in the text or the button names no brand at all.
+            'two_button_label' => sprintf($this->l('Buy with %s'), $brandName),
+            // Where the checkout actually lives, by core's own rule for a
+            // controller declaring $ssl = true: FrontController uses
+            // ($this->ssl && PS_SSL_ENABLED), independent of
+            // PS_SSL_ENABLED_EVERYWHERE. On a shop with SSL enabled but not
+            // everywhere, that is a DIFFERENT ORIGIN from this product page,
+            // and the hand-off cannot cross it.
+            'two_button_checkout_url' => $this->context->link->getPageLink(
+                'order',
+                (bool) Configuration::get('PS_SSL_ENABLED')
+            ),
+            // What the buyer is told when core never answered at all - the
+            // request rejected, or took longer than the button waits. Core
+            // supplies wording for a refusal it can explain; there is none for
+            // a request that did not arrive, and silence is the one outcome
+            // that leaves the buyer with nothing to act on.
+            'two_button_unreachable' => $this->l('Sorry, we could not add this to your basket. Please try again.'),
+            'module_dir' => $this->_path,
+        ));
+
+        return $this->context->smarty->fetch('module:twopayment/views/templates/hook/productbutton.tpl');
+    }
+
+    /**
+     * Say so, once per request, when the checkout is on another origin.
+     *
+     * With PS_SSL_ENABLED on and PS_SSL_ENABLED_EVERYWHERE off, the product
+     * page is served over http while the cart and the checkout declare
+     * $ssl = true and are served over https. sessionStorage is keyed by the
+     * full origin, so a hand-off recorded here could never be read there. The
+     * button still adds to the basket; only the preselection is skipped, and
+     * this is how a merchant finds out why rather than it simply never
+     * happening.
+     *
+     * @return void
+     */
+    private function warnIfTwoCheckoutIsAnotherOrigin()
+    {
+        static $logged = false;
+
+        if ($logged) {
+            return;
+        }
+
+        if (!Configuration::get('PS_SSL_ENABLED') || Configuration::get('PS_SSL_ENABLED_EVERYWHERE')) {
+            return;
+        }
+
+        $logged = true;
+
+        PrestaShopLogger::addLog(
+            'TwoPayment: product page and checkout are on different origins '
+            . '(PS_SSL_ENABLED without PS_SSL_ENABLED_EVERYWHERE), so the buy button adds to the '
+            . 'basket but cannot preselect the payment method. Enable SSL everywhere to restore it.',
+            2
+        );
+    }
+
+    /**
+     * Whether the product-page button may render at all (TWO-25800).
+     *
+     * The same three conditions the message uses: the module is active, the
+     * merchant switched this on, and the api-key verdict is not a DEFINITIVE
+     * failure. A transient outage leaves the button up exactly as it leaves
+     * the method on offer.
+     *
+     * @return bool
+     */
+    public function isTwoProductButtonWarranted()
+    {
+        if (!$this->active) {
+            return false;
+        }
+
+        // Strict: only the stored '1' enables it. A corrupt row left by an
+        // import or a hand edit reads as off rather than being coerced into
+        // putting a purchase control on the storefront, and is logged once per
+        // request so the merchant whose button vanished has something to read.
+        //
+        // Deliberately degrading rather than throwing, and the same call the
+        // message switch makes. The fail-loud standard exists so an
+        // unrecognised value is never PRICED; nothing is priced on this one.
+        // It decides whether a button is drawn, and the button only ever hands
+        // the buyer to the shop's own cart, where every gate that does decide
+        // money still runs. Throwing here would put the product page at risk
+        // to protect a decision that has no money in it, and would make two
+        // adjacent toggles behave differently for no reason a merchant could
+        // follow.
+        $enabled = Configuration::get('PS_TWO_PRODUCT_BUTTON_ENABLED');
+        if ($enabled === false || (string) $enabled !== '1') {
+            if ($enabled !== false && !in_array((string) $enabled, array('', '0'), true)) {
+                self::logTwoProductButtonToggleOnce((string) $enabled);
+            }
+
+            return false;
+        }
+
+        return !$this->isTwoApiKeyDefinitelyUnusable();
+    }
+
+    /**
+     * The offending toggle value, once per request.
+     *
+     * Nothing is priced on this setting, so a corrupt row degrades to no
+     * button rather than throwing. Once per request keeps a category page of
+     * products to a single line.
+     *
+     * @param string $value
+     *
+     * @return void
+     */
+    private static function logTwoProductButtonToggleOnce($value)
+    {
+        static $logged = false;
+
+        if ($logged) {
+            return;
+        }
+
+        $logged = true;
+
+        PrestaShopLogger::addLog(
+            'TwoPayment: unrecognised PS_TWO_PRODUCT_BUTTON_ENABLED value "'
+            . $value . '"; product page button withheld',
+            2
+        );
     }
 
     /**
