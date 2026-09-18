@@ -19026,15 +19026,20 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        // Quick View sets this on the request that renders the modal body. It
-        // is the fragment case that matters: its markup lands on a category
-        // page that never loaded this stylesheet.
+        // Quick View renders the modal body from a fragment request whose
+        // markup lands on a category page that never loaded this stylesheet.
+        // The theme dispatches it as action=quickview; quickview=1 is the
+        // direct-URL form core's ProductController::init() also honours.
         //
         // A combination refresh is ALSO an ajax product request, and it
-        // re-renders the additional-info block the theme swaps in — excluding
+        // re-renders the additional-info block the theme swaps in - excluding
         // every ajax request made the badge vanish as soon as a buyer picked a
         // variant, on a page whose stylesheet was already loaded. So the
         // exclusion names Quick View, not ajax.
+        if (Tools::getValue('action') === 'quickview') {
+            return false;
+        }
+
         return (int) Tools::getValue('quickview') !== 1;
     }
 
@@ -19104,9 +19109,14 @@ class Twopayment extends PaymentModule
 
         // Strict: only the stored '1' enables it. A corrupt row left by an
         // import or a hand edit reads as off rather than being coerced into
-        // publishing the message.
+        // publishing the message, and is logged once per request so the
+        // merchant whose message vanished has something to read.
         $enabled = Configuration::get('PS_TWO_PRODUCT_MESSAGE_ENABLED');
         if ($enabled === false || (string) $enabled !== '1') {
+            if ($enabled !== false && !in_array((string) $enabled, array('', '0'), true)) {
+                self::logTwoProductMessageToggleOnce((string) $enabled);
+            }
+
             return false;
         }
 
@@ -19118,6 +19128,34 @@ class Twopayment extends PaymentModule
         // is exactly this question, and still ignores transient ones so an
         // outage does not withhold.
         return !$this->isTwoApiKeyDefinitelyUnusable();
+    }
+
+    /**
+     * The offending toggle value, once per request.
+     *
+     * This setting only decides whether a line of text is drawn, so a corrupt
+     * row degrades to no message rather than throwing: nothing is priced on
+     * it. Once per request keeps a category page of products to a single line.
+     *
+     * @param string $value
+     *
+     * @return void
+     */
+    private static function logTwoProductMessageToggleOnce($value)
+    {
+        static $logged = false;
+
+        if ($logged) {
+            return;
+        }
+
+        $logged = true;
+
+        PrestaShopLogger::addLog(
+            'TwoPayment: unrecognised PS_TWO_PRODUCT_MESSAGE_ENABLED value "'
+            . $value . '"; product page message withheld',
+            2
+        );
     }
 
     /**
