@@ -5777,6 +5777,7 @@ require __DIR__ . '/EnvironmentUpgradeMigrationSpec.php';
 require __DIR__ . '/CheckoutTitleSpec.php';
 require __DIR__ . '/CheckoutSubtitleSpec.php';
 require __DIR__ . '/ProductPromoMessageSpec.php';
+require __DIR__ . '/ProductButtonSpec.php';
 require __DIR__ . '/TwoAnchorOnlyHtmlSpec.php';
 require __DIR__ . '/ConfigFallbackSpec.php';
 require __DIR__ . '/TranslationCatalogueSpec.php';
@@ -5843,6 +5844,7 @@ $tests = [
     'CheckoutTitleSpec::runAll' => [CheckoutTitleSpec::class, 'runAll'],
     'CheckoutSubtitleSpec::runAll' => [CheckoutSubtitleSpec::class, 'runAll'],
     'ProductPromoMessageSpec::runAll' => [ProductPromoMessageSpec::class, 'runAll'],
+    'ProductButtonSpec::runAll' => [ProductButtonSpec::class, 'runAll'],
     'TwoAnchorOnlyHtmlSpec::runAll' => [TwoAnchorOnlyHtmlSpec::class, 'runAll'],
     'PaymentTileAboutControlSpec::runAll' => [PaymentTileAboutControlSpec::class, 'runAll'],
     'ConfigFallbackSpec::runAll' => [ConfigFallbackSpec::class, 'runAll'],

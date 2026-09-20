@@ -569,3 +569,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_520ef901e639941eb2ca17a0425d40f0'] = 'Toont een korte promotionele regel op productpagina’s, onder de knop om aan de winkelwagen toe te voegen. Standaard uitgeschakeld. Waar de regel precies terechtkomt, hangt af van je thema.';
 $_MODULE['<{twopayment}prestashop>twopayment_a0256ed4b51769a1870a4ef18e840bd8'] = 'Optioneel. Laat leeg om de standaardtekst te gebruiken. Vermeld geen aantal dagen tenzij je zeker bent van de termijnen die je aanbiedt: betaaltermijnen lopen vanaf de uitlevering, en de termijnen die echt beschikbaar zijn komen uit je merchant-record.';
 $_MODULE['<{twopayment}prestashop>twopayment_f45f18a5f256c8384d55cc90c57fa750'] = 'Bericht tonen op productpagina\'s accepteert alleen aan of uit; "%s" is geen waarde die het begrijpt.';
+$_MODULE['<{twopayment}prestashop>twopayment_b63f118411f3e32350cac7a5b296608a'] = 'Koopknop tonen op productpagina’s';
+$_MODULE['<{twopayment}prestashop>twopayment_aed5d9ab8bcba45120413823ecd4c5bb'] = 'Voegt naast in winkelwagen een knop toe die het artikel in de winkelwagen legt en de koper naar de kassa brengt met deze betaalmethode al gekozen. Standaard uit. Waar de knop precies terechtkomt hangt af van je thema.';
+$_MODULE['<{twopayment}prestashop>twopayment_97dd4467b7e52981c915692e40e3c6b6'] = 'Koopknop tonen op productpagina’s accepteert alleen aan of uit; "%s" is geen waarde die het begrijpt.';
+$_MODULE['<{twopayment}prestashop>twopayment_fb240641c0e8815c516e341934b1e5da'] = 'Kopen met %s';
+$_MODULE['<{twopayment}prestashop>twopayment_0592fff84c41da1f5de791af5d35bb18'] = 'Kopen met';
+$_MODULE['<{twopayment}prestashop>twopayment_17ff44377a631de2e9afb533c9a34063'] = 'Sorry, we konden dit niet aan je winkelwagen toevoegen. Probeer het opnieuw.';
