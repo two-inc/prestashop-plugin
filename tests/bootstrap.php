@@ -726,6 +726,14 @@ namespace {
             return 'https://shop.local/product/' . $idProduct;
         }
 
+        /** Core's front-page link builder; the buy button asks it for the cart. */
+        public function getPageLink($controller, $ssl = null, $idLang = null, $request = null): string
+        {
+            $query = is_array($request) ? http_build_query($request) : (string) $request;
+
+            return 'https://shop.local/' . $controller . ($query !== '' ? '?' . $query : '');
+        }
+
         public function getModuleLink($module, $controller, $params = [], $ssl = true): string
         {
             $query = http_build_query((array) $params);

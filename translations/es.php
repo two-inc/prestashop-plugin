@@ -569,3 +569,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_520ef901e639941eb2ca17a0425d40f0'] = 'Muestra una breve línea promocional en las páginas de producto, debajo del botón de añadir a la cesta. Desactivado de forma predeterminada. El lugar exacto donde aparece depende de tu plantilla.';
 $_MODULE['<{twopayment}prestashop>twopayment_a0256ed4b51769a1870a4ef18e840bd8'] = 'Opcional. Déjalo vacío para usar el texto predeterminado. Evita indicar un número de días salvo que tengas la certeza de los plazos que ofreces: los plazos de pago cuentan desde la preparación del pedido, y los plazos realmente disponibles proceden de tu registro de comerciante.';
 $_MODULE['<{twopayment}prestashop>twopayment_f45f18a5f256c8384d55cc90c57fa750'] = 'Mostrar mensaje en las páginas de producto solo acepta activado o desactivado; "%s" no es un valor que entienda.';
+$_MODULE['<{twopayment}prestashop>twopayment_b63f118411f3e32350cac7a5b296608a'] = 'Mostrar botón de compra en las páginas de producto';
+$_MODULE['<{twopayment}prestashop>twopayment_aed5d9ab8bcba45120413823ecd4c5bb'] = 'Añade un botón junto a añadir al carrito que pone el artículo en la cesta y lleva al comprador al pago con este método ya seleccionado. Desactivado por defecto. Dónde aparece exactamente depende de tu plantilla.';
+$_MODULE['<{twopayment}prestashop>twopayment_97dd4467b7e52981c915692e40e3c6b6'] = 'Mostrar botón de compra en las páginas de producto solo acepta activado o desactivado; "%s" no es un valor que entienda.';
+$_MODULE['<{twopayment}prestashop>twopayment_fb240641c0e8815c516e341934b1e5da'] = 'Comprar con %s';
+$_MODULE['<{twopayment}prestashop>twopayment_0592fff84c41da1f5de791af5d35bb18'] = 'Comprar con';
+$_MODULE['<{twopayment}prestashop>twopayment_17ff44377a631de2e9afb533c9a34063'] = 'Lo sentimos, no hemos podido añadir esto a tu cesta. Inténtalo de nuevo.';
