@@ -30,7 +30,7 @@ OVERRIDE_BACKUP="$OVERRIDE_DEST.matrix-backup"
 CART_DEST=/var/www/html/override/classes/Cart.php
 CART_BACKUP="$CART_DEST.matrix-backup"
 SHIM_DEST=/tmp/two-merchant-shim
-CONFIG_KEYS='["TWO_CARRIERLESS_TEST_GROSS","TWO_CARRIERLESS_TEST_NET","TWO_CARRIERLESS_TEST_MODE","PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP"'
+CONFIG_KEYS='["TWO_CARRIERLESS_TEST_GROSS","TWO_CARRIERLESS_TEST_NET","TWO_CARRIERLESS_TEST_MODE","TWO_CARRIERLESS_TEST_SURCHARGE","PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP"'
 [ -z "${MERCHANT_RATE_CONFIG_KEY:-}" ] || CONFIG_KEYS+=",\"$MERCHANT_RATE_CONFIG_KEY\""
 CONFIG_KEYS+=']'
 
@@ -124,7 +124,10 @@ for config in "${CONFIGS[@]}"; do
     2|3|5*) docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" >/dev/null ;;
     *) docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" --reset >/dev/null ;;
   esac
-  for mode in A B C; do
+  modes=(A B C)
+  # D's anomaly is on a product line, which the merchant override does not touch.
+  case "$config" in 1|2|3) modes+=(D) ;; esac
+  for mode in "${modes[@]}"; do
     rc=0
     out=$(docker exec -u www-data -e MERCHANT_RATE_CONFIG_KEY="${MERCHANT_RATE_CONFIG_KEY:-}" "$PS_CONTAINER" \
       php -d memory_limit=512M /tmp/two-integration/matrix/carrierless-shipping-cell.php "$mode" "$config" || echo "EXIT $?") || true

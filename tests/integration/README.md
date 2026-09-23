@@ -15,11 +15,12 @@ These run in CI on every pull request — `.github/workflows/integration.yml`, P
 
 `make carrierless-matrix` (CI: the "Carrier-less shipping matrix" step) runs `matrix/carrierless-shipping-cell.php` once per cell and prints a table of the `SHIPPING_FEE` line, order totals and outcome from `getTwoNewOrderData()`. It records rather than asserts: a cell fails only when its cart shape could not be reproduced. Modes, driven through the same fixture module and its Cart override (`getExternalShippingCost()`, `two_test_external_shipping` table):
 
-| Mode | Cart shape (all `id_carrier = 0`, no carrier declares a shipping tax rules group) |
+| Mode | Cart shape |
 | --- | --- |
-| A | `ONLY_SHIPPING` 29.00 incl == excl (PrestaShop sees 0% shipping VAT) |
-| B | `ONLY_SHIPPING` 29.00 incl / 23.97 excl (21%) |
-| C | `ONLY_SHIPPING` 0; 29.00 only via `getExternalShippingCost()`, added untaxed to `getOrderTotal(*, BOTH)` |
+| A | `id_carrier = 0`, no shipping tax rules group; `ONLY_SHIPPING` 29.00 incl == excl (PrestaShop sees 0% shipping VAT) |
+| B | `id_carrier = 0`, no shipping tax rules group; `ONLY_SHIPPING` 29.00 incl / 23.97 excl (21%) |
+| C | `id_carrier = 0`, no shipping tax rules group; `ONLY_SHIPPING` 0; 29.00 only via `getExternalShippingCost()`, added untaxed to `getOrderTotal(*, BOTH)` |
+| D | A real carrier declaring a 21% group; the product line declares 21% but carries a fixed untaxed 120.00 on its net, so its tax covers only the base. Configs 1–3 only |
 
 Configs 1–3 set the Default shipping tax code to unset / a 21% group / "No tax". Configs 4a/4b/5a/5b add a merchant `TwopaymentOverride`, with its tax-rate setting unset / 21, and default code unset (4) or 21% (5). Nothing merchant-specific is committed; those cells need three env vars:
 

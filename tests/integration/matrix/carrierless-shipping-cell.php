@@ -7,7 +7,7 @@
  * gates - and never sent anywhere. Records outcomes; asserts only that the
  * cart shape itself was reproduced.
  *
- * Usage: php carrierless-shipping-cell.php <A|B|C> <1|2|3|4a|4b|5a|5b>
+ * Usage: php carrierless-shipping-cell.php <A|B|C|D> <1|2|3|4a|4b|5a|5b>
  * Configs 4/5 take the merchant override's rate config key from env MERCHANT_RATE_CONFIG_KEY.
  * Exit: 0 recorded, 2 shape not reproduced or merchant override not loaded.
  */
@@ -21,7 +21,9 @@ const CELL_MODES = array(
     'A' => array('gross' => '29.00', 'net' => '29.00', 'mode' => ''),
     'B' => array('gross' => '29.00', 'net' => '23.97', 'mode' => ''),
     'C' => array('gross' => '29.00', 'net' => '29.00', 'mode' => 'external_only'),
+    'D' => array('gross' => '0', 'net' => '0', 'mode' => 'product_surcharge'),
 );
+const CELL_PRODUCT_SURCHARGE = '120.00';
 // group: '' unset, 'TRG_21' the seeded 21% group, '0' core's "No tax".
 const CELL_CONFIGS = array(
     '1' => array('group' => '', 'override' => false, 'merchant_rate' => null),
@@ -36,7 +38,7 @@ const CELL_CONFIGS = array(
 $mode_name = isset($argv[1]) ? (string) $argv[1] : '';
 $config_name = isset($argv[2]) ? (string) $argv[2] : '';
 if (!isset(CELL_MODES[$mode_name]) || !isset(CELL_CONFIGS[$config_name])) {
-    fwrite(STDERR, 'usage: carrierless-shipping-cell.php <A|B|C> <1|2|3|4a|4b|5a|5b>' . PHP_EOL);
+    fwrite(STDERR, 'usage: carrierless-shipping-cell.php <A|B|C|D> <1|2|3|4a|4b|5a|5b>' . PHP_EOL);
     exit(2);
 }
 $mode = CELL_MODES[$mode_name];
@@ -47,6 +49,7 @@ probeBootKernel();
 Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', $mode['gross']);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_NET', $mode['net']);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_MODE', $mode['mode']);
+Configuration::updateValue('TWO_CARRIERLESS_TEST_SURCHARGE', CELL_PRODUCT_SURCHARGE);
 Configuration::updateValue(
     'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP',
     $config['group'] === 'TRG_21' ? (string) (int) Configuration::get('TWO_CARRIERLESS_TEST_TRG_21') : $config['group']
@@ -64,7 +67,8 @@ if ($rate_key !== '') {
     }
 }
 
-$cart = new Cart((int) Configuration::get('TWO_CARRIERLESS_TEST_ID_CART'));
+$surcharged = $mode['mode'] === 'product_surcharge';
+$cart = new Cart((int) Configuration::get($surcharged ? 'TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER_CART' : 'TWO_CARRIERLESS_TEST_ID_CART'));
 if (!Validate::isLoadedObject($cart)) {
     fwrite(STDERR, 'probe cart does not load - run dev/ci/seed-carrierless-cart.sh first' . PHP_EOL);
     exit(2);
@@ -85,20 +89,43 @@ $totals = array(
 );
 
 $invalid = array();
-if ((int) $cart->id_carrier !== 0) {
-    $invalid[] = 'id_carrier=' . (int) $cart->id_carrier;
+if ($surcharged) {
+    $id_taxed_carrier = (int) Configuration::get('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER');
+    $trg_21 = (int) Configuration::get('TWO_CARRIERLESS_TEST_TRG_21');
+    if ((int) $cart->id_carrier !== $id_taxed_carrier || (int) (new Carrier($id_taxed_carrier))->getIdTaxRulesGroup() !== $trg_21) {
+        $invalid[] = 'carrier ' . (int) $cart->id_carrier . ' is not the seeded 21% carrier';
+    }
+    if (array($totals['ship_incl'], $totals['ship_excl']) !== array(12.1, 10.0)) {
+        $invalid[] = 'ONLY_SHIPPING=' . $totals['ship_incl'] . '/' . $totals['ship_excl'];
+    }
+    $lines_gross = 0.0;
+    foreach ($cart->getProducts(true) as $row) {
+        $base = round((float) $row['total'] - (float) CELL_PRODUCT_SURCHARGE, 2);
+        if ((int) Product::getIdTaxRulesGroupByIdProduct((int) $row['id_product']) !== $trg_21
+            || round((float) $row['total_wt'] - (float) $row['total'], 2) !== round($base * 0.21, 2)) {
+            $invalid[] = 'product ' . (int) $row['id_product'] . ' is not 21% on its base plus an untaxed ' . CELL_PRODUCT_SURCHARGE;
+        }
+        $lines_gross += (float) $row['total_wt'];
+    }
+    if ($totals['noship_incl'] !== round($lines_gross, 2)) {
+        $invalid[] = 'BOTH_WITHOUT_SHIPPING=' . $totals['noship_incl'] . ' does not include the surcharge';
+    }
+} else {
+    if ((int) $cart->id_carrier !== 0) {
+        $invalid[] = 'id_carrier=' . (int) $cart->id_carrier;
+    }
+    if ($totals['external'] !== (float) $mode['gross']) {
+        $invalid[] = 'getExternalShippingCost()=' . var_export($totals['external'], true);
+    }
+    $expect_ship = $mode['mode'] === 'external_only'
+        ? array(0.0, 0.0)
+        : array((float) $mode['gross'], (float) $mode['net']);
+    if (array($totals['ship_incl'], $totals['ship_excl']) !== $expect_ship) {
+        $invalid[] = 'ONLY_SHIPPING=' . $totals['ship_incl'] . '/' . $totals['ship_excl'];
+    }
 }
-if ($totals['external'] !== (float) $mode['gross']) {
-    $invalid[] = 'getExternalShippingCost()=' . var_export($totals['external'], true);
-}
-$expect_ship = $mode['mode'] === 'external_only'
-    ? array(0.0, 0.0)
-    : array((float) $mode['gross'], (float) $mode['net']);
-if (array($totals['ship_incl'], $totals['ship_excl']) !== $expect_ship) {
-    $invalid[] = 'ONLY_SHIPPING=' . $totals['ship_incl'] . '/' . $totals['ship_excl'];
-}
-if (round($totals['both_incl'] - $totals['noship_incl'], 2) !== (float) $mode['gross']) {
-    $invalid[] = 'BOTH does not include the ' . $mode['gross'] . ' shipping cost';
+if (round($totals['both_incl'] - $totals['noship_incl'], 2) !== ($surcharged ? $totals['ship_incl'] : (float) $mode['gross'])) {
+    $invalid[] = 'BOTH does not include the shipping cost';
 }
 if ($config['override'] !== ($module_class === 'TwopaymentOverride')) {
     $invalid[] = 'module class is ' . $module_class;
