@@ -57,6 +57,8 @@ run_shim_script() {
 set_override() {
   if [ "$1" = on ]; then
     if [ "${override_copied:-0}" = 0 ]; then
+      # Set before mutating, so restore also cleans up a setup that failed partway.
+      override_copied=1
       docker exec "$PS_CONTAINER" mkdir -p "$(dirname "$OVERRIDE_DEST")"
       docker cp "$MERCHANT_OVERRIDE_PATH" "$PS_CONTAINER:$OVERRIDE_DEST" >/dev/null
       docker exec "$PS_CONTAINER" rm -rf "$SHIM_DEST"
@@ -65,31 +67,37 @@ set_override() {
       docker exec "$PS_CONTAINER" cp -p "$CART_DEST" "$CART_BACKUP"
       docker exec "$PS_CONTAINER" cp "$SHIM_DEST/Cart.php" "$CART_DEST"
       docker exec "$PS_CONTAINER" chown -R www-data:www-data "$OVERRIDE_DEST" "$SHIM_DEST" "$CART_DEST"
-      override_copied=1
       run_shim_script install.php
     fi
   elif [ "${override_copied:-0}" = 1 ]; then
-    run_shim_script uninstall.php || true
-    docker exec "$PS_CONTAINER" rm -f "$OVERRIDE_DEST"
-    docker exec "$PS_CONTAINER" mv "$CART_BACKUP" "$CART_DEST"
-    docker exec "$PS_CONTAINER" rm -rf "$SHIM_DEST"
+    attempt run_shim_script uninstall.php
+    attempt docker exec "$PS_CONTAINER" rm -f "$OVERRIDE_DEST"
+    if docker exec "$PS_CONTAINER" test -e "$CART_BACKUP"; then
+      attempt docker exec "$PS_CONTAINER" mv "$CART_BACKUP" "$CART_DEST"
+    fi
+    attempt docker exec "$PS_CONTAINER" rm -rf "$SHIM_DEST"
     override_copied=0
   fi
-  docker exec "$PS_CONTAINER" bash -c "rm -f /var/www/html/var/cache/*/class_index.php"
+  attempt docker exec "$PS_CONTAINER" bash -c "rm -f /var/www/html/var/cache/*/class_index.php"
+}
+# Cleanup steps log and carry on, so one failure does not skip the rest.
+attempt() {
+  "$@" || echo "::warning::cleanup step failed (exit $?): $*" >&2
 }
 # Leave the shop as it was before this run, so the probes still pass afterwards.
 restore() {
+  set +e
   set_override off
   if docker exec "$PS_CONTAINER" test -e "$OVERRIDE_BACKUP"; then
-    docker exec "$PS_CONTAINER" mv "$OVERRIDE_BACKUP" "$OVERRIDE_DEST"
-    docker exec "$PS_CONTAINER" bash -c "rm -f /var/www/html/var/cache/*/class_index.php"
+    attempt docker exec "$PS_CONTAINER" mv "$OVERRIDE_BACKUP" "$OVERRIDE_DEST"
+    attempt docker exec "$PS_CONTAINER" bash -c "rm -f /var/www/html/var/cache/*/class_index.php"
   fi
   if [ "$tax_code_was_on" = 1 ]; then
-    docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" >/dev/null
+    attempt docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" >/dev/null
   else
-    docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" --reset >/dev/null
+    attempt docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" --reset >/dev/null
   fi
-  docker exec -u www-data "$PS_CONTAINER" php -r '
+  attempt docker exec -u www-data "$PS_CONTAINER" php -r '
 require "/var/www/html/config/config.inc.php";
 foreach (json_decode($argv[1], true) as $key => $value) {
     if ($value === null) {
