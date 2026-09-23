@@ -105,12 +105,15 @@ if ($config['override'] !== ($module_class === 'TwopaymentOverride')) {
 }
 
 probeClearModuleLogs();
-$outcome = 'payload OK';
+$outcome = 'not run: cart shape not reproduced';
 $payload = null;
-try {
-    $payload = $module->getTwoNewOrderData('matrix-' . $cell, $cart);
-} catch (Throwable $e) {
-    $outcome = get_class($e) . ': ' . $e->getMessage();
+if ($invalid === array()) {
+    $outcome = 'payload OK';
+    try {
+        $payload = $module->getTwoNewOrderData('matrix-' . $cell, $cart);
+    } catch (Throwable $e) {
+        $outcome = get_class($e) . ': ' . $e->getMessage();
+    }
 }
 
 $shipping = array();
