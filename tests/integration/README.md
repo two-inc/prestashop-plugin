@@ -29,6 +29,14 @@ Configs 1–3 set the Default shipping tax code to unset / a 21% group / "No tax
 | `MERCHANT_SHIM_PATH` | a dir with a `Cart.php` that replaces the fixture's Cart override for those cells (adapting it to what the override calls), plus optional `install.php` / `uninstall.php` run in the shop around them |
 | `MERCHANT_RATE_CONFIG_KEY` | the Configuration key the override reads its tax rate from |
 
+#### Matrix invariants
+
+- Setup is strict: any failure aborts before a cell runs.
+- Teardown is best-effort: every step is attempted, and any failed step makes the run exit non-zero.
+- Shop state after a run equals shop state before it.
+- A cell is reported only if its cart-shape checks pass; the plugin's gates are never bypassed.
+- No merchant-specific identifier enters this repo: merchant-shaped pieces are injected from out-of-tree paths through the env vars above.
+
 ### Why a probe and not another unit spec
 
 `tests/DefaultShippingTaxCodeSpec.php` already proves the decision logic, but against a hand-rolled core stub — so it can only prove the logic is right *about a cart shape it asserts into existence*. Verified on PrestaShop 8.2.7, that shape does not arise from a broken carrier setup: core's `Cart::getDeliveryOptionList()` discards the entire delivery-option list on its no-carrier sentinel (`Cart.php:2921`) and `Cart::getOrderTotal(*, ONLY_SHIPPING)` derives from that same list, so a coverage gap yields shipping of `0.00` and exercises nothing at all.
