@@ -54,49 +54,44 @@ run_shim_script() {
   fi
 }
 # PrestaShop resolves overrides through its class index, so the file alone is not enough.
-set_override() {
-  if [ "$1" = on ]; then
-    if [ "${override_copied:-0}" = 0 ]; then
-      # Set before mutating, so restore also cleans up a setup that failed partway.
-      override_copied=1
-      docker exec "$PS_CONTAINER" mkdir -p "$(dirname "$OVERRIDE_DEST")"
-      docker cp "$MERCHANT_OVERRIDE_PATH" "$PS_CONTAINER:$OVERRIDE_DEST" >/dev/null
-      docker exec "$PS_CONTAINER" rm -rf "$SHIM_DEST"
-      docker cp "$MERCHANT_SHIM_PATH/." "$PS_CONTAINER:$SHIM_DEST" >/dev/null
-      # Only one Cart override can load, so the shim's replaces the fixture's for these cells.
-      docker exec "$PS_CONTAINER" cp -p "$CART_DEST" "$CART_BACKUP"
-      docker exec "$PS_CONTAINER" cp "$SHIM_DEST/Cart.php" "$CART_DEST"
-      docker exec "$PS_CONTAINER" chown -R www-data:www-data "$OVERRIDE_DEST" "$SHIM_DEST" "$CART_DEST"
-      run_shim_script install.php
-    fi
-  elif [ "${override_copied:-0}" = 1 ]; then
-    attempt run_shim_script uninstall.php
-    attempt docker exec "$PS_CONTAINER" rm -f "$OVERRIDE_DEST"
-    if docker exec "$PS_CONTAINER" test -e "$CART_BACKUP"; then
-      attempt docker exec "$PS_CONTAINER" mv "$CART_BACKUP" "$CART_DEST"
-    fi
-    attempt docker exec "$PS_CONTAINER" rm -rf "$SHIM_DEST"
-    override_copied=0
-  fi
-  attempt docker exec "$PS_CONTAINER" bash -c "rm -f /var/www/html/var/cache/*/class_index.php"
+clear_class_index() {
+  docker exec "$PS_CONTAINER" bash -c "rm -f /var/www/html/var/cache/*/class_index.php"
 }
-# Cleanup steps log and carry on, so one failure does not skip the rest.
+install_merchant_override() {
+  [ "$override_copied" = 0 ] || return 0
+  # Set before mutating, so restore also cleans up a setup that failed partway.
+  override_copied=1
+  docker exec "$PS_CONTAINER" mkdir -p "$(dirname "$OVERRIDE_DEST")"
+  docker cp "$MERCHANT_OVERRIDE_PATH" "$PS_CONTAINER:$OVERRIDE_DEST" >/dev/null
+  docker exec "$PS_CONTAINER" rm -rf "$SHIM_DEST"
+  docker cp "$MERCHANT_SHIM_PATH/." "$PS_CONTAINER:$SHIM_DEST" >/dev/null
+  # Only one Cart override can load, so the shim's replaces the fixture's for these cells.
+  docker exec "$PS_CONTAINER" cp -p "$CART_DEST" "$CART_BACKUP"
+  docker exec "$PS_CONTAINER" cp "$SHIM_DEST/Cart.php" "$CART_DEST"
+  docker exec "$PS_CONTAINER" chown -R www-data:www-data "$OVERRIDE_DEST" "$SHIM_DEST" "$CART_DEST"
+  run_shim_script install.php
+  clear_class_index
+}
 attempt() {
-  "$@" || echo "::warning::cleanup step failed (exit $?): $*" >&2
+  "$@" || { echo "::error::cleanup step failed (exit $?): $*" >&2; cleanup_failed=1; }
 }
 # Leave the shop as it was before this run, so the probes still pass afterwards.
 restore() {
+  local rc=$?
   set +e
-  set_override off
+  if [ "$override_copied" = 1 ]; then
+    attempt run_shim_script uninstall.php
+    attempt docker exec "$PS_CONTAINER" rm -rf "$OVERRIDE_DEST" "$SHIM_DEST"
+    attempt docker exec "$PS_CONTAINER" rmdir -p --ignore-fail-on-non-empty "$(dirname "$OVERRIDE_DEST")"
+    if docker exec "$PS_CONTAINER" test -e "$CART_BACKUP"; then
+      attempt docker exec "$PS_CONTAINER" mv "$CART_BACKUP" "$CART_DEST"
+    fi
+  fi
   if docker exec "$PS_CONTAINER" test -e "$OVERRIDE_BACKUP"; then
     attempt docker exec "$PS_CONTAINER" mv "$OVERRIDE_BACKUP" "$OVERRIDE_DEST"
-    attempt docker exec "$PS_CONTAINER" bash -c "rm -f /var/www/html/var/cache/*/class_index.php"
   fi
-  if [ "$tax_code_was_on" = 1 ]; then
-    attempt docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" >/dev/null
-  else
-    attempt docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" --reset >/dev/null
-  fi
+  attempt clear_class_index
+  attempt docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" $([ "$tax_code_was_on" = 1 ] || echo --reset) >/dev/null
   attempt docker exec -u www-data "$PS_CONTAINER" php -r '
 require "/var/www/html/config/config.inc.php";
 foreach (json_decode($argv[1], true) as $key => $value) {
@@ -107,21 +102,23 @@ foreach (json_decode($argv[1], true) as $key => $value) {
     }
 }
 ' "$config_snapshot"
+  [ "$rc" != 0 ] || rc=$cleanup_failed
+  exit "$rc"
 }
+override_copied=0
+cleanup_failed=0
 trap restore EXIT
 
 # A developer's own override is moved aside, not deleted, so configs 1-3 run without it.
 if docker exec "$PS_CONTAINER" test -e "$OVERRIDE_DEST"; then
   docker exec "$PS_CONTAINER" mv "$OVERRIDE_DEST" "$OVERRIDE_BACKUP"
 fi
+clear_class_index
 
 rows=()
 status=0
 for config in "${CONFIGS[@]}"; do
-  case "$config" in
-    4*|5*) set_override on ;;
-    *) set_override off ;;
-  esac
+  case "$config" in 4*|5*) install_merchant_override ;; esac
   # Configs that set the default code do so with its admin field revealed, as a merchant would.
   case "$config" in
     2|3|5*) docker exec "$PS_CONTAINER" bash "$TAX_CODE_SWITCH" >/dev/null ;;
