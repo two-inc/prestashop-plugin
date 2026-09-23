@@ -33,7 +33,7 @@ make phpstan   # static analysis
 ```
 
 If you touched shipping-tax resolution, also run the real-engine probes:
-`make carrierless-shop && make test-integration` (undo with `make carrierless-off`).
+`make carrierless-shop && make test-integration` (undo with `make carrierless-off`); `make carrierless-matrix` tabulates carrier-less modes × tax-code configs.
 CI runs them on PrestaShop 8 and 9.
 
 Lint each PHP file you edited:
