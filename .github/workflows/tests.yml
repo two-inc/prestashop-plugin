@@ -63,6 +63,9 @@ jobs:
           # is where a syntax error in them gets caught cheaply.
           php -l tests/integration/default-shipping-tax-code.php
           php -l tests/integration/fixtures/twocarrierlesstest/twocarrierlesstest.php
+          php -l tests/integration/lib/probe-helpers.php
+          php -l tests/integration/matrix/carrierless-shipping-cell.php
+          php -l tests/integration/fixtures/twocarrierlesstest/override/classes/Cart.php
           php -l dev/ci/seed-carrierless-cart.php
           php -l dev/ci/two-api-stub.php
 

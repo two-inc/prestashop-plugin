@@ -55,6 +55,15 @@ exit(Module::isInstalled("twocarrierlesstest") ? 0 : 1);
   docker exec -u www-data "$PS_CONTAINER" bash -c \
     "cd /var/www/html && php -d memory_limit=512M bin/console prestashop:module install twocarrierlesstest"
 fi
+# Re-applied every run so a shop that installed an older copy of the fixture
+# picks up its current Cart override and external shipping table.
+docker exec -u www-data "$PS_CONTAINER" php -d memory_limit=512M -r '
+require "/var/www/html/config/config.inc.php";
+$module = Module::getInstanceByName("twocarrierlesstest");
+$module->uninstallOverrides();
+exit($module->installOverrides() && Twocarrierlesstest::installExternalShippingTable() ? 0 : 1);
+'
+docker exec "$PS_CONTAINER" bash -c "rm -f /var/www/html/var/cache/*/class_index.php"
 
 tar -cf - -C "$REPO_ROOT/dev/ci" seed-carrierless-cart.php \
   | docker exec -i "$PS_CONTAINER" tar -xf - -C /tmp

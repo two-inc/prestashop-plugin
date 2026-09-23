@@ -29,7 +29,9 @@ if (!defined('_PS_VERSION_')) {
 
 const PROBE_EMAIL = 'carrierless-probe@example.com';
 const PROBE_TAX_RATE = 25.0;
+const PROBE_MATRIX_TAX_RATE = 21.0;
 const PROBE_LABEL = 'Two carrier-less probe';
+const PROBE_TAXED_CARRIER_NET = 10.0;
 
 /**
  * @param string $key
@@ -115,7 +117,7 @@ function probeCarrierCoverage($country)
 }
 
 /**
- * A tax rules group declaring PROBE_TAX_RATE in the shop's default country.
+ * A tax rules group declaring $rate in the shop's default country.
  *
  * A stock install can have NO tax rules groups at all (a PS_COUNTRY=NO
  * install has none), so this creates its own rather than depending on the
@@ -123,25 +125,27 @@ function probeCarrierCoverage($country)
  *
  * @param Country $country
  * @param int $id_lang
+ * @param float $rate
+ * @param string $config_key Where the group id is published
  * @return int Tax rules group id
  */
-function probeTaxRulesGroup($country, $id_lang)
+function probeTaxRulesGroup($country, $id_lang, $rate, $config_key)
 {
-    $existing = probeStoredId('TWO_CARRIERLESS_TEST_TRG');
+    $existing = probeStoredId($config_key);
     if ($existing > 0 && Validate::isLoadedObject(new TaxRulesGroup($existing))) {
         return $existing;
     }
 
     $tax = new Tax();
-    $tax->rate = PROBE_TAX_RATE;
+    $tax->rate = $rate;
     $tax->active = true;
-    $tax->name = array($id_lang => PROBE_LABEL . ' ' . (int) PROBE_TAX_RATE . '%');
+    $tax->name = array($id_lang => PROBE_LABEL . ' ' . (int) $rate . '%');
     if (!$tax->add()) {
         throw new RuntimeException('could not create the probe Tax');
     }
 
     $group = new TaxRulesGroup();
-    $group->name = PROBE_LABEL . ' ' . (int) PROBE_TAX_RATE . '%';
+    $group->name = PROBE_LABEL . ' ' . (int) $rate . '%';
     $group->active = true;
     if (!$group->add()) {
         throw new RuntimeException('could not create the probe TaxRulesGroup');
@@ -346,21 +350,159 @@ function probeCart($customer, $address, $id_lang, $id_product)
     return new Cart((int) $cart->id);
 }
 
+/**
+ * The cart's external shipping row: its product priced outside core against a
+ * REAL carrier reference, while the cart itself keeps id_carrier 0.
+ *
+ * @param Cart $cart
+ * @param int $id_product
+ * @param int $id_lang
+ * @return int Carrier reference
+ */
+function probeExternalShippingRow($cart, $id_product, $id_lang)
+{
+    $carriers = Carrier::getCarriers($id_lang, true, false, false, null, Carrier::ALL_CARRIERS);
+    if (empty($carriers)) {
+        throw new RuntimeException('no active carrier to reference from the external shipping row');
+    }
+    $id_reference = (int) $carriers[0]['id_reference'];
+    Db::getInstance()->execute(
+        'REPLACE INTO `' . _DB_PREFIX_ . 'two_test_external_shipping` (`id_cart`, `id_product`, `id_carrier_reference`) VALUES ('
+        . (int) $cart->id . ', ' . (int) $id_product . ', ' . $id_reference . ')'
+    );
+
+    return $id_reference;
+}
+
+/**
+ * A priced carrier declaring $id_tax_rules_group, for carts whose shipping must be unremarkable.
+ *
+ * @param Country $country
+ * @param int $id_lang
+ * @param int $id_tax_rules_group
+ * @return int Carrier id
+ */
+function probeTaxedCarrier($country, $id_lang, $id_tax_rules_group)
+{
+    $existing = probeStoredId('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER');
+    if ($existing > 0 && Validate::isLoadedObject(new Carrier($existing))) {
+        return $existing;
+    }
+
+    $carrier = new Carrier();
+    $carrier->name = PROBE_LABEL . ' carrier';
+    $carrier->delay = array($id_lang => PROBE_LABEL);
+    $carrier->active = true;
+    $carrier->shipping_method = Carrier::SHIPPING_METHOD_PRICE;
+    $carrier->shipping_handling = false;
+    if (!$carrier->add()) {
+        throw new RuntimeException('could not create the probe Carrier');
+    }
+    $range = new RangePrice();
+    $range->id_carrier = (int) $carrier->id;
+    $range->delimiter1 = 0;
+    $range->delimiter2 = 1000000;
+    if (!$range->add()
+        || !$carrier->addZone((int) $country->id_zone)
+        || !$carrier->setTaxRulesGroup($id_tax_rules_group)
+        || !$carrier->setGroups(array_column(Group::getGroups($id_lang), 'id_group'))
+        || !$carrier->addDeliveryPrice(array(array(
+            'id_range_price' => (int) $range->id,
+            'id_range_weight' => null,
+            'id_carrier' => (int) $carrier->id,
+            'id_zone' => (int) $country->id_zone,
+            'price' => PROBE_TAXED_CARRIER_NET,
+        )), true)) {
+        throw new RuntimeException('could not configure the probe Carrier');
+    }
+
+    return (int) $carrier->id;
+}
+
+/**
+ * A cart of one product declaring $id_tax_rules_group, shipped by $id_carrier.
+ *
+ * @param Customer $customer
+ * @param Address $address
+ * @param int $id_lang
+ * @param int $id_tax_rules_group
+ * @param int $id_carrier
+ * @return Cart
+ */
+function probeTaxedCarrierCart($customer, $address, $id_lang, $id_tax_rules_group, $id_carrier)
+{
+    $id_existing = probeStoredId('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER_CART');
+    if ($id_existing > 0) {
+        $cart = new Cart($id_existing);
+        if (Validate::isLoadedObject($cart) && $cart->nbProducts() > 0) {
+            return $cart;
+        }
+    }
+
+    $product = new Product();
+    $product->name = array($id_lang => PROBE_LABEL . ' product ' . (int) PROBE_MATRIX_TAX_RATE . '%');
+    $product->link_rewrite = array($id_lang => 'two-carrierless-probe-product-taxed');
+    $product->price = 100.0;
+    $product->id_tax_rules_group = $id_tax_rules_group;
+    $product->active = true;
+    $product->id_category_default = (int) Configuration::get('PS_HOME_CATEGORY');
+    $product->minimal_quantity = 1;
+    if (!$product->add()) {
+        throw new RuntimeException('could not create the probe taxed Product');
+    }
+    StockAvailable::setQuantity((int) $product->id, 0, 100);
+
+    $cart = new Cart();
+    $cart->id_customer = (int) $customer->id;
+    $cart->id_address_delivery = (int) $address->id;
+    $cart->id_address_invoice = (int) $address->id;
+    $cart->id_lang = (int) $id_lang;
+    $cart->id_currency = (int) Configuration::get('PS_CURRENCY_DEFAULT');
+    $cart->id_shop = (int) Context::getContext()->shop->id;
+    $cart->id_shop_group = (int) Context::getContext()->shop->id_shop_group;
+    $cart->id_carrier = (int) $id_carrier;
+    $cart->delivery_option = json_encode(array((int) $address->id => (int) $id_carrier . ','));
+    if (!$cart->add()) {
+        throw new RuntimeException('could not create the probe taxed-carrier Cart');
+    }
+    Context::getContext()->cart = $cart;
+    if (!$cart->updateQty(1, (int) $product->id)) {
+        throw new RuntimeException('could not add the probe taxed product to its cart');
+    }
+
+    return new Cart((int) $cart->id);
+}
+
 $id_lang = (int) Configuration::get('PS_LANG_DEFAULT');
 $country = probeCountry();
 probeCarrierCoverage($country);
-$id_tax_rules_group = probeTaxRulesGroup($country, $id_lang);
+$id_tax_rules_group = probeTaxRulesGroup($country, $id_lang, PROBE_TAX_RATE, 'TWO_CARRIERLESS_TEST_TRG');
+Configuration::updateValue('TWO_CARRIERLESS_TEST_TRG', (int) $id_tax_rules_group);
+Configuration::updateValue(
+    'TWO_CARRIERLESS_TEST_TRG_21',
+    probeTaxRulesGroup($country, $id_lang, PROBE_MATRIX_TAX_RATE, 'TWO_CARRIERLESS_TEST_TRG_21')
+);
 $customer = probeCustomer($id_lang);
 probeApplyContext($customer, $country, $id_lang);
 $address = probeAddress($customer, $country);
 $id_product = probeProductId($id_lang);
 $cart = probeCart($customer, $address, $id_lang, $id_product);
+$id_carrier_reference = probeExternalShippingRow($cart, $id_product, $id_lang);
+$id_taxed_carrier = probeTaxedCarrier($country, $id_lang, (int) Configuration::get('TWO_CARRIERLESS_TEST_TRG_21'));
+$taxed_carrier_cart = probeTaxedCarrierCart(
+    $customer,
+    $address,
+    $id_lang,
+    (int) Configuration::get('TWO_CARRIERLESS_TEST_TRG_21'),
+    $id_taxed_carrier
+);
 
-Configuration::updateValue('TWO_CARRIERLESS_TEST_TRG', (int) $id_tax_rules_group);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_RATE', (string) PROBE_TAX_RATE);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_CUSTOMER', (int) $customer->id);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_ADDRESS', (int) $address->id);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_CART', (int) $cart->id);
+Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER', $id_taxed_carrier);
+Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER_CART', (int) $taxed_carrier_cart->id);
 // Arm the fixture module: shipping priced at 29.00 gross / 23.20 net, i.e.
 // 5.80 tax, which is exactly PROBE_TAX_RATE on that net. The module asserts a
 // declared rate against the applied amounts
@@ -376,4 +518,5 @@ echo 'carrier-less cart seeded: cart=' . (int) $cart->id
     . ' country=' . $country->iso_code
     . ' tax_rules_group=' . (int) $id_tax_rules_group . ' (' . (int) PROBE_TAX_RATE . '%)'
     . ' product=' . (int) $id_product
+    . ' external_carrier_reference=' . $id_carrier_reference
     . PHP_EOL;
