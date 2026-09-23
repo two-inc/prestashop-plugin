@@ -64,6 +64,10 @@ jobs:
       - name: Run integration probes
         run: dev/ci/run-integration-probes.sh
 
+      # Report-only: fails only if a cell cannot reproduce its cart shape.
+      - name: Carrier-less shipping matrix
+        run: dev/ci/run-carrierless-matrix.sh
+
       - name: Dump module log on failure
         if: failure()
         run: |

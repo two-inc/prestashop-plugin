@@ -29,6 +29,7 @@ if (!defined('_PS_VERSION_')) {
 
 const PROBE_EMAIL = 'carrierless-probe@example.com';
 const PROBE_TAX_RATE = 25.0;
+const PROBE_MATRIX_TAX_RATE = 21.0;
 const PROBE_LABEL = 'Two carrier-less probe';
 
 /**
@@ -115,7 +116,7 @@ function probeCarrierCoverage($country)
 }
 
 /**
- * A tax rules group declaring PROBE_TAX_RATE in the shop's default country.
+ * A tax rules group declaring $rate in the shop's default country.
  *
  * A stock install can have NO tax rules groups at all (a PS_COUNTRY=NO
  * install has none), so this creates its own rather than depending on the
@@ -123,25 +124,27 @@ function probeCarrierCoverage($country)
  *
  * @param Country $country
  * @param int $id_lang
+ * @param float $rate
+ * @param string $config_key Where the group id is published
  * @return int Tax rules group id
  */
-function probeTaxRulesGroup($country, $id_lang)
+function probeTaxRulesGroup($country, $id_lang, $rate, $config_key)
 {
-    $existing = probeStoredId('TWO_CARRIERLESS_TEST_TRG');
+    $existing = probeStoredId($config_key);
     if ($existing > 0 && Validate::isLoadedObject(new TaxRulesGroup($existing))) {
         return $existing;
     }
 
     $tax = new Tax();
-    $tax->rate = PROBE_TAX_RATE;
+    $tax->rate = $rate;
     $tax->active = true;
-    $tax->name = array($id_lang => PROBE_LABEL . ' ' . (int) PROBE_TAX_RATE . '%');
+    $tax->name = array($id_lang => PROBE_LABEL . ' ' . (int) $rate . '%');
     if (!$tax->add()) {
         throw new RuntimeException('could not create the probe Tax');
     }
 
     $group = new TaxRulesGroup();
-    $group->name = PROBE_LABEL . ' ' . (int) PROBE_TAX_RATE . '%';
+    $group->name = PROBE_LABEL . ' ' . (int) $rate . '%';
     $group->active = true;
     if (!$group->add()) {
         throw new RuntimeException('could not create the probe TaxRulesGroup');
@@ -346,17 +349,46 @@ function probeCart($customer, $address, $id_lang, $id_product)
     return new Cart((int) $cart->id);
 }
 
+/**
+ * The cart's external shipping row: its product priced outside core against a
+ * REAL carrier reference, while the cart itself keeps id_carrier 0.
+ *
+ * @param Cart $cart
+ * @param int $id_product
+ * @param int $id_lang
+ * @return int Carrier reference
+ */
+function probeExternalShippingRow($cart, $id_product, $id_lang)
+{
+    $carriers = Carrier::getCarriers($id_lang, true, false, false, null, Carrier::ALL_CARRIERS);
+    if (empty($carriers)) {
+        throw new RuntimeException('no active carrier to reference from the external shipping row');
+    }
+    $id_reference = (int) $carriers[0]['id_reference'];
+    Db::getInstance()->execute(
+        'REPLACE INTO `' . _DB_PREFIX_ . 'two_test_external_shipping` (`id_cart`, `id_product`, `id_carrier_reference`) VALUES ('
+        . (int) $cart->id . ', ' . (int) $id_product . ', ' . $id_reference . ')'
+    );
+
+    return $id_reference;
+}
+
 $id_lang = (int) Configuration::get('PS_LANG_DEFAULT');
 $country = probeCountry();
 probeCarrierCoverage($country);
-$id_tax_rules_group = probeTaxRulesGroup($country, $id_lang);
+$id_tax_rules_group = probeTaxRulesGroup($country, $id_lang, PROBE_TAX_RATE, 'TWO_CARRIERLESS_TEST_TRG');
+Configuration::updateValue('TWO_CARRIERLESS_TEST_TRG', (int) $id_tax_rules_group);
+Configuration::updateValue(
+    'TWO_CARRIERLESS_TEST_TRG_21',
+    probeTaxRulesGroup($country, $id_lang, PROBE_MATRIX_TAX_RATE, 'TWO_CARRIERLESS_TEST_TRG_21')
+);
 $customer = probeCustomer($id_lang);
 probeApplyContext($customer, $country, $id_lang);
 $address = probeAddress($customer, $country);
 $id_product = probeProductId($id_lang);
 $cart = probeCart($customer, $address, $id_lang, $id_product);
+$id_carrier_reference = probeExternalShippingRow($cart, $id_product, $id_lang);
 
-Configuration::updateValue('TWO_CARRIERLESS_TEST_TRG', (int) $id_tax_rules_group);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_RATE', (string) PROBE_TAX_RATE);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_CUSTOMER', (int) $customer->id);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_ADDRESS', (int) $address->id);
@@ -376,4 +408,5 @@ echo 'carrier-less cart seeded: cart=' . (int) $cart->id
     . ' country=' . $country->iso_code
     . ' tax_rules_group=' . (int) $id_tax_rules_group . ' (' . (int) PROBE_TAX_RATE . '%)'
     . ' product=' . (int) $id_product
+    . ' external_carrier_reference=' . $id_carrier_reference
     . PHP_EOL;

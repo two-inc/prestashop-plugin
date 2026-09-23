@@ -42,7 +42,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop bump patch minor major phpstan bumpver-patch bumpver-minor bumpver-major
+.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop carrierless-matrix bump patch minor major phpstan bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
@@ -187,6 +187,12 @@ carrierless-shop:
 	@echo "               -> 'Default shipping tax code'"
 	@echo " Probe it:     make test-integration"
 	@echo "========================================="
+
+# Configs 4/5 (merchant override) run only with MERCHANT_OVERRIDE_PATH,
+# MERCHANT_SHIM_PATH and MERCHANT_RATE_CONFIG_KEY set; see tests/integration/README.md.
+## Cross carrier-less shipping modes A/B/C with Default shipping tax code configs; prints a results table
+carrierless-matrix: carrierless-shop
+	PS_CONTAINER=$(CONTAINER) dev/ci/run-carrierless-matrix.sh
 
 ## Run the tests/integration probes against the running local shop (run make carrierless-shop first)
 test-integration:
