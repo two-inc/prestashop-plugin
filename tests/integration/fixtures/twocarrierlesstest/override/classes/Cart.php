@@ -29,6 +29,35 @@ class Cart extends CartCore
         return $has_row ? max(0.0, round((float) Configuration::get('TWO_CARRIERLESS_TEST_GROSS'), 2)) : 0.0;
     }
 
+    /**
+     * @return float
+     */
+    private function getProductSurcharge()
+    {
+        return (string) Configuration::get('TWO_CARRIERLESS_TEST_MODE') === 'product_surcharge'
+            ? round((float) Configuration::get('TWO_CARRIERLESS_TEST_SURCHARGE'), 2)
+            : 0.0;
+    }
+
+    public function getProducts($refresh = false, $id_product = false, $id_country = null, $fullInfos = true, bool $keepOrderPrices = false)
+    {
+        $products = parent::getProducts($refresh, $id_product, $id_country, $fullInfos, $keepOrderPrices);
+        $surcharge = $this->getProductSurcharge();
+        if ($surcharge > 0) {
+            // Untaxed: lands on the net and the gross alike, while the line keeps its declared tax rules group.
+            foreach ($products as &$row) {
+                $unit = $surcharge / max(1, (int) $row['cart_quantity']);
+                $row['price'] += $unit;
+                $row['price_wt'] += $unit;
+                $row['total'] += $surcharge;
+                $row['total_wt'] += $surcharge;
+            }
+            unset($row);
+        }
+
+        return $products;
+    }
+
     public function getOrderTotal(
         $withTaxes = true,
         $type = Cart::BOTH,
@@ -42,6 +71,10 @@ class Cart extends CartCore
         if ((int) $type === Cart::BOTH && $products === null
             && (string) Configuration::get('TWO_CARRIERLESS_TEST_MODE') === 'external_only') {
             $total += $this->getExternalShippingCost();
+        }
+        // Core prices product rows itself, so the rows' surcharge has to be added to the totals too.
+        if ($products === null && in_array((int) $type, array(Cart::BOTH, Cart::BOTH_WITHOUT_SHIPPING, Cart::ONLY_PRODUCTS), true)) {
+            $total += $this->getProductSurcharge() * count(parent::getProducts());
         }
 
         return $total;
