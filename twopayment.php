@@ -346,7 +346,7 @@ class Twopayment extends PaymentModule
     // that array is rebuilt from scratch on every HTTP request (e.g. each order-intent
     // poll from the Payment step), so repeat polls with an unchanged cart/address/term
     // were re-quoting the fee every time. Session-cache the quote for a short TTL,
-    // keyed on the same signature (days|gross|country|currency) already used for the
+    // keyed on the same signature (days:gross:country:currency) already used for the
     // request-scoped cache, so it is invalidated the instant any of those change.
     // TWO-25040 / order-intent poll perf.
     const FEE_QUOTE_CACHE_TTL_SECONDS = 60;
@@ -13746,7 +13746,8 @@ class Twopayment extends PaymentModule
     {
         $days = (int) $days;
         $gross_amount = (float) $gross_amount;
-        $cacheKey = $days . '|' . $this->getTwoRoundAmount($gross_amount) . '|' . $buyer_country . '|' . $currency_iso;
+        // ':' because core Cookie::__set throws on '|' and '¤' (TWO-26084); no part can hold ':'.
+        $cacheKey = $days . ':' . $this->getTwoRoundAmount($gross_amount) . ':' . $buyer_country . ':' . $currency_iso;
         if (array_key_exists($cacheKey, $this->twoFeeCache)) {
             return $this->twoFeeCache[$cacheKey];
         }
@@ -13833,7 +13834,7 @@ class Twopayment extends PaymentModule
     /**
      * Read a cross-request-cached fee quote from the session cookie, honouring
      * FEE_QUOTE_CACHE_TTL_SECONDS and requiring an exact signature match
-     * (days|gross|country|currency) — any change in cart total, term, buyer
+     * (days:gross:country:currency) — any change in cart total, term, buyer
      * country or currency invalidates the cache immediately regardless of TTL.
      * Fail-soft: any malformed/missing cache data is treated as a miss.
      *
@@ -15045,7 +15046,7 @@ class Twopayment extends PaymentModule
      * that builds the Two order payload's fee line - fed with the SAME basis
      * derivation the payload builder uses (calculateTwoLineItemTotals over
      * getTwoProductItems, which excludes this very product), so the quote
-     * cache key (days|gross|country|currency) is byte-identical and both
+     * cache key (days:gross:country:currency) is byte-identical and both
      * sides read the same cached quote. There is no second computation that
      * could drift.
      *
