@@ -10,7 +10,7 @@
  * Whether the Default shipping tax code fallback is switched on for a shop
  * (TWO-26082). Off unless Two has enabled it for the merchant with
  * `bin/console twopayment:shipping-tax-fallback enable`, globally or for one
- * shop with `--id_shop=<n>`. A shop's own setting wins over the global one.
+ * shop with `--shop=<n>`. A shop's own setting wins over the global one.
  * While off, the admin field is hidden and a stored group is kept but never
  * consulted.
  */
@@ -42,7 +42,7 @@ class TwoShippingTaxFallbackGate
     {
         $action = strtolower(trim((string) $action));
         if (!in_array($action, self::ACTIONS, true)) {
-            return array(1, 'Unknown action "' . $action . '". Use: ' . self::COMMAND_NAME . ' enable|disable|status [--id_shop=<n>]');
+            return array(1, 'Unknown action "' . $action . '". Use: ' . self::COMMAND_NAME . ' enable|disable|status [--shop=<n>]');
         }
         $shops = array_map('intval', array_values(Shop::getShops(false, null, true)));
         if ($idShop !== null) {
