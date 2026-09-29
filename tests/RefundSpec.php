@@ -20,6 +20,7 @@ final class RefundSpec
         self::testSlipOnNonTwoOrderMakesNoApiCall();
         self::testGrossAmountSumsProductsAndShippingTaxIncl();
         self::testPayloadBuilderFormatsAmountAsTwoDecimalString();
+        self::testPartialRefundSendsTaxSubtotalsFromStoredSlip();
     }
 
     /**
@@ -33,6 +34,7 @@ final class RefundSpec
             public int $id;
             public $module;
             public int $id_currency = 826;
+            public $carrier_tax_rate = 0;
 
             public function __construct(int $id, string $module)
             {
@@ -52,6 +54,7 @@ final class RefundSpec
             public int $id_order;
             public $total_products_tax_incl;
             public $total_shipping_tax_incl;
+            public $total_shipping_tax_excl;
 
             public function __construct(int $id, float $products, float $shipping, int $idOrder)
             {
@@ -59,6 +62,7 @@ final class RefundSpec
                 $this->id_order = $idOrder;
                 $this->total_products_tax_incl = $products;
                 $this->total_shipping_tax_incl = $shipping;
+                $this->total_shipping_tax_excl = $shipping;
             }
         };
     }
@@ -71,6 +75,8 @@ final class RefundSpec
     {
         return new class ($twoOrder, $paymentData) extends TwopaymentTestHarness {
             public array $requests = [];
+            /** False: one 0%-rate slip line per slip; true: read the Db stub (TWO-26093). */
+            public bool $readSlipLinesFromDb = false;
             private array $twoOrder;
             private $paymentData;
 
@@ -89,6 +95,15 @@ final class RefundSpec
             public function setTwoOrderPaymentData($id_order, $payment_data)
             {
                 return true;
+            }
+
+            public function getTwoCreditSlipTaxLines($slip)
+            {
+                if ($this->readSlipLinesFromDb) {
+                    return parent::getTwoCreditSlipTaxLines($slip);
+                }
+                $amount = (string)$slip->total_products_tax_incl;
+                return $amount > 0 ? [['amount_tax_excl' => $amount, 'amount_tax_incl' => $amount, 'rate' => '0.000']] : [];
             }
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
@@ -304,5 +319,61 @@ final class RefundSpec
         $payload = $module->buildTwoPartialRefundPayload(7.5, 'NOK');
         TinyAssert::same('7.50', $payload['amount']);
         TinyAssert::same('NOK', $payload['currency']);
+    }
+
+    /** One stored slip line: order_slip_detail amounts plus the summed order_detail_tax rate. */
+    private static function line(float $excl, float $incl, string $rate, array $extra = []): array
+    {
+        return array_merge(['amount_tax_excl' => (string)$excl, 'amount_tax_incl' => (string)$incl, 'rate' => $rate], $extra);
+    }
+
+    /**
+     * TWO-26093: Two requires tax_subtotals on a partial refund, built from
+     * the stored slip. Columns: slip lines, slip products tax incl, slip
+     * shipping tax incl / excl, order carrier_tax_rate, expected
+     * [tax_rate, taxable_amount, tax_amount] entries (null: no refund sent).
+     */
+    private static function testPartialRefundSendsTaxSubtotalsFromStoredSlip(): void
+    {
+        $cases = [
+            [[self::line(25.00, 30.00, '20.000')], 30.00, 0.0, 0.0, 0.0, [['0.200000', '25.00', '5.00']], 'single-rate slip'],
+            [[self::line(50.00, 60.00, '20.000'), self::line(20.00, 21.00, '5.500')], 81.00, 12.00, 10.00, 20.0, [['0.055000', '20.00', '1.00'], ['0.200000', '60.00', '12.00']], 'multi-rate slip with shipping'],
+            [[], 0.0, 12.00, 10.00, 20.0, [['0.200000', '10.00', '2.00']], 'shipping-only slip'],
+            [[self::line(8.333333, 10.00, '20.000')], 10.00, 0.0, 0.0, 0.0, [['0.200000', '8.33', '1.67']], 'partial quantity, 1 of 3 units'],
+            [[self::line(25.00, 30.00, '20.000', ['tax_rate' => '0.000'])], 30.00, 0.0, 0.0, 0.0, [['0.200000', '25.00', '5.00']], 'PS 1.7 rate source, order_detail.tax_rate 0.000'],
+            [[self::line(50.00, 60.00, '20.000')], 54.00, 0.0, 0.0, 0.0, [['0.200000', '45.00', '9.00']], 'voucher deducted from slip products'],
+            [[], 30.00, 0.0, 0.0, 0.0, null, 'no stored lines fails closed'],
+        ];
+
+        foreach ($cases as $i => [$lines, $products, $shipIncl, $shipExcl, $carrierRate, $expected, $desc]) {
+            StubStore::reset();
+            StubStore::$dbExecuteSResponses = [$lines];
+            $module = self::makeModule(self::fulfilledOrder(500.00));
+            $module->readSlipLinesFromDb = true;
+            $order = self::makeOrder();
+            $order->carrier_tax_rate = $carrierRate;
+            $slip = self::makeSlip(600 + $i, $products, $shipIncl);
+            $slip->total_shipping_tax_excl = $shipExcl;
+
+            $module->hookActionOrderSlipAdd(['order' => $order, 'order_slip' => $slip]);
+
+            $refunds = $module->refundCalls();
+            if ($expected === null) {
+                TinyAssert::count(0, $refunds, $desc);
+                continue;
+            }
+            TinyAssert::count(1, $refunds, $desc);
+            $payload = $refunds[0]['payload'];
+            TinyAssert::true(isset($payload['tax_subtotals']), $desc . ': tax_subtotals missing');
+            $got = array_map(static function ($t) {
+                return [$t['tax_rate'], $t['taxable_amount'], $t['tax_amount']];
+            }, $payload['tax_subtotals']);
+            TinyAssert::same($expected, $got, $desc . ": got " . json_encode($got));
+            $sum = array_sum(array_map(static function ($t) {
+                return (float)$t['taxable_amount'] + (float)$t['tax_amount'];
+            }, $payload['tax_subtotals']));
+            TinyAssert::same($payload['amount'], number_format($sum, 2, '.', ''), $desc . ': subtotals sum to amount');
+            TinyAssert::true(strpos(implode(' ', StubStore::$dbLastExecuteS), 'order_detail_tax') !== false, $desc . ': rate from order_detail_tax');
+        }
     }
 }
