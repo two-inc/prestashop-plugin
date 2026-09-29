@@ -575,3 +575,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_97dd4467b7e52981c915692e40e3c6b6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_fb240641c0e8815c516e341934b1e5da'] = 'Comprar con %s';
 $_MODULE['<{twopayment}prestashop>twopayment_0592fff84c41da1f5de791af5d35bb18'] = 'Comprar con';
 $_MODULE['<{twopayment}prestashop>twopayment_17ff44377a631de2e9afb533c9a34063'] = 'Lo sentimos, no hemos podido añadir esto a tu cesta. Inténtalo de nuevo.';
+$_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Esta modificación del pedido se ha guardado en PrestaShop, pero no se ha enviado al proveedor de facturas. No repitas la modificación. Ponte en contacto con el soporte.';
+$_MODULE['<{twopayment}prestashop>twopayment_d9e8fd0ca4e27bc560c15e7ac3e5c1ff'] = 'El número de seguimiento se ha guardado en PrestaShop, pero no se ha enviado al proveedor de facturas. Ponte en contacto con el soporte.';

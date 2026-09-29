@@ -575,3 +575,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_97dd4467b7e52981c915692e40e3c6b6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_fb240641c0e8815c516e341934b1e5da'] = 'Kopen met %s';
 $_MODULE['<{twopayment}prestashop>twopayment_0592fff84c41da1f5de791af5d35bb18'] = 'Kopen met';
 $_MODULE['<{twopayment}prestashop>twopayment_17ff44377a631de2e9afb533c9a34063'] = 'Sorry, we konden dit niet aan je winkelwagen toevoegen. Probeer het opnieuw.';
+$_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Deze wijziging van de bestelling is opgeslagen in PrestaShop, maar niet naar de factuurprovider verzonden. Voer de wijziging niet opnieuw uit. Neem contact op met support.';
+$_MODULE['<{twopayment}prestashop>twopayment_d9e8fd0ca4e27bc560c15e7ac3e5c1ff'] = 'Het trackingnummer is opgeslagen in PrestaShop, maar niet naar de factuurprovider verzonden. Neem contact op met support.';
