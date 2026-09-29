@@ -12,6 +12,9 @@ declare(strict_types=1);
  */
 final class SurchargeSpec
 {
+    /** What the stubbed fee quote answers in the update-replay rows. */
+    public static string $quotedFee = '5.00';
+
     public static function runAll(): void
     {
         self::testBuildBuyerFeeShareReturnsNullWhenDisabled();
@@ -61,6 +64,7 @@ final class SurchargeSpec
         self::testSurchargeLineItemTaxRateSelfConsistentAtHighPrecision();
         self::testSurchargeLineItemHonorsExplicitTermOverride();
         self::testOrderPayloadInjectsSurchargeLineAndBumpsTotals();
+        self::testUpdatePayloadReplaysThePlacedSurchargeLine();
         self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
         self::testSurchargeGridEmptyStateReplacesTheHeadings();
     }
@@ -1574,6 +1578,85 @@ final class SurchargeSpec
         TinyAssert::same('5.00', $feeLines[0]['net_amount']);
         TinyAssert::same('0.25', $feeLines[0]['tax_rate']);
         TinyAssert::same('6.25', $feeLines[0]['gross_amount']);
+    }
+
+    /**
+     * TWO-26076: an order update (admin edit, tracking number) PUTs the fee
+     * line PrestaShop recorded on the order, whatever the surcharge config
+     * says now. Placed: 5.00 net at 25% on a 105.50 order.
+     */
+    private static function testUpdatePayloadReplaysThePlacedSurchargeLine(): void
+    {
+        $cases = [
+            // [change after the order, placed gross, expected tax, expected rate, description]
+            [fn () => Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '401'), 6.25, '1.25', '0.25', 'tax group changed after order'],
+            [fn () => Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'none'), 6.25, '1.25', '0.25', 'surcharge disabled after order'],
+            [fn () => StubStore::$taxRuleRates[400] = [33 => 12.0], 6.25, '1.25', '0.25', 'rate rule edited after order'],
+            [fn () => self::$quotedFee = '9.00', 6.25, '1.25', '0.25', 'fee re-quotes differently after order'],
+            [fn () => null, 6.25, '1.25', '0.25', 'unchanged'],
+            [fn () => null, 5.00, '0.00', '0', 'VAT-number exempt at placement: core keeps the group rate, applies none'],
+        ];
+        $failures = [];
+        foreach ($cases as [$change, $placedGross, $tax, $rate, $description]) {
+            self::reset();
+            self::$quotedFee = '5.00';
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            StubStore::$taxRuleRates[400] = [33 => 25.0];
+            StubStore::$taxRuleRates[401] = [33 => 0.0];
+            StubStore::$taxRuleRates[500] = 5.5;
+            StubStore::$products[9301]['id_tax_rules_group'] = 500;
+            StubStore::$customers[7001] = ['email' => 'buyer@example.com', 'firstname' => 'Eva', 'lastname' => 'Martin', 'loaded' => true];
+            StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+            StubStore::$addresses[7101] = ['id_country' => 33, 'company' => 'Acme FR SAS', 'companyid' => 'FR123456789', 'address1' => '10 Rue de Paris', 'city' => 'Paris', 'postcode' => '75001', 'phone' => '+33100000000', 'loaded' => true];
+            StubStore::$countries[33] = 'FR';
+            StubStore::$cartProducts[7001] = [[
+                'id_product' => 9301, 'link_rewrite' => 'item', 'name' => 'Reduced VAT item', 'description_short' => '',
+                'manufacturer_name' => '', 'ean13' => '', 'upc' => '', 'total' => 100.00, 'total_wt' => 105.50,
+                'cart_quantity' => 1, 'rate' => 5.5, 'price' => 100.00, 'reduction' => 0,
+            ]];
+            StubStore::$cartTotals[7001] = [
+                true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => 105.50],
+                false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => 100.00],
+                'average_products_tax_rate' => 5.5,
+            ];
+            StubStore::$carts[7001] = ['id_customer' => 7001, 'id_currency' => 978, 'id_address_invoice' => 7101, 'id_address_delivery' => 7101, 'id_carrier' => 0, 'id_lang' => 1];
+            StubStore::$orderDetails[] = [
+                'id_order' => 8001, 'product_id' => 77, 'product_reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE,
+                'total_price_tax_excl' => '5.000000', 'total_price_tax_incl' => number_format($placedGross, 6, '.', ''), 'tax_rate' => '25.000',
+            ];
+            $change();
+
+            $module = new class extends TwopaymentTestHarness {
+                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                {
+                    return ['http_status' => 200, 'buyer_fee_share' => SurchargeSpec::$quotedFee, 'currency' => 'EUR'];
+                }
+            };
+            $order = new class {
+                public bool $loaded = true;
+                public int $id = 8001;
+                public int $id_cart = 7001;
+                public int $id_carrier = 0;
+                public string $shipping_number = '';
+
+                public function getIdOrderCarrier(): int
+                {
+                    return 0;
+                }
+            };
+            $payload = $module->getTwoUpdateOrderData($order, ['two_order_reference' => 'ref-8001', 'two_day_on_invoice' => '30']);
+
+            $feeLines = array_values(array_filter($payload['line_items'], fn ($item) => ($item['type'] ?? '') === 'SERVICE'));
+            $fee = $feeLines[0] ?? [];
+            $expected = ['1 fee line', '5.00', $tax, number_format($placedGross, 2, '.', ''), $rate, number_format(105.50 + $placedGross, 2, '.', '')];
+            $actual = [count($feeLines) . ' fee line', $fee['net_amount'] ?? '-', $fee['tax_amount'] ?? '-', $fee['gross_amount'] ?? '-', $fee['tax_rate'] ?? '-', $payload['gross_amount']];
+            if ($actual !== $expected) {
+                $failures[] = $description . ': want ' . implode('/', $expected) . ', got ' . implode('/', $actual);
+            }
+        }
+        TinyAssert::same([], $failures, "fee line count/net/tax/gross/rate/order gross\n  " . implode("\n  ", $failures));
     }
 
     /**

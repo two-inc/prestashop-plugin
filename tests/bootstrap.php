@@ -344,7 +344,7 @@ namespace {
         public static array $checkoutSessionData = [];
         /** @var array<string,array{window_start:int,hit_count:int}> TwoRateLimiter's twopayment_rate_limit rows, by rate_key */
         public static array $rateLimitRows = [];
-        /** @var array<int,array{id_order:int,product_id:int}> order_detail rows */
+        /** @var array<int,array<string,mixed>> order_detail rows (id_order, product_id, product_reference, totals, tax_rate) */
         public static array $orderDetails = [];
         /** @var string[] Every SQL string passed to Db::execute() */
         public static array $dbExecuted = [];
@@ -2498,6 +2498,19 @@ namespace {
                 $m
             )) {
                 return StubStore::$twoPaymentRows[(int) $m[1]] ?? false;
+            }
+
+            if (preg_match(
+                "/FROM `" . _DB_PREFIX_ . "order_detail` WHERE `id_order` = (\\d+) AND `product_reference` = '([^']+)'/",
+                $sql,
+                $m
+            )) {
+                foreach (StubStore::$orderDetails as $row) {
+                    if ((int) $row['id_order'] === (int) $m[1] && ($row['product_reference'] ?? '') === $m[2]) {
+                        return $row;
+                    }
+                }
+                return false;
             }
 
             if (preg_match(

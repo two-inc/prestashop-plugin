@@ -6258,10 +6258,11 @@ class Twopayment extends PaymentModule
      *
      * @param Cart $cart
      * @param string $contextLabel
+     * @param int|null $placedOrderId set on the update path: the fee line is replayed from that order
      * @return array
      * @throws Exception
      */
-    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null, $syncSurchargeCartLine = false)
+    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null, $syncSurchargeCartLine = false, $placedOrderId = null)
     {
         // Money-critical self-heal (create + strict-submit paths only; never
         // the update path, whose cart belongs to an already-placed order):
@@ -6347,12 +6348,15 @@ class Twopayment extends PaymentModule
         // consistent, so the order-intent approval reconciles against the same
         // gross the create call sends. TWO-24752 / TWO-24893.
         $surchargeQuoteUnavailable = false;
-        $surchargeLine = $this->buildTwoSurchargeLineItemForCart(
-            $cart,
-            $subtotalsTotals['gross'],
-            $paymentTermDays,
-            $surchargeQuoteUnavailable
-        );
+        // A placed order's fee is what PrestaShop recorded, not what today's config would quote (TWO-26076).
+        $surchargeLine = $placedOrderId !== null
+            ? $this->getTwoPlacedSurchargeLineItem($placedOrderId, $paymentTermDays)
+            : $this->buildTwoSurchargeLineItemForCart(
+                $cart,
+                $subtotalsTotals['gross'],
+                $paymentTermDays,
+                $surchargeQuoteUnavailable
+            );
         if ($surchargeLine !== null && $this->validateTwoLineItems(array($surchargeLine))) {
             $line_items[] = $surchargeLine;
             $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
@@ -6367,9 +6371,9 @@ class Twopayment extends PaymentModule
         // carries must be the same money. On the create/strict paths a
         // mismatch beyond ORDER_RECONCILIATION_TOLERANCE throws - checkout
         // fails with a retryable error instead of ever creating an order
-        // whose PrestaShop total diverges from the Two invoice. The update
-        // path and the non-strict intent precheck log a warning only
-        // (pre-feature orders legitimately have no cart line).
+        // whose PrestaShop total diverges from the Two invoice. The
+        // non-strict intent precheck logs a warning only; the update path
+        // replays the order's own fee row, so it has no cart side to compare.
         $cartSurchargeLine = $this->getTwoSurchargeCartLine($cart);
         $payloadFeeGrossCents = $surchargeLine !== null ? $this->convertAmountToCents($surchargeLine['gross_amount']) : 0;
         $payloadFeeNetCents = $surchargeLine !== null ? $this->convertAmountToCents($surchargeLine['net_amount']) : 0;
@@ -6384,8 +6388,8 @@ class Twopayment extends PaymentModule
         // the buyer can switch term after the payment-options gate ran, and a
         // pre-switch term that quoted zero leaves zero on both sides, which the
         // cents comparison reads as agreement.
-        $surchargeParityFailed = ($surchargeQuoteUnavailable && $enforceSurchargeParity)
-            || $surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
+        $surchargeParityFailed = $placedOrderId === null && (($surchargeQuoteUnavailable && $enforceSurchargeParity)
+            || $surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE));
         if ($surchargeParityFailed) {
             PrestaShopLogger::addLog(
                 'TwoPayment: ' . $contextLabel . ' surcharge parity mismatch - '
@@ -7126,7 +7130,7 @@ class Twopayment extends PaymentModule
         $storedTerm = (isset($orderpaymentdata['two_day_on_invoice']) && $orderpaymentdata['two_day_on_invoice'] !== '')
             ? (int) $orderpaymentdata['two_day_on_invoice']
             : null;
-        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')', false, $storedTerm);
+        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')', false, $storedTerm, false, (int) $order->id);
         $line_items = $pricingData['line_items'];
         $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
@@ -14227,10 +14231,48 @@ class Twopayment extends PaymentModule
         // decimals, silently dropping the whole surcharge line. Snapping
         // first mirrors the product-line convention (snapped_product_rate).
         // TWO-24752.
-        $taxRate = $this->getTwoSurchargeTaxRateForCart($cart);
-        $taxRateString = $this->formatTwoTaxRate($taxRate);
+        $taxRateString = $this->formatTwoTaxRate($this->getTwoSurchargeTaxRateForCart($cart));
+        $tax = round($net * (float) $taxRateString, 2);
+
+        return $this->formatTwoSurchargeLineItem($days, $net, $tax, $taxRateString);
+    }
+
+    /**
+     * The fee row PrestaShop recorded on the order, keyed by reference because the product id is live config.
+     *
+     * @param int $orderId
+     * @param int|null $paymentTermDays the placed term (label only)
+     * @return array|null null when the order carries no fee row
+     */
+    public function getTwoPlacedSurchargeLineItem($orderId, $paymentTermDays)
+    {
+        $row = Db::getInstance()->getRow(
+            'SELECT `total_price_tax_excl`, `total_price_tax_incl`, `tax_rate` FROM `' . _DB_PREFIX_ . 'order_detail`'
+            . ' WHERE `id_order` = ' . (int) $orderId
+            . " AND `product_reference` = '" . pSQL(self::TWO_SURCHARGE_PRODUCT_REFERENCE) . "'"
+        );
+        if (!is_array($row) || round((float) $row['total_price_tax_excl'], 2) <= 0) {
+            return null;
+        }
+        $net = round((float) $row['total_price_tax_excl'], 2);
+        $tax = round((float) $row['total_price_tax_incl'] - $net, 2);
+        // Core stores the group's rate even where it applied no tax (VAT-number exemption).
+        $taxRateString = $this->formatTwoTaxRate($tax != 0.0 ? (float) $row['tax_rate'] / 100 : 0.0);
+        $days = $paymentTermDays !== null ? (int) $paymentTermDays : $this->getSelectedPaymentTerm();
+
+        return $this->formatTwoSurchargeLineItem($days, $net, $tax, $taxRateString);
+    }
+
+    /**
+     * @param int $days
+     * @param float $net
+     * @param float $tax
+     * @param string $taxRateString as sent, from formatTwoTaxRate
+     * @return array
+     */
+    private function formatTwoSurchargeLineItem($days, $net, $tax, $taxRateString)
+    {
         $sentRate = (float) $taxRateString;
-        $tax = round($net * $sentRate, 2);
         $gross = round($net + $tax, 2);
         $label = $this->getTwoSurchargeLineLabel($days);
 
