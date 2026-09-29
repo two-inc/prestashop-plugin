@@ -4318,17 +4318,20 @@ class Twopayment extends PaymentModule
         }
         $this->syncTwoOrderPaymentAmount($order);
 
+        // The order holding the Two row, which another order of a multi-carrier split is not.
+        $syncId = (int) $order->id;
         // Core has saved the edit before this hook runs, and on 1.7 an uncaught throw 500s its AJAX, so a retry duplicates the line.
         try {
-            $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
-            if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
-                $response = $this->putTwoOrderUpdate($order, $orderpaymentdata);
+            $placement = $this->getTwoOrderGroupPaymentData($order);
+            if ($placement !== null) {
+                $syncId = (int) $placement['order']->id;
+                $response = $this->putTwoOrderUpdate($placement['order'], $placement['row']);
                 $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
                 // A null response is an update identical to the last one Two accepted.
                 if ($response !== null && ($http_status < 200 || $http_status >= 300)) {
                     throw new Exception('HTTP ' . $http_status . ' ' . (string) $this->getTwoErrorMessage($response));
                 }
-                $this->recordTwoOrderSync($order->id, null);
+                $this->recordTwoOrderSync($syncId, null);
             }
         } catch (Throwable $e) {
             PrestaShopLogger::addLog(
@@ -4339,12 +4342,12 @@ class Twopayment extends PaymentModule
             $this->addTwoBackOfficeWarning(
                 $this->l('This order edit was saved in PrestaShop but was not sent to the invoice provider. Do not repeat the edit. Please contact support.')
             );
-            $this->recordTwoOrderSync($order->id, $e->getMessage());
+            $this->recordTwoOrderSync($syncId, $e->getMessage());
         }
     }
 
     /**
-     * Keep Two's payment row at the edited order's total. A split payment, or a row another method recorded, is left alone.
+     * Keep Two's payment row at the total of the orders it pays. A split payment, or a row another method recorded, is left alone.
      *
      * @param Order $order
      */
@@ -4357,7 +4360,12 @@ class Twopayment extends PaymentModule
         if (count($payments) !== 1 || (string) $payments[0]->payment_method !== (string) $order->payment) {
             return;
         }
-        $payments[0]->amount = $order->total_paid_tax_incl;
+        // Core records one payment for the whole reference, however many orders the cart split into.
+        $total = 0.0;
+        foreach ($this->getTwoOrderGroup($order) as $member) {
+            $total += (float) $member->total_paid_tax_incl;
+        }
+        $payments[0]->amount = round($total, 6);
         $payments[0]->save();
     }
 
@@ -4428,13 +4436,16 @@ class Twopayment extends PaymentModule
             return;
         }
 
+        $syncId = (int) $order->id;
         try {
-            $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
-            if (!$orderpaymentdata || empty($orderpaymentdata['two_order_id'])) {
+            $placement = $this->getTwoOrderGroupPaymentData($order);
+            if ($placement === null) {
                 return;
             }
+            $syncId = (int) $placement['order']->id;
+            $orderpaymentdata = $placement['row'];
 
-            $response = $this->putTwoOrderUpdate($order, $orderpaymentdata, $paymentdata);
+            $response = $this->putTwoOrderUpdate($placement['order'], $orderpaymentdata, $paymentdata);
             if ($response === null) {
                 return;
             }
@@ -4458,9 +4469,9 @@ class Twopayment extends PaymentModule
                 $this->addTwoBackOfficeWarning(
                     $this->l('The tracking number could not be forwarded to the invoice provider; the invoice will be sent without it.')
                 );
-                $this->recordTwoOrderSync($order->id, 'HTTP ' . $http_status . ' ' . (string) $this->getTwoErrorMessage($response));
+                $this->recordTwoOrderSync($syncId, 'HTTP ' . $http_status . ' ' . (string) $this->getTwoErrorMessage($response));
             } else {
-                $this->recordTwoOrderSync($order->id, null);
+                $this->recordTwoOrderSync($syncId, null);
             }
         } catch (Throwable $e) {
             // e.g. the order's cart no longer loads (purged carts, deleted
@@ -4476,7 +4487,7 @@ class Twopayment extends PaymentModule
             $this->addTwoBackOfficeWarning(
                 $this->l('The tracking number was saved in PrestaShop but was not sent to the invoice provider. Please contact support.')
             );
-            $this->recordTwoOrderSync($order->id, $e->getMessage());
+            $this->recordTwoOrderSync($syncId, $e->getMessage());
         }
     }
 
@@ -7255,94 +7266,156 @@ class Twopayment extends PaymentModule
 
     /**
      * The placed order's money, which admin edits rewrite and catalogue, tax-rule, carrier and cart-rule changes do not (TWO-26085).
+     * Summed over every order core split the cart into, as one Two order covers them all.
      *
      * @param Order $order
      * @return array
      */
     private function getTwoPlacedOrderSnapshot($order)
     {
-        $orderId = (int) $order->id;
         $products = array();
         $feeRows = array();
         $feeGross = 0.0;
         $feeNet = 0.0;
-        foreach ($this->getTwoPlacedOrderDetailRows($orderId) as $row) {
-            // The fee replay decides on every row carrying the fee reference, and fails loud on an id the fee never had.
-            if ((string) $row['product_reference'] === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
-                $feeRows[] = $row;
-                $feeGross += (float) $row['total_price_tax_incl'];
-                $feeNet += (float) $row['total_price_tax_excl'];
-                continue;
-            }
-            $product = new Product((int) $row['product_id'], false, (int) $order->id_lang);
-            $cover = Image::getCover((int) $row['product_id']);
-            $net = round((float) $row['total_price_tax_excl'], 2);
-            $products[] = array(
-                'id_product' => (int) $row['product_id'],
-                'name' => (string) $row['product_name'],
-                'description_short' => (string) $product->description_short,
-                'link_rewrite' => (string) $product->link_rewrite,
-                'id_image' => is_array($cover) ? (int) $row['product_id'] . '-' . (int) $cover['id_image'] : '',
-                'manufacturer_name' => (string) $product->manufacturer_name,
-                'ean13' => (string) $row['product_ean13'],
-                'upc' => (string) $row['product_upc'],
-                'total' => $net,
-                'total_wt' => round((float) $row['total_price_tax_incl'], 2),
-                'cart_quantity' => (int) $row['product_quantity'],
-                'price' => (float) $row['unit_price_tax_excl'],
-                'ecotax' => (float) $row['ecotax'],
-                'ecotax_tax_rate' => (float) $row['ecotax_tax_rate'],
-                // A VAT-number exemption applies no tax, whatever rate the row records.
-                'placed_tax_rate' => round((float) $row['total_price_tax_incl'], 2) != $net
-                    ? $this->normalizeTwoTaxRateToPercentPrecision($this->getTwoPlacedRowTaxRate($row))
-                    : 0.0,
-            );
-        }
-
-        $shippingNet = 0.0;
-        $shippingGross = 0.0;
-        $carriers = Db::getInstance()->executeS(
-            'SELECT `shipping_cost_tax_excl`, `shipping_cost_tax_incl` FROM `' . _DB_PREFIX_ . 'order_carrier` WHERE `id_order` = ' . $orderId
-        );
-        foreach (is_array($carriers) ? $carriers : array() as $row) {
-            $shippingNet += (float) $row['shipping_cost_tax_excl'];
-            $shippingGross += (float) $row['shipping_cost_tax_incl'];
-        }
-        $shippingNet = round($shippingNet, 2);
-        $shippingGross = round($shippingGross, 2);
-        $shippingRate = $shippingGross != $shippingNet ? $this->normalizeTwoTaxRateToPercentPrecision((float) $order->carrier_tax_rate / 100) : 0.0;
-        // A carrier-less order records no carrier rate: the declared shipping rate is resolved as at checkout.
-        if (abs(round($shippingGross - $shippingNet, 2) - round($shippingNet * $shippingRate, 2)) > self::TAX_FORMULA_TOLERANCE) {
-            $shippingRate = null;
-        }
-
+        $shipping = array('net' => 0.0, 'gross' => 0.0, 'classes' => array());
         $cartRules = array();
-        $rules = Db::getInstance()->executeS(
-            'SELECT * FROM `' . _DB_PREFIX_ . 'order_cart_rule` WHERE `id_order` = ' . $orderId . ' ORDER BY `id_order_cart_rule`'
-        );
-        foreach (is_array($rules) ? $rules : array() as $rule) {
-            // `deleted` exists from 1.7.7: an admin-removed discount stays as a flagged row.
-            if (empty($rule['deleted'])) {
-                $cartRules[] = $rule;
+        $wrappingNet = 0.0;
+        $wrappingGross = 0.0;
+        $discountGross = 0.0;
+        $paidGross = 0.0;
+        $paidNet = 0.0;
+        foreach ($this->getTwoOrderGroup($order) as $member) {
+            $orderId = (int) $member->id;
+            foreach ($this->getTwoPlacedOrderDetailRows($orderId) as $row) {
+                // The fee replay decides on every row carrying the fee reference, and fails loud on an id the fee never had.
+                if ((string) $row['product_reference'] === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
+                    $feeRows[] = $row;
+                    $feeGross += (float) $row['total_price_tax_incl'];
+                    $feeNet += (float) $row['total_price_tax_excl'];
+                    continue;
+                }
+                $product = new Product((int) $row['product_id'], false, (int) $order->id_lang);
+                $cover = Image::getCover((int) $row['product_id']);
+                $net = round((float) $row['total_price_tax_excl'], 2);
+                $products[] = array(
+                    'id_product' => (int) $row['product_id'],
+                    'name' => (string) $row['product_name'],
+                    'description_short' => (string) $product->description_short,
+                    'link_rewrite' => (string) $product->link_rewrite,
+                    'id_image' => is_array($cover) ? (int) $row['product_id'] . '-' . (int) $cover['id_image'] : '',
+                    'manufacturer_name' => (string) $product->manufacturer_name,
+                    'ean13' => (string) $row['product_ean13'],
+                    'upc' => (string) $row['product_upc'],
+                    'total' => $net,
+                    'total_wt' => round((float) $row['total_price_tax_incl'], 2),
+                    'cart_quantity' => (int) $row['product_quantity'],
+                    'price' => (float) $row['unit_price_tax_excl'],
+                    'ecotax' => (float) $row['ecotax'],
+                    'ecotax_tax_rate' => (float) $row['ecotax_tax_rate'],
+                    // A VAT-number exemption applies no tax, whatever rate the row records.
+                    'placed_tax_rate' => round((float) $row['total_price_tax_incl'], 2) != $net
+                        ? $this->normalizeTwoTaxRateToPercentPrecision($this->getTwoPlacedRowTaxRate($row))
+                        : 0.0,
+                );
             }
-        }
 
-        $wrappingNet = round((float) $order->total_wrapping_tax_excl, 2);
-        $wrappingGross = round((float) $order->total_wrapping_tax_incl, 2);
+            // The order's own shipping, never order_carrier: PS 8 adds a row per new invoice while the first row already holds the whole shipping.
+            $shippingNet = round((float) $member->total_shipping_tax_excl, 2);
+            $shippingGross = round((float) $member->total_shipping_tax_incl, 2);
+            if ($shippingGross > 0) {
+                $shippingRate = $shippingGross != $shippingNet ? $this->normalizeTwoTaxRateToPercentPrecision((float) $member->carrier_tax_rate / 100) : 0.0;
+                // PS_ATCP_SHIPWRAP taxes shipping at the products' average, which the line builder splits over the product rates instead.
+                if (!$this->isTwoAtcpShipWrapEnabled()
+                    && abs(round($shippingGross - $shippingNet, 2) - round($shippingNet * $shippingRate, 2)) > self::TAX_FORMULA_TOLERANCE) {
+                    $message = sprintf(
+                        'Order %d records shipping %.2f net, %.2f tax at carrier_tax_rate %.3f%%, which do not agree: the order holds no usable shipping rate',
+                        $orderId,
+                        $shippingNet,
+                        round($shippingGross - $shippingNet, 2),
+                        (float) $member->carrier_tax_rate
+                    );
+                    PrestaShopLogger::addLog('TwoPayment: ' . $message, 3);
+                    throw new Exception($message);
+                }
+                $rateKey = (string) $shippingRate;
+                if (!isset($shipping['classes'][$rateKey])) {
+                    $shipping['classes'][$rateKey] = array('rate' => $shippingRate, 'net_weight' => 0.0);
+                }
+                $shipping['classes'][$rateKey]['net_weight'] += $shippingNet;
+                $shipping['net'] += $shippingNet;
+                $shipping['gross'] += $shippingGross;
+            }
+
+            $rules = Db::getInstance()->executeS(
+                'SELECT * FROM `' . _DB_PREFIX_ . 'order_cart_rule` WHERE `id_order` = ' . $orderId . ' ORDER BY `id_order_cart_rule`'
+            );
+            foreach (is_array($rules) ? $rules : array() as $rule) {
+                // `deleted` exists from 1.7.7: an admin-removed discount stays as a flagged row.
+                if (empty($rule['deleted'])) {
+                    $cartRules[] = $rule;
+                }
+            }
+
+            $wrappingNet += (float) $member->total_wrapping_tax_excl;
+            $wrappingGross += (float) $member->total_wrapping_tax_incl;
+            $discountGross += (float) $member->total_discounts_tax_incl;
+            $paidGross += (float) $member->total_paid_tax_incl;
+            $paidNet += (float) $member->total_paid_tax_excl;
+        }
+        $shipping['net'] = round($shipping['net'], 2);
+        $shipping['gross'] = round($shipping['gross'], 2);
+        $shipping['classes'] = array_values($shipping['classes']);
+        $wrappingNet = round($wrappingNet, 2);
+        $wrappingGross = round($wrappingGross, 2);
 
         return array(
             'id_carrier' => (int) $order->id_carrier,
             'products' => $products,
             'fee_rows' => $feeRows,
-            'shipping' => array('net' => $shippingNet, 'gross' => $shippingGross, 'rate' => $shippingRate),
+            'shipping' => $shipping,
             'wrapping' => array('net' => $wrappingNet, 'tax' => round($wrappingGross - $wrappingNet, 2), 'gross' => $wrappingGross),
             'cart_rules' => $cartRules,
-            'discount_gross' => round((float) $order->total_discounts_tax_incl, 2),
+            'discount_gross' => round($discountGross, 2),
             'totals' => array(
-                'gross' => round((float) $order->total_paid_tax_incl - $feeGross, 2),
-                'net' => round((float) $order->total_paid_tax_excl - $feeNet, 2),
+                'gross' => round($paidGross - $feeGross, 2),
+                'net' => round($paidNet - $feeNet, 2),
             ),
         );
+    }
+
+    /**
+     * The orders core split one cart into, one per carrier, oldest first. They share the reference, the payment and the one Two order.
+     *
+     * @param Order $order
+     * @return Order[]
+     */
+    private function getTwoOrderGroup($order)
+    {
+        $group = array((int) $order->id => $order);
+        foreach ($order->getBrother() as $sibling) {
+            $group[(int) $sibling->id] = $sibling;
+        }
+        ksort($group);
+
+        return array_values($group);
+    }
+
+    /**
+     * The order in the group that holds the Two row, and that row: only the order validateOrder() returned records one.
+     *
+     * @param Order $order
+     * @return array|null ['order' => Order, 'row' => array]
+     */
+    private function getTwoOrderGroupPaymentData($order)
+    {
+        foreach ($this->getTwoOrderGroup($order) as $member) {
+            $row = $this->getTwoOrderPaymentData($member->id);
+            if ($row && !empty($row['two_order_id'])) {
+                return array('order' => $member, 'row' => $row);
+            }
+        }
+
+        return null;
     }
 
     public function getTwoUpdateOrderData($order, $orderpaymentdata)
@@ -7371,7 +7444,12 @@ class Twopayment extends PaymentModule
                 $expected_delivery_days = (int)$carrier->min_delivery_days;
             }
         }
-        $tracking_number = $this->getTwoOrderTrackingNumber($order);
+        // A multi-carrier split ships each order under its own tracking number, and the Two order covers them all.
+        $tracking_numbers = array();
+        foreach ($this->getTwoOrderGroup($order) as $member) {
+            $tracking_numbers[] = $this->getTwoOrderTrackingNumber($member);
+        }
+        $tracking_number = implode(', ', array_unique(array_filter($tracking_numbers, 'strlen')));
 
         // The update path runs in admin/webhook context with no buyer term
         // cookie, so pass the persisted order term to the surcharge builder;
@@ -7842,8 +7920,8 @@ class Twopayment extends PaymentModule
                 // failing — the exact class of silent approximation this change
                 // exists to remove. `id_carrier` now only supplies the line's
                 // name, delay text and by-weight/by-price suffix (above).
-                $shipping_rate_classes = $placed !== null && $placed['shipping']['rate'] !== null
-                    ? array(array('rate' => $placed['shipping']['rate']))
+                $shipping_rate_classes = $placed !== null
+                    ? $placed['shipping']['classes']
                     : $this->resolveTwoCartShippingRateClasses(
                         $cart,
                         $shipping_gross,
