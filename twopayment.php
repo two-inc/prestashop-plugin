@@ -4313,15 +4313,11 @@ class Twopayment extends PaymentModule
     public function hookActionOrderEdited($params)
     {
         $order = $params['order'];
-        $payment = $order->getOrderPaymentCollection();
-        if (isset($payment[0])) {
-            $payment[0]->amount = $order->total_paid_tax_incl;
-            $payment[0]->save();
-        }
-
         if ($order->module != $this->name) {
             return;
         }
+        $this->syncTwoOrderPaymentAmount($order);
+
         // Core has saved the edit before this hook runs, and on 1.7 an uncaught throw 500s its AJAX, so a retry duplicates the line.
         try {
             $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
@@ -4345,6 +4341,24 @@ class Twopayment extends PaymentModule
             );
             $this->recordTwoOrderSync($order->id, $e->getMessage());
         }
+    }
+
+    /**
+     * Keep Two's payment row at the edited order's total. A split payment, or a row another method recorded, is left alone.
+     *
+     * @param Order $order
+     */
+    private function syncTwoOrderPaymentAmount($order)
+    {
+        $payments = array();
+        foreach ($order->getOrderPaymentCollection() as $payment) {
+            $payments[] = $payment;
+        }
+        if (count($payments) !== 1 || (string) $payments[0]->payment_method !== (string) $order->payment) {
+            return;
+        }
+        $payments[0]->amount = $order->total_paid_tax_incl;
+        $payments[0]->save();
     }
 
     /**
