@@ -11,6 +11,7 @@ This folder contains deterministic tests for order-building and payload safety l
   a declared rate that diverges from the applied amounts throws
 - Non-integer VAT handling for line-item formula safety (e.g. 5.5%)
 - Guardrails that reject invalid line items before building order payloads
+- Cart-vs-order-lines reconciliation diagnostics naming only the drifted figures (gross, net, tax)
 - Snapshot hash sensitivity to tax-rate precision changes beyond two decimals
 - Gift wrapping payload line composition and reconciliation safety
 - `PS_ATCP_SHIPWRAP` shipping split across the cart's canonical product rate classes
