@@ -41,6 +41,13 @@ tar -cf - -C "$REPO_ROOT/tests/integration" --exclude=fixtures . \
 # The carrier-less probe needs the gated fallback (TWO-26082), switched on the way Two does it for a merchant.
 docker exec -u www-data -w /var/www/html "$PS_CONTAINER" php -d memory_limit=512M bin/console twopayment:shipping-tax-fallback enable
 
+# Every legacy back-office page builds the module's admin services first, so one bad service file 500s them all (TWO-26082).
+code=$(docker exec "$PS_CONTAINER" curl -s -L -o /dev/null -w '%{http_code}' 'http://localhost/admin-dev/index.php?controller=AdminLogin')
+if [ "$code" != "200" ]; then
+  echo "::error::back-office login page returned '$code', not 200"
+  exit 1
+fi
+
 status=0
 for probe in "${PROBES[@]}"; do
   echo "--- $probe"
