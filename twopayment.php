@@ -376,6 +376,9 @@ class Twopayment extends PaymentModule
      */
     protected $twoOrderCompanyColumnsEnsured = null;
 
+    /** @var bool|null whether `two_update_hash` exists on `ps_twopayment` (TWO-26085), memoised like the company columns. */
+    protected $twoUpdateHashColumnEnsured = null;
+
     // Module metadata fields ModuleCore does not declare on all supported
     // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
     // $author_address and $languages are never declared by core), plus this
@@ -852,6 +855,7 @@ class Twopayment extends PaymentModule
             `two_organization_number` VARCHAR(64) NULL,
             `two_company_name` VARCHAR(255) NULL,
             `two_not_sent_at` DATETIME NULL,
+            `two_update_hash` VARCHAR(32) NULL,
             PRIMARY KEY  (`id_two`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
 
@@ -4309,10 +4313,9 @@ class Twopayment extends PaymentModule
     public function hookActionOrderEdited($params)
     {
         $order = $params['order'];
-        $cart = new Cart($order->id_cart);
         $payment = $order->getOrderPaymentCollection();
         if (isset($payment[0])) {
-            $payment[0]->amount = $cart->getOrderTotal(true, Cart::BOTH);
+            $payment[0]->amount = $order->total_paid_tax_incl;
             $payment[0]->save();
         }
 
@@ -4323,11 +4326,10 @@ class Twopayment extends PaymentModule
         try {
             $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
             if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
-                $two_order_id = $orderpaymentdata['two_order_id'];
-                $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
-                $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, $paymentdata, 'PUT');
+                $response = $this->putTwoOrderUpdate($order, $orderpaymentdata);
                 $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
-                if ($http_status < 200 || $http_status >= 300) {
+                // A null response is an update identical to the last one Two accepted.
+                if ($response !== null && ($http_status < 200 || $http_status >= 300)) {
                     throw new Exception('HTTP ' . $http_status . ' ' . (string) $this->getTwoErrorMessage($response));
                 }
                 $this->recordTwoOrderSync($order->id, null);
@@ -4343,6 +4345,53 @@ class Twopayment extends PaymentModule
             );
             $this->recordTwoOrderSync($order->id, $e->getMessage());
         }
+    }
+
+    /**
+     * PUT the order as placed, unless it is what was last accepted (TWO-26085).
+     *
+     * @param Order $order
+     * @param array $orderpaymentdata
+     * @param array|null $paymentdata set to the payload built
+     * @return array|null the response; null when nothing changed since the last accepted PUT
+     */
+    public function putTwoOrderUpdate($order, $orderpaymentdata, &$paymentdata = null)
+    {
+        $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
+        $hashed = $paymentdata;
+        // Derived from today's date, so it would change the hash daily without changing the order.
+        unset($hashed['shipping_details']['expected_delivery_date']);
+        $hash = md5(json_encode($hashed));
+        if (isset($orderpaymentdata['two_update_hash']) && $orderpaymentdata['two_update_hash'] === $hash) {
+            return null;
+        }
+        $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
+        $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        if ($http_status >= 200 && $http_status < 300 && $this->ensureTwoUpdateHashColumn()) {
+            Db::getInstance()->update('twopayment', array('two_update_hash' => pSQL($hash)), 'id_order = ' . (int) $order->id);
+        }
+
+        return $response;
+    }
+
+    /**
+     * Adds `two_update_hash` on a shop installed before it; false when it cannot, and every update then PUTs.
+     *
+     * @return bool
+     */
+    private function ensureTwoUpdateHashColumn()
+    {
+        if ($this->twoUpdateHashColumnEnsured === null) {
+            $table = _DB_PREFIX_ . 'twopayment';
+            $this->twoUpdateHashColumnEnsured = (bool) Db::getInstance()->getValue(
+                'SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS'
+                . " WHERE TABLE_SCHEMA = '" . _DB_NAME_ . "'"
+                . " AND TABLE_NAME = '" . pSQL($table) . "'"
+                . " AND COLUMN_NAME = 'two_update_hash'"
+            ) || (bool) Db::getInstance()->execute('ALTER TABLE `' . $table . '` ADD `two_update_hash` VARCHAR(32) NULL');
+        }
+
+        return $this->twoUpdateHashColumnEnsured;
     }
 
     /**
@@ -4371,8 +4420,10 @@ class Twopayment extends PaymentModule
                 return;
             }
 
-            $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
-            $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
+            $response = $this->putTwoOrderUpdate($order, $orderpaymentdata, $paymentdata);
+            if ($response === null) {
+                return;
+            }
 
             $http_status = is_array($response) && isset($response['http_status']) ? (int)$response['http_status'] : 0;
             if ($http_status < 200 || $http_status >= 300) {
@@ -6355,11 +6406,11 @@ class Twopayment extends PaymentModule
      *
      * @param Cart $cart
      * @param string $contextLabel
-     * @param int|null $placedOrderId set on the update path: the fee line is replayed from that order
+     * @param Order|null $placedOrder set on the update path: every line is replayed from that order, never the cart (TWO-26085)
      * @return array
      * @throws Exception
      */
-    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null, $syncSurchargeCartLine = false, $placedOrderId = null)
+    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null, $syncSurchargeCartLine = false, $placedOrder = null)
     {
         // Money-critical self-heal (create + strict-submit paths only; never
         // the update path, whose cart belongs to an already-placed order):
@@ -6373,7 +6424,8 @@ class Twopayment extends PaymentModule
             $this->syncTwoSurchargeCartLine($cart, $this->isTwoSurchargeAdmissibleForCart($cart));
         }
 
-        $line_items = $this->getTwoProductItems($cart);
+        $placed = $placedOrder !== null ? $this->getTwoPlacedOrderSnapshot($placedOrder) : null;
+        $line_items = $placed !== null ? $this->buildTwoLineItems($cart, $placed) : $this->getTwoProductItems($cart);
         if (empty($line_items)) {
             PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - no valid line items', 3);
             throw new Exception('No valid line items in cart');
@@ -6387,7 +6439,7 @@ class Twopayment extends PaymentModule
         $lineTotals = $this->calculateTwoLineItemTotals($line_items);
         $max_reconciliation_diff_cents = 0;
         $reconciliation_drift = '';
-        if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, $max_reconciliation_diff_cents, $reconciliation_drift)) {
+        if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, $max_reconciliation_diff_cents, $reconciliation_drift, $placed !== null ? $placed['totals'] : null)) {
             if ($this->shouldBlockOnReconciliationDrift($contextLabel, $max_reconciliation_diff_cents, (bool)$strictReconciliation)) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: ' . $contextLabel . ' blocked by reconciliation policy. ' .
@@ -6446,8 +6498,8 @@ class Twopayment extends PaymentModule
         // gross the create call sends. TWO-24752 / TWO-24893.
         $surchargeQuoteUnavailable = false;
         // A placed order's fee is what PrestaShop recorded, not what today's config would quote (TWO-26076).
-        $surchargeLine = $placedOrderId !== null
-            ? $this->getTwoPlacedSurchargeLineItem($placedOrderId, $paymentTermDays)
+        $surchargeLine = $placed !== null
+            ? $this->getTwoPlacedSurchargeLineItem($placed['fee_rows'], (int) $placedOrder->id, $paymentTermDays)
             : $this->buildTwoSurchargeLineItemForCart(
                 $cart,
                 $subtotalsTotals['gross'],
@@ -6485,7 +6537,7 @@ class Twopayment extends PaymentModule
         // the buyer can switch term after the payment-options gate ran, and a
         // pre-switch term that quoted zero leaves zero on both sides, which the
         // cents comparison reads as agreement.
-        $surchargeParityFailed = $placedOrderId === null && (($surchargeQuoteUnavailable && $enforceSurchargeParity)
+        $surchargeParityFailed = $placed === null && (($surchargeQuoteUnavailable && $enforceSurchargeParity)
             || $surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE));
         if ($surchargeParityFailed) {
             PrestaShopLogger::addLog(
@@ -6508,7 +6560,7 @@ class Twopayment extends PaymentModule
             'net_amount' => $subtotalsTotals['net'],
             'tax_amount' => $subtotalsTotals['tax'],
             'gross_amount' => $subtotalsTotals['gross'],
-            'discount_amount' => abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS)),
+            'discount_amount' => $placed !== null ? $placed['discount_gross'] : abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS)),
         ];
     }
 
@@ -6544,9 +6596,10 @@ class Twopayment extends PaymentModule
      * @param string $contextLabel
      * @param int $maxDiffCents Set to the largest net/tax/gross drift, in cents
      * @param string $driftDetail Set to the figures that drifted, e.g. "net cart 60.00 vs order lines 64.00 (difference 4.00)"
+     * @param array|null $placedTotals the placed order's own gross/net, fee excluded, in place of the cart's
      * @return bool
      */
-    private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, &$maxDiffCents = 0, &$driftDetail = '')
+    private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, &$maxDiffCents = 0, &$driftDetail = '', $placedTotals = null)
     {
         $maxDiffCents = 0;
         $driftDetail = '';
@@ -6565,17 +6618,17 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        $cartGross = round((float)$cart->getOrderTotal(true, Cart::BOTH), 2);
-        $cartNet = round((float)$cart->getOrderTotal(false, Cart::BOTH), 2);
+        $cartGross = $placedTotals !== null ? $placedTotals['gross'] : round((float)$cart->getOrderTotal(true, Cart::BOTH), 2);
+        $cartNet = $placedTotals !== null ? $placedTotals['net'] : round((float)$cart->getOrderTotal(false, Cart::BOTH), 2);
         // The hidden surcharge line is excluded from the product line items
         // (its payload counterpart is appended AFTER this gate), so subtract
         // its cart-side totals to compare like with like.
-        $surchargeCartLine = $this->getTwoSurchargeCartLine($cart);
+        $surchargeCartLine = $placedTotals === null ? $this->getTwoSurchargeCartLine($cart) : null;
         if ($surchargeCartLine !== null && ($cartGross != 0.0 || $cartNet != 0.0)) {
             $cartGross = round($cartGross - $surchargeCartLine['gross'], 2);
             $cartNet = round($cartNet - $surchargeCartLine['net'], 2);
         }
-        if ($cart->nbProducts() > 0 && $cartGross == 0.0 && $cartNet == 0.0) {
+        if ($placedTotals === null && $cart->nbProducts() > 0 && $cartGross == 0.0 && $cartNet == 0.0) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Cart totals unavailable for ' . $contextLabel . '; skipping strict reconciliation gate.',
                 2
@@ -7186,20 +7239,106 @@ class Twopayment extends PaymentModule
         return $request_data;
     }
 
+    /**
+     * The placed order's money, which admin edits rewrite and catalogue, tax-rule, carrier and cart-rule changes do not (TWO-26085).
+     *
+     * @param Order $order
+     * @return array
+     */
+    private function getTwoPlacedOrderSnapshot($order)
+    {
+        $orderId = (int) $order->id;
+        $products = array();
+        $feeRows = array();
+        $feeGross = 0.0;
+        $feeNet = 0.0;
+        foreach ($this->getTwoPlacedOrderDetailRows($orderId) as $row) {
+            // The fee replay decides on every row carrying the fee reference, and fails loud on an id the fee never had.
+            if ((string) $row['product_reference'] === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
+                $feeRows[] = $row;
+                $feeGross += (float) $row['total_price_tax_incl'];
+                $feeNet += (float) $row['total_price_tax_excl'];
+                continue;
+            }
+            $product = new Product((int) $row['product_id'], false, (int) $order->id_lang);
+            $cover = Image::getCover((int) $row['product_id']);
+            $net = round((float) $row['total_price_tax_excl'], 2);
+            $products[] = array(
+                'id_product' => (int) $row['product_id'],
+                'name' => (string) $row['product_name'],
+                'description_short' => (string) $product->description_short,
+                'link_rewrite' => (string) $product->link_rewrite,
+                'id_image' => is_array($cover) ? (int) $row['product_id'] . '-' . (int) $cover['id_image'] : '',
+                'manufacturer_name' => (string) $product->manufacturer_name,
+                'ean13' => (string) $row['product_ean13'],
+                'upc' => (string) $row['product_upc'],
+                'total' => $net,
+                'total_wt' => round((float) $row['total_price_tax_incl'], 2),
+                'cart_quantity' => (int) $row['product_quantity'],
+                'price' => (float) $row['unit_price_tax_excl'],
+                'ecotax' => (float) $row['ecotax'],
+                'ecotax_tax_rate' => (float) $row['ecotax_tax_rate'],
+                // A VAT-number exemption applies no tax, whatever rate the row records.
+                'placed_tax_rate' => round((float) $row['total_price_tax_incl'], 2) != $net
+                    ? $this->normalizeTwoTaxRateToPercentPrecision($this->getTwoPlacedRowTaxRate($row))
+                    : 0.0,
+            );
+        }
+
+        $shippingNet = 0.0;
+        $shippingGross = 0.0;
+        $carriers = Db::getInstance()->executeS(
+            'SELECT `shipping_cost_tax_excl`, `shipping_cost_tax_incl` FROM `' . _DB_PREFIX_ . 'order_carrier` WHERE `id_order` = ' . $orderId
+        );
+        foreach (is_array($carriers) ? $carriers : array() as $row) {
+            $shippingNet += (float) $row['shipping_cost_tax_excl'];
+            $shippingGross += (float) $row['shipping_cost_tax_incl'];
+        }
+        $shippingNet = round($shippingNet, 2);
+        $shippingGross = round($shippingGross, 2);
+        $shippingRate = $shippingGross != $shippingNet ? $this->normalizeTwoTaxRateToPercentPrecision((float) $order->carrier_tax_rate / 100) : 0.0;
+        // A carrier-less order records no carrier rate: the declared shipping rate is resolved as at checkout.
+        if (abs(round($shippingGross - $shippingNet, 2) - round($shippingNet * $shippingRate, 2)) > self::TAX_FORMULA_TOLERANCE) {
+            $shippingRate = null;
+        }
+
+        $cartRules = array();
+        $rules = Db::getInstance()->executeS(
+            'SELECT * FROM `' . _DB_PREFIX_ . 'order_cart_rule` WHERE `id_order` = ' . $orderId . ' ORDER BY `id_order_cart_rule`'
+        );
+        foreach (is_array($rules) ? $rules : array() as $rule) {
+            // `deleted` exists from 1.7.7: an admin-removed discount stays as a flagged row.
+            if (empty($rule['deleted'])) {
+                $cartRules[] = $rule;
+            }
+        }
+
+        $wrappingNet = round((float) $order->total_wrapping_tax_excl, 2);
+        $wrappingGross = round((float) $order->total_wrapping_tax_incl, 2);
+
+        return array(
+            'id_carrier' => (int) $order->id_carrier,
+            'products' => $products,
+            'fee_rows' => $feeRows,
+            'shipping' => array('net' => $shippingNet, 'gross' => $shippingGross, 'rate' => $shippingRate),
+            'wrapping' => array('net' => $wrappingNet, 'tax' => round($wrappingGross - $wrappingNet, 2), 'gross' => $wrappingGross),
+            'cart_rules' => $cartRules,
+            'discount_gross' => round((float) $order->total_discounts_tax_incl, 2),
+            'totals' => array(
+                'gross' => round((float) $order->total_paid_tax_incl - $feeGross, 2),
+                'net' => round((float) $order->total_paid_tax_excl - $feeNet, 2),
+            ),
+        );
+    }
+
     public function getTwoUpdateOrderData($order, $orderpaymentdata)
     {
+        // The cart supplies only the language, the tax address and the buyer's order note: every amount is the order's (TWO-26085).
         $cart = new Cart($order->id_cart);
-        
-        // Validate cart has products before building order data
-        if (!Validate::isLoadedObject($cart) || $cart->nbProducts() <= 0) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build update order data - cart is empty or invalid (Order ID: ' . $order->id . ')', 3);
-            throw new Exception('Cart is empty or invalid');
-        }
-        
-        $currency = new Currency($cart->id_currency);
-        $customer = new Customer($cart->id_customer);
-        $invoice_address = new Address($cart->id_address_invoice);
-        $delivery_address = new Address($cart->id_address_delivery);
+        $currency = new Currency($order->id_currency);
+        $customer = new Customer($order->id_customer);
+        $invoice_address = new Address($order->id_address_invoice);
+        $delivery_address = new Address($order->id_address_delivery);
         $carrier_name = '';
         $expected_delivery_days = self::DEFAULT_DELIVERY_DAYS_OFFSET; // Default fallback
         // Carrier from the ORDER, not the cart: the admin shipping panel
@@ -7227,7 +7366,7 @@ class Twopayment extends PaymentModule
         $storedTerm = (isset($orderpaymentdata['two_day_on_invoice']) && $orderpaymentdata['two_day_on_invoice'] !== '')
             ? (int) $orderpaymentdata['two_day_on_invoice']
             : null;
-        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')', false, $storedTerm, false, (int) $order->id);
+        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')', false, $storedTerm, false, $order);
         $line_items = $pricingData['line_items'];
         $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
@@ -7380,9 +7519,19 @@ class Twopayment extends PaymentModule
 
     public function getTwoProductItems($cart)
     {
+        return $this->buildTwoLineItems($cart, null);
+    }
+
+    /**
+     * @param Cart $cart
+     * @param array|null $placed getTwoPlacedOrderSnapshot() on the update path: every amount and rate it holds replaces the cart's
+     * @return array
+     */
+    private function buildTwoLineItems($cart, $placed)
+    {
         $items = [];
-        $carrier = new Carrier($cart->id_carrier, $cart->id_lang);
-        $line_items = $cart->getProducts(true);
+        $carrier = new Carrier($placed !== null ? $placed['id_carrier'] : $cart->id_carrier, $cart->id_lang);
+        $line_items = $placed !== null ? $placed['products'] : $cart->getProducts(true);
 
         //  Validate cart has products
         if (empty($line_items)) {
@@ -7449,7 +7598,9 @@ class Twopayment extends PaymentModule
                 (int) $line_item['id_product'],
                 $this->context
             );
-            $tax_rate = $this->getTwoConfiguredTaxRateDecimalForGroup($declared_tax_rules_group_id, $cart);
+            $tax_rate = isset($line_item['placed_tax_rate'])
+                ? (float) $line_item['placed_tax_rate']
+                : $this->getTwoConfiguredTaxRateDecimalForGroup($declared_tax_rules_group_id, $cart);
 
             if (Configuration::get('PS_TWO_DEBUG_MODE')) {
                 PrestaShopLogger::addLog(
@@ -7600,10 +7751,11 @@ class Twopayment extends PaymentModule
         // discount, so the payload needs the pre-discount carrier price to stay
         // coherent. That fallback is inherently carrier-bound and stays gated
         // on a loadable carrier.
-        $shipping_gross = round((float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING), 2);
-        $shipping_net = round((float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING), 2);
+        $shipping_gross = $placed !== null ? $placed['shipping']['gross'] : round((float)$cart->getOrderTotal(true, Cart::ONLY_SHIPPING), 2);
+        $shipping_net = $placed !== null ? $placed['shipping']['net'] : round((float)$cart->getOrderTotal(false, Cart::ONLY_SHIPPING), 2);
 
-        if ($shipping_gross <= 0 && Validate::isLoadedObject($carrier)) {
+        // order_carrier already holds the pre-discount price, and the free-shipping rule its own order_cart_rule row.
+        if ($placed === null && $shipping_gross <= 0 && Validate::isLoadedObject($carrier)) {
             // Parameters: id_carrier, use_tax, country, product_list, id_zone
             $package_gross = (float)$cart->getPackageShippingCost((int)$cart->id_carrier, true, null, null, null);
             $package_net = (float)$cart->getPackageShippingCost((int)$cart->id_carrier, false, null, null, null);
@@ -7676,11 +7828,13 @@ class Twopayment extends PaymentModule
                 // failing — the exact class of silent approximation this change
                 // exists to remove. `id_carrier` now only supplies the line's
                 // name, delay text and by-weight/by-price suffix (above).
-                $shipping_rate_classes = $this->resolveTwoCartShippingRateClasses(
-                    $cart,
-                    $shipping_gross,
-                    $carrier_is_loaded ? $carrier : null
-                );
+                $shipping_rate_classes = $placed !== null && $placed['shipping']['rate'] !== null
+                    ? array(array('rate' => $placed['shipping']['rate']))
+                    : $this->resolveTwoCartShippingRateClasses(
+                        $cart,
+                        $shipping_gross,
+                        $carrier_is_loaded ? $carrier : null
+                    );
 
                 if (count($shipping_rate_classes) > 1) {
                     // MIXED DECLARED RATES: the delivery option spans carriers
@@ -7730,7 +7884,7 @@ class Twopayment extends PaymentModule
             }
         }
 
-        $wrapping_totals = $this->getTwoGiftWrappingTotals($cart);
+        $wrapping_totals = $placed !== null ? $placed['wrapping'] : $this->getTwoGiftWrappingTotals($cart);
         if ($wrapping_totals['gross'] > 0) {
             $wrapping_line_template = [
                 'name' => $this->l('Gift wrapping'),
@@ -7773,7 +7927,9 @@ class Twopayment extends PaymentModule
         }
 
         // Add cart-level discounts as one or more lines split by tax context when applicable.
-        $discount_lines = $this->buildTwoDiscountLinesFromCartTotals($cart, $items);
+        $discount_lines = $placed !== null
+            ? $this->buildTwoPlacedDiscountLines($placed['cart_rules'], $items)
+            : $this->buildTwoDiscountLinesFromCartTotals($cart, $items);
         if (!empty($discount_lines)) {
             foreach ($discount_lines as $discount_line) {
                 $items[] = $discount_line;
@@ -8080,10 +8236,12 @@ class Twopayment extends PaymentModule
         // PS_ECOTAX_TAX_RULES_GROUP_ID group (the rate PrestaShop itself
         // embedded in total_ecotax), resolved at the cart's tax address via
         // the shared helper. Never the row's country-only 'rate' field.
-        $ecotax_rate_decimal = $this->getTwoConfiguredTaxRateDecimalForGroup(
-            (int) Configuration::get('PS_ECOTAX_TAX_RULES_GROUP_ID'),
-            $cart
-        );
+        $ecotax_rate_decimal = isset($line_item['ecotax_tax_rate'])
+            ? $this->normalizeTwoTaxRateToPercentPrecision((float) $line_item['ecotax_tax_rate'] / 100)
+            : $this->getTwoConfiguredTaxRateDecimalForGroup(
+                (int) Configuration::get('PS_ECOTAX_TAX_RULES_GROUP_ID'),
+                $cart
+            );
         $ecotax_total_tax = round($ecotax_total_net * $ecotax_rate_decimal, 2);
         $ecotax_total_gross = round($ecotax_total_net + $ecotax_total_tax, 2);
 
@@ -8195,12 +8353,81 @@ class Twopayment extends PaymentModule
             return $lines;
         }
 
+        return array_merge($lines, $this->buildTwoTaxContextDiscountLines(
+            $remaining_discount_gross,
+            $remaining_discount_net,
+            $fallback_items,
+            $this->buildTwoDiscountDescriptor($cart->getCartRules())
+        ));
+    }
+
+    /**
+     * Discount lines for a placed order, from its order_cart_rule rows (TWO-26085).
+     *
+     * @param array $cart_rules order_cart_rule rows
+     * @param array $items positive payload lines built so far
+     * @return array
+     */
+    private function buildTwoPlacedDiscountLines($cart_rules, $items)
+    {
+        $lines = array();
+        $gross = 0.0;
+        $net = 0.0;
+        $free_shipping_rule = null;
+        foreach ($cart_rules as $rule) {
+            $gross += (float) $rule['value'];
+            $net += (float) $rule['value_tax_excl'];
+            if ($free_shipping_rule === null && !empty($rule['free_shipping'])) {
+                $free_shipping_rule = $rule;
+            }
+        }
+        $shipping_items = array_filter($items, function ($item) {
+            return isset($item['type']) && $item['type'] === 'SHIPPING_FEE';
+        });
+        if ($free_shipping_rule !== null && $shipping_items !== array()) {
+            // The rule's value includes the shipping it waived: cancel each shipping line at its own rate.
+            $descriptor = $this->buildTwoSingleDiscountDescriptor($free_shipping_rule);
+            foreach ($shipping_items as $item) {
+                $line = array_merge($item, array(
+                    'name' => $descriptor['name'],
+                    'description' => $descriptor['description'],
+                    'quantity_unit' => 'item',
+                    'type' => 'DIGITAL',
+                ));
+                foreach (array('gross_amount', 'net_amount', 'tax_amount', 'unit_price') as $field) {
+                    $line[$field] = (string) $this->getTwoRoundAmount(-(float) $item[$field]);
+                }
+                $lines[] = $line;
+                $gross -= (float) $item['gross_amount'];
+                $net -= (float) $item['net_amount'];
+            }
+            $items = $this->filterTwoShippingFeeItems($items);
+        }
+        $gross = round($gross, 2);
+        if ($gross <= 0) {
+            return $lines;
+        }
+
+        return array_merge($lines, $this->buildTwoTaxContextDiscountLines($gross, max(0.0, round($net, 2)), $items, $this->buildTwoDiscountDescriptor($cart_rules)));
+    }
+
+    /**
+     * Split a discount across the tax contexts of the positive lines, at their declared rates.
+     *
+     * @param float $remaining_discount_gross
+     * @param float $remaining_discount_net
+     * @param array $fallback_items positive payload lines the discount applies to
+     * @param array $descriptor buildTwoDiscountDescriptor()
+     * @return array
+     */
+    private function buildTwoTaxContextDiscountLines($remaining_discount_gross, $remaining_discount_net, $fallback_items, $descriptor)
+    {
+        $lines = [];
         if ($remaining_discount_net > $remaining_discount_gross) {
             $remaining_discount_net = $remaining_discount_gross;
         }
         $remaining_discount_tax = round($remaining_discount_gross - $remaining_discount_net, 2);
 
-        $descriptor = $this->buildTwoDiscountDescriptor($cart);
         $contexts = $this->collectDiscountTaxContextsFromItems($fallback_items);
 
         if (empty($contexts)) {
@@ -8387,7 +8614,7 @@ class Twopayment extends PaymentModule
         $descriptor_rule = !empty($free_shipping_rules) ? reset($free_shipping_rules) : null;
         $descriptor = $descriptor_rule !== null
             ? $this->buildTwoSingleDiscountDescriptor($descriptor_rule)
-            : $this->buildTwoDiscountDescriptor($cart);
+            : $this->buildTwoDiscountDescriptor($cart->getCartRules());
 
         return [
             'gross' => $alloc_gross,
@@ -8958,12 +9185,11 @@ class Twopayment extends PaymentModule
     /**
      * Build discount line descriptor from cart rules.
      *
-     * @param Cart $cart
+     * @param array $cart_rules Cart::getCartRules() or order_cart_rule rows
      * @return array ['name' => string, 'description' => string]
      */
-    private function buildTwoDiscountDescriptor($cart)
+    private function buildTwoDiscountDescriptor($cart_rules)
     {
-        $cart_rules = $cart->getCartRules();
         $discount_name = $this->l('Discount');
         $discount_description = $this->l('Order discount');
 
@@ -14346,23 +14572,19 @@ class Twopayment extends PaymentModule
     /**
      * The fee rows PrestaShop recorded on the order, summed, at the rate core recorded for them (TWO-26076).
      *
+     * @param array $rows the order's fee rows, from getTwoPlacedOrderDetailRows()
      * @param int $orderId
      * @param int|null $paymentTermDays the placed term (label only)
      * @return array|null null when the order carries no fee row
      * @throws Exception when the recorded rows cannot be replayed exactly
      */
-    public function getTwoPlacedSurchargeLineItem($orderId, $paymentTermDays)
+    public function getTwoPlacedSurchargeLineItem($rows, $orderId, $paymentTermDays)
     {
         $orderId = (int) $orderId;
         $productIds = $this->getTwoSurchargeProductIds();
-        // order_detail.tax_rate is only written from PS 8; order_detail_tax holds the placement rates on every version.
-        $rows = Db::getInstance()->executeS(
-            'SELECT od.`product_id`, od.`product_reference`, od.`product_name`, od.`total_price_tax_excl`, od.`total_price_tax_incl`, od.`tax_computation_method`,'
-            . ' (SELECT GROUP_CONCAT(t.`rate` SEPARATOR \',\') FROM `' . _DB_PREFIX_ . 'order_detail_tax` odt'
-            . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = odt.`id_tax`'
-            . ' WHERE odt.`id_order_detail` = od.`id_order_detail`) AS `placed_rates`'
-            . ' FROM `' . _DB_PREFIX_ . 'order_detail` od WHERE od.`id_order` = ' . $orderId
-        );
+        if ($rows === array()) {
+            return null;
+        }
         $net = 0.0;
         $gross = 0.0;
         $rates = array();
@@ -14426,6 +14648,27 @@ class Twopayment extends PaymentModule
         }
 
         return array_sum($rates);
+    }
+
+    /**
+     * Every order_detail row of the order, with its order_detail_tax rates listed as `placed_rates` (percentages, see getTwoPlacedRowTaxRate()).
+     *
+     * @param int $orderId
+     * @return array
+     */
+    private function getTwoPlacedOrderDetailRows($orderId)
+    {
+        // order_detail.tax_rate is only written from PS 8; order_detail_tax holds the placement rates on every version.
+        $rows = Db::getInstance()->executeS(
+            'SELECT od.*,'
+            . ' (SELECT GROUP_CONCAT(t.`rate` SEPARATOR \',\') FROM `' . _DB_PREFIX_ . 'order_detail_tax` odt'
+            . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = odt.`id_tax`'
+            . ' WHERE odt.`id_order_detail` = od.`id_order_detail`) AS `placed_rates`'
+            . ' FROM `' . _DB_PREFIX_ . 'order_detail` od WHERE od.`id_order` = ' . (int) $orderId
+            . ' ORDER BY od.`id_order_detail`'
+        );
+
+        return is_array($rows) ? $rows : array();
     }
 
     /**

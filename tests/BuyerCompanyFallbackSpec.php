@@ -407,20 +407,7 @@ final class BuyerCompanyFallbackSpec
 
     private static function makeOrder(): object
     {
-        $order = new class {
-            public bool $loaded = true;
-            public int $id = 0;
-            public int $id_cart = 0;
-            public int $id_carrier = 0;
-            public string $shipping_number = '';
-
-            public function getIdOrderCarrier(): int
-            {
-                return 0;
-            }
-        };
-        $order->id = self::ORDER_ID;
-        $order->id_cart = self::CART_ID;
+        $order = PlacedOrderStub::fromCart(self::ORDER_ID, self::CART_ID);
         $order->id_carrier = self::CARRIER_ID;
 
         return $order;
