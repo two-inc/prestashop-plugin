@@ -57,6 +57,6 @@ class TwoShippingTaxFallbackGate
 
         return 'Default shipping tax code fallback: ' . (self::isEnabled() ? 'enabled' : 'disabled') .
             '. Stored tax rules group: ' . ($group === '' ? 'none' : $group) .
-            (self::isEnabled() ? '.' : ' (kept, not used while disabled).');
+            (self::isEnabled() || $group === '' ? '.' : ' (kept, not used while disabled).');
     }
 }
