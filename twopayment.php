@@ -4711,11 +4711,10 @@ class Twopayment extends PaymentModule
      * cover credit slips, so partial refunds previously reached Two only when
      * the merchant used the Two merchant portal.
      *
-     * This hook builds an {amount, currency} partial-refund payload from the
-     * credit slip and calls POST /v1/order/{id}/refund. Two's refund endpoint
-     * accepts a simple {amount, currency} body for partial refunds (line_items
-     * optional) - confirmed against the refund endpoint's documented request
-     * contract - so we avoid mapping PrestaShop's credit-slip product list to
+     * This hook builds an {amount, currency, tax_subtotals} partial-refund
+     * payload from the credit slip and calls POST /v1/order/{id}/refund. Two's
+     * PartialRefundRequestSchema requires those three fields (line_items is
+     * optional), so we avoid mapping PrestaShop's credit-slip product list to
      * Two line items.
      *
      * Idempotency + duplicate-refund protection:
@@ -4835,7 +4834,15 @@ class Twopayment extends PaymentModule
                 return;
             }
 
-            $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency);
+            // Two requires tax_subtotals on a partial refund. Without stored
+            // slip lines to derive them from, the API would reject the call.
+            $tax_subtotals = $this->buildTwoCreditSlipTaxSubtotals($slip, $order, $slip_amount);
+            if (empty($tax_subtotals)) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not build tax subtotals from the credit slip. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
+                return;
+            }
+
+            $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency, $tax_subtotals);
 
             // Idempotency key derived from the credit slip ID (NOT amount) so
             // two same-amount partial refunds on one order don't collide.
@@ -4907,14 +4914,23 @@ class Twopayment extends PaymentModule
             $products = (float)$slip->amount;
         }
 
-        $shipping = 0.0;
+        return round($products + $this->getTwoCreditSlipShippingTaxIncl($slip), 2);
+    }
+
+    /**
+     * Refunded shipping (tax incl) on a credit slip, falling back to the
+     * legacy shipping_cost_amount field.
+     *
+     * @param object $slip OrderSlip
+     * @return float
+     */
+    private function getTwoCreditSlipShippingTaxIncl($slip)
+    {
         if (isset($slip->total_shipping_tax_incl) && $slip->total_shipping_tax_incl !== null && $slip->total_shipping_tax_incl !== '') {
-            $shipping = (float)$slip->total_shipping_tax_incl;
-        } elseif (isset($slip->shipping_cost_amount)) {
-            $shipping = (float)$slip->shipping_cost_amount;
+            return (float)$slip->total_shipping_tax_incl;
         }
 
-        return round($products + $shipping, 2);
+        return isset($slip->shipping_cost_amount) ? (float)$slip->shipping_cost_amount : 0.0;
     }
 
     /**
@@ -4938,19 +4954,113 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Build the {amount, currency} partial-refund payload for Two. Amount is a
-     * 2dp decimal string, matching Two's Money format.
+     * Build the {amount, currency, tax_subtotals} partial-refund payload for
+     * Two. Amount is a 2dp decimal string, matching Two's Money format.
      *
      * @param float $amount Gross refund amount
      * @param string $currency ISO currency code
+     * @param array $tax_subtotals From buildTwoCreditSlipTaxSubtotals()
      * @return array
      */
-    public function buildTwoPartialRefundPayload($amount, $currency)
+    public function buildTwoPartialRefundPayload($amount, $currency, $tax_subtotals = array())
     {
         return array(
             'amount' => number_format((float)$amount, 2, '.', ''),
             'currency' => $currency,
+            'tax_subtotals' => $tax_subtotals,
         );
+    }
+
+    /**
+     * Stored product lines of a credit slip: order_slip_detail amounts with
+     * the line's tax rate in percent. The rate is summed from
+     * order_detail_tax JOIN tax, which every supported PrestaShop version
+     * writes; order_detail.tax_rate stays 0.000 before 8.x.
+     *
+     * @param object $slip OrderSlip
+     * @return array rows of amount_tax_excl, amount_tax_incl, rate
+     */
+    public function getTwoCreditSlipTaxLines($slip)
+    {
+        $rows = Db::getInstance()->executeS(
+            'SELECT osd.`amount_tax_excl`, osd.`amount_tax_incl`,'
+            . ' (SELECT COALESCE(SUM(t.`rate`), 0) FROM `' . _DB_PREFIX_ . 'order_detail_tax` odt'
+            . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = odt.`id_tax`'
+            . ' WHERE odt.`id_order_detail` = osd.`id_order_detail`) AS `rate`'
+            . ' FROM `' . _DB_PREFIX_ . 'order_slip_detail` osd'
+            . ' WHERE osd.`id_order_slip` = ' . (int)$slip->id
+        );
+
+        return is_array($rows) ? $rows : array();
+    }
+
+    /**
+     * Per-rate tax_subtotals for a partial refund, from stored slip and order
+     * data only: the slip's product lines plus its refunded shipping at the
+     * order's stored carrier_tax_rate. Amounts are scaled onto $refund_amount
+     * (a slip can deduct a voucher from its products total) and any rounding
+     * cent lands on the largest entry, so the entries sum to exactly the
+     * refunded amount.
+     *
+     * @param object $slip OrderSlip
+     * @param object $order Order
+     * @param float $refund_amount Gross amount being refunded
+     * @return array TaxSubtotalSchema entries; empty when none can be derived
+     */
+    public function buildTwoCreditSlipTaxSubtotals($slip, $order, $refund_amount)
+    {
+        $lines = $this->getTwoCreditSlipTaxLines($slip);
+
+        $shipping_incl = $this->getTwoCreditSlipShippingTaxIncl($slip);
+        if ($shipping_incl > 0) {
+            $shipping_rate = isset($order->carrier_tax_rate) ? (float)$order->carrier_tax_rate : 0.0;
+            $shipping_excl = isset($slip->total_shipping_tax_excl) && $slip->total_shipping_tax_excl !== null && $slip->total_shipping_tax_excl !== ''
+                ? (float)$slip->total_shipping_tax_excl
+                : $shipping_incl / (1 + $shipping_rate / 100);
+            $lines[] = array('amount_tax_excl' => $shipping_excl, 'amount_tax_incl' => $shipping_incl, 'rate' => $shipping_rate);
+        }
+
+        $buckets = array();
+        foreach ($lines as $line) {
+            $rate = number_format((float)$line['rate'] / 100, 6, '.', '');
+            if (!isset($buckets[$rate])) {
+                $buckets[$rate] = array('excl' => 0.0, 'incl' => 0.0);
+            }
+            $buckets[$rate]['excl'] += (float)$line['amount_tax_excl'];
+            $buckets[$rate]['incl'] += (float)$line['amount_tax_incl'];
+        }
+
+        $total_incl = array_sum(array_column($buckets, 'incl'));
+        if ($total_incl <= 0 || $refund_amount <= 0) {
+            return array();
+        }
+
+        $factor = $refund_amount / $total_incl;
+        $rows = array();
+        $gross_sum = 0.0;
+        $largest = null;
+        foreach ($buckets as $rate => $bucket) {
+            $gross = round($bucket['incl'] * $factor, 2);
+            $taxable = round($bucket['excl'] * $factor, 2);
+            $rows[$rate] = array('taxable' => $taxable, 'tax' => round($gross - $taxable, 2));
+            $gross_sum += $gross;
+            if ($largest === null || $gross > $rows[$largest]['taxable'] + $rows[$largest]['tax']) {
+                $largest = $rate;
+            }
+        }
+        $rows[$largest]['taxable'] += round($refund_amount - $gross_sum, 2);
+
+        ksort($rows, SORT_NUMERIC);
+        $tax_subtotals = array();
+        foreach ($rows as $rate => $row) {
+            $tax_subtotals[] = array(
+                'taxable_amount' => $this->getTwoRoundAmount($row['taxable']),
+                'tax_amount' => $this->getTwoRoundAmount($row['tax']),
+                'tax_rate' => (string)$rate,
+            );
+        }
+
+        return $tax_subtotals;
     }
 
     /**
