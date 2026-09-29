@@ -507,6 +507,8 @@ Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_ADDRESS', (int) $address->id
 Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_CART', (int) $cart->id);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER', $id_taxed_carrier);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER_CART', (int) $taxed_carrier_cart->id);
+Configuration::updateValue('TWO_CARRIERLESS_TEST_TAXED_CARRIER_NET', (string) PROBE_TAXED_CARRIER_NET);
+Configuration::updateValue('TWO_CARRIERLESS_TEST_MATRIX_RATE', (string) PROBE_MATRIX_TAX_RATE);
 // Arm the fixture module: shipping priced at 29.00 gross / 23.20 net, i.e.
 // 5.80 tax, which is exactly PROBE_TAX_RATE on that net. The module asserts a
 // declared rate against the applied amounts
