@@ -167,6 +167,12 @@ multiCarrierProbeBootKernel();
 // No mail transport in the probe container, and no stock movement from validateOrder() on 1.7.
 Configuration::updateValue('PS_MAIL_METHOD', 3);
 Configuration::updateValue('PS_STOCK_MANAGEMENT', 0);
+// The carrier-less fixture, where CI seeds it armed, replaces every delivery option with its own: disarm it for this run.
+$armed_gross = Configuration::get('TWO_CARRIERLESS_TEST_GROSS');
+Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', '0');
+register_shutdown_function(function () use ($armed_gross) {
+    Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', (string) $armed_gross);
+});
 $context = Context::getContext();
 $id_lang = (int) Configuration::get('PS_LANG_DEFAULT');
 $context->shop = new Shop((int) Configuration::get('PS_SHOP_DEFAULT'));
@@ -192,7 +198,8 @@ $customer = new Customer();
 $customer->firstname = 'Probe';
 $customer->lastname = 'Buyer';
 $customer->email = 'multi-carrier-probe-' . time() . '@example.com';
-$customer->passwd = Tools::encrypt('probe-password-1');
+// Tools::encrypt() is gone in PrestaShop 9.
+$customer->passwd = method_exists('Tools', 'encrypt') ? Tools::encrypt('probe-password-1') : password_hash('probe-password-1', PASSWORD_BCRYPT);
 $customer->add();
 $context->customer = $customer;
 $address = new Address();
@@ -220,8 +227,20 @@ $cart->add();
 $context->cart = $cart;
 $cart->updateQty(2, (int) $first_product->id);
 $cart->updateQty(1, (int) $second_product->id);
+// The option shipping each product with its own carrier; another module may offer more.
+$option_key = null;
 $options = $cart->getDeliveryOptionList();
-$option_key = key($options[(int) $address->id]);
+foreach (array_keys(isset($options[(int) $address->id]) ? $options[(int) $address->id] : array()) as $key) {
+    $carriers = array_map('intval', array_filter(explode(',', (string) $key)));
+    sort($carriers);
+    if ($carriers === array((int) $first_carrier->id, (int) $second_carrier->id)) {
+        $option_key = $key;
+    }
+}
+if ($option_key === null) {
+    fwrite(STDERR, 'no delivery option ships with both probe carriers: ' . json_encode(array_keys(isset($options[(int) $address->id]) ? $options[(int) $address->id] : array())) . PHP_EOL);
+    exit(1);
+}
 $cart->setDeliveryOption(array((int) $address->id => $option_key));
 $cart->update();
 
