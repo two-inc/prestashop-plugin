@@ -68,6 +68,7 @@ class TwoDiscrepancySnapshot
     {
         // A failed rate lookup logs a row of its own, so each group is asked once per snapshot.
         $rates = array();
+        $truncated = array();
         $declaredRate = function ($group) use (&$rates, $declaredRate) {
             if (!array_key_exists($group, $rates)) {
                 $rates[$group] = round((float) call_user_func($declaredRate, $group), 6);
@@ -82,8 +83,8 @@ class TwoDiscrepancySnapshot
             'totals' => self::guard(function () use ($cart) {
                 return self::totals($cart);
             }),
-            'products' => self::guard(function () use ($cart, $declaredRate) {
-                return self::products($cart, $declaredRate);
+            'products' => self::guard(function () use ($cart, $declaredRate, &$truncated) {
+                return self::products(self::cap((array) $cart->getProducts(), 'products', $truncated), $declaredRate);
             }),
             'shipping' => self::guard(function () use ($cart) {
                 return self::shipping($cart);
@@ -97,8 +98,8 @@ class TwoDiscrepancySnapshot
             'hooks' => self::guard(function () {
                 return self::hooks();
             }),
-            'cart_rules' => self::guard(function () use ($cart) {
-                return self::cartRules($cart);
+            'cart_rules' => self::guard(function () use ($cart, &$truncated) {
+                return self::cartRules(self::cap((array) $cart->getCartRules(), 'cart_rules', $truncated));
             }),
             'config' => self::guard(function () use ($cart, $defaultShippingGroup) {
                 return self::config($cart, $defaultShippingGroup);
@@ -106,8 +107,11 @@ class TwoDiscrepancySnapshot
             'address' => self::guard(function () use ($cart) {
                 return self::addresses($cart);
             }),
-            'sent_line_items' => is_array($lineItems) ? self::lineItems($lineItems) : null,
+            'sent_line_items' => is_array($lineItems) ? self::lineItems(self::cap($lineItems, 'sent_line_items', $truncated)) : null,
         );
+        if ($truncated !== array()) {
+            $snapshot['truncated'] = $truncated;
+        }
         $snapshot['shape'] = self::classify($snapshot);
 
         return $snapshot;
@@ -275,13 +279,13 @@ class TwoDiscrepancySnapshot
         return $totals;
     }
 
-    private static function products($cart, $declaredRate)
+    private static function products(array $cartProducts, $declaredRate)
     {
         $ecotaxRate = self::guard(function () use ($declaredRate) {
             return call_user_func($declaredRate, (int) Configuration::get('PS_ECOTAX_TAX_RULES_GROUP_ID'));
         });
         $rows = array();
-        foreach (array_slice((array) $cart->getProducts(), 0, self::MAX_ROWS) as $row) {
+        foreach ($cartProducts as $row) {
             $total = round((float) (isset($row['total']) ? $row['total'] : 0), 2);
             $totalWt = round((float) (isset($row['total_wt']) ? $row['total_wt'] : 0), 2);
             $group = self::guard(function () use ($row) {
@@ -322,6 +326,10 @@ class TwoDiscrepancySnapshot
                 return (int) Carrier::getIdTaxRulesGroupByIdCarrier($idCarrier);
             }) : 0,
             'delivery_option' => is_array($option) ? $option : self::str($raw),
+            // What ONLY_SHIPPING is priced from: core auto-selects the best option when the stored one is empty or stale.
+            'priced_option' => self::guard(function () use ($cart) {
+                return $cart->getDeliveryOption(null, false);
+            }),
             'package_cost_incl' => self::guard(function () use ($cart, $idCarrier) {
                 return round((float) $cart->getPackageShippingCost($idCarrier > 0 ? $idCarrier : null, true), 2);
             }),
@@ -413,10 +421,10 @@ class TwoDiscrepancySnapshot
         return $hooks;
     }
 
-    private static function cartRules($cart)
+    private static function cartRules(array $cartRules)
     {
         $rules = array();
-        foreach (array_slice((array) $cart->getCartRules(), 0, self::MAX_ROWS) as $rule) {
+        foreach ($cartRules as $rule) {
             $rules[] = array(
                 'id_cart_rule' => (int) (isset($rule['id_cart_rule']) ? $rule['id_cart_rule'] : 0),
                 'free_shipping' => !empty($rule['free_shipping']),
@@ -471,7 +479,7 @@ class TwoDiscrepancySnapshot
     private static function lineItems(array $lineItems)
     {
         $out = array();
-        foreach (array_slice($lineItems, 0, self::MAX_ROWS) as $item) {
+        foreach ($lineItems as $item) {
             $row = array();
             foreach (self::LINE_ITEM_KEYS as $key) {
                 if (isset($item[$key])) {
@@ -484,18 +492,35 @@ class TwoDiscrepancySnapshot
         return $out;
     }
 
-    // Every row is readable and one exceeds rounding: PS_ROUND_TYPE=item rounds each unit, so it scales with qty.
+    private static function cap(array $rows, $section, array &$truncated)
+    {
+        if (count($rows) > self::MAX_ROWS) {
+            $truncated[$section] = count($rows) - self::MAX_ROWS;
+        }
+
+        return array_slice($rows, 0, self::MAX_ROWS);
+    }
+
+    // Every row is readable and one exceeds what PS_ROUND_TYPE's rounding can explain.
     private static function hasUnexplainedProductDelta(array $snapshot)
     {
         $rows = isset($snapshot['products']) && is_array($snapshot['products']) && !isset($snapshot['products']['error'])
             ? $snapshot['products'] : array();
+        $roundType = self::num($snapshot, array('config', 'PS_ROUND_TYPE'));
         $unexplained = false;
         foreach ($rows as $row) {
             $delta = is_array($row) ? self::productDelta($row) : null;
             if ($delta === null) {
                 return false;
             }
-            $tolerance = max(self::AMOUNT_TOLERANCE, $row['qty'] * 0.005 * (1 + $row['declared_rate']));
+            if ($roundType === 1.0) {
+                // ROUND_ITEM rounds unit net and unit gross apart (Cart.php:977-983@1.7.6.5), each by up to half a cent.
+                $tolerance = $row['qty'] * 0.005 * (2 + $row['declared_rate']);
+            } elseif ($roundType === 2.0 || $roundType === 3.0) {
+                $tolerance = 0.011;
+            } else {
+                return false;
+            }
             $unexplained = $unexplained || abs($delta) > $tolerance;
         }
 
@@ -520,26 +545,17 @@ class TwoDiscrepancySnapshot
     }
 
     /**
-     * The tax rules groups of the carriers the cart ships with; array(0) when it has none.
+     * The tax rules groups of the carriers in the delivery option core prices shipping from; 0 is no carrier.
      *
      * @param array $snapshot
-     * @return int[]|null null when any of them cannot be read
+     * @return int[]|null null when the option or any of its carriers' groups cannot be read
      */
     private static function carrierGroups(array $snapshot)
     {
-        $idCarrier = self::num($snapshot, array('shipping', 'id_carrier'));
-        if ($idCarrier === null) {
+        // Each key lists the option's carriers ('3,5,'), so a multi-carrier option is covered too.
+        $selected = isset($snapshot['shipping']['priced_option']) ? $snapshot['shipping']['priced_option'] : null;
+        if (!is_array($selected) || isset($selected['error'])) {
             return null;
-        }
-        if ($idCarrier > 0) {
-            $group = self::num($snapshot, array('shipping', 'carrier_tax_rules_group'));
-
-            return $group === null ? null : array((int) $group);
-        }
-        // A multi-carrier option leaves id_carrier at 0; its key lists the carriers ('3,5,').
-        $selected = isset($snapshot['shipping']['delivery_option']) ? $snapshot['shipping']['delivery_option'] : '';
-        if (!is_array($selected)) {
-            return $selected === '' ? array(0) : null;
         }
         $known = array();
         foreach (isset($snapshot['delivery_options']) && is_array($snapshot['delivery_options']) ? $snapshot['delivery_options'] : array() as $option) {
@@ -549,7 +565,11 @@ class TwoDiscrepancySnapshot
         }
         $groups = array();
         foreach ($selected as $key) {
+            if (!is_scalar($key)) {
+                return null;
+            }
             foreach (array_filter(explode(',', (string) $key), 'strlen') as $id) {
+                // isset, not array_key_exists: a group that failed to read is null, and (int) null would pass as untaxed.
                 if ((int) $id === 0) {
                     $groups[] = 0;
                 } elseif (isset($known[(int) $id])) {
@@ -560,7 +580,7 @@ class TwoDiscrepancySnapshot
             }
         }
 
-        return $groups === array() ? array(0) : array_values(array_unique($groups));
+        return $groups === array() ? null : array_values(array_unique($groups));
     }
 
     /**

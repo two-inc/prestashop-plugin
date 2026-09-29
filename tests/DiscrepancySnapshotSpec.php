@@ -13,6 +13,7 @@ final class DiscrepancySnapshotSpec
     {
         self::testClassifiesEachCartShape();
         self::testEncodeStaysUnderTheLimitAndDecodesBack();
+        self::testTruncatedSectionsCountWhatWasCut();
         self::testGateOutcomesWriteTheExpectedSnapshot();
     }
 
@@ -27,8 +28,9 @@ final class DiscrepancySnapshotSpec
     {
         $clean = [
             'totals' => ['BOTH' => ['incl' => 150.0, 'excl' => 123.97], 'ONLY_SHIPPING' => ['incl' => 0.0, 'excl' => 0.0], 'residual' => ['incl' => 0.0, 'excl' => 0.0]],
-            'shipping' => ['id_carrier' => 7, 'carrier_tax_rules_group' => 4, 'delivery_option' => ''],
-            'delivery_options' => [],
+            'shipping' => ['id_carrier' => 7, 'carrier_tax_rules_group' => 4, 'delivery_option' => '', 'priced_option' => [5 => '7,']],
+            'delivery_options' => [['id_address' => 5, 'key' => '7,', 'carriers' => [['id_carrier' => 7, 'tax_rules_group' => 4]]]],
+            'config' => ['PS_ROUND_TYPE' => '2'],
             'products' => [self::product(100.0, 121.0, 1, 0.21)],
             'overrides' => ['files' => ['Cart' => 'core'], 'methods_overridden' => ['Cart' => [], 'Product' => [], 'Carrier' => []]],
             'hooks' => ['actionProductPriceCalculation' => []],
@@ -37,7 +39,11 @@ final class DiscrepancySnapshotSpec
         $addedMethodOnly = ['overrides' => ['files' => ['Cart' => 'override/classes/Cart.php']]];
         $priceHook = ['hooks' => ['actionProductPriceCalculation' => ['somepricemodule']]];
         $carrierless = static function (float $incl, float $excl): array {
-            return ['totals' => ['ONLY_SHIPPING' => ['incl' => $incl, 'excl' => $excl]], 'shipping' => ['id_carrier' => 0, 'carrier_tax_rules_group' => 0]];
+            return ['totals' => ['ONLY_SHIPPING' => ['incl' => $incl, 'excl' => $excl]], 'shipping' => ['id_carrier' => 0, 'carrier_tax_rules_group' => 0, 'priced_option' => [5 => '0,']]];
+        };
+        // Core prices ONLY_SHIPPING from the auto-selected option, whatever the cart's own delivery_option says.
+        $autoSelectedTaxed = static function ($stored): array {
+            return ['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['id_carrier' => 0, 'carrier_tax_rules_group' => 0, 'delivery_option' => $stored, 'priced_option' => [5 => '7,']]];
         };
         $error = ['error' => 'PrestaShopException', 'code' => 0];
 
@@ -48,16 +54,25 @@ final class DiscrepancySnapshotSpec
             [$carrierless(29.0, 23.97), 'B', 'carrier-less shipping carrying tax'],
             [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]]], 'other', 'taxed shipping behind a carrier group is normal'],
             [array_replace_recursive(['products' => [self::product(100.0, 95.8, 1, 0.21)]], $cartOverride), 'D', 'fixed untaxed amount on a product line, Cart override'],
+            [array_replace_recursive(['products' => [self::product(100.0, 120.0, 1, 0.0)]], $cartOverride), 'D', 'TWO-25938 matrix: 120 charged on a 100 line declared untaxed'],
             [array_replace_recursive(['products' => [self::product(100.0, 95.8, 1, 0.21)]], $priceHook), 'D', 'fixed untaxed amount on a product line, price hook module'],
             [['products' => [self::product(100.0, 95.8, 1, 0.21)]], 'other', 'product delta with no override or hook to explain it'],
             [array_replace_recursive(['products' => [self::product(100.0, 121.01, 1, 0.21)]], $cartOverride), 'other', 'rounding-sized delta is not a product anomaly'],
             [[], 'other', 'a clean cart'],
             [['totals' => ['ONLY_SHIPPING' => ['incl' => $error, 'excl' => $error], 'residual' => ['incl' => 29.0]]], 'other', 'errored ONLY_SHIPPING is not a zero shipping total'],
-            [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['carrier_tax_rules_group' => $error]], 'other', 'errored carrier group is not a missing one'],
-            [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['id_carrier' => 0, 'carrier_tax_rules_group' => 0, 'delivery_option' => [5 => '3,8,']],
+            [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['carrier_tax_rules_group' => $error], 'delivery_options' => [['carriers' => [['tax_rules_group' => $error]]]]], 'other', 'errored carrier group is not a missing one'],
+            [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['id_carrier' => 0, 'carrier_tax_rules_group' => 0, 'priced_option' => [5 => '3,8,']],
                 'delivery_options' => [['id_address' => 5, 'key' => '3,8,', 'carriers' => [['id_carrier' => 3, 'tax_rules_group' => 4], ['id_carrier' => 8, 'tax_rules_group' => 4]]]]],
                 'other', 'multi-carrier option leaves id_carrier 0 but its carriers carry a group'],
-            [array_replace_recursive(['products' => [self::product(12.0, 15.0, 100, 0.21)]], $cartOverride), 'other', 'PS_ROUND_TYPE=item rounding over qty 100'],
+            [array_replace_recursive(['products' => [self::product(12.0, 15.0, 100, 0.21)], 'config' => ['PS_ROUND_TYPE' => '1']], $cartOverride), 'other', 'PS_ROUND_TYPE=item rounding over qty 100'],
+            [array_replace_recursive(['products' => [self::product(200.0, 242.2, 20, 0.21)], 'config' => ['PS_ROUND_TYPE' => '1']], $cartOverride), 'other', 'PS_ROUND_TYPE=item rounds unit net and gross apart: net 10.0042 x 20 is 0.20 off'],
+            [array_replace_recursive(['products' => [self::product(1002.5, 1212.5, 100, 0.21)], 'config' => ['PS_ROUND_TYPE' => '2']], $cartOverride), 'D', 'PS_ROUND_TYPE=line has no per-unit rounding: 2.50 untaxed over qty 100'],
+            [array_replace_recursive(['products' => [self::product(1002.5, 1212.5, 100, 0.21)], 'config' => ['PS_ROUND_TYPE' => '3']], $cartOverride), 'D', 'PS_ROUND_TYPE=total has no per-unit rounding either'],
+            [array_replace_recursive(['products' => [self::product(100.0, 95.8, 1, 0.21)], 'config' => ['PS_ROUND_TYPE' => $error]], $cartOverride), 'other', 'an unreadable PS_ROUND_TYPE leaves the tolerance unknown'],
+            [array_replace_recursive(['products' => [self::product(100.0, 95.8, 1, 0.21)], 'config' => ['PS_ROUND_TYPE' => false]], $cartOverride), 'other', 'an unset PS_ROUND_TYPE leaves the tolerance unknown'],
+            [$autoSelectedTaxed(''), 'other', 'empty delivery_option: core prices the auto-selected taxed carrier'],
+            [$autoSelectedTaxed([5 => '0,']), 'other', 'stale carrier-less key: core prices the auto-selected taxed carrier'],
+            [['shipping' => ['priced_option' => $error], 'totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 29.0]]], 'other', 'errored priced option'],
             [array_replace_recursive(['products' => [self::product(220.0, 235.0, 2, 0.055, 10.0, 0.2)]], $cartOverride), 'other', 'ecotax taxed under its own group'],
             [array_replace_recursive(['products' => [self::product(100.0, 95.8, 1, 0.21)]], $addedMethodOnly), 'other', 'a Cart override that only adds a method'],
             [['totals' => ['BOTH' => ['incl' => 0.0, 'excl' => 0.0], 'residual' => ['incl' => -20.0]]], 'other', 'stacked vouchers clamp BOTH to 0'],
@@ -97,6 +112,28 @@ final class DiscrepancySnapshotSpec
         TinyAssert::same(null, TwoDiscrepancySnapshot::decodeStored('TwoPayment: not json'), 'decodeStored: a plain log line');
     }
 
+    private static function testTruncatedSectionsCountWhatWasCut(): void
+    {
+        $cases = [
+            // [rows per section, expected truncated, description]
+            [TwoDiscrepancySnapshot::MAX_ROWS, null, 'at the cap nothing is cut'],
+            [TwoDiscrepancySnapshot::MAX_ROWS + 5, ['products' => 5, 'cart_rules' => 5, 'sent_line_items' => 5], 'over the cap each section counts its cut rows'],
+        ];
+        foreach ($cases as $i => [$rows, $expected, $description]) {
+            StubStore::reset();
+            $cart = new Cart(9500 + $i);
+            StubStore::$cartProducts[$cart->id] = array_fill(0, $rows, ['id_product' => 1, 'total' => 1.0, 'total_wt' => 1.21, 'cart_quantity' => 1]);
+            StubStore::$cartRules[$cart->id] = array_fill(0, $rows, ['id_cart_rule' => 1]);
+            $snapshot = TwoDiscrepancySnapshot::build($cart, null, array_fill(0, $rows, ['type' => 'PHYSICAL']), static function (): float {
+                return 0.21;
+            }, null);
+            TinyAssert::same($expected, $snapshot['truncated'] ?? null, 'truncated: ' . $description);
+            foreach (['products', 'cart_rules', 'sent_line_items'] as $section) {
+                TinyAssert::count(min($rows, TwoDiscrepancySnapshot::MAX_ROWS), $snapshot[$section], 'rows kept in ' . $section . ': ' . $description);
+            }
+        }
+    }
+
     /** DefaultShippingTaxCodeSpec's cart fixtures, reused rather than copied. */
     private static function fixture(string $method, ...$args)
     {
@@ -106,16 +143,25 @@ final class DiscrepancySnapshotSpec
         return $reflection->invoke(null, ...$args);
     }
 
-    /** A harness whose line formulas or tax subtotals fail, to reach the gates no cart fixture can. */
-    private static function harness(?string $fault): TwopaymentTestHarness
+    /** A harness whose line formulas or tax subtotals fail, or whose line build throws, to reach the gates no cart fixture can. */
+    private static function harness($fault): TwopaymentTestHarness
     {
         return new class ($fault) extends TwopaymentTestHarness {
             private $fault;
 
-            public function __construct(?string $fault)
+            public function __construct($fault)
             {
                 parent::__construct();
                 $this->fault = $fault;
+            }
+
+            public function getTwoProductItems($cart)
+            {
+                if ($this->fault instanceof Throwable) {
+                    throw $this->fault;
+                }
+
+                return $this->fault === 'noLines' ? [] : parent::getTwoProductItems($cart);
             }
 
             public function validateTwoLineItems($line_items)
@@ -138,7 +184,7 @@ final class DiscrepancySnapshotSpec
     private static function testGateOutcomesWriteTheExpectedSnapshot(): void
     {
         $cases = [
-            // [default shipping group, debug, product total_wt, cart BOTH incl, harness, expected gate (null none, '' baseline), severity, has sent lines, description]
+            // [default shipping group, debug, product total_wt, cart BOTH incl, harness fault, expected gate (null none, '' baseline), severity, has sent lines, description]
             ['', '0', 121.00, 150.00, null, 'shipping_rate_unresolvable', 3, false, 'carrier-less shipping refused'],
             ['4210', '0', 121.00, 150.00, null, null, 0, false, 'shipping gate caught by the Default shipping tax code is not a failure'],
             ['4210', '1', 121.00, 150.00, null, '', 1, true, 'debug mode leaves a baseline for a passing cart'],
@@ -146,6 +192,11 @@ final class DiscrepancySnapshotSpec
             ['4210', '0', 121.00, 170.00, null, 'reconciliation', 3, true, 'order lines do not reconcile with the cart total'],
             ['4210', '0', 121.00, 150.00, 'badFormulas', 'line_formulas', 3, true, 'line item formulas do not hold'],
             ['4210', '0', 121.00, 150.00, 'badSubtotals', 'tax_subtotals', 3, true, 'tax subtotals do not reconcile with the lines'],
+            ['4210', '0', 121.00, 150.00, 'wrapping', 'Exception', 3, false, 'gift wrapping gross below net, after a fallback-caught shipping gate'],
+            ['4210', '0', 121.00, 150.00, new Exception('Discount amounts diverge from all declared cart tax rates'), 'Exception', 3, false, 'discount diverges from every declared rate'],
+            ['4210', '0', 121.00, 150.00, new Exception('Cannot attribute shipping tax under PS_ATCP_SHIPWRAP: no product rate classes'), 'Exception', 3, false, 'PS_ATCP_SHIPWRAP shipping with no product rate class'],
+            ['4210', '0', 121.00, 150.00, new Exception('Cannot reconcile gift wrapping tax under PS_ATCP_SHIPWRAP with canonical rates'), 'Exception', 3, false, 'PS_ATCP_SHIPWRAP wrapping residual beyond tolerance'],
+            ['4210', '0', 121.00, 150.00, 'noLines', null, 0, false, 'a cart with no valid line items is not a discrepancy'],
         ];
         foreach ($cases as $i => [$group, $debug, $productGross, $cartGross, $harness, $gate, $severity, $hasLines, $description]) {
             StubStore::reset();
@@ -159,11 +210,20 @@ final class DiscrepancySnapshotSpec
             self::fixture('seedTotalsFor21PercentShipping', $id);
             StubStore::$cartProducts[$id][0]['total_wt'] = $productGross;
             StubStore::$cartTotals[$id][true][Cart::BOTH] = $cartGross;
+            if ($harness === 'wrapping') {
+                StubStore::$cartTotals[$id][true][Cart::ONLY_WRAPPING] = 5.00;
+                StubStore::$cartTotals[$id][false][Cart::ONLY_WRAPPING] = 10.00;
+            }
 
+            $caught = null;
             try {
                 self::harness($harness)->getTwoNewOrderData('attempt-' . $id, $cart, self::fixture('merchantUrls'));
             } catch (Exception $e) {
                 // Refusals are expected; the snapshot row is what is asserted.
+                $caught = $e;
+            }
+            if ($harness instanceof Throwable) {
+                TinyAssert::true($caught === $harness, 'the same exception is rethrown: ' . $description);
             }
 
             $rows = array_values(array_filter(PrestaShopLogger::$logs, static function (array $entry): bool {
@@ -178,6 +238,9 @@ final class DiscrepancySnapshotSpec
             TinyAssert::same($severity, $rows[0]['severity'], 'severity: ' . $description);
             TinyAssert::same($gate === '' ? null : $gate, $snapshot['gate']['name'] ?? null, 'gate: ' . $description);
             TinyAssert::same($hasLines, is_array($snapshot['sent_line_items']), 'sent line items: ' . $description);
+            if ($caught !== null) {
+                TinyAssert::false(strpos($rows[0]['message'], $caught->getMessage()) !== false, 'no exception message: ' . $description);
+            }
             foreach (['buyer@example.com', 'Calle Uno', '28001', '666666601', 'Pia'] as $pii) {
                 TinyAssert::false(strpos($rows[0]['message'], $pii) !== false, 'no buyer PII "' . $pii . '": ' . $description);
             }
