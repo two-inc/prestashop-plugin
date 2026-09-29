@@ -7298,9 +7298,12 @@ class Twopayment extends PaymentModule
                 continue;
             }
             $categories = Product::getProductCategoriesFull($line_item['id_product'], $cart->id_lang);
-            $image = Image::getCover($line_item['id_product']);
-            $imagePath = $this->context->link->getImageLink($line_item['link_rewrite'], $image['id_image'], ImageType::getFormattedName('home'));
-            
+            // Cart rows carry a combination-aware id_image: "<id_product>-<id_image>" before PS 9, bare from PS 9, "<iso>-default" with no image.
+            $imagePath = '';
+            if (isset($line_item['id_image']) && preg_match('/^(\d+-)?\d+$/', (string) $line_item['id_image'])) {
+                $imagePath = $this->context->link->getImageLink($line_item['link_rewrite'], $line_item['id_image'], ImageType::getFormattedName('home'));
+            }
+
             // Use PrestaShop monetary amounts as canonical values for payload totals.
             $net_amount_prestashop = round((float)$line_item['total'], 2);
             $gross_amount_prestashop = round((float)$line_item['total_wt'], 2);
