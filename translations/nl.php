@@ -589,3 +589,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'de aanbieder het niet heeft geaccepteerd (HTTP %s)';
 $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'De bestelling is in PrestaShop als terugbetaald gemarkeerd, maar wat na de creditnota\'s nog terug te betalen was, is niet naar %1$s verzonden, omdat %2$s. Betaal de rest terug in de %1$s Merchant Portal.';
 $_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'een onverwachte fout dit verhinderde';
+$_MODULE['<{twopayment}prestashop>twopayment_b324ba130c48d915b7f4065f928d9019'] = 'Momentopnamen van afwijkingen';
+$_MODULE['<{twopayment}prestashop>twopayment_0fafc015674a68481a377c36125bc110'] = 'Er zijn geen momentopnamen van afwijkingen vastgelegd.';
+$_MODULE['<{twopayment}prestashop>twopayment_a85eba4c6c699122b2bb1387ea4813ad'] = 'Winkelwagen';
+$_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] = 'JSON downloaden';

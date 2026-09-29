@@ -589,3 +589,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'el proveedor no lo ha aceptado (HTTP %s)';
 $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'El pedido se ha marcado como reembolsado en PrestaShop, pero lo que quedaba por reembolsar tras sus facturas por abono no se ha enviado a %1$s porque %2$s. Reembolsa el resto en el Portal de Comerciantes de %1$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'un error inesperado lo ha impedido';
+$_MODULE['<{twopayment}prestashop>twopayment_b324ba130c48d915b7f4065f928d9019'] = 'Instantáneas de discrepancias';
+$_MODULE['<{twopayment}prestashop>twopayment_0fafc015674a68481a377c36125bc110'] = 'No hay instantáneas de discrepancias registradas.';
+$_MODULE['<{twopayment}prestashop>twopayment_a85eba4c6c699122b2bb1387ea4813ad'] = 'Carrito';
+$_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] = 'Descargar JSON';
