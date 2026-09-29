@@ -6302,9 +6302,11 @@ class Twopayment extends PaymentModule
                 // opaque rejection here is what made TWO-25161 take two weeks
                 // of email to diagnose. TwoCheckoutAmountException is what
                 // authorises that relay — see the class docblock.
-                throw new TwoCheckoutAmountException(
-                    'Order totals do not reconcile with cart totals: ' . $reconciliation_drift
-                );
+                // PHP_INT_MAX is the validator's marker for order lines failing gross = net + tax, before any cart comparison.
+                $reconciliation_prefix = $max_reconciliation_diff_cents === PHP_INT_MAX
+                    ? 'Order line totals are internally inconsistent: '
+                    : 'Order totals do not reconcile with cart totals: ';
+                throw new TwoCheckoutAmountException($reconciliation_prefix . $reconciliation_drift);
             }
 
             PrestaShopLogger::addLog(
