@@ -805,7 +805,7 @@ document without re-deciding them:
   alongside the existing four instead. Restructuring the record would have rewritten the shape every
   read site consumes for no gain the requirement asks for. The keys are centralised in
   `Twopayment::COMPANY_SESSION_KEYS` so they cannot drift, which is what the blob was really for.
-  **Superseded by TWO-26094:** the record is now that blob after all, one base64-encoded JSON value
+  **Superseded by TWO-26094:** the record is now that blob after all, one JSON value (UTF-8 kept raw, only `|` and `¤` escaped, so a long Nordic address stays inside core's 4096-byte cookie)
   under `two_company_record` (the mirror-write record likewise under `two_mirror_record`). Core's
   cookie throws on `|` and `¤`, which a company name can hold, so per-key writes could fail part way
   and leave a half-updated record behind a matching stamp. The read shape callers see is unchanged.

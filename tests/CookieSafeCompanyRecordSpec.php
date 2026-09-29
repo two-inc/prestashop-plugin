@@ -38,7 +38,24 @@ final class CookieSafeCompanyRecordSpec
             'state' => '',
         ];
 
-        // [record, raw legacy seed, first write, second write, expected read, description]
+        $nordic = static function (int $length): string {
+            return mb_substr(str_repeat('æøåäöÆØÅÄÖ', 26), 0, $length);
+        };
+        // Address field sizes from core's Address and State definitions.
+        $maxNordicMirror = [
+            'company' => $nordic(255),
+            'organization' => '1234567890123456',
+            'country' => 'NO',
+            'address1' => $nordic(128),
+            'address2' => $nordic(128),
+            'postcode' => '123456789012',
+            'city' => $nordic(64),
+            'state' => $nordic(80),
+        ];
+        $maxNordicCompany = ['name' => $nordic(255), 'id' => '1234567890123456', 'country' => 'NO', 'address_id' => '99999999'];
+        $stamped = ['two_company_record' => '{"cart":' . self::CART_ID . ',"fields":{"name":"Seeded Ltd","id":"1"}}'];
+
+        // [record, raw seed, first write, second write, expected read, description]
         $cases = [
             ['company', [], [], ['name' => 'Smith | Sons Ltd', 'id' => '123'], ['name' => 'Smith | Sons Ltd', 'id' => '123'], 'company name with |'],
             ['company', [], [], ['name' => 'Kr¤na AB', 'id' => '456'], ['name' => 'Kr¤na AB', 'id' => '456'], 'company name with ¤'],
@@ -49,6 +66,13 @@ final class CookieSafeCompanyRecordSpec
             ['company', $legacyCompany, [], ['name' => 'Fresh Ltd'], ['name' => 'Fresh Ltd', 'id' => ''], 'write over an old raw-format record'],
             ['company', [], ['name' => 'Old Ltd', 'id' => '111'], ['id' => '222', 'name' => 'New | Ltd'], ['name' => 'New | Ltd', 'id' => '222'], 'partial-write safety: company'],
             ['mirror', [], ['company' => 'Old Ltd', 'city' => 'Leeds'], ['city' => 'York', 'company' => 'New ¤ Ltd'], ['company' => 'New ¤ Ltd', 'city' => 'York'], 'partial-write safety: mirror'],
+            ['company', [], [], $maxNordicCompany, $maxNordicCompany, 'max-length Nordic company record'],
+            ['mirror', [], [], $maxNordicMirror, $maxNordicMirror, 'max-length Nordic mirror record'],
+            ['company', $stamped, [], [], ['name' => 'Seeded Ltd', 'id' => '1'], 'seeded record in the stored format'],
+            ['company', ['two_company_record' => 'not json {'], [], [], null, 'undecodable record: not JSON'],
+            ['company', ['two_company_record' => '{"cart":"' . self::CART_ID . '","fields":{"name":"Seeded Ltd"}}'], [], [], null, 'undecodable record: cart as a string'],
+            ['company', ['two_company_record' => '{"cart":' . self::CART_ID . ',"fields":"Seeded Ltd"}'], [], [], null, 'undecodable record: fields not an array'],
+            ['company', [], ['name' => 'Old Ltd', 'id' => '111'], ['name' => "Bad \xB1 Ltd"], null, 'encode failure: invalid UTF-8 clears the record'],
         ];
 
         $failures = [];
@@ -86,16 +110,20 @@ final class CookieSafeCompanyRecordSpec
             $thrown = $e->getMessage();
         }
 
+        TinyAssert::true($cookie->coreSetCookieBytes() <= 4096, 'cookie must stay within core\'s 4096-byte limit, was ' . $cookie->coreSetCookieBytes() . ': ' . $description);
         $actual = $module->{$read}();
         if ($expected === null) {
-            TinyAssert::same(null, $actual, 'an old raw-format record must read as absent: ' . $description);
+            TinyAssert::same(null, $actual, 'record must read as absent: ' . $description);
+            TinyAssert::false(isset($cookie->{'two_' . $record . '_record'}), 'unreadable record must be cleared: ' . $description);
         } else {
             TinyAssert::true(is_array($actual), 'record must be readable: ' . $description);
             TinyAssert::same($expected, array_intersect_key((array) $actual, $expected), 'record must read back whole: ' . $description);
         }
         TinyAssert::same('', $thrown, 'no write may throw: ' . $description);
         foreach (array_keys($seed) as $key) {
-            TinyAssert::false(isset($cookie->{$key}), 'old raw-format key must be purged: ' . $key . ': ' . $description);
+            if (strpos($key, '_record') === false) {
+                TinyAssert::false(isset($cookie->{$key}), 'old raw-format key must be purged: ' . $key . ': ' . $description);
+            }
         }
     }
 }

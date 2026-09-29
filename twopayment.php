@@ -12446,7 +12446,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Base64 over JSON: base64 can never hold the '|' or '¤' core's Cookie::__set throws on.
+     * Raw UTF-8 JSON with only the '|' and '¤' core's Cookie::__set throws on escaped: base64 or \uXXXX would push a long Nordic address past core's 4096-byte cookie limit.
      *
      * @param int $cartId
      * @param array $values
@@ -12454,9 +12454,9 @@ class Twopayment extends PaymentModule
      */
     private function encodeTwoCartScopedRecord($cartId, array $values)
     {
-        $json = json_encode(array('cart' => (int) $cartId, 'fields' => $values));
+        $json = json_encode(array('cart' => (int) $cartId, 'fields' => $values), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-        return $json === false ? null : base64_encode($json);
+        return $json === false ? null : str_replace(array('|', '¤'), array('\u007c', '\u00a4'), $json);
     }
 
     /**
@@ -12469,8 +12469,7 @@ class Twopayment extends PaymentModule
             return null;
         }
 
-        $json = base64_decode((string) $this->context->cookie->$cookieKey, true);
-        $data = $json === false ? null : json_decode($json, true);
+        $data = json_decode((string) $this->context->cookie->$cookieKey, true);
         if (!is_array($data) || !isset($data['cart'], $data['fields']) || !is_int($data['cart']) || !is_array($data['fields'])) {
             return null;
         }
