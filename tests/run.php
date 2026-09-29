@@ -5647,12 +5647,15 @@ final class OrderBuilderSpec
      */
     private static function testGetTwoProductItemsSourcesImageFromCartRow(): void
     {
-        // [id_product_attribute, cart row id_image, expected image_url, description]
+        // [id_product_attribute, cart row id_image (null: key absent), expected image_url, description]
         $cases = [
             [0, '702-55', 'https://img.local/702-55', 'product with a cover image (PS 1.7/8 id_image form)'],
             [0, '55', 'https://img.local/55', 'product with a cover image (PS 9 id_image form)'],
             [31, '702-77', 'https://img.local/702-77', 'combination with its own image'],
             [0, 'en-default', '', 'product with no image'],
+            [0, null, '', 'cart row with no id_image key'],
+            [0, '0', '', 'image id 0 (PS 9 form)'],
+            [0, '702-0', '', 'image id 0 (PS 1.7/8 form)'],
         ];
         foreach ($cases as [$idProductAttribute, $idImage, $expected, $description]) {
             self::reset();
@@ -5661,7 +5664,7 @@ final class OrderBuilderSpec
             $cart = new Cart(812);
             $cart->id_lang = 1;
             $cart->id_carrier = 999;
-            StubStore::$cartProducts[812] = [[
+            $row = [
                 'id_product' => 702,
                 'id_product_attribute' => $idProductAttribute,
                 'id_image' => $idImage,
@@ -5677,7 +5680,11 @@ final class OrderBuilderSpec
                 'rate' => 21.0,
                 'price' => 100.00,
                 'reduction' => 0,
-            ]];
+            ];
+            if ($idImage === null) {
+                unset($row['id_image']);
+            }
+            StubStore::$cartProducts[812] = [$row];
             StubStore::$productCategories[702] = [['name' => 'Lighting']];
             self::declareProductRate($cart, 702, 21.0);
 

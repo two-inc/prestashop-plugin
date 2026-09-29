@@ -7300,7 +7300,7 @@ class Twopayment extends PaymentModule
             $categories = Product::getProductCategoriesFull($line_item['id_product'], $cart->id_lang);
             // Cart rows carry a combination-aware id_image: "<id_product>-<id_image>" before PS 9, bare from PS 9, "<iso>-default" with no image.
             $imagePath = '';
-            if (isset($line_item['id_image']) && preg_match('/^(\d+-)?\d+$/', (string) $line_item['id_image'])) {
+            if (isset($line_item['id_image']) && preg_match('/^(\d+-)?[1-9]\d*$/', (string) $line_item['id_image'])) {
                 $imagePath = $this->context->link->getImageLink($line_item['link_rewrite'], $line_item['id_image'], ImageType::getFormattedName('home'));
             }
 
