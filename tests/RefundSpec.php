@@ -21,6 +21,7 @@ final class RefundSpec
         self::testGrossAmountSumsProductsAndShippingTaxIncl();
         self::testPayloadBuilderFormatsAmountAsTwoDecimalString();
         self::testPartialRefundSendsTaxSubtotalsFromStoredSlip();
+        self::testHookResolvesSlipAsCorePassesIt();
     }
 
     /**
@@ -81,6 +82,9 @@ final class RefundSpec
             public array $requests = [];
             /** False: one 0%-rate slip line per slip; true: read the Db stub (TWO-26093). */
             public bool $readSlipLinesFromDb = false;
+            /** What getTwoLatestOrderSlip() answers, and the order ids it was asked for. */
+            public $latestSlip = null;
+            public array $latestSlipLookups = [];
             private array $twoOrder;
             private $paymentData;
 
@@ -107,6 +111,12 @@ final class RefundSpec
             protected function flagTwoCreditSlipNotSent($idOrder, $slipId, $reason)
             {
                 $this->notSent[] = [$idOrder, $slipId, $reason];
+            }
+
+            public function getTwoLatestOrderSlip($id_order)
+            {
+                $this->latestSlipLookups[] = $id_order;
+                return $this->latestSlip;
             }
 
             public function getTwoCreditSlipTaxLines($slip)
@@ -411,6 +421,37 @@ final class RefundSpec
                 return (float)$t['taxable_amount'] + (float)$t['tax_amount'];
             }, $payload['tax_subtotals']));
             TinyAssert::same($payload['amount'], number_format($sum, 2, '.', ''), $desc . ': subtotals sum to amount');
+        }
+    }
+
+    /**
+     * TWO-26093: core never passes order_slip. 1.7.x and 8.x pass only
+     * order/productList/qtyList, 9.x adds orderSlipCreated. Columns: hook
+     * params, newest stored slip, expected refunded slip id (null: no call).
+     */
+    private static function testHookResolvesSlipAsCorePassesIt(): void
+    {
+        $cases = [
+            [['order_slip' => self::makeSlip(701, 30.00)], null, 701, 'explicit order_slip'],
+            [['orderSlipCreated' => self::makeSlip(702, 30.00)], null, 702, 'PS 9 orderSlipCreated'],
+            [['productList' => [], 'qtyList' => []], self::makeSlip(703, 30.00), 703, 'PS 1.7/8 params: newest slip of the order'],
+            [['productList' => [], 'qtyList' => []], null, null, 'PS 1.7/8 params, no stored slip'],
+        ];
+
+        foreach ($cases as [$params, $latest, $expectedSlipId, $desc]) {
+            StubStore::reset();
+            $module = self::makeModule(self::fulfilledOrder(100.00));
+            $module->latestSlip = $latest;
+
+            $module->hookActionOrderSlipAdd(['order' => self::makeOrder()] + $params);
+
+            $refunds = $module->refundCalls();
+            if ($expectedSlipId === null) {
+                TinyAssert::count(0, $refunds, $desc);
+                continue;
+            }
+            TinyAssert::count(1, $refunds, $desc);
+            TinyAssert::same(['X-Idempotency-Key: partial_refund_two-order-uuid_slip_' . $expectedSlipId], $refunds[0]['headers'], $desc);
         }
     }
 }
