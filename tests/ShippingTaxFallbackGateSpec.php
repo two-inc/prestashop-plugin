@@ -139,6 +139,8 @@ final class ShippingTaxFallbackGateSpec
             [null, null, ['action' => 'enable'], 0, '1', null, ['shop 1: enabled', 'shop 2: enabled'], 'multishop, enable with no shop writes the global row'],
             [null, null, ['action' => 'enable', '--shop' => '2'], 0, null, '1', ['shop 1: disabled', 'shop 2: enabled'], 'multishop, enable --shop=2 writes only the shop 2 row'],
             ['1', null, ['action' => 'disable', '--shop' => '2'], 0, '1', '0', ['shop 1: enabled', 'shop 2: disabled'], 'multishop, disable --shop=2 leaves global on'],
+            ['1', null, ['action' => 'enable', '--shop' => '2'], 0, '1', '1', ['shop 2: enabled (shop setting)'], 'multishop, enable --shop=2 with global on still writes the shop 2 row'],
+            ['0', null, ['action' => 'disable', '--shop' => '2'], 0, '0', '0', ['shop 2: disabled (shop setting)'], 'multishop, disable --shop=2 with global off still writes the shop 2 row'],
             ['1', '1', ['action' => 'disable'], 0, '0', '1', ['shop 1: disabled', 'shop 2: enabled (shop setting)'], 'multishop, disable with no shop keeps a shop override'],
             ['0', '1', ['action' => 'status'], 0, '0', '1', ['global: disabled', 'shop 1: disabled (global setting)', 'shop 2: enabled (shop setting)'], 'multishop, status reports each shop'],
             [null, null, ['action' => 'enable', '--id_shop' => '2'], 0, null, '1', ['shop 2: enabled'], 'multishop, core\'s --id_shop=2 on PS 1.7.6-8 writes only the shop 2 row'],

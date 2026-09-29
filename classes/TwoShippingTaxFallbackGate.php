@@ -58,11 +58,37 @@ class TwoShippingTaxFallbackGate
                 // updateValue() would write the context shop's row under multistore; this must be the global one.
                 Configuration::updateGlobalValue(self::CONFIG_ENABLED, $value);
             } else {
-                Configuration::updateValue(self::CONFIG_ENABLED, $value, false, (int) Shop::getGroupFromShop($idShop), $idShop);
+                self::writeShopValue($idShop, $value);
             }
         }
 
         return array(0, self::describe($shops));
+    }
+
+    /**
+     * @param int $idShop
+     * @param string $value
+     * @return void
+     */
+    private static function writeShopValue($idShop, $value)
+    {
+        $idShopGroup = (int) Shop::getGroupFromShop($idShop);
+        if (Configuration::hasKey(self::CONFIG_ENABLED, null, null, $idShop)) {
+            Configuration::updateValue(self::CONFIG_ENABLED, $value, false, $idShopGroup, $idShop);
+
+            return;
+        }
+        // Core 1.7 updateValue() skips a value the shop already inherits, so no row would pin it against a later global flip.
+        $now = date('Y-m-d H:i:s');
+        Db::getInstance()->insert('configuration', array(
+            'id_shop_group' => $idShopGroup,
+            'id_shop' => (int) $idShop,
+            'name' => pSQL(self::CONFIG_ENABLED),
+            'value' => pSQL($value),
+            'date_add' => $now,
+            'date_upd' => $now,
+        ), true);
+        Configuration::set(self::CONFIG_ENABLED, $value, $idShopGroup, $idShop);
     }
 
     /**
