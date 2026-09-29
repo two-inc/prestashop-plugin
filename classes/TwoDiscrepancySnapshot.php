@@ -73,6 +73,14 @@ class TwoDiscrepancySnapshot
 
             return $rates[$group];
         };
+        // First, so a carrier throw never skips it; core's getOrderTotal() calls getProducts() itself.
+        $products = self::guard(function () use ($cart, $declaredRate, &$truncated) {
+            $products = self::cartRead(function () use ($cart) {
+                return (array) $cart->getProducts();
+            });
+
+            return isset($products['error']) ? $products : self::products(self::cap($products, 'products', $truncated), $declaredRate);
+        });
         $snapshot = array(
             'v' => self::SCHEMA_VERSION,
             'id_cart' => (int) $cart->id,
@@ -80,10 +88,7 @@ class TwoDiscrepancySnapshot
             'totals' => self::guard(function () use ($cart) {
                 return self::totals($cart);
             }),
-            'products' => self::guard(function () use ($cart, $declaredRate, &$truncated) {
-                // Outside the circuit breaker: getProducts() is cached and never prices a carrier.
-                return self::products(self::cap((array) $cart->getProducts(), 'products', $truncated), $declaredRate);
-            }),
+            'products' => $products,
             'shipping' => self::guard(function () use ($cart) {
                 return self::shipping($cart);
             }),

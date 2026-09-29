@@ -809,7 +809,7 @@ it also writes one for every cart that passes, as a baseline to compare against.
   whole section shed to fit the size limit.
 - **Cost**: once one `Cart` pricing read throws, the remaining ones are recorded as
   `{error: "skipped"}` rather than re-run, since core does not cache a failed price.
-  `products` is always read: core caches it and it prices no carrier.
+  `products` is read first, so a carrier that throws never skips it.
 - **Log growth**: one row per refused order, and with Debug Mode on two or three per order
   (each pricing pass leaves a baseline), so switch Debug Mode off once done.
 - **Reading it**: the record's `shape` field applies this decision tree, first match wins:
@@ -820,6 +820,8 @@ it also writes one for every cart that passes, as a baseline to compare against.
   | A | `ONLY_SHIPPING` > 0, incl = excl, every carrier id is 0 | shipping priced without a carrier and without tax |
   | B | `ONLY_SHIPPING` incl > excl, every carrier id is 0 | shipping priced without a carrier, with tax nothing declares |
   | other | anything else, including any input that failed to read | read the gate numbers and product lines directly |
+
+  A and B come only from PrestaShop 1.7's `'0,'` option key: on 8 and 9 a package with no carrier gets no delivery option, so `priced_option` is `[]` and the shape is other.
 
   "Every carrier id is 0" means every carrier id in `priced_option`, the delivery option
   core prices shipping from: when the cart's own `delivery_option` is empty or stale, core
