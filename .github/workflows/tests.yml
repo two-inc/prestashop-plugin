@@ -57,6 +57,10 @@ jobs:
           php -l tests/SoleTraderTokenPreconditionSpec.php
           php -l classes/TwoOverrideMigrator.php
           php -l classes/TwoDiscrepancySnapshot.php
+          php -l classes/TwoOrderPostprocessing.php
+          php -l classes/TwoOrderPostprocessingException.php
+          php -l tests/OrderPostprocessingSpec.php
+          php -l upgrade/upgrade-2.7.18.php
           php -l controllers/admin/AdminTwoErrorLogController.php
           php -l tests/DiscrepancySnapshotSpec.php
           php -l upgrade/upgrade-2.7.1.php
@@ -72,6 +76,8 @@ jobs:
           php -l tests/integration/lib/probe-helpers.php
           php -l tests/integration/matrix/carrierless-shipping-cell.php
           php -l tests/integration/fixtures/twocarrierlesstest/override/classes/Cart.php
+          php -l tests/integration/order-postprocessing-hook.php
+          php -l tests/integration/fixtures/twoorderpostprocessingtest/twoorderpostprocessingtest.php
           php -l dev/ci/seed-carrierless-cart.php
           php -l dev/ci/two-api-stub.php
 

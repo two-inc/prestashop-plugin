@@ -333,9 +333,11 @@ final class OrderBuilderSpec
         StubStore::$images[501] = ['id_image' => 9001];
         self::declareProductRate($cart, 501, 21.0);
 
+        // Deferred to the post-hook gates (TWO-26092): the build no longer refuses, the gate does.
+        $module->getTwoProductItems($cart);
         TinyAssert::throws(
             static function () use ($module, $cart): void {
-                $module->getTwoProductItems($cart);
+                $module->priceAndGateTwoCart($cart, 'order create payload');
             },
             'Declared tax rate diverges'
         );
@@ -5902,6 +5904,7 @@ require __DIR__ . '/DeprecatedCustomPaymentTermSpec.php';
 require __DIR__ . '/CheckoutWithholdReasonSpec.php';
 require __DIR__ . '/PaymentTileAboutControlSpec.php';
 require __DIR__ . '/ReconciliationDriftMessageSpec.php';
+require __DIR__ . '/OrderPostprocessingSpec.php';
 require __DIR__ . '/DiscrepancySnapshotSpec.php';
 
 $tests = [
@@ -5975,6 +5978,7 @@ $tests = [
     'DeprecatedCustomPaymentTermSpec::runAll' => [DeprecatedCustomPaymentTermSpec::class, 'runAll'],
     'CheckoutWithholdReasonSpec::runAll' => [CheckoutWithholdReasonSpec::class, 'runAll'],
     'ReconciliationDriftMessageSpec::runAll' => [ReconciliationDriftMessageSpec::class, 'runAll'],
+    'OrderPostprocessingSpec::runAll' => [OrderPostprocessingSpec::class, 'runAll'],
 ];
 
 $failed = 0;

@@ -64,7 +64,6 @@ final class ReconciliationDriftMessageSpec
             [100.00, 21.00, 125.00, 100.00, 125.00, 'Order line totals are internally inconsistent: order lines gross 125.00 vs order lines net+tax 121.00', 'order lines failing gross = net + tax'],
         ];
 
-        $method = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
         foreach ($cases as [$lineNet, $lineTax, $lineGross, $cartNet, $cartGross, $expected, $description]) {
             StubStore::reset();
             PrestaShopLogger::reset();
@@ -99,7 +98,7 @@ final class ReconciliationDriftMessageSpec
 
             $message = null;
             try {
-                $method->invoke($module, $cart, 'order create payload', true);
+                $module->priceAndGateTwoCart($cart, 'order create payload', true);
             } catch (TwoCheckoutAmountException $e) {
                 $message = $e->getMessage();
             }

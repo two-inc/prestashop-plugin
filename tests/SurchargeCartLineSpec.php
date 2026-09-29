@@ -522,7 +522,6 @@ final class SurchargeCartLineSpec
      */
     private static function testNonEnforcingPathStaysQuietOnAnUnavailableQuote(): void
     {
-        $method = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
         $cases = [
             [false, false, 'the update path reports nothing and never throws'],
             [true, true, 'an enforcing path refuses the order'],
@@ -539,7 +538,7 @@ final class SurchargeCartLineSpec
 
             $threw = false;
             try {
-                $method->invoke($module, $cart, 'spec context', false, 30, $enforce);
+                $module->priceAndGateTwoCart($cart, 'spec context', false, 30, $enforce);
             } catch (Exception $e) {
                 $threw = strpos($e->getMessage(), 'Surcharge line mismatch') !== false;
             }

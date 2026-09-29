@@ -180,6 +180,7 @@ test-js:
 ## Set up the local shop for carrier-less shipping
 carrierless-shop:
 	PS_CONTAINER=$(CONTAINER) dev/ci/seed-carrierless-cart.sh
+	PS_CONTAINER=$(CONTAINER) dev/ci/install-order-postprocessing-fixture.sh
 	@echo ""
 	@echo "========================================="
 	@echo " Carrier-less shipping is set up."
