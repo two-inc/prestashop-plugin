@@ -42,7 +42,7 @@ final class DiscrepancySnapshotSpec
         };
         // A real carrier can have tax rules group 0 ("No tax"): the carrier id, not its group, says whether one exists.
         $realCarrier = static function (int $group, float $incl, float $excl): array {
-            return ['totals' => ['ONLY_SHIPPING' => ['incl' => $incl, 'excl' => $excl]], 'shipping' => ['carrier_tax_rules_group' => $group],
+            return ['totals' => ['ONLY_SHIPPING' => ['incl' => $incl, 'excl' => $excl]], 'shipping' => ['id_carrier' => 7, 'carrier_tax_rules_group' => $group, 'priced_option' => [5 => '7,']],
                 'delivery_options' => [['carriers' => [['id_carrier' => 7, 'tax_rules_group' => $group]]]]];
         };
         $error = ['error' => 'PrestaShopException', 'code' => 0];
@@ -206,6 +206,28 @@ final class DiscrepancySnapshotSpec
         }
         TinyAssert::same(['error' => 'skipped'], $snapshot['shipping']['priced_option'], 'circuit breaker: priced_option is skipped');
         TinyAssert::same('other', $snapshot['shape'], 'circuit breaker: a skipped read classifies as other');
+
+        // Core's getOrderTotal() calls getProducts() itself, so a throwing override would otherwise run twice.
+        $cart = new class (9601) extends Cart {
+            public $productReads = 0;
+
+            public function getOrderTotal($withTaxes, $type)
+            {
+                return array_sum(array_column($this->getProducts(), 'total'));
+            }
+
+            public function getProducts($refresh = false): array
+            {
+                ++$this->productReads;
+                throw new RuntimeException('product price override failed');
+            }
+        };
+        $snapshot = TwoDiscrepancySnapshot::build($cart, null, null, static function (): float {
+            return 0.21;
+        }, null);
+        TinyAssert::same(1, $cart->productReads, 'circuit breaker: a throwing getProducts runs once');
+        TinyAssert::same(['error' => 'RuntimeException', 'code' => 0], $snapshot['products'], 'circuit breaker: products records its error');
+        TinyAssert::same(['error' => 'skipped'], $snapshot['totals']['BOTH']['incl'], 'circuit breaker: totals are skipped after products threw');
     }
 
     private static function testThrowSiteNeverRecordsAnAbsolutePath(): void
