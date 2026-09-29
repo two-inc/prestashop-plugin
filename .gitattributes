@@ -1,0 +1,4 @@
+# Keep the test suite and dev tooling out of `git archive` (make archive) and GitHub source downloads.
+/tests export-ignore
+/dev export-ignore
+/.gitattributes export-ignore
