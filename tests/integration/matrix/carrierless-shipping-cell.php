@@ -18,12 +18,14 @@ if (!defined('_PS_VERSION_')) {
 require __DIR__ . '/../lib/probe-helpers.php';
 
 const CELL_MODES = array(
-    'A' => array('gross' => '29.00', 'net' => '29.00', 'mode' => ''),
-    'B' => array('gross' => '29.00', 'net' => '23.97', 'mode' => ''),
-    'C' => array('gross' => '29.00', 'net' => '29.00', 'mode' => 'external_only'),
-    'D' => array('gross' => '0', 'net' => '0', 'mode' => 'product_surcharge'),
+    'A' => array('gross' => '29.00', 'net' => '29.00', 'mode' => '', 'surcharge' => '0'),
+    'B' => array('gross' => '29.00', 'net' => '23.97', 'mode' => '', 'surcharge' => '0'),
+    'C' => array('gross' => '29.00', 'net' => '29.00', 'mode' => 'external_only', 'surcharge' => '0'),
+    'D' => array('gross' => '0', 'net' => '0', 'mode' => 'product_surcharge', 'surcharge' => '120.00'),
 );
-const CELL_PRODUCT_SURCHARGE = '120.00';
+// Mode D's seeded carrier (dev/ci/seed-carrierless-cart.php): 10.00 net under the 21% group.
+const CELL_TAXED_CARRIER_NET = 10.0;
+const CELL_TAXED_RATE = 0.21;
 // group: '' unset, 'TRG_21' the seeded 21% group, '0' core's "No tax".
 const CELL_CONFIGS = array(
     '1' => array('group' => '', 'override' => false, 'merchant_rate' => null),
@@ -49,7 +51,7 @@ probeBootKernel();
 Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', $mode['gross']);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_NET', $mode['net']);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_MODE', $mode['mode']);
-Configuration::updateValue('TWO_CARRIERLESS_TEST_SURCHARGE', CELL_PRODUCT_SURCHARGE);
+Configuration::updateValue('TWO_CARRIERLESS_TEST_SURCHARGE', $mode['surcharge']);
 Configuration::updateValue(
     'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP',
     $config['group'] === 'TRG_21' ? (string) (int) Configuration::get('TWO_CARRIERLESS_TEST_TRG_21') : $config['group']
@@ -95,15 +97,15 @@ if ($surcharged) {
     if ((int) $cart->id_carrier !== $id_taxed_carrier || (int) (new Carrier($id_taxed_carrier))->getIdTaxRulesGroup() !== $trg_21) {
         $invalid[] = 'carrier ' . (int) $cart->id_carrier . ' is not the seeded 21% carrier';
     }
-    if (array($totals['ship_incl'], $totals['ship_excl']) !== array(12.1, 10.0)) {
+    if (array($totals['ship_incl'], $totals['ship_excl']) !== array(round(CELL_TAXED_CARRIER_NET * (1 + CELL_TAXED_RATE), 2), CELL_TAXED_CARRIER_NET)) {
         $invalid[] = 'ONLY_SHIPPING=' . $totals['ship_incl'] . '/' . $totals['ship_excl'];
     }
     $lines_gross = 0.0;
     foreach ($cart->getProducts(true) as $row) {
-        $base = round((float) $row['total'] - (float) CELL_PRODUCT_SURCHARGE, 2);
+        $base = round((float) $row['total'] - (float) $mode['surcharge'], 2);
         if ((int) Product::getIdTaxRulesGroupByIdProduct((int) $row['id_product']) !== $trg_21
-            || round((float) $row['total_wt'] - (float) $row['total'], 2) !== round($base * 0.21, 2)) {
-            $invalid[] = 'product ' . (int) $row['id_product'] . ' is not 21% on its base plus an untaxed ' . CELL_PRODUCT_SURCHARGE;
+            || round((float) $row['total_wt'] - (float) $row['total'], 2) !== round($base * CELL_TAXED_RATE, 2)) {
+            $invalid[] = 'product ' . (int) $row['id_product'] . ' is not 21% on its base plus an untaxed ' . $mode['surcharge'];
         }
         $lines_gross += (float) $row['total_wt'];
     }

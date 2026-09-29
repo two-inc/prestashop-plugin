@@ -250,15 +250,30 @@ function probeProductId($id_lang)
         }
     }
 
+    return probeNewProduct($id_lang, PROBE_LABEL . ' product', 'two-carrierless-probe-product');
+}
+
+/**
+ * @param int $id_lang
+ * @param string $name
+ * @param string $link_rewrite
+ * @param int|null $id_tax_rules_group Null keeps core's default
+ * @return int Product id
+ */
+function probeNewProduct($id_lang, $name, $link_rewrite, $id_tax_rules_group = null)
+{
     $product = new Product();
-    $product->name = array($id_lang => PROBE_LABEL . ' product');
-    $product->link_rewrite = array($id_lang => 'two-carrierless-probe-product');
+    $product->name = array($id_lang => $name);
+    $product->link_rewrite = array($id_lang => $link_rewrite);
     $product->price = 100.0;
+    if ($id_tax_rules_group !== null) {
+        $product->id_tax_rules_group = $id_tax_rules_group;
+    }
     $product->active = true;
     $product->id_category_default = (int) Configuration::get('PS_HOME_CATEGORY');
     $product->minimal_quantity = 1;
     if (!$product->add()) {
-        throw new RuntimeException('could not create a probe Product');
+        throw new RuntimeException('could not create probe Product ' . $name);
     }
     StockAvailable::setQuantity((int) $product->id, 0, 100);
 
@@ -321,6 +336,21 @@ function probeCart($customer, $address, $id_lang, $id_product)
         }
     }
 
+    // Carrier 0 with a delivery option selected: the custom-logistics shape.
+    return probeNewCart($customer, $address, $id_lang, $id_product, 2, 0);
+}
+
+/**
+ * @param Customer $customer
+ * @param Address $address
+ * @param int $id_lang
+ * @param int $id_product
+ * @param int $quantity
+ * @param int $id_carrier Selected as the cart's delivery option
+ * @return Cart
+ */
+function probeNewCart($customer, $address, $id_lang, $id_product, $quantity, $id_carrier)
+{
     $cart = new Cart();
     $cart->id_customer = (int) $customer->id;
     $cart->id_address_delivery = (int) $address->id;
@@ -332,19 +362,18 @@ function probeCart($customer, $address, $id_lang, $id_product)
     $cart->recyclable = 0;
     $cart->gift = 0;
     if (!$cart->add()) {
-        throw new RuntimeException('could not create the probe Cart');
+        throw new RuntimeException('could not create a probe Cart');
     }
     Context::getContext()->cart = $cart;
 
-    if (!$cart->updateQty(2, $id_product)) {
-        throw new RuntimeException('could not add the probe product to the cart');
+    if (!$cart->updateQty($quantity, $id_product)) {
+        throw new RuntimeException('could not add product ' . $id_product . ' to a probe cart');
     }
 
-    // Carrier 0 with a delivery option selected: the custom-logistics shape.
-    $cart->delivery_option = json_encode(array((int) $address->id => '0,'));
-    $cart->id_carrier = 0;
+    $cart->delivery_option = json_encode(array((int) $address->id => (int) $id_carrier . ','));
+    $cart->id_carrier = (int) $id_carrier;
     if (!$cart->update()) {
-        throw new RuntimeException('could not store the carrier-less delivery selection');
+        throw new RuntimeException('could not store a probe cart delivery selection');
     }
 
     return new Cart((int) $cart->id);
@@ -385,8 +414,11 @@ function probeExternalShippingRow($cart, $id_product, $id_lang)
 function probeTaxedCarrier($country, $id_lang, $id_tax_rules_group)
 {
     $existing = probeStoredId('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER');
-    if ($existing > 0 && Validate::isLoadedObject(new Carrier($existing))) {
-        return $existing;
+    if ($existing > 0) {
+        $carrier = new Carrier($existing);
+        if (Validate::isLoadedObject($carrier) && !$carrier->deleted && $carrier->active) {
+            return $existing;
+        }
     }
 
     $carrier = new Carrier();
@@ -434,43 +466,23 @@ function probeTaxedCarrierCart($customer, $address, $id_lang, $id_tax_rules_grou
     $id_existing = probeStoredId('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER_CART');
     if ($id_existing > 0) {
         $cart = new Cart($id_existing);
-        if (Validate::isLoadedObject($cart) && $cart->nbProducts() > 0) {
+        if (Validate::isLoadedObject($cart) && $cart->nbProducts() > 0 && (int) $cart->id_carrier === $id_carrier) {
             return $cart;
         }
     }
 
-    $product = new Product();
-    $product->name = array($id_lang => PROBE_LABEL . ' product ' . (int) PROBE_MATRIX_TAX_RATE . '%');
-    $product->link_rewrite = array($id_lang => 'two-carrierless-probe-product-taxed');
-    $product->price = 100.0;
-    $product->id_tax_rules_group = $id_tax_rules_group;
-    $product->active = true;
-    $product->id_category_default = (int) Configuration::get('PS_HOME_CATEGORY');
-    $product->minimal_quantity = 1;
-    if (!$product->add()) {
-        throw new RuntimeException('could not create the probe taxed Product');
-    }
-    StockAvailable::setQuantity((int) $product->id, 0, 100);
-
-    $cart = new Cart();
-    $cart->id_customer = (int) $customer->id;
-    $cart->id_address_delivery = (int) $address->id;
-    $cart->id_address_invoice = (int) $address->id;
-    $cart->id_lang = (int) $id_lang;
-    $cart->id_currency = (int) Configuration::get('PS_CURRENCY_DEFAULT');
-    $cart->id_shop = (int) Context::getContext()->shop->id;
-    $cart->id_shop_group = (int) Context::getContext()->shop->id_shop_group;
-    $cart->id_carrier = (int) $id_carrier;
-    $cart->delivery_option = json_encode(array((int) $address->id => (int) $id_carrier . ','));
-    if (!$cart->add()) {
-        throw new RuntimeException('could not create the probe taxed-carrier Cart');
-    }
-    Context::getContext()->cart = $cart;
-    if (!$cart->updateQty(1, (int) $product->id)) {
-        throw new RuntimeException('could not add the probe taxed product to its cart');
+    $id_product = probeStoredId('TWO_CARRIERLESS_TEST_ID_TAXED_PRODUCT');
+    if ($id_product <= 0 || !Validate::isLoadedObject(new Product($id_product))) {
+        $id_product = probeNewProduct(
+            $id_lang,
+            PROBE_LABEL . ' product ' . (int) PROBE_MATRIX_TAX_RATE . '%',
+            'two-carrierless-probe-product-taxed',
+            $id_tax_rules_group
+        );
+        Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_TAXED_PRODUCT', $id_product);
     }
 
-    return new Cart((int) $cart->id);
+    return probeNewCart($customer, $address, $id_lang, $id_product, 1, $id_carrier);
 }
 
 $id_lang = (int) Configuration::get('PS_LANG_DEFAULT');
@@ -478,24 +490,16 @@ $country = probeCountry();
 probeCarrierCoverage($country);
 $id_tax_rules_group = probeTaxRulesGroup($country, $id_lang, PROBE_TAX_RATE, 'TWO_CARRIERLESS_TEST_TRG');
 Configuration::updateValue('TWO_CARRIERLESS_TEST_TRG', (int) $id_tax_rules_group);
-Configuration::updateValue(
-    'TWO_CARRIERLESS_TEST_TRG_21',
-    probeTaxRulesGroup($country, $id_lang, PROBE_MATRIX_TAX_RATE, 'TWO_CARRIERLESS_TEST_TRG_21')
-);
+$id_trg_21 = probeTaxRulesGroup($country, $id_lang, PROBE_MATRIX_TAX_RATE, 'TWO_CARRIERLESS_TEST_TRG_21');
+Configuration::updateValue('TWO_CARRIERLESS_TEST_TRG_21', $id_trg_21);
 $customer = probeCustomer($id_lang);
 probeApplyContext($customer, $country, $id_lang);
 $address = probeAddress($customer, $country);
 $id_product = probeProductId($id_lang);
 $cart = probeCart($customer, $address, $id_lang, $id_product);
 $id_carrier_reference = probeExternalShippingRow($cart, $id_product, $id_lang);
-$id_taxed_carrier = probeTaxedCarrier($country, $id_lang, (int) Configuration::get('TWO_CARRIERLESS_TEST_TRG_21'));
-$taxed_carrier_cart = probeTaxedCarrierCart(
-    $customer,
-    $address,
-    $id_lang,
-    (int) Configuration::get('TWO_CARRIERLESS_TEST_TRG_21'),
-    $id_taxed_carrier
-);
+$id_taxed_carrier = probeTaxedCarrier($country, $id_lang, $id_trg_21);
+$taxed_carrier_cart = probeTaxedCarrierCart($customer, $address, $id_lang, $id_trg_21, $id_taxed_carrier);
 
 Configuration::updateValue('TWO_CARRIERLESS_TEST_RATE', (string) PROBE_TAX_RATE);
 Configuration::updateValue('TWO_CARRIERLESS_TEST_ID_CUSTOMER', (int) $customer->id);

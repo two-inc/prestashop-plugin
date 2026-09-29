@@ -39,7 +39,7 @@ class Cart extends CartCore
             : 0.0;
     }
 
-    // PS 9 core adds the sixth parameter; PS 8 core ignores the extra argument.
+    // PS 9.0.1+ core adds the sixth parameter; PS 8 core ignores the extra argument.
     public function getProducts($refresh = false, $id_product = false, $id_country = null, $fullInfos = true, bool $keepOrderPrices = false, bool $shouldSplitGiftProductsQuantity = false)
     {
         $products = parent::getProducts($refresh, $id_product, $id_country, $fullInfos, $keepOrderPrices, $shouldSplitGiftProductsQuantity);
@@ -74,7 +74,7 @@ class Cart extends CartCore
             $total += $this->getExternalShippingCost();
         }
         // Core prices product rows itself, so the rows' surcharge has to be added to the totals too.
-        if ($products === null && in_array((int) $type, array(Cart::BOTH, Cart::BOTH_WITHOUT_SHIPPING, Cart::ONLY_PRODUCTS), true)) {
+        if ($products === null && in_array((int) $type, array(Cart::BOTH, Cart::BOTH_WITHOUT_SHIPPING, Cart::ONLY_PRODUCTS, Cart::ONLY_PRODUCTS_WITHOUT_SHIPPING, Cart::ONLY_PHYSICAL_PRODUCTS_WITHOUT_SHIPPING), true)) {
             $total += $this->getProductSurcharge() * count(parent::getProducts());
         }
 
