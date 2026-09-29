@@ -14,7 +14,7 @@ These run in CI on every pull request — `.github/workflows/integration.yml`, P
 
 ### Carrier-less shipping matrix
 
-`make carrierless-matrix` (CI: the "Carrier-less shipping matrix" step) runs `matrix/carrierless-shipping-cell.php` once per cell and prints a table of the `SHIPPING_FEE` line, order totals and outcome from `getTwoNewOrderData()`. It records rather than asserts: a cell fails only when its cart shape could not be reproduced. Modes, driven through the same fixture module and its Cart override (`getExternalShippingCost()`, `two_test_external_shipping` table):
+`make carrierless-matrix` (CI: the "Carrier-less shipping matrix" job) boots a throwaway PrestaShop, installs the module from the working tree, and runs `matrix/carrierless-shipping-cell.php` once per cell, printing a table of the `SHIPPING_FEE` line, order totals and outcome from `getTwoNewOrderData()`. It records rather than asserts: a cell fails only when its cart shape could not be reproduced. Modes, driven through the same fixture module and its Cart override (`getExternalShippingCost()`, `two_test_external_shipping` table):
 
 | Mode | Cart shape |
 | --- | --- |
@@ -28,16 +28,15 @@ Configs 1–3 set the Default shipping tax code to unset / a 21% group / "No tax
 | Env var | Holds |
 | --- | --- |
 | `MERCHANT_OVERRIDE_PATH` | the `TwopaymentOverride` file |
-| `MERCHANT_SHIM_PATH` | a dir with a `Cart.php` that replaces the fixture's Cart override for those cells (adapting it to what the override calls), plus optional `install.php` / `uninstall.php` run in the shop around them |
+| `MERCHANT_SHIM_PATH` | a dir with a `Cart.php` that replaces the fixture's Cart override for those cells (adapting it to what the override calls), plus an optional `install.php` run in the shop before them |
 | `MERCHANT_RATE_CONFIG_KEY` | the Configuration key the override reads its tax rate from |
 
 #### Matrix invariants
 
-- Setup is strict: any failure aborts before a cell runs.
-- Teardown is best-effort: every step is attempted, and any failed step makes the run exit non-zero.
-- Shop state after a run equals shop state before it.
-- A cell is reported only if its cart-shape checks pass; the plugin's gates are never bypassed.
-- No merchant-specific identifier enters this repo: merchant-shaped pieces are injected from out-of-tree paths through the env vars above.
+- The matrix runs only on a container it created, and removes that container on exit, whether the run passes, fails or is killed. A later run never depends on or inherits a previous run's state. A run killed with SIGKILL cannot clean up, so the next run removes its leftovers before booting.
+- Setup is strict: any failure aborts before any cell runs.
+- A cell is reported only if its cart-shape checks pass. Plugin gates are never bypassed.
+- Merchant-specific identifiers never enter the repo. Merchant-shaped pieces are injected from out-of-tree paths via env vars.
 
 ### Why a probe and not another unit spec
 

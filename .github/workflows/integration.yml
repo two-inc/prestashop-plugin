@@ -64,10 +64,6 @@ jobs:
       - name: Run integration probes
         run: dev/ci/run-integration-probes.sh
 
-      # Report-only: fails only if a cell cannot reproduce its cart shape.
-      - name: Carrier-less shipping matrix
-        run: dev/ci/run-carrierless-matrix.sh
-
       - name: Dump module log on failure
         if: failure()
         run: |
@@ -85,3 +81,20 @@ jobs:
         run: |
           docker rm -f "ps-$SFX" "psdb-$SFX" 2>/dev/null || true
           docker network rm "psnet-$SFX" 2>/dev/null || true
+
+  carrierless-matrix:
+    name: Carrier-less shipping matrix (PS ${{ matrix.ps-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        ps-version: ["8", "9"]
+    env:
+      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-version }}-apache
+    steps:
+      - uses: actions/checkout@v4
+
+      # Report-only: boots and removes its own shop, and fails only if a cell cannot reproduce its cart shape.
+      - name: Carrier-less shipping matrix
+        run: dev/ci/run-carrierless-matrix.sh
