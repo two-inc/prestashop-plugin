@@ -4380,10 +4380,7 @@ class Twopayment extends PaymentModule
     public function putTwoOrderUpdate($order, $orderpaymentdata, &$paymentdata = null)
     {
         $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
-        $hashed = $paymentdata;
-        // Derived from today's date, so it would change the hash daily without changing the order.
-        unset($hashed['shipping_details']['expected_delivery_date']);
-        $hash = md5(json_encode($hashed));
+        $hash = md5(json_encode($this->getTwoUpdateHashBasis($paymentdata)));
         if (isset($orderpaymentdata['two_update_hash']) && $orderpaymentdata['two_update_hash'] === $hash) {
             return null;
         }
@@ -4394,6 +4391,33 @@ class Twopayment extends PaymentModule
         }
 
         return $response;
+    }
+
+    /**
+     * What an update changes at Two: the money, the lines' shape, the parties and addresses, and the shipment.
+     * Catalogue copy, images and translated labels are left out, as they change without the order changing.
+     *
+     * @param array $paymentdata getTwoUpdateOrderData()
+     * @return array
+     */
+    private function getTwoUpdateHashBasis($paymentdata)
+    {
+        $lines = array();
+        foreach ($paymentdata['line_items'] as $line) {
+            $lines[] = array_intersect_key($line, array_flip(array(
+                'type', 'quantity', 'unit_price', 'net_amount', 'tax_amount', 'gross_amount', 'discount_amount', 'tax_rate',
+            )));
+        }
+        $basis = array_intersect_key($paymentdata, array_flip(array(
+            'gross_amount', 'net_amount', 'tax_amount', 'discount_amount', 'currency', 'merchant_order_id', 'merchant_reference',
+            'billing_address', 'shipping_address',
+        )));
+        $basis['company'] = $paymentdata['buyer']['company'];
+        $basis['carrier_name'] = $paymentdata['shipping_details']['carrier_name'];
+        $basis['tracking_number'] = $paymentdata['shipping_details']['tracking_number'];
+        $basis['line_items'] = $lines;
+
+        return $basis;
     }
 
     /**
