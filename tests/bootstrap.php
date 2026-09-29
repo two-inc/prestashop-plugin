@@ -2470,6 +2470,16 @@ namespace {
                 $next = array_shift(StubStore::$dbExecuteSResponses);
                 return is_array($next) ? $next : [];
             }
+            // Every id the fee reference was ever sold under, for the retired-id seed.
+            if (preg_match("/SELECT DISTINCT `product_id` FROM `" . _DB_PREFIX_ . "order_detail` WHERE `product_reference` = '([^']*)'$/", (string) $sql, $m)) {
+                $ids = [];
+                foreach (StubStore::$orderDetails as $row) {
+                    if (($row['product_reference'] ?? '') === $m[1]) {
+                        $ids[(int) $row['product_id']] = ['product_id' => (string) $row['product_id']];
+                    }
+                }
+                return array_values($ids);
+            }
             // The order's rows, each with its order_detail_tax rates listed as `placed_rates`.
             if (preg_match("/FROM `" . _DB_PREFIX_ . "order_detail` od WHERE od\\.`id_order` = (\\d+)$/", (string) $sql, $m)) {
                 $rows = [];
