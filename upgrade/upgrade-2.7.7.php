@@ -29,7 +29,7 @@
  *
  * Guarded on information_schema per column rather than assumed absent: a shop
  * installed fresh on 2.7.7+ already has them from createTwoTables(), and
- * ensureTwoOrderCompanyColumns() may have added them at runtime on a shop whose
+ * ensureTwoPaymentColumns() may have added them at runtime on a shop whose
  * files were swapped in place without core ever running an upgrade. All three
  * routes must be idempotent.
  *

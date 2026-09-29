@@ -577,3 +577,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_0592fff84c41da1f5de791af5d35bb18'] 
 $_MODULE['<{twopayment}prestashop>twopayment_17ff44377a631de2e9afb533c9a34063'] = 'Tyvärr, vi kunde inte lägga detta i varukorgen. Försök igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Ändringen av ordern sparades i PrestaShop men skickades inte till fakturaleverantören. Upprepa inte ändringen. Kontakta support.';
 $_MODULE['<{twopayment}prestashop>twopayment_d9e8fd0ca4e27bc560c15e7ac3e5c1ff'] = 'Spårningsnumret sparades i PrestaShop men skickades inte till fakturaleverantören. Kontakta support.';
+$_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] = 'Ändringen sparades i PrestaShop men skickades inte till fakturaleverantören: %s';
+$_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Ändringar i ordern sedan %s sparades i PrestaShop men har inte nått %s, så fakturan kanske inte stämmer med ordern. Upprepa inte en ändring för att försöka igen; kontakta support.';
