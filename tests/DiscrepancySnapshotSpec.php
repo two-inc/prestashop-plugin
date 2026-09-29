@@ -88,17 +88,48 @@ final class DiscrepancySnapshotSpec
         return $reflection->invoke(null, ...$args);
     }
 
+    /** A harness whose line formulas or tax subtotals fail, to reach the gates no cart fixture can. */
+    private static function harness(?string $fault): TwopaymentTestHarness
+    {
+        return new class ($fault) extends TwopaymentTestHarness {
+            private $fault;
+
+            public function __construct(?string $fault)
+            {
+                parent::__construct();
+                $this->fault = $fault;
+            }
+
+            public function validateTwoLineItems($line_items)
+            {
+                return $this->fault !== 'badFormulas' && parent::validateTwoLineItems($line_items);
+            }
+
+            public function getTwoTaxSubtotals($line_items)
+            {
+                $subtotals = parent::getTwoTaxSubtotals($line_items);
+                if ($this->fault === 'badSubtotals') {
+                    $subtotals[0]['taxable_amount'] += 5.0;
+                }
+
+                return $subtotals;
+            }
+        };
+    }
+
     private static function testGateOutcomesWriteTheExpectedSnapshot(): void
     {
         $cases = [
-            // [default shipping group, debug, product total_wt, cart BOTH incl, expected gate (null none, '' baseline), severity, has sent lines, description]
-            ['', '0', 121.00, 150.00, 'shipping_rate_unresolvable', 3, false, 'carrier-less shipping refused'],
-            ['4210', '0', 121.00, 150.00, null, 0, false, 'shipping gate caught by the Default shipping tax code is not a failure'],
-            ['4210', '1', 121.00, 150.00, '', 1, true, 'debug mode leaves a baseline for a passing cart'],
-            ['4210', '0', 131.00, 160.00, 'declared_rate', 3, false, 'product tax contradicts its declared rate'],
-            ['4210', '0', 121.00, 170.00, 'reconciliation', 3, true, 'order lines do not reconcile with the cart total'],
+            // [default shipping group, debug, product total_wt, cart BOTH incl, harness, expected gate (null none, '' baseline), severity, has sent lines, description]
+            ['', '0', 121.00, 150.00, null, 'shipping_rate_unresolvable', 3, false, 'carrier-less shipping refused'],
+            ['4210', '0', 121.00, 150.00, null, null, 0, false, 'shipping gate caught by the Default shipping tax code is not a failure'],
+            ['4210', '1', 121.00, 150.00, null, '', 1, true, 'debug mode leaves a baseline for a passing cart'],
+            ['4210', '0', 131.00, 160.00, null, 'declared_rate', 3, false, 'product tax contradicts its declared rate'],
+            ['4210', '0', 121.00, 170.00, null, 'reconciliation', 3, true, 'order lines do not reconcile with the cart total'],
+            ['4210', '0', 121.00, 150.00, 'badFormulas', 'line_formulas', 3, true, 'line item formulas do not hold'],
+            ['4210', '0', 121.00, 150.00, 'badSubtotals', 'tax_subtotals', 3, true, 'tax subtotals do not reconcile with the lines'],
         ];
-        foreach ($cases as $i => [$group, $debug, $productGross, $cartGross, $gate, $severity, $hasLines, $description]) {
+        foreach ($cases as $i => [$group, $debug, $productGross, $cartGross, $harness, $gate, $severity, $hasLines, $description]) {
             StubStore::reset();
             PrestaShopLogger::reset();
             StubStore::$taxRulesGroups[4210] = ['name' => 'IVA 21%', 'active' => 1];
@@ -112,7 +143,7 @@ final class DiscrepancySnapshotSpec
             StubStore::$cartTotals[$id][true][Cart::BOTH] = $cartGross;
 
             try {
-                (new TwopaymentTestHarness())->getTwoNewOrderData('attempt-' . $id, $cart, self::fixture('merchantUrls'));
+                self::harness($harness)->getTwoNewOrderData('attempt-' . $id, $cart, self::fixture('merchantUrls'));
             } catch (Exception $e) {
                 // Refusals are expected; the snapshot row is what is asserted.
             }

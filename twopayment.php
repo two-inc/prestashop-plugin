@@ -7165,16 +7165,17 @@ class Twopayment extends PaymentModule
      * @param string $label
      * @param array $numbers
      * @param Throwable|null $exception the exception the gate throws, null when its caller throws
+     * @param array|null $lineItems the payload lines built so far
      * @return void
      */
-    private function recordTwoDiscrepancyGate($name, $label, array $numbers, $exception = null)
+    private function recordTwoDiscrepancyGate($name, $label, array $numbers, $exception = null, $lineItems = null)
     {
         $this->twoDiscrepancyGate = array(
             'name' => $name,
             'label' => (string) $label,
             'numbers' => $numbers,
             'exception' => $exception,
-            'line_items' => null,
+            'line_items' => $lineItems,
         );
     }
 
@@ -7250,6 +7251,7 @@ class Twopayment extends PaymentModule
 
         if (!$this->validateTwoLineItems($line_items)) {
             PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - invalid line item formulas', 3);
+            $this->recordTwoDiscrepancyGate('line_formulas', $contextLabel, array(), null, $line_items);
             throw new Exception('Invalid line item formulas');
         }
 
@@ -7304,6 +7306,10 @@ class Twopayment extends PaymentModule
                 $this->getTwoRoundAmount($subtotalsTotals['gross']) . ')',
                 3
             );
+            $this->recordTwoDiscrepancyGate('tax_subtotals', $contextLabel, array(
+                'line' => $lineTotals,
+                'subtotals' => $subtotalsTotals,
+            ), null, $line_items);
             throw new TwoCheckoutAmountException('Tax subtotals do not reconcile with line items');
         }
 
