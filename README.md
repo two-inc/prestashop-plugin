@@ -815,7 +815,7 @@ it also writes one for every cart that passes, as a baseline to compare against.
   | C | `residual` ≠ 0 and `ONLY_SHIPPING` = 0 | a cost is added to the cart total outside the shipping total, so no tax rule covers it |
   | A | `ONLY_SHIPPING` > 0, incl = excl, no carrier tax rules group | shipping priced without a carrier and without tax |
   | B | `ONLY_SHIPPING` incl > excl, no carrier tax rules group | shipping priced without a carrier, with tax nothing declares |
-  | D | a product line whose `delta` exceeds rounding (qty × 0.005 × (2 + rate) under `PS_ROUND_TYPE` item, 0.011 under line or total), plus an overridden Cart, Product or Carrier price method or a price-hook module | an amount added to a product line that its tax rate does not cover |
+  | D | a product line whose \|`delta`\| > max(1% of its `total_wt`, 1.00), plus an overridden Cart, Product or Carrier price method or a price-hook module | a material amount added to a product line that its tax rate does not cover |
   | other | anything else, including any input that failed to read | read the gate numbers and product lines directly |
 
   "No carrier tax rules group" means every carrier in `priced_option`, the delivery option
@@ -823,6 +823,14 @@ it also writes one for every cart that passes, as a baseline to compare against.
   auto-selects one, and a multi-carrier option lists all its carriers. C also
   needs `BOTH` > 0, since stacked vouchers clamp it to 0. `delta` already allows for
   ecotax taxed under its own group.
+
+  D is a materiality test, not a rounding detector: the 1% and 1.00 bounds sit above the
+  rounding of every round type, round mode and currency precision on ordinary lines, with no
+  per-setting tolerance to get wrong. The floor is deliberate: €2.50 untaxed on a €1,002.50
+  line (delta −0.53) reads `other`, and its raw `delta` is still in the record. Known limit:
+  `PS_ROUND_TYPE` item rounds each unit, so a cheap unit at high quantity, or a whole-unit
+  currency precision, can round past 1% (10 × 40.49 NOK at precision 0 is delta 10.00 on
+  510.00) and reads D when a price override or hook is also present.
 
 #### Snapshot invariants
 - The snapshot never changes, fails or slows a checkout. Every one of its own failures is
@@ -832,6 +840,8 @@ it also writes one for every cart that passes, as a baseline to compare against.
   refused (the Debug Mode baseline aside), nor for a cart with no valid line items.
 - No buyer PII leaves the address section. Third-party exception messages are never
   stored, only the class and code.
+- D means a material untaxed component, |delta| > max(1% of the line's gross, 1.00), with
+  no tolerance per round type, round mode or currency precision.
 - The shape is a positive identification only. Any errored, missing or ambiguous input
   yields `other`, never A, B, C or D.
 - The stored JSON survives PrestaShop's log storage on 1.7, 8 and 9 byte-for-byte: `<` and
