@@ -77,7 +77,7 @@ final class AjaxCheckoutFailureSpec
      */
     private static function testPluginAmountDiagnosticStillReachesTheBuyer(): void
     {
-        $diagnostic = 'Order totals do not reconcile with cart totals: cart total 150.00 ' .
+        $diagnostic = 'Order totals do not reconcile with cart totals: gross cart 150.00 ' .
             'vs order lines 121.00 (difference 29.00)';
         $controller = self::makeController(new TwoCheckoutAmountException($diagnostic));
         $_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';

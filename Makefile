@@ -42,7 +42,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop carrierless-off bump patch minor major phpstan bumpver-patch bumpver-minor bumpver-major
+.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop bump patch minor major phpstan bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
@@ -172,30 +172,21 @@ test-js:
 # optional "Default shipping tax code" setting exists for. Not part of
 # `install`: it is a deliberately unusual shop, not a default dev shop.
 #
-# What it does, all of it reversible with `make carrierless-off`:
+# What it does:
 #   - installs tests/integration/fixtures/twocarrierlesstest, which injects a
 #     priced delivery option belonging to no carrier
 #   - creates a customer, a company address, a 25% tax rules group and a cart
 #     carrying that delivery selection (id_carrier = 0)
-#   - adds define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true) to
-#     config/defines_custom.inc.php, which is what reveals the "Default
-#     shipping tax code" dropdown in the module's Advanced settings
-## Set up the local shop for carrier-less shipping + reveal the hidden "Default shipping tax code" field
+## Set up the local shop for carrier-less shipping
 carrierless-shop:
 	PS_CONTAINER=$(CONTAINER) dev/ci/seed-carrierless-cart.sh
-	docker exec $(CONTAINER) bash /var/www/html/modules/$(MODULE_NAME)/dev/enable-default-shipping-tax-code
 	@echo ""
 	@echo "========================================="
 	@echo " Carrier-less shipping is set up."
 	@echo " Admin field:  $(URL)admin -> Modules -> Two -> Configure -> Advanced settings"
 	@echo "               -> 'Default shipping tax code'"
 	@echo " Probe it:     make test-integration"
-	@echo " Undo:         make carrierless-off"
 	@echo "========================================="
-
-## Undo make carrierless-shop: hide the "Default shipping tax code" field again
-carrierless-off:
-	docker exec $(CONTAINER) bash /var/www/html/modules/$(MODULE_NAME)/dev/enable-default-shipping-tax-code --reset
 
 ## Run the tests/integration probes against the running local shop (run make carrierless-shop first)
 test-integration:
