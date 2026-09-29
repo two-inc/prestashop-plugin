@@ -400,6 +400,8 @@ namespace {
 
         public static function reset(): void
         {
+            Hook::$subscribers = [];
+            Hook::$ids = [];
             self::$configurationGroup = [];
             self::$configurationShop = [];
             self::$configurationLang = [];
@@ -975,9 +977,62 @@ namespace {
         /** @var array<string,array<int,array{module:string}>> modules registered per hook */
         public static array $execLists = [];
 
+        /** @var array<string,array<string,callable>> subscriber callbacks per hook, keyed by module name */
+        public static array $subscribers = [];
+        /** @var array<string,int> hook rows by name, as Hook::getIdByName() finds them */
+        public static array $ids = [];
+
+        public $id = 0;
+        public $name = '';
+        public $title = '';
+        public $description = '';
+        public $position = 1;
+
         public static function getHookModuleExecList($hookName = null)
         {
-            return self::$execLists[$hookName] ?? false;
+            if (isset(self::$execLists[$hookName])) {
+                return self::$execLists[$hookName];
+            }
+            if (!empty(self::$subscribers[$hookName])) {
+                return array_map(static function ($module) {
+                    return ['module' => $module];
+                }, array_keys(self::$subscribers[$hookName]));
+            }
+
+            return false;
+        }
+
+        /**
+         * Core's call shape: each subscriber gets the args array by value, so only
+         * elements the caller bound by reference travel back.
+         */
+        public static function exec($hookName, $hookArgs = [], $idModule = null, $arrayReturn = false)
+        {
+            foreach (self::$subscribers[$hookName] ?? [] as $callback) {
+                $callback($hookArgs);
+            }
+
+            return '';
+        }
+
+        public static function getIdByName($hookName)
+        {
+            return self::$ids[$hookName] ?? false;
+        }
+
+        public function add(): bool
+        {
+            $this->id = count(self::$ids) + 1;
+            self::$ids[$this->name] = $this->id;
+
+            return true;
+        }
+
+        public static function reset(): void
+        {
+            self::$execLists = [];
+            self::$subscribers = [];
+            self::$ids = [];
         }
     }
 
@@ -2667,6 +2722,9 @@ namespace {
         public $id = 0;
         public $id_cart = 0;
         public $id_customer = 0;
+        public $id_carrier = 0;
+        public $id_lang = 1;
+        public $module = '';
         public $total_paid = 0.0;
         public $module = '';
         public bool $loaded = false;
@@ -2681,6 +2739,8 @@ namespace {
                 $this->module = (string) ($row['module'] ?? '');
                 $this->id_cart = (int) ($row['id_cart'] ?? 0);
                 $this->id_customer = (int) ($row['id_customer'] ?? 0);
+                $this->id_carrier = (int) ($row['id_carrier'] ?? 0);
+                $this->module = (string) ($row['module'] ?? '');
                 $this->total_paid = (float) ($row['total_paid'] ?? 0.0);
             }
         }
@@ -2979,6 +3039,26 @@ namespace {
             $this->twoApiKeyStatusMemo = $status === null
                 ? null
                 : array('status' => (string) $status, 'code' => $code);
+        }
+
+        /**
+         * The pricing build plus the gates it hands to the order postprocessing
+         * choke (TWO-26092), for specs that price a bare cart without a builder.
+         */
+        public function priceAndGateTwoCart($cart, $contextLabel, $strict = false, $termDays = null, $sync = false): array
+        {
+            $build = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
+            $pricing = $build->invoke($this, $cart, $contextLabel, $strict, $termDays, $sync);
+            $payload = [
+                'net_amount' => $this->getTwoRoundAmount($pricing['net_amount']),
+                'tax_amount' => $this->getTwoRoundAmount($pricing['tax_amount']),
+                'gross_amount' => $this->getTwoRoundAmount($pricing['gross_amount']),
+                'line_items' => $pricing['line_items'],
+                'tax_subtotals' => $pricing['tax_subtotals'],
+            ];
+            $context = $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_CREATE, 'spec', '/v1/order', $cart);
+
+            return $this->postprocessOrderRequest(TwoOrderPostprocessing::REQUEST_ORDER_CREATE, $payload, $context, $pricing['gates']);
         }
 
         /** The admin "Current configuration health" panel HTML (ABN-518). */
