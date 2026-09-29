@@ -23,9 +23,6 @@ class TwoDiscrepancySnapshot
     const MAX_ROWS = 40;
     const MAX_STRING = 120;
     const AMOUNT_TOLERANCE = 0.01;
-    // D is a material untaxed amount on a line: its delta beyond 1% of the line's gross and this floor.
-    const MATERIAL_SHARE = 0.01;
-    const MATERIAL_FLOOR = 1.0;
 
     /** @var bool set once a Cart read has thrown during the build in progress */
     private static $cartReadFailed = false;
@@ -45,13 +42,6 @@ class TwoDiscrepancySnapshot
         'ONLY_SHIPPING',
         'ONLY_WRAPPING',
         'ONLY_PHYSICAL_PRODUCTS_WITHOUT_SHIPPING',
-    );
-
-    // Overriding one of these can move a product line's amounts away from its tax rate.
-    const PRICE_METHODS = array(
-        'Cart' => array('getOrderTotal', 'getProducts', 'getPackageShippingCost', 'getTotalShippingCost'),
-        'Product' => array('getPriceStatic', 'priceCalculation', 'getPrice', 'getTaxesRate', 'getIdTaxRulesGroupByIdProduct'),
-        'Carrier' => array('getTaxesRate', 'getIdTaxRulesGroup', 'getIdTaxRulesGroupByIdCarrier'),
     );
 
     const LINE_ITEM_KEYS = array(
@@ -136,7 +126,7 @@ class TwoDiscrepancySnapshot
      * Map a snapshot to the cart shape that explains it (README "Discrepancy snapshot").
      *
      * @param array $snapshot
-     * @return string A|B|C|D|other
+     * @return string A|B|C|other
      */
     public static function classify(array $snapshot)
     {
@@ -157,16 +147,12 @@ class TwoDiscrepancySnapshot
         if ($shipIncl > self::AMOUNT_TOLERANCE && $carrierGroups === array(0)) {
             return abs($shipIncl - $shipExcl) <= self::AMOUNT_TOLERANCE ? 'A' : 'B';
         }
-        if (self::hasMaterialProductDelta($snapshot) && self::hasPriceOverrideOrHook($snapshot)) {
-            return 'D';
-        }
 
         return 'other';
     }
 
     /**
      * total_wt - total x (1 + declared rate), less what ecotax taxed at its own rate adds.
-     * Ecotax is subtracted because its rate gap alone can exceed 1% of a line's gross.
      *
      * @param array $row a products row
      * @return float|null null when an input is missing or errored
@@ -433,7 +419,7 @@ class TwoDiscrepancySnapshot
             });
         }
         $overridden = array();
-        foreach (array_keys(self::PRICE_METHODS) as $class) {
+        foreach (array('Cart', 'Product', 'Carrier') as $class) {
             $overridden[$class] = self::guard(function () use ($class, &$truncated) {
                 $names = array();
                 if (class_exists($class . 'Core', false) && get_parent_class($class) === $class . 'Core') {
@@ -547,40 +533,6 @@ class TwoDiscrepancySnapshot
         }
 
         return array_slice($rows, 0, self::MAX_ROWS);
-    }
-
-    // Every row is readable and one carries a material delta: rounding in any round type, mode or precision stays below it.
-    private static function hasMaterialProductDelta(array $snapshot)
-    {
-        $rows = isset($snapshot['products']) && is_array($snapshot['products']) && !isset($snapshot['products']['error'])
-            ? $snapshot['products'] : array();
-        $material = false;
-        foreach ($rows as $row) {
-            $delta = is_array($row) ? self::productDelta($row) : null;
-            if ($delta === null) {
-                return false;
-            }
-            $material = $material || abs($delta) > max(self::MATERIAL_SHARE * abs((float) $row['total_wt']), self::MATERIAL_FLOOR);
-        }
-
-        return $material;
-    }
-
-    private static function hasPriceOverrideOrHook(array $snapshot)
-    {
-        foreach (self::PRICE_METHODS as $class => $methods) {
-            $overridden = isset($snapshot['overrides']['methods_overridden'][$class]) ? $snapshot['overrides']['methods_overridden'][$class] : null;
-            if (is_array($overridden) && !isset($overridden['error']) && array_intersect($methods, $overridden)) {
-                return true;
-            }
-        }
-        foreach (array('actionProductPriceCalculation', 'actionCartGetPackageShippingCost') as $hook) {
-            if (!empty($snapshot['hooks'][$hook]) && !isset($snapshot['hooks'][$hook]['error'])) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**
