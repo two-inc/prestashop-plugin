@@ -8,11 +8,13 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PREFIX=carrierless-matrix
+# The UID keeps one user's sweep off another's runs on a shared Docker daemon.
+PREFIX="carrierless-matrix-$(id -u)"
 # The harness scripts would target PS_CONTAINER over SFX; this run only ever uses its own.
 unset PS_CONTAINER
 # The cells never call Two; a port nothing listens on makes checkout-media priming fail fast.
-export TWO_API_BASE_URL="${TWO_API_BASE_URL:-http://127.0.0.1:1}"
+# Assigned unconditionally: the Makefile exports its sandbox URL.
+export TWO_API_BASE_URL=http://127.0.0.1:1
 
 CONFIG_GROUPS=("1 2 3")
 if [ -n "${MERCHANT_OVERRIDE_PATH:-}" ]; then
@@ -28,16 +30,36 @@ remove_run() {
   docker ps -aq --filter "name=-$PREFIX-$1-" | xargs -r docker rm -f >/dev/null
   docker network ls -q --filter "name=-$PREFIX-$1-" | xargs -r docker network rm >/dev/null
 }
+TMP_ROOT="${TMPDIR:-/tmp}"
 # A run killed with SIGKILL never reached its trap; its PID is gone, so its leftovers go now.
 for pid in $({ docker ps -a --format '{{.Names}}'; docker network ls --format '{{.Name}}'; } \
     | sed -n "s/^[a-z]*-$PREFIX-\([0-9]*\)-.*/\1/p" | sort -u); do
-  if [ "$pid" = "$$" ] || ! kill -0 "$pid" 2>/dev/null; then
+  if [ "$pid" = "$$" ] || ! ps -p "$pid" >/dev/null; then
     remove_run "$pid"
   fi
 done
+for dir in "$TMP_ROOT/$PREFIX-"*; do
+  pid=${dir##*/"$PREFIX"-}
+  pid=${pid%%.*}
+  if [ -O "$dir" ] && ! ps -p "$pid" >/dev/null; then
+    rm -rf "$dir"
+  fi
+done
 
-STAGE=$(mktemp -d)
-trap 'remove_run $$; rm -rf "$STAGE"' EXIT
+rows=()
+print_table() {
+  [ "${#rows[@]}" -gt 0 ] || return 0
+  echo
+  echo "| cell | shape | cart BOTH incl/excl | SHIPPING_FEE gross/net/tax@rate | order gross/net/tax | outcome |"
+  echo "|---|---|---|---|---|---|"
+  for row in "${rows[@]}"; do
+    echo "| ${row//$'\t'/ | } |"
+  done
+  [ -n "${MERCHANT_OVERRIDE_PATH:-}" ] || echo "(configs 4/5 skipped: MERCHANT_OVERRIDE_PATH not set)"
+}
+
+STAGE=$(mktemp -d "$TMP_ROOT/$PREFIX-$$.XXXXXX")
+trap 'rm -rf "$STAGE"; print_table; remove_run $$' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 (cd "$REPO_ROOT" && git ls-files -z --cached --others --exclude-standard) \
@@ -57,18 +79,17 @@ inject_merchant_override() {
   docker exec "$ps" bash -c "rm -f /var/www/html/var/cache/*/class_index.php"
 }
 
-rows=()
 status=0
 for group in "${!CONFIG_GROUPS[@]}"; do
   export SFX="$PREFIX-$$-$group"
   ps="ps-$SFX"
-  "$REPO_ROOT/dev/ci/boot-prestashop.sh"
-  "$REPO_ROOT/dev/ci/install-module.sh" "$STAGE"
-  "$REPO_ROOT/dev/ci/seed-two-config.sh"
-  "$REPO_ROOT/dev/ci/seed-carrierless-cart.sh"
+  "$STAGE/dev/ci/boot-prestashop.sh"
+  "$STAGE/dev/ci/install-module.sh" "$STAGE"
+  "$STAGE/dev/ci/seed-two-config.sh"
+  "$STAGE/dev/ci/seed-carrierless-cart.sh"
   [ "$group" = 0 ] || inject_merchant_override "$ps"
   docker exec "$ps" mkdir -p /tmp/two-integration
-  tar -cf - -C "$REPO_ROOT/tests/integration" --exclude=fixtures . \
+  tar -cf - -C "$STAGE/tests/integration" --exclude=fixtures . \
     | docker exec -i "$ps" tar -xf - -C /tmp/two-integration
 
   for config in ${CONFIG_GROUPS[$group]}; do
@@ -93,11 +114,4 @@ for group in "${!CONFIG_GROUPS[@]}"; do
   remove_run $$
 done
 
-echo
-echo "| cell | shape | cart BOTH incl/excl | SHIPPING_FEE gross/net/tax@rate | order gross/net/tax | outcome |"
-echo "|---|---|---|---|---|---|"
-for row in "${rows[@]}"; do
-  echo "| ${row//$'\t'/ | } |"
-done
-[ -n "${MERCHANT_OVERRIDE_PATH:-}" ] || echo "(configs 4/5 skipped: MERCHANT_OVERRIDE_PATH not set)"
 exit $status
