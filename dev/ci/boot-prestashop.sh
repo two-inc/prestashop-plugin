@@ -11,6 +11,7 @@
 #               can't collide on container/network names.
 # Optional env:
 #   PS_IMAGE     — PrestaShop image (default mirrors docker-compose.yml).
+#   PULL         — 0 to reuse a locally cached image instead of pulling.
 #   PS_DEV_MODE  — 1 (default) for debug-mode strictness (extra hook/method
 #                  validation, verbose fatals) when installing HEAD; 0 for
 #                  merchant-realistic production mode. The upgrade-smoke job
@@ -49,6 +50,9 @@ TWO_API_BASE_URL="${TWO_API_BASE_URL:-}"
 # error.
 pull_with_retry() {
   local image="$1" n=0
+  if [ "${PULL:-1}" = 0 ] && docker image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
   until docker pull "$image"; do
     n=$((n + 1))
     if [ "$n" -ge 5 ]; then

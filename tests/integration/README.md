@@ -12,6 +12,34 @@ These run in CI on every pull request — `.github/workflows/integration.yml`, P
 | `default-shipping-tax-code.php` | The optional **Default shipping tax code** on a cart whose shipping is priced but whose delivery option belongs to no carrier. Asserts the real order-intent `SHIPPING_FEE` line (`gross_amount` / `net_amount` / `tax_amount` / `tax_rate` / `tax_class_name`) and the log severity, across four states: unset → refuse at severity 3; group declared → that group's rate relayed at severity 2; core's "No tax" sentinel → 0%; a since-deleted group → refuse at severity 3. |
 | `line-item-image.php` | The line-item `image_url` against the cart rows core builds (TWO-26071). A combination with its own image sends that image rather than the product cover, a combination without one sends the cover, and a product with no image sends an empty `image_url`. Builds its own products and cart. |
 
+### Carrier-less shipping matrix
+
+`make carrierless-matrix` (CI: the "Carrier-less shipping matrix" job) boots a throwaway PrestaShop, installs the module from the working tree, and runs `matrix/carrierless-shipping-cell.php` once per cell, printing a table of the `SHIPPING_FEE` line, order totals and outcome from `getTwoNewOrderData()`. It records rather than asserts: a cell fails only when its cart shape could not be reproduced. Modes, driven through the same fixture module and its Cart override (`getExternalShippingCost()`, `two_test_external_shipping` table):
+
+| Mode | Cart shape |
+| --- | --- |
+| A | `id_carrier = 0`, no shipping tax rules group; `ONLY_SHIPPING` 29.00 incl == excl (PrestaShop sees 0% shipping VAT) |
+| B | `id_carrier = 0`, no shipping tax rules group; `ONLY_SHIPPING` 29.00 incl / 23.97 excl (21%) |
+| C | `id_carrier = 0`, no shipping tax rules group; `ONLY_SHIPPING` 0; 29.00 only via `getExternalShippingCost()`, added untaxed to `getOrderTotal(*, BOTH)` |
+| D | A real carrier declaring a 21% group; the product line declares 21% but carries a fixed untaxed 120.00 on its net, so its tax covers only the base. Configs 1–3 only |
+
+Configs 1–3 set the Default shipping tax code to unset / a 21% group / "No tax". Configs 4a/4b/5a/5b add a merchant `TwopaymentOverride`, with its tax-rate setting unset / 21, and default code unset (4) or 21% (5). Nothing merchant-specific is committed; those cells need three env vars:
+
+| Env var | Holds |
+| --- | --- |
+| `MERCHANT_OVERRIDE_PATH` | the `TwopaymentOverride` file |
+| `MERCHANT_SHIM_PATH` | a dir with a `Cart.php` that replaces the fixture's Cart override for those cells (adapting it to what the override calls), plus an optional `install.php` run in the shop before them |
+| `MERCHANT_RATE_CONFIG_KEY` | the Configuration key the override reads its tax rate from |
+
+The matrix pulls its images on every run; `PULL=0 make carrierless-matrix` reuses locally cached ones.
+
+#### Matrix invariants
+
+- The matrix runs only on a container it created, and removes that container on exit, whether the run passes, fails or is killed. A later run never depends on or inherits a previous run's state. A run killed with SIGKILL cannot clean up, so the next run removes its leftovers before booting.
+- Setup is strict: any failure aborts before any cell runs.
+- A cell is reported only if its cart-shape checks pass. Plugin gates are never bypassed.
+- Merchant-specific identifiers never enter the repo. Merchant-shaped pieces are injected from out-of-tree paths via env vars.
+
 ### Why a probe and not another unit spec
 
 `tests/DefaultShippingTaxCodeSpec.php` already proves the decision logic, but against a hand-rolled core stub — so it can only prove the logic is right *about a cart shape it asserts into existence*. Verified on PrestaShop 8.2.7, that shape does not arise from a broken carrier setup: core's `Cart::getDeliveryOptionList()` discards the entire delivery-option list on its no-carrier sentinel (`Cart.php:2921`) and `Cart::getOrderTotal(*, ONLY_SHIPPING)` derives from that same list, so a coverage gap yields shipping of `0.00` and exercises nothing at all.
