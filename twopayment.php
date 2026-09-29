@@ -7212,10 +7212,11 @@ class Twopayment extends PaymentModule
                 true
             );
         } catch (Throwable $e) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Discrepancy snapshot for cart ' . (int) $cart->id . ' failed: ' . get_class($e) . ': ' . $e->getMessage(),
-                2
-            );
+            try {
+                // The class only: a third-party message can carry buyer address data.
+                PrestaShopLogger::addLog('TwoPayment: Discrepancy snapshot for cart ' . (int) $cart->id . ' failed: ' . get_class($e), 2);
+            } catch (Throwable $ignored) {
+            }
         }
     }
 

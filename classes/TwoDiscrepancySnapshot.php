@@ -41,6 +41,13 @@ class TwoDiscrepancySnapshot
         'ONLY_PHYSICAL_PRODUCTS_WITHOUT_SHIPPING',
     );
 
+    // Overriding one of these can move a product line's amounts away from its tax rate.
+    const PRICE_METHODS = array(
+        'Cart' => array('getOrderTotal', 'getProducts', 'getPackageShippingCost', 'getTotalShippingCost'),
+        'Product' => array('getPriceStatic', 'priceCalculation', 'getPrice', 'getTaxesRate', 'getIdTaxRulesGroupByIdProduct'),
+        'Carrier' => array('getTaxesRate', 'getIdTaxRulesGroup', 'getIdTaxRulesGroupByIdCarrier'),
+    );
+
     const LINE_ITEM_KEYS = array(
         'type', 'name', 'quantity', 'unit_price', 'net_amount', 'discount_amount',
         'tax_amount', 'gross_amount', 'tax_rate', 'tax_class_name',
@@ -59,6 +66,15 @@ class TwoDiscrepancySnapshot
      */
     public static function build($cart, $gate, $lineItems, $declaredRate, $defaultShippingGroup)
     {
+        // A failed rate lookup logs a row of its own, so each group is asked once per snapshot.
+        $rates = array();
+        $declaredRate = function ($group) use (&$rates, $declaredRate) {
+            if (!array_key_exists($group, $rates)) {
+                $rates[$group] = round((float) call_user_func($declaredRate, $group), 6);
+            }
+
+            return $rates[$group];
+        };
         $snapshot = array(
             'v' => self::SCHEMA_VERSION,
             'id_cart' => (int) $cart->id,
@@ -105,16 +121,21 @@ class TwoDiscrepancySnapshot
      */
     public static function classify(array $snapshot)
     {
-        $totals = isset($snapshot['totals']) && is_array($snapshot['totals']) ? $snapshot['totals'] : array();
-        $shipIncl = self::num($totals, array('ONLY_SHIPPING', 'incl'));
-        $shipExcl = self::num($totals, array('ONLY_SHIPPING', 'excl'));
-        $residual = self::num($totals, array('residual', 'incl'));
-        $carrierGroup = (int) self::num($snapshot, array('shipping', 'carrier_tax_rules_group'));
+        $both = self::num($snapshot, array('totals', 'BOTH', 'incl'));
+        $shipIncl = self::num($snapshot, array('totals', 'ONLY_SHIPPING', 'incl'));
+        $shipExcl = self::num($snapshot, array('totals', 'ONLY_SHIPPING', 'excl'));
+        $residual = self::num($snapshot, array('totals', 'residual', 'incl'));
+        $carrierGroups = self::carrierGroups($snapshot);
+        // A shape is a positive identification: any input that errored or is missing proves nothing.
+        if ($both === null || $shipIncl === null || $shipExcl === null || $residual === null || $carrierGroups === null) {
+            return 'other';
+        }
 
-        if (abs($residual) > self::AMOUNT_TOLERANCE && abs($shipIncl) <= self::AMOUNT_TOLERANCE) {
+        // Stacked vouchers clamp BOTH to 0, which leaves a residual no hidden cost explains.
+        if (abs($residual) > self::AMOUNT_TOLERANCE && abs($shipIncl) <= self::AMOUNT_TOLERANCE && $both > self::AMOUNT_TOLERANCE) {
             return 'C';
         }
-        if ($shipIncl > self::AMOUNT_TOLERANCE && $carrierGroup <= 0) {
+        if ($shipIncl > self::AMOUNT_TOLERANCE && $carrierGroups === array(0)) {
             return abs($shipIncl - $shipExcl) <= self::AMOUNT_TOLERANCE ? 'A' : 'B';
         }
         if (self::hasUnexplainedProductDelta($snapshot) && self::hasPriceOverrideOrHook($snapshot)) {
@@ -122,6 +143,30 @@ class TwoDiscrepancySnapshot
         }
 
         return 'other';
+    }
+
+    /**
+     * total_wt - total x (1 + declared rate), less what ecotax taxed at its own rate adds.
+     *
+     * @param array $row a products row
+     * @return float|null null when an input is missing or errored
+     */
+    public static function productDelta(array $row)
+    {
+        $total = self::num($row, array('total'));
+        $totalWt = self::num($row, array('total_wt'));
+        $qty = self::num($row, array('qty'));
+        $declared = self::num($row, array('declared_rate'));
+        $ecotax = self::num($row, array('ecotax'));
+        if ($total === null || $totalWt === null || $qty === null || $declared === null || $ecotax === null) {
+            return null;
+        }
+        $ecotaxRate = $ecotax != 0.0 ? self::num($row, array('ecotax_rate')) : $declared;
+        if ($ecotaxRate === null) {
+            return null;
+        }
+
+        return round($totalWt - $total * (1 + $declared) - $ecotax * $qty * ($ecotaxRate - $declared), 2) + 0.0;
     }
 
     /**
@@ -161,7 +206,8 @@ class TwoDiscrepancySnapshot
 
     private static function encodeWithinLimit(array $snapshot)
     {
-        $flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | (defined('JSON_PARTIAL_OUTPUT_ON_ERROR') ? JSON_PARTIAL_OUTPUT_ON_ERROR : 0);
+        // Core strip_tags() every log message (pSQL without html_ok), so no raw < or > may reach it.
+        $flags = JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | (defined('JSON_PARTIAL_OUTPUT_ON_ERROR') ? JSON_PARTIAL_OUTPUT_ON_ERROR : 0);
         $json = (string) json_encode($snapshot, $flags);
         foreach (self::SHEDDABLE as $key) {
             if (strlen(addslashes($json)) <= self::MAX_BYTES) {
@@ -174,6 +220,7 @@ class TwoDiscrepancySnapshot
             $json = (string) json_encode(array(
                 'v' => self::SCHEMA_VERSION,
                 'id_cart' => isset($snapshot['id_cart']) ? $snapshot['id_cart'] : 0,
+                'gate' => array('name' => isset($snapshot['gate']['name']) ? $snapshot['gate']['name'] : null),
                 'shape' => isset($snapshot['shape']) ? $snapshot['shape'] : 'other',
                 'dropped' => 'size',
             ), $flags);
@@ -184,14 +231,15 @@ class TwoDiscrepancySnapshot
 
     /**
      * @param callable $read
-     * @return mixed the section, or {error} when it raised
+     * @return mixed the section, or {error, code} when it raised
      */
     private static function guard($read)
     {
         try {
             return $read();
         } catch (Throwable $e) {
-            return array('error' => self::str(get_class($e) . ': ' . $e->getMessage()));
+            // Never the message: third-party code puts buyer addresses in it.
+            return array('error' => get_class($e), 'code' => $e->getCode());
         }
     }
 
@@ -215,14 +263,12 @@ class TwoDiscrepancySnapshot
         // Discounts come back positive and BOTH subtracts them.
         $residual = array();
         foreach (array('incl', 'excl') as $side) {
-            $residual[$side] = round(
-                self::num($totals, array('BOTH', $side))
-                - self::num($totals, array('ONLY_PRODUCTS', $side))
-                - self::num($totals, array('ONLY_SHIPPING', $side))
-                - self::num($totals, array('ONLY_WRAPPING', $side))
-                + self::num($totals, array('ONLY_DISCOUNTS', $side)),
-                2
-            ) + 0.0;
+            $sum = 0.0;
+            foreach (array('BOTH' => 1, 'ONLY_PRODUCTS' => -1, 'ONLY_SHIPPING' => -1, 'ONLY_WRAPPING' => -1, 'ONLY_DISCOUNTS' => 1) as $name => $sign) {
+                $value = self::num($totals, array($name, $side));
+                $sum = $sum === null || $value === null ? null : $sum + $sign * $value;
+            }
+            $residual[$side] = $sum === null ? null : round($sum, 2) + 0.0;
         }
         $totals['residual'] = $residual;
 
@@ -231,18 +277,17 @@ class TwoDiscrepancySnapshot
 
     private static function products($cart, $declaredRate)
     {
+        $ecotaxRate = self::guard(function () use ($declaredRate) {
+            return call_user_func($declaredRate, (int) Configuration::get('PS_ECOTAX_TAX_RULES_GROUP_ID'));
+        });
         $rows = array();
         foreach (array_slice((array) $cart->getProducts(), 0, self::MAX_ROWS) as $row) {
             $total = round((float) (isset($row['total']) ? $row['total'] : 0), 2);
             $totalWt = round((float) (isset($row['total_wt']) ? $row['total_wt'] : 0), 2);
-            $group = (int) self::guard(function () use ($row) {
-                return Product::getIdTaxRulesGroupByIdProduct((int) $row['id_product']);
+            $group = self::guard(function () use ($row) {
+                return (int) Product::getIdTaxRulesGroupByIdProduct((int) $row['id_product']);
             });
-            $declared = self::guard(function () use ($declaredRate, $group) {
-                return round((float) call_user_func($declaredRate, $group), 6);
-            });
-            $declaredNum = is_float($declared) ? $declared : 0.0;
-            $rows[] = array(
+            $out = array(
                 'id_product' => (int) $row['id_product'],
                 'id_product_attribute' => (int) (isset($row['id_product_attribute']) ? $row['id_product_attribute'] : 0),
                 'qty' => (int) (isset($row['cart_quantity']) ? $row['cart_quantity'] : 0),
@@ -251,11 +296,15 @@ class TwoDiscrepancySnapshot
                 'total' => $total,
                 'total_wt' => $totalWt,
                 'ecotax' => round((float) (isset($row['ecotax']) ? $row['ecotax'] : 0), 6),
+                'ecotax_rate' => $ecotaxRate,
                 'id_tax_rules_group' => $group,
-                'declared_rate' => $declared,
+                'declared_rate' => is_int($group) ? self::guard(function () use ($declaredRate, $group) {
+                    return call_user_func($declaredRate, $group);
+                }) : null,
                 'implied_rate' => $total != 0.0 ? round(($totalWt - $total) / $total, 6) : null,
-                'delta' => round($totalWt - $total * (1 + $declaredNum), 2) + 0.0,
             );
+            $out['delta'] = self::productDelta($out);
+            $rows[] = $out;
         }
 
         return $rows;
@@ -327,26 +376,23 @@ class TwoDiscrepancySnapshot
                 return strpos($file, "eval()'d") !== false ? 'core' : self::relativePath($file);
             });
         }
-        $added = array();
         $overridden = array();
-        if (class_exists('CartCore', false) && get_parent_class('Cart') === 'CartCore') {
-            foreach ((new ReflectionClass('Cart'))->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
-                if ($method->getDeclaringClass()->getName() !== 'Cart') {
-                    continue;
+        foreach (array_keys(self::PRICE_METHODS) as $class) {
+            $overridden[$class] = self::guard(function () use ($class) {
+                $names = array();
+                if (class_exists($class . 'Core', false) && get_parent_class($class) === $class . 'Core') {
+                    foreach ((new ReflectionClass($class))->getMethods() as $method) {
+                        if ($method->getDeclaringClass()->getName() === $class && method_exists($class . 'Core', $method->getName())) {
+                            $names[] = $method->getName();
+                        }
+                    }
                 }
-                if (method_exists('CartCore', $method->getName())) {
-                    $overridden[] = $method->getName();
-                } else {
-                    $added[] = $method->getName();
-                }
-            }
+
+                return array_slice($names, 0, self::MAX_ROWS);
+            });
         }
 
-        return array(
-            'files' => $files,
-            'cart_methods_added' => array_slice($added, 0, self::MAX_ROWS),
-            'cart_methods_overridden' => array_slice($overridden, 0, self::MAX_ROWS),
-        );
+        return array('files' => $files, 'methods_overridden' => $overridden);
     }
 
     private static function hooks()
@@ -438,27 +484,29 @@ class TwoDiscrepancySnapshot
         return $out;
     }
 
+    // Every row is readable and one exceeds rounding: PS_ROUND_TYPE=item rounds each unit, so it scales with qty.
     private static function hasUnexplainedProductDelta(array $snapshot)
     {
-        foreach (isset($snapshot['products']) && is_array($snapshot['products']) ? $snapshot['products'] : array() as $row) {
-            if (is_array($row) && isset($row['delta']) && abs((float) $row['delta']) > self::AMOUNT_TOLERANCE) {
-                return true;
+        $rows = isset($snapshot['products']) && is_array($snapshot['products']) && !isset($snapshot['products']['error'])
+            ? $snapshot['products'] : array();
+        $unexplained = false;
+        foreach ($rows as $row) {
+            $delta = is_array($row) ? self::productDelta($row) : null;
+            if ($delta === null) {
+                return false;
             }
+            $tolerance = max(self::AMOUNT_TOLERANCE, $row['qty'] * 0.005 * (1 + $row['declared_rate']));
+            $unexplained = $unexplained || abs($delta) > $tolerance;
         }
 
-        return false;
+        return $unexplained;
     }
 
     private static function hasPriceOverrideOrHook(array $snapshot)
     {
-        $overrides = isset($snapshot['overrides']) && is_array($snapshot['overrides']) ? $snapshot['overrides'] : array();
-        foreach (array('cart_methods_added', 'cart_methods_overridden') as $key) {
-            if (!empty($overrides[$key])) {
-                return true;
-            }
-        }
-        foreach (isset($overrides['files']) && is_array($overrides['files']) ? $overrides['files'] : array() as $file) {
-            if (is_string($file) && strpos($file, 'override/') === 0) {
+        foreach (self::PRICE_METHODS as $class => $methods) {
+            $overridden = isset($snapshot['overrides']['methods_overridden'][$class]) ? $snapshot['overrides']['methods_overridden'][$class] : null;
+            if (is_array($overridden) && !isset($overridden['error']) && array_intersect($methods, $overridden)) {
                 return true;
             }
         }
@@ -471,16 +519,63 @@ class TwoDiscrepancySnapshot
         return false;
     }
 
+    /**
+     * The tax rules groups of the carriers the cart ships with; array(0) when it has none.
+     *
+     * @param array $snapshot
+     * @return int[]|null null when any of them cannot be read
+     */
+    private static function carrierGroups(array $snapshot)
+    {
+        $idCarrier = self::num($snapshot, array('shipping', 'id_carrier'));
+        if ($idCarrier === null) {
+            return null;
+        }
+        if ($idCarrier > 0) {
+            $group = self::num($snapshot, array('shipping', 'carrier_tax_rules_group'));
+
+            return $group === null ? null : array((int) $group);
+        }
+        // A multi-carrier option leaves id_carrier at 0; its key lists the carriers ('3,5,').
+        $selected = isset($snapshot['shipping']['delivery_option']) ? $snapshot['shipping']['delivery_option'] : '';
+        if (!is_array($selected)) {
+            return $selected === '' ? array(0) : null;
+        }
+        $known = array();
+        foreach (isset($snapshot['delivery_options']) && is_array($snapshot['delivery_options']) ? $snapshot['delivery_options'] : array() as $option) {
+            foreach (isset($option['carriers']) && is_array($option['carriers']) ? $option['carriers'] : array() as $carrier) {
+                $known[(int) $carrier['id_carrier']] = self::num($carrier, array('tax_rules_group'));
+            }
+        }
+        $groups = array();
+        foreach ($selected as $key) {
+            foreach (array_filter(explode(',', (string) $key), 'strlen') as $id) {
+                if ((int) $id === 0) {
+                    $groups[] = 0;
+                } elseif (isset($known[(int) $id])) {
+                    $groups[] = (int) $known[(int) $id];
+                } else {
+                    return null;
+                }
+            }
+        }
+
+        return $groups === array() ? array(0) : array_values(array_unique($groups));
+    }
+
+    /**
+     * @return float|null null when the path is missing or not a number (an {error} section)
+     */
     private static function num($array, array $path)
     {
         foreach ($path as $key) {
             if (!is_array($array) || !isset($array[$key])) {
-                return 0.0;
+                return null;
             }
             $array = $array[$key];
         }
 
-        return is_numeric($array) ? (float) $array : 0.0;
+        return is_numeric($array) ? (float) $array : null;
     }
 
     private static function relativePath($file)
