@@ -16,62 +16,80 @@ final class DiscrepancySnapshotSpec
         self::testGateOutcomesWriteTheExpectedSnapshot();
     }
 
-    /** A snapshot carrying only what classify() reads. */
-    private static function shape(array $ship, float $residual, int $carrierGroup, float $delta, array $overrides, array $hooks): array
+    /** A product row as products() stores it, delta computed as 1c78e7e did, before ecotax and item rounding. */
+    private static function product(float $total, float $totalWt, int $qty, float $declared, float $ecotax = 0.0, float $ecotaxRate = 0.0): array
     {
-        return [
-            'totals' => ['ONLY_SHIPPING' => ['incl' => $ship[0], 'excl' => $ship[1]], 'residual' => ['incl' => $residual, 'excl' => $residual]],
-            'shipping' => ['carrier_tax_rules_group' => $carrierGroup],
-            'products' => [['delta' => $delta]],
-            'overrides' => $overrides,
-            'hooks' => $hooks,
-        ];
+        return ['qty' => $qty, 'total' => $total, 'total_wt' => $totalWt, 'ecotax' => $ecotax, 'ecotax_rate' => $ecotaxRate,
+            'declared_rate' => $declared, 'delta' => round($totalWt - $total * (1 + $declared), 2)];
     }
 
     private static function testClassifiesEachCartShape(): void
     {
-        $core = ['files' => ['Cart' => 'core'], 'cart_methods_added' => [], 'cart_methods_overridden' => []];
-        $cartOverride = ['files' => ['Cart' => 'override/classes/Cart.php'], 'cart_methods_added' => [], 'cart_methods_overridden' => ['getOrderTotal']];
-        $noHooks = ['actionProductPriceCalculation' => []];
-        $priceHook = ['actionProductPriceCalculation' => ['somepricemodule']];
+        $clean = [
+            'totals' => ['BOTH' => ['incl' => 150.0, 'excl' => 123.97], 'ONLY_SHIPPING' => ['incl' => 0.0, 'excl' => 0.0], 'residual' => ['incl' => 0.0, 'excl' => 0.0]],
+            'shipping' => ['id_carrier' => 7, 'carrier_tax_rules_group' => 4, 'delivery_option' => ''],
+            'delivery_options' => [],
+            'products' => [self::product(100.0, 121.0, 1, 0.21)],
+            'overrides' => ['files' => ['Cart' => 'core'], 'methods_overridden' => ['Cart' => [], 'Product' => [], 'Carrier' => []]],
+            'hooks' => ['actionProductPriceCalculation' => []],
+        ];
+        $cartOverride = ['overrides' => ['files' => ['Cart' => 'override/classes/Cart.php'], 'methods_overridden' => ['Cart' => ['getOrderTotal']]]];
+        $addedMethodOnly = ['overrides' => ['files' => ['Cart' => 'override/classes/Cart.php']]];
+        $priceHook = ['hooks' => ['actionProductPriceCalculation' => ['somepricemodule']]];
+        $carrierless = static function (float $incl, float $excl): array {
+            return ['totals' => ['ONLY_SHIPPING' => ['incl' => $incl, 'excl' => $excl]], 'shipping' => ['id_carrier' => 0, 'carrier_tax_rules_group' => 0]];
+        };
+        $error = ['error' => 'PrestaShopException', 'code' => 0];
 
         $cases = [
-            // [ship incl/excl, residual, carrier group, product delta, overrides, hooks, expected, description]
-            [[0.0, 0.0], 29.0, 0, 0.0, $cartOverride, $noHooks, 'C', 'cost in BOTH but not in ONLY_SHIPPING'],
-            [[29.0, 29.0], 0.0, 0, 0.0, $core, $noHooks, 'A', 'carrier-less shipping with no tax component'],
-            [[29.0, 23.97], 0.0, 0, 0.0, $core, $noHooks, 'B', 'carrier-less shipping carrying tax'],
-            [[29.0, 23.97], 0.0, 7, 0.0, $core, $noHooks, 'other', 'taxed shipping behind a carrier group is normal'],
-            [[5.0, 4.13], 0.0, 7, -25.2, $cartOverride, $noHooks, 'D', 'fixed untaxed amount on a product line, Cart override'],
-            [[5.0, 4.13], 0.0, 7, -25.2, $core, $priceHook, 'D', 'fixed untaxed amount on a product line, price hook module'],
-            [[5.0, 4.13], 0.0, 7, -25.2, $core, $noHooks, 'other', 'product delta with no override or hook to explain it'],
-            [[5.0, 4.13], 0.0, 7, 0.01, $cartOverride, $noHooks, 'other', 'rounding-sized delta is not a product anomaly'],
-            [[0.0, 0.0], 0.0, 0, 0.0, $core, $noHooks, 'other', 'a clean cart'],
+            // [patch over a clean cart, expected, description]
+            [array_replace_recursive(['totals' => ['residual' => ['incl' => 29.0]]], $cartOverride), 'C', 'cost in BOTH but not in ONLY_SHIPPING'],
+            [$carrierless(29.0, 29.0), 'A', 'carrier-less shipping with no tax component'],
+            [$carrierless(29.0, 23.97), 'B', 'carrier-less shipping carrying tax'],
+            [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]]], 'other', 'taxed shipping behind a carrier group is normal'],
+            [array_replace_recursive(['products' => [self::product(100.0, 95.8, 1, 0.21)]], $cartOverride), 'D', 'fixed untaxed amount on a product line, Cart override'],
+            [array_replace_recursive(['products' => [self::product(100.0, 95.8, 1, 0.21)]], $priceHook), 'D', 'fixed untaxed amount on a product line, price hook module'],
+            [['products' => [self::product(100.0, 95.8, 1, 0.21)]], 'other', 'product delta with no override or hook to explain it'],
+            [array_replace_recursive(['products' => [self::product(100.0, 121.01, 1, 0.21)]], $cartOverride), 'other', 'rounding-sized delta is not a product anomaly'],
+            [[], 'other', 'a clean cart'],
+            [['totals' => ['ONLY_SHIPPING' => ['incl' => $error, 'excl' => $error], 'residual' => ['incl' => 29.0]]], 'other', 'errored ONLY_SHIPPING is not a zero shipping total'],
+            [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['carrier_tax_rules_group' => $error]], 'other', 'errored carrier group is not a missing one'],
+            [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['id_carrier' => 0, 'carrier_tax_rules_group' => 0, 'delivery_option' => [5 => '3,8,']],
+                'delivery_options' => [['id_address' => 5, 'key' => '3,8,', 'carriers' => [['id_carrier' => 3, 'tax_rules_group' => 4], ['id_carrier' => 8, 'tax_rules_group' => 4]]]]],
+                'other', 'multi-carrier option leaves id_carrier 0 but its carriers carry a group'],
+            [array_replace_recursive(['products' => [self::product(12.0, 15.0, 100, 0.21)]], $cartOverride), 'other', 'PS_ROUND_TYPE=item rounding over qty 100'],
+            [array_replace_recursive(['products' => [self::product(220.0, 235.0, 2, 0.055, 10.0, 0.2)]], $cartOverride), 'other', 'ecotax taxed under its own group'],
+            [array_replace_recursive(['products' => [self::product(100.0, 95.8, 1, 0.21)]], $addedMethodOnly), 'other', 'a Cart override that only adds a method'],
+            [['totals' => ['BOTH' => ['incl' => 0.0, 'excl' => 0.0], 'residual' => ['incl' => -20.0]]], 'other', 'stacked vouchers clamp BOTH to 0'],
+            [['totals' => ['ONLY_SHIPPING' => ['incl' => 5.0, 'excl' => 4.13], 'ONLY_DISCOUNTS' => ['incl' => 5.0, 'excl' => 4.13]]], 'other', 'free-shipping discount'],
         ];
-        foreach ($cases as [$ship, $residual, $group, $delta, $overrides, $hooks, $expected, $description]) {
-            $actual = TwoDiscrepancySnapshot::classify(self::shape($ship, $residual, $group, $delta, $overrides, $hooks));
+        foreach ($cases as [$patch, $expected, $description]) {
+            $actual = TwoDiscrepancySnapshot::classify(array_replace_recursive($clean, $patch));
             TinyAssert::same($expected, $actual, 'classify: ' . $description . ' - expected ' . $expected . ', got ' . $actual);
         }
         TinyAssert::same('other', TwoDiscrepancySnapshot::classify([]), 'classify: an empty snapshot');
-        TinyAssert::same('other', TwoDiscrepancySnapshot::classify(['totals' => ['error' => 'boom']]), 'classify: a section that raised');
+        TinyAssert::same('other', TwoDiscrepancySnapshot::classify(['totals' => $error]), 'classify: a section that raised');
     }
 
     private static function testEncodeStaysUnderTheLimitAndDecodesBack(): void
     {
         $row = ['id_product' => 1, 'total' => 47.8, 'name' => str_repeat('é', 200)];
+        $tagged = ['id_product' => 1, 'total' => 47.8, 'name' => 'Kabel <3m> & "Stecker" \'rot\' \\ /'];
         $cases = [
             // [snapshot, expect products kept, description]
             [['v' => 1, 'shape' => 'A', 'products' => [$row]], true, 'a small snapshot is kept whole, floats unmangled'],
             [['v' => 1, 'shape' => 'A', 'products' => array_fill(0, 2000, $row)], false, 'an oversized section is dropped, not the record'],
+            [['v' => 1, 'shape' => 'A', 'products' => [$tagged]], true, 'a name with < survives core strip_tags'],
         ];
         foreach ($cases as [$snapshot, $kept, $description]) {
             $json = TwoDiscrepancySnapshot::encode($snapshot);
             TinyAssert::true(strlen(addslashes($json)) <= TwoDiscrepancySnapshot::MAX_BYTES, 'encode: fits the limit even pSQL()-escaped - ' . $description);
-            foreach ([$json, addslashes($json)] as $stored) {
+            // What core stores: strip_tags() on 8 and 9, and after addslashes() on 1.7.
+            foreach (['8/9' => strip_tags($json), '1.7' => strip_tags(addslashes($json))] as $version => $stored) {
                 $decoded = json_decode((string) TwoDiscrepancySnapshot::decodeStored($stored), true);
-                TinyAssert::same('A', $decoded['shape'] ?? null, 'encode: decodes back, raw or escaped - ' . $description);
+                TinyAssert::same('A', $decoded['shape'] ?? null, 'encode: decodes back on ' . $version . ' - ' . $description);
+                TinyAssert::same($kept ? $snapshot['products'][0]['name'] : null, $decoded['products'][0]['name'] ?? null, 'encode: name byte-for-byte on ' . $version . ' - ' . $description);
             }
-            $decoded = json_decode($json, true);
-            TinyAssert::same($kept, isset($decoded['products'][0]['id_product']), 'encode: ' . $description);
             if ($kept) {
                 TinyAssert::true(strpos($json, '47.8,') !== false, 'encode: ' . $description);
             }

@@ -153,6 +153,7 @@ class AdminTwoErrorLogController extends ModuleAdminController
         header('Content-Type: application/json; charset=utf-8');
         header('Content-Disposition: attachment; filename="two-discrepancy-cart-' . (int) $row['object_id'] . '-' . (int) $id_log . '.json"');
         header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: no-store');
         echo $json;
         exit;
     }
