@@ -39,6 +39,12 @@ class TwoShippingTaxFallbackCommand extends Command
         $idShop = $input->getOption('shop');
         if ($idShop === null && $input->hasOption('id_shop')) {
             $idShop = $input->getOption('id_shop');
+            // Core declares it VALUE_OPTIONAL, so a bare --id_shop arrives empty and would otherwise write the global row.
+            if ((string) $idShop === '' && $input->hasParameterOption('--id_shop')) {
+                $output->writeln('--id_shop needs a shop id. Use --shop=<n> for one shop, or no option for the global setting.');
+
+                return 1;
+            }
         }
         if ($input->hasOption('id_shop_group') && $input->getOption('id_shop_group') !== null) {
             $output->writeln('--id_shop_group is not supported. Use --shop=<n> for one shop, or no option for the global setting.');

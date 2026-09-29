@@ -18,6 +18,9 @@ namespace Symfony\Component\Console\Input {
 
         /** @return bool */
         public function hasOption($name);
+
+        /** @return bool */
+        public function hasParameterOption($values, $onlyParams = false);
     }
 
     class InputOption
@@ -55,6 +58,18 @@ namespace Symfony\Component\Console\Input {
         public function hasOption($name)
         {
             return in_array($name, ['shop', 'id_shop', 'id_shop_group'], true);
+        }
+
+        /** A bare option is passed as '--name' => null, as with Symfony's own ArrayInput. */
+        public function hasParameterOption($values, $onlyParams = false)
+        {
+            foreach ((array) $values as $value) {
+                if (array_key_exists($value, $this->parameters)) {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }
