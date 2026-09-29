@@ -376,9 +376,6 @@ class Twopayment extends PaymentModule
      */
     protected $twoOrderCompanyColumnsEnsured = null;
 
-    /** @var bool|null whether `two_update_hash` exists on `ps_twopayment` (TWO-26085), memoised like the company columns. */
-    protected $twoUpdateHashColumnEnsured = null;
-
     // Module metadata fields ModuleCore does not declare on all supported
     // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
     // $author_address and $languages are never declared by core), plus this
@@ -406,7 +403,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.16';
+        $this->version = '2.7.17';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -4386,7 +4383,7 @@ class Twopayment extends PaymentModule
         }
         $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
         $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
-        if ($http_status >= 200 && $http_status < 300 && $this->ensureTwoUpdateHashColumn()) {
+        if ($http_status >= 200 && $http_status < 300 && in_array('two_update_hash', $this->ensureTwoPaymentColumns(), true)) {
             Db::getInstance()->update('twopayment', array('two_update_hash' => pSQL($hash)), 'id_order = ' . (int) $order->id);
         }
 
@@ -4418,26 +4415,6 @@ class Twopayment extends PaymentModule
         $basis['line_items'] = $lines;
 
         return $basis;
-    }
-
-    /**
-     * Adds `two_update_hash` on a shop installed before it; false when it cannot, and every update then PUTs.
-     *
-     * @return bool
-     */
-    private function ensureTwoUpdateHashColumn()
-    {
-        if ($this->twoUpdateHashColumnEnsured === null) {
-            $table = _DB_PREFIX_ . 'twopayment';
-            $this->twoUpdateHashColumnEnsured = (bool) Db::getInstance()->getValue(
-                'SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS'
-                . " WHERE TABLE_SCHEMA = '" . _DB_NAME_ . "'"
-                . " AND TABLE_NAME = '" . pSQL($table) . "'"
-                . " AND COLUMN_NAME = 'two_update_hash'"
-            ) || (bool) Db::getInstance()->execute('ALTER TABLE `' . $table . '` ADD `two_update_hash` VARCHAR(32) NULL');
-        }
-
-        return $this->twoUpdateHashColumnEnsured;
     }
 
     /**
@@ -15385,6 +15362,7 @@ class Twopayment extends PaymentModule
             'two_organization_number' => 'ALTER TABLE `' . $table . '` ADD `two_organization_number` VARCHAR(64) NULL',
             'two_company_name' => 'ALTER TABLE `' . $table . '` ADD `two_company_name` VARCHAR(255) NULL',
             'two_not_sent_at' => 'ALTER TABLE `' . $table . '` ADD `two_not_sent_at` DATETIME NULL',
+            'two_update_hash' => 'ALTER TABLE `' . $table . '` ADD `two_update_hash` VARCHAR(32) NULL',
         );
 
         foreach ($columns as $column => $ddl) {

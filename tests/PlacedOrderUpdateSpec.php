@@ -21,6 +21,31 @@ final class PlacedOrderUpdateSpec
     public static function runAll(): void
     {
         self::testUpdatesReplayThePlacedOrder();
+        self::testHashColumnIsAddedAndAFailureIsLogged();
+    }
+
+    private static function testHashColumnIsAddedAndAFailureIsLogged(): void
+    {
+        $alters = fn () => count(preg_grep('/ALTER TABLE `ps_twopayment` ADD `two_update_hash` VARCHAR\(32\) NULL/', StubStore::$dbExecuted));
+        StubStore::reset();
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.17.php';
+        $module = new TwopaymentTestHarness();
+        TinyAssert::true(upgrade_module_2_7_17($module), 'the upgrade script must report success');
+        TinyAssert::true(upgrade_module_2_7_17($module), 'a re-run must still succeed');
+        TinyAssert::same(1, $alters(), 'the upgrade adds the column once');
+
+        StubStore::reset();
+        PrestaShopLogger::reset();
+        StubStore::$dbFailOn = ['/ADD `two_update_hash`/'];
+        $ensure = new ReflectionMethod(Twopayment::class, 'ensureTwoPaymentColumns');
+        $columns = $ensure->invoke(new TwopaymentTestHarness());
+        StubStore::$dbFailOn = [];
+        TinyAssert::false(in_array('two_update_hash', $columns, true), 'a refused ALTER reports the column missing');
+        TinyAssert::same(
+            ['TwoPayment: Failed to add column two_update_hash to ps_twopayment - its value cannot be persisted on this shop, and this column will be omitted from writes rather than failing them'],
+            array_column(array_filter(PrestaShopLogger::$logs, fn ($l) => $l['severity'] === 3), 'message'),
+            'a refused ALTER is logged'
+        );
     }
 
     private static function testUpdatesReplayThePlacedOrder(): void
