@@ -81,11 +81,8 @@ class TwoDiscrepancySnapshot
                 return self::totals($cart);
             }),
             'products' => self::guard(function () use ($cart, $declaredRate, &$truncated) {
-                $products = self::cartRead(function () use ($cart) {
-                    return (array) $cart->getProducts();
-                });
-
-                return isset($products['error']) ? $products : self::products(self::cap($products, 'products', $truncated), $declaredRate);
+                // Outside the circuit breaker: getProducts() is cached and never prices a carrier.
+                return self::products(self::cap((array) $cart->getProducts(), 'products', $truncated), $declaredRate);
             }),
             'shipping' => self::guard(function () use ($cart) {
                 return self::shipping($cart);
@@ -134,9 +131,9 @@ class TwoDiscrepancySnapshot
         $shipIncl = self::num($snapshot, array('totals', 'ONLY_SHIPPING', 'incl'));
         $shipExcl = self::num($snapshot, array('totals', 'ONLY_SHIPPING', 'excl'));
         $residual = self::num($snapshot, array('totals', 'residual', 'incl'));
-        $carrierGroups = self::carrierGroups($snapshot);
+        $carrierIds = self::pricedCarrierIds($snapshot);
         // A shape is a positive identification: any input that errored or is missing proves nothing.
-        if ($both === null || $shipIncl === null || $shipExcl === null || $residual === null || $carrierGroups === null) {
+        if ($both === null || $shipIncl === null || $shipExcl === null || $residual === null || $carrierIds === null) {
             return 'other';
         }
 
@@ -144,7 +141,8 @@ class TwoDiscrepancySnapshot
         if (abs($residual) > self::AMOUNT_TOLERANCE && abs($shipIncl) <= self::AMOUNT_TOLERANCE && $both > self::AMOUNT_TOLERANCE) {
             return 'C';
         }
-        if ($shipIncl > self::AMOUNT_TOLERANCE && $carrierGroups === array(0)) {
+        // A real carrier can have tax rules group 0 ("No tax"), so only carrier id 0 means no carrier.
+        if ($shipIncl > self::AMOUNT_TOLERANCE && $carrierIds === array(0)) {
             return abs($shipIncl - $shipExcl) <= self::AMOUNT_TOLERANCE ? 'A' : 'B';
         }
 
@@ -415,7 +413,7 @@ class TwoDiscrepancySnapshot
                 $file = (string) (new ReflectionClass($class))->getFileName();
 
                 // Without an override the autoloader eval()s an empty `X extends XCore`.
-                return strpos($file, "eval()'d") !== false ? 'core' : self::relativePath($file);
+                return strpos($file, "eval()'d") !== false ? 'core' : self::sitePath($file);
             });
         }
         $overridden = array();
@@ -536,42 +534,29 @@ class TwoDiscrepancySnapshot
     }
 
     /**
-     * The tax rules groups of the carriers in the delivery option core prices shipping from; 0 is no carrier.
+     * The carrier ids of the delivery option core prices shipping from; 0 is no carrier.
      *
      * @param array $snapshot
-     * @return int[]|null null when the option or any of its carriers' groups cannot be read
+     * @return int[]|null null when the option cannot be read
      */
-    private static function carrierGroups(array $snapshot)
+    private static function pricedCarrierIds(array $snapshot)
     {
         // Each key lists the option's carriers ('3,5,'), so a multi-carrier option is covered too.
         $selected = isset($snapshot['shipping']['priced_option']) ? $snapshot['shipping']['priced_option'] : null;
         if (!is_array($selected) || isset($selected['error'])) {
             return null;
         }
-        $known = array();
-        foreach (isset($snapshot['delivery_options']) && is_array($snapshot['delivery_options']) ? $snapshot['delivery_options'] : array() as $option) {
-            foreach (isset($option['carriers']) && is_array($option['carriers']) ? $option['carriers'] : array() as $carrier) {
-                $known[(int) $carrier['id_carrier']] = self::num($carrier, array('tax_rules_group'));
-            }
-        }
-        $groups = array();
+        $ids = array();
         foreach ($selected as $key) {
             if (!is_scalar($key)) {
                 return null;
             }
             foreach (array_filter(explode(',', (string) $key), 'strlen') as $id) {
-                // isset, not array_key_exists: a group that failed to read is null, and (int) null would pass as untaxed.
-                if ((int) $id === 0) {
-                    $groups[] = 0;
-                } elseif (isset($known[(int) $id])) {
-                    $groups[] = (int) $known[(int) $id];
-                } else {
-                    return null;
-                }
+                $ids[] = (int) $id;
             }
         }
 
-        return $groups === array() ? null : array_values(array_unique($groups));
+        return $ids === array() ? null : array_values(array_unique($ids));
     }
 
     /**
@@ -590,25 +575,28 @@ class TwoDiscrepancySnapshot
     }
 
     /**
-     * Where an exception was thrown, relative to the module (else the shop) root: never an absolute path.
+     * Where an exception was thrown, as a site path: never an absolute path.
      *
      * @param Throwable $e
      * @return string file:line
      */
     public static function throwSite($e)
     {
-        $file = (string) $e->getFile();
-        $module = dirname(__DIR__) . '/';
-        $file = strpos($file, $module) === 0 ? substr($file, strlen($module)) : self::relativePath($file);
-
-        return (strpos($file, '/') === 0 ? basename($file) : $file) . ':' . (int) $e->getLine();
+        return self::sitePath((string) $e->getFile()) . ':' . (int) $e->getLine();
     }
 
-    private static function relativePath($file)
+    /** Relative to the module, else the shop root; any other path (Windows, phar://, a symlink target) is cut to its basename. */
+    private static function sitePath($file)
     {
-        $root = defined('_PS_ROOT_DIR_') ? rtrim((string) _PS_ROOT_DIR_, '/') . '/' : '';
+        $file = str_replace('\\', '/', $file);
+        foreach (array(dirname(__DIR__), defined('_PS_ROOT_DIR_') ? (string) _PS_ROOT_DIR_ : '') as $root) {
+            $root = rtrim(str_replace('\\', '/', $root), '/') . '/';
+            if ($root !== '/' && strpos($file, $root) === 0) {
+                return substr($file, strlen($root));
+            }
+        }
 
-        return $root !== '' && strpos($file, $root) === 0 ? substr($file, strlen($root)) : $file;
+        return basename($file);
     }
 
     private static function str($value, $max = self::MAX_STRING)

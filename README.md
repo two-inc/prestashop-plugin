@@ -809,6 +809,7 @@ it also writes one for every cart that passes, as a baseline to compare against.
   whole section shed to fit the size limit.
 - **Cost**: once one `Cart` pricing read throws, the remaining ones are recorded as
   `{error: "skipped"}` rather than re-run, since core does not cache a failed price.
+  `products` is always read: core caches it and it prices no carrier.
 - **Log growth**: one row per refused order, and with Debug Mode on two or three per order
   (each pricing pass leaves a baseline), so switch Debug Mode off once done.
 - **Reading it**: the record's `shape` field applies this decision tree, first match wins:
@@ -816,13 +817,14 @@ it also writes one for every cart that passes, as a baseline to compare against.
   | Shape | Snapshot values | Cart shape |
   | --- | --- | --- |
   | C | `residual` ≠ 0 and `ONLY_SHIPPING` = 0 | a cost is added to the cart total outside the shipping total, so no tax rule covers it |
-  | A | `ONLY_SHIPPING` > 0, incl = excl, no carrier tax rules group | shipping priced without a carrier and without tax |
-  | B | `ONLY_SHIPPING` incl > excl, no carrier tax rules group | shipping priced without a carrier, with tax nothing declares |
+  | A | `ONLY_SHIPPING` > 0, incl = excl, every carrier id is 0 | shipping priced without a carrier and without tax |
+  | B | `ONLY_SHIPPING` incl > excl, every carrier id is 0 | shipping priced without a carrier, with tax nothing declares |
   | other | anything else, including any input that failed to read | read the gate numbers and product lines directly |
 
-  "No carrier tax rules group" means every carrier in `priced_option`, the delivery option
+  "Every carrier id is 0" means every carrier id in `priced_option`, the delivery option
   core prices shipping from: when the cart's own `delivery_option` is empty or stale, core
-  auto-selects one, and a multi-carrier option lists all its carriers. C also
+  auto-selects one, and a multi-carrier option lists all its carriers. A real carrier whose
+  tax rules group is 0 ("No tax") still has a carrier, so it is never A or B. C also
   needs `BOTH` > 0, since stacked vouchers clamp it to 0.
 
   Product lines carry no shape label: their raw `declared_rate`, `implied_rate` and

@@ -15,6 +15,7 @@ final class DiscrepancySnapshotSpec
         self::testEncodeStaysUnderTheLimitAndDecodesBack();
         self::testTruncatedSectionsCountWhatWasCut();
         self::testCartReadsStopAfterTheFirstThrow();
+        self::testThrowSiteNeverRecordsAnAbsolutePath();
         self::testGateOutcomesWriteTheExpectedSnapshot();
     }
 
@@ -39,6 +40,11 @@ final class DiscrepancySnapshotSpec
         $autoSelectedTaxed = static function ($stored): array {
             return ['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['id_carrier' => 0, 'carrier_tax_rules_group' => 0, 'delivery_option' => $stored, 'priced_option' => [5 => '7,']]];
         };
+        // A real carrier can have tax rules group 0 ("No tax"): the carrier id, not its group, says whether one exists.
+        $realCarrier = static function (int $group, float $incl, float $excl): array {
+            return ['totals' => ['ONLY_SHIPPING' => ['incl' => $incl, 'excl' => $excl]], 'shipping' => ['carrier_tax_rules_group' => $group],
+                'delivery_options' => [['carriers' => [['id_carrier' => 7, 'tax_rules_group' => $group]]]]];
+        };
         $error = ['error' => 'PrestaShopException', 'code' => 0];
 
         $cases = [
@@ -46,13 +52,15 @@ final class DiscrepancySnapshotSpec
             [['totals' => ['residual' => ['incl' => 29.0]]], 'C', 'cost in BOTH but not in ONLY_SHIPPING'],
             [$carrierless(29.0, 29.0), 'A', 'carrier-less shipping with no tax component'],
             [$carrierless(29.0, 23.97), 'B', 'carrier-less shipping carrying tax'],
-            [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]]], 'other', 'taxed shipping behind a carrier group is normal'],
+            [$realCarrier(4, 29.0, 23.97), 'other', 'real carrier with a 21% group is normal'],
+            [$realCarrier(0, 29.0, 29.0), 'other', 'real carrier with group 0 is not carrier-less (A)'],
+            [$realCarrier(0, 29.0, 23.97), 'other', 'real carrier with group 0 is not carrier-less (B)'],
             [[], 'other', 'a clean cart'],
             [['totals' => ['ONLY_SHIPPING' => ['incl' => $error, 'excl' => $error], 'residual' => ['incl' => 29.0]]], 'other', 'errored ONLY_SHIPPING is not a zero shipping total'],
             [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['carrier_tax_rules_group' => $error], 'delivery_options' => [['carriers' => [['tax_rules_group' => $error]]]]], 'other', 'errored carrier group is not a missing one'],
             [['totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 23.97]], 'shipping' => ['id_carrier' => 0, 'carrier_tax_rules_group' => 0, 'priced_option' => [5 => '3,8,']],
                 'delivery_options' => [['id_address' => 5, 'key' => '3,8,', 'carriers' => [['id_carrier' => 3, 'tax_rules_group' => 4], ['id_carrier' => 8, 'tax_rules_group' => 4]]]]],
-                'other', 'multi-carrier option leaves id_carrier 0 but its carriers carry a group'],
+                'other', 'multi-carrier option leaves id_carrier 0 but lists real carriers'],
             [$autoSelectedTaxed(''), 'other', 'empty delivery_option: core prices the auto-selected taxed carrier'],
             [$autoSelectedTaxed([5 => '0,']), 'other', 'stale carrier-less key: core prices the auto-selected taxed carrier'],
             [['shipping' => ['priced_option' => $error], 'totals' => ['ONLY_SHIPPING' => ['incl' => 29.0, 'excl' => 29.0]]], 'other', 'errored priced option'],
@@ -164,7 +172,7 @@ final class DiscrepancySnapshotSpec
 
             public function getProducts($refresh = false): array
             {
-                return $this->fail();
+                return [['id_product' => 1, 'cart_quantity' => 1, 'total' => 100.0, 'total_wt' => 121.0]];
             }
 
             public function getPackageShippingCost($idCarrier, $useTax, $defaultCountry = null, $productList = null, $idZone = null)
@@ -192,11 +200,33 @@ final class DiscrepancySnapshotSpec
         }, null);
         TinyAssert::same(1, $cart->reads, 'circuit breaker: the throwing Cart is read once');
         TinyAssert::same(['error' => 'RuntimeException', 'code' => 0], $snapshot['totals']['ONLY_DISCOUNTS']['incl'], 'circuit breaker: the first read records its error');
-        foreach (['products', 'cart_rules', 'delivery_options'] as $section) {
+        TinyAssert::same(121.0, $snapshot['products'][0]['total_wt'] ?? null, 'circuit breaker: cached products are still read');
+        foreach (['cart_rules', 'delivery_options'] as $section) {
             TinyAssert::same(['error' => 'skipped'], $snapshot[$section], 'circuit breaker: ' . $section . ' is skipped');
         }
         TinyAssert::same(['error' => 'skipped'], $snapshot['shipping']['priced_option'], 'circuit breaker: priced_option is skipped');
         TinyAssert::same('other', $snapshot['shape'], 'circuit breaker: a skipped read classifies as other');
+    }
+
+    private static function testThrowSiteNeverRecordsAnAbsolutePath(): void
+    {
+        $module = dirname(__DIR__);
+        $file = new ReflectionProperty(Exception::class, 'file');
+        $line = new ReflectionProperty(Exception::class, 'line');
+        $cases = [
+            // [thrown from, expected site, description]
+            [$module . '/classes/TwoDiscrepancySnapshot.php', 'classes/TwoDiscrepancySnapshot.php:7', 'module file'],
+            [_PS_ROOT_DIR_ . '/override/classes/Cart.php', 'override/classes/Cart.php:7', 'shop file'],
+            ['/opt/shared/carriers/Rates.php', 'Rates.php:7', 'outside-root symlink target'],
+            ['C:\\shop\\override\\classes\\Cart.php', 'Cart.php:7', 'Windows path'],
+            ['phar:///var/lib/vendor.phar/src/Client.php', 'Client.php:7', 'phar path'],
+        ];
+        foreach ($cases as [$path, $expected, $description]) {
+            $e = new RuntimeException('x');
+            $file->setValue($e, $path);
+            $line->setValue($e, 7);
+            TinyAssert::same($expected, TwoDiscrepancySnapshot::throwSite($e), 'throwSite: ' . $description);
+        }
     }
 
     /** DefaultShippingTaxCodeSpec's cart fixtures, reused rather than copied. */
