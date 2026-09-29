@@ -66,6 +66,7 @@ final class SurchargeSpec
         self::testOrderPayloadInjectsSurchargeLineAndBumpsTotals();
         self::testCreatePayloadKnowsTheFeeRowByIdAndReference();
         self::testUpdatePayloadReplaysThePlacedSurchargeLine();
+        self::testUpgrade2716SeedsRetiredFeeIdsFromOrderHistoryOnce();
         self::testAdminOrderHooksWarnInsteadOfThrowingAFailedUpdate();
         self::testOrderPageShowsAnUpdateTwoNeverReceivedUntilOneLands();
         self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
@@ -1706,6 +1707,27 @@ final class SurchargeSpec
             }
         }
         TinyAssert::same([], $failures, "fee lines/net/tax/gross/rate/name/order gross\n  " . implode("\n  ", $failures));
+    }
+
+    /** TWO-26076: ids the fee reference was sold under before retirements were recorded become retired, once. */
+    private static function testUpgrade2716SeedsRetiredFeeIdsFromOrderHistoryOnce(): void
+    {
+        self::reset();
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.16.php';
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '77');
+        StubStore::$products[77] = ['reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, 'is_virtual' => 1, 'visibility' => 'none'];
+        $fee = Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE;
+        StubStore::$orderDetails = [
+            ['id_order' => 1, 'product_id' => 12, 'product_reference' => $fee],
+            ['id_order' => 2, 'product_id' => 12, 'product_reference' => $fee],
+            ['id_order' => 3, 'product_id' => 77, 'product_reference' => $fee],
+            ['id_order' => 4, 'product_id' => 30, 'product_reference' => 'SKU-30'],
+        ];
+        TinyAssert::true(upgrade_module_2_7_16(new TwopaymentTestHarness()));
+        TinyAssert::same('12', (string) Configuration::get('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS'), 'old fee ids only: not the live id, not merchandise');
+        StubStore::$orderDetails[] = ['id_order' => 5, 'product_id' => 555, 'product_reference' => $fee];
+        TinyAssert::true(upgrade_module_2_7_16(new TwopaymentTestHarness()));
+        TinyAssert::same('12', (string) Configuration::get('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS'), 'a second run seeds nothing: a later unknown id must fail loud, not become the fee');
     }
 
     /** TWO-26076: an id MySQL reused for a real product is sold; the fee needs its id AND its reference. */
