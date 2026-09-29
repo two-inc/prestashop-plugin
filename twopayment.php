@@ -19,6 +19,7 @@ require_once dirname(__FILE__) . '/classes/TwoSurchargeMethodException.php';
 require_once dirname(__FILE__) . '/classes/TwoRateLimiter.php';
 require_once dirname(__FILE__) . '/classes/TwoStoredTerm.php';
 require_once dirname(__FILE__) . '/classes/TwoAnchorOnlyHtml.php';
+require_once dirname(__FILE__) . '/classes/TwoShippingTaxFallbackGate.php';
 
 class Twopayment extends PaymentModule
 {
@@ -315,7 +316,7 @@ class Twopayment extends PaymentModule
     // never inferred from amounts. Unset (the shipped state) keeps the loud
     // refusal; '0' is core's first-class "No tax" sentinel and is only ever
     // stored when the merchant selected it.
-    const CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP = 'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP';
+    const CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP = TwoShippingTaxFallbackGate::CONFIG_GROUP;
 
     // JSON array of {name, value, send_from_browser}.
     const CONFIG_CUSTOM_HEADERS = 'PS_TWO_CUSTOM_HEADERS';
@@ -1030,6 +1031,7 @@ class Twopayment extends PaymentModule
         // Like the surcharge group above: the merchant's own TaxRulesGroup is
         // NOT module-owned, so only the reference goes.
         Configuration::deleteByName(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP);
+        Configuration::deleteByName(TwoShippingTaxFallbackGate::CONFIG_ENABLED);
         // TWO-25386 admin controls.
         Configuration::deleteByName('PS_TWO_VENDOR_NAME');
         Configuration::deleteByName('PS_TWO_SHOW_ABOUT_LINK');
@@ -2761,11 +2763,15 @@ class Twopayment extends PaymentModule
             ),
         );
 
+        if (!TwoShippingTaxFallbackGate::isEnabled()) {
+            return $fields_form;
+        }
+
         // Real need: shipping priced outside PrestaShop's carrier table
         // entirely (third-party carrier modules, click-and-collect,
         // marketplace shipping) never registers a tax rules group, so this
-        // is the merchant's only way to declare a rate for it. Always
-        // visible, like every other setting on this page.
+        // is the merchant's only way to declare a rate for it. Shown only
+        // once Two has enabled the fallback for the merchant (TWO-26082).
         $fields_form['form']['input'][] = array(
             'type' => 'select',
             'label' => $this->l('Default shipping tax code'),
@@ -3247,7 +3253,7 @@ class Twopayment extends PaymentModule
     protected function validTwoOrderManagementFormValues()
     {
         $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
-        if ($raw === false) {
+        if ($raw === false || !TwoShippingTaxFallbackGate::isEnabled()) {
             return;
         }
         $trimmed = is_string($raw) ? trim($raw) : '';
@@ -3270,8 +3276,9 @@ class Twopayment extends PaymentModule
         // A blank '' default here would wipe a stored declaration on the
         // next unrelated order-management save - the same failure mode the
         // payment-terms checkbox loop was fixed for under TWO-24813.
+        // Hidden while the fallback is off, so a posted value there is never the merchant's choice.
         $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
-        if ($raw !== false) {
+        if ($raw !== false && TwoShippingTaxFallbackGate::isEnabled()) {
             $trimmed = is_string($raw) ? trim($raw) : '';
             $value = '';
             if ($trimmed !== '' && ctype_digit($trimmed)) {
@@ -9108,11 +9115,15 @@ class Twopayment extends PaymentModule
     /**
      * The merchant's stored default shipping tax rules group.
      *
-     * @return int|null Group id (0 = "No tax"), or null when unset/invalid -
-     *                  null being the shipped state and the loud-refusal path
+     * @return int|null Group id (0 = "No tax"), or null when unset/invalid or
+     *                  the fallback is not enabled (TWO-26082) - null being
+     *                  the shipped state and the loud-refusal path
      */
     private function getTwoDefaultShippingTaxRulesGroupId()
     {
+        if (!TwoShippingTaxFallbackGate::isEnabled()) {
+            return null;
+        }
         $stored = Configuration::get(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP);
         if ($stored === false || $stored === null) {
             return null;
