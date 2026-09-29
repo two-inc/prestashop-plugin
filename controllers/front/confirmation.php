@@ -470,14 +470,8 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         }
 
         try {
-            $update_payload = $this->module->getTwoUpdateOrderData($order, $payment_data);
-            $update_payload['merchant_order_id'] = (string)$order->id;
-
-            $update_response = $this->module->setTwoPaymentRequest(
-                '/v1/order/' . $payment_data['two_order_id'],
-                $update_payload,
-                'PUT'
-            );
+            // Also records the hash that lets later unchanged saves skip their PUT (TWO-26085).
+            $update_response = $this->module->putTwoOrderUpdate($order, $payment_data);
 
             $http_status = isset($update_response['http_status']) ? (int)$update_response['http_status'] : 0;
             if ($http_status === Twopayment::HTTP_STATUS_OK) {

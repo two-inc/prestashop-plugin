@@ -312,6 +312,10 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 
 ### Order Management
 
+#### Order updates
+
+An order update (a back-office edit, a tracking number) sends Two the order as PrestaShop recorded it, never as the cart would price it today. Each line's amounts and tax rate come from the order's own lines and the taxes recorded for them, shipping from the order's carrier record, discounts from the order's recorded vouchers, and gift wrapping from the order's totals. A catalogue price, tax rule, carrier price or voucher changed after placement therefore changes nothing at Two, while a back-office edit to the order itself does. The payment amount a back-office edit records is the order's own total. An update identical to the last one Two accepted is not sent at all, so saving an unchanged tracking number makes no request.
+
 #### Buyer surcharge on order updates
 
 An order update (a back-office edit, a tracking number) replays the buyer surcharge exactly as PrestaShop currently records it on the order. Its amounts and rate come from the stored order data, never from the live surcharge configuration, so changing the surcharge settings, tax rules or tax treatment later does not change an existing order's fee at Two. Rates stacked one after another are compounded, as PrestaShop applied them. The fee is recognised under any product id the hidden fee product has had, so recreating or deleting that product does not orphan older orders (see [Recognising the fee row](#recognising-the-fee-row)).
