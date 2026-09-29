@@ -296,11 +296,17 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 
 #### Buyer surcharge on order updates
 
-An order update (a back-office edit, a tracking number) replays the buyer surcharge exactly as PrestaShop currently records it on the order. Its amounts and rate come from the stored order data, never from the live surcharge configuration, so changing the surcharge settings, tax rules or tax treatment later does not change an existing order's fee at Two. Rates stacked one after another are compounded, as PrestaShop applied them. The fee is recognised under any product id the hidden fee product has had, so recreating or deleting that product does not orphan older orders.
+An order update (a back-office edit, a tracking number) replays the buyer surcharge exactly as PrestaShop currently records it on the order. Its amounts and rate come from the stored order data, never from the live surcharge configuration, so changing the surcharge settings, tax rules or tax treatment later does not change an existing order's fee at Two. Rates stacked one after another are compounded, as PrestaShop applied them. The fee is recognised under any product id the hidden fee product has had, so recreating or deleting that product does not orphan older orders (see [Recognising the fee row](#recognising-the-fee-row)).
 
 PrestaShop's own admin actions can rewrite that record: on 8 and 9 an address change re-taxes every order line from the live rates, and on 1.7 editing a line re-taxes it from the product's live tax group. The update then sends what PrestaShop now holds.
 
-Where the stored data cannot be replayed as recorded (fee lines at different rates, amounts that disagree with the recorded rate, or a line carrying the fee's reference under a product that was never the fee product), the update fails loudly with a `TWO-26076` entry in the shop log rather than send the order without its fee. The admin's edit stays saved in PrestaShop, and the back office warns that it was not sent to Two and must not be repeated.
+Where the stored data cannot be replayed as recorded (fee lines at different rates, or amounts that disagree with the recorded rate), the update fails loudly with a `TWO-26076` entry in the shop log rather than send the order without its fee. The admin's edit stays saved in PrestaShop, and the back office warns that it was not sent to Two and must not be repeated.
+
+#### Recognising the fee row
+
+A cart or order row is the surcharge fee if and only if its product id is the current or a retired fee product id AND its reference (cart row `reference` / order_detail `product_reference`) equals `TWO_SURCHARGE_PRODUCT_REFERENCE`.
+
+Every place the module tells the fee apart from merchandise (the order payload, the cart and order parity checks, the update replay, the cart display and the order-row guard) applies this one test, `Twopayment::isTwoSurchargeRow`. An id alone is not enough: MySQL can hand a retired fee id to a new catalog product, and that product must still be sold.
 
 #### Order Fulfillment
 

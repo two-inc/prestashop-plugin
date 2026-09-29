@@ -6493,7 +6493,7 @@ class Twopayment extends PaymentModule
         // The hidden surcharge line is excluded from the product line items
         // (its payload counterpart is appended AFTER this gate), so subtract
         // its cart-side totals to compare like with like.
-        $surchargeCartLine = $this->getTwoSurchargeCartLine($cart, true);
+        $surchargeCartLine = $this->getTwoSurchargeCartLine($cart);
         if ($surchargeCartLine !== null && ($cartGross != 0.0 || $cartNet != 0.0)) {
             $cartGross = round($cartGross - $surchargeCartLine['gross'], 2);
             $cartNet = round($cartNet - $surchargeCartLine['net'], 2);
@@ -7320,7 +7320,7 @@ class Twopayment extends PaymentModule
             // (buildTwoSurchargeLineItemForCart), and the fee basis must never
             // include the fee itself. Skip it here; reconciliation subtracts
             // its cart totals symmetrically.
-            if (in_array((int) $line_item['id_product'], $surchargeProductIds, true)) {
+            if ($this->isTwoSurchargeRow($line_item['id_product'], isset($line_item['reference']) ? $line_item['reference'] : null, $surchargeProductIds)) {
                 continue;
             }
             $categories = Product::getProductCategoriesFull($line_item['id_product'], $cart->id_lang);
@@ -14259,8 +14259,6 @@ class Twopayment extends PaymentModule
 
     /**
      * The fee rows PrestaShop recorded on the order, summed, at the rate core recorded for them (TWO-26076).
-     * Identified by the fee product id, as getTwoProductItems excludes it: a primary key, where a reference is neither unique nor ours alone.
-     * Any id the fee product has had counts, since recreating it changes the id but not the orders placed under the old one.
      *
      * @param int $orderId
      * @param int|null $paymentTermDays the placed term (label only)
@@ -14273,25 +14271,19 @@ class Twopayment extends PaymentModule
         $productIds = $this->getTwoSurchargeProductIds();
         // order_detail.tax_rate is only written from PS 8; order_detail_tax holds the placement rates on every version.
         $rows = Db::getInstance()->executeS(
-            'SELECT od.`product_id`, od.`product_name`, od.`total_price_tax_excl`, od.`total_price_tax_incl`, od.`tax_computation_method`,'
+            'SELECT od.`product_id`, od.`product_reference`, od.`product_name`, od.`total_price_tax_excl`, od.`total_price_tax_incl`, od.`tax_computation_method`,'
             . ' (SELECT GROUP_CONCAT(t.`rate` SEPARATOR \',\') FROM `' . _DB_PREFIX_ . 'order_detail_tax` odt'
             . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = odt.`id_tax`'
             . ' WHERE odt.`id_order_detail` = od.`id_order_detail`) AS `placed_rates`'
             . ' FROM `' . _DB_PREFIX_ . 'order_detail` od WHERE od.`id_order` = ' . $orderId
-            . ' AND (od.`product_id` IN (' . implode(',', array_merge(array(0), $productIds)) . ')'
-            . " OR od.`product_reference` = '" . pSQL(self::TWO_SURCHARGE_PRODUCT_REFERENCE) . "')"
         );
-        if (!is_array($rows) || $rows === array()) {
-            return null;
-        }
         $net = 0.0;
         $gross = 0.0;
         $rates = array();
         $storedName = '';
-        foreach ($rows as $row) {
-            if (!in_array((int) $row['product_id'], $productIds, true)) {
-                $this->failTwoPlacedSurchargeReplay($orderId, 'a row for product ' . (int) $row['product_id']
-                    . ' carries the fee reference, but the fee product ids are ' . ($productIds !== array() ? implode(', ', $productIds) : 'none'));
+        foreach (is_array($rows) ? $rows : array() as $row) {
+            if (!$this->isTwoSurchargeRow($row['product_id'], $row['product_reference'], $productIds)) {
+                continue;
             }
             $rowNet = round((float) $row['total_price_tax_excl'], 2);
             $rowGross = round((float) $row['total_price_tax_incl'], 2);
@@ -14634,6 +14626,19 @@ class Twopayment extends PaymentModule
         $liveId = $this->getTwoSurchargeCartProductId(false);
 
         return array_values(array_unique(array_merge($liveId > 0 ? array($liveId) : array(), $this->getTwoRetiredSurchargeProductIds())));
+    }
+
+    /**
+     * The only test for the surcharge fee row: a current or retired fee id AND the fee reference (README "Recognising the fee row").
+     *
+     * @param int $productId cart `id_product` / order_detail `product_id`
+     * @param string|null $reference cart `reference` / order_detail `product_reference`
+     * @param int[] $feeProductIds from getTwoSurchargeProductIds()
+     * @return bool
+     */
+    public function isTwoSurchargeRow($productId, $reference, array $feeProductIds)
+    {
+        return (string) $reference === self::TWO_SURCHARGE_PRODUCT_REFERENCE && in_array((int) $productId, $feeProductIds, true);
     }
 
     /**
@@ -15088,29 +15093,22 @@ class Twopayment extends PaymentModule
      * cart-vs-payload parity gate.
      *
      * @param Cart $cart
-     * @param bool $anyFeeId sum the rows under every current or retired fee id, as getTwoProductItems excludes them
-     * @return array{quantity:int,net:float,gross:float}|null
+     * @return array{quantity:int,net:float,gross:float}|null the fee rows summed, as getTwoProductItems excludes them
      */
-    public function getTwoSurchargeCartLine($cart, $anyFeeId = false)
+    public function getTwoSurchargeCartLine($cart)
     {
         if (!Validate::isLoadedObject($cart)) {
             return null;
         }
-        $productIds = array_filter($anyFeeId ? $this->getTwoSurchargeProductIds() : array($this->getTwoSurchargeCartProductId(false)));
-        if ($productIds === array()) {
-            return null;
-        }
+        $productIds = $this->getTwoSurchargeProductIds();
         $line = null;
         foreach ((array) $cart->getProducts(true) as $row) {
-            if (in_array((int) $row['id_product'], $productIds, true)) {
+            if ($this->isTwoSurchargeRow($row['id_product'], isset($row['reference']) ? $row['reference'] : null, $productIds)) {
                 $line = array(
                     'quantity' => ($line !== null ? $line['quantity'] : 0) + (int) $row['cart_quantity'],
                     'net' => round(($line !== null ? $line['net'] : 0) + (float) $row['total'], 2),
                     'gross' => round(($line !== null ? $line['gross'] : 0) + (float) $row['total_wt'], 2),
                 );
-                if (!$anyFeeId) {
-                    break;
-                }
             }
         }
 
@@ -15173,11 +15171,11 @@ class Twopayment extends PaymentModule
 
         $products = (array) $presentedCart['products'];
         $filteredProducts = array();
+        $feeProductIds = $this->getTwoSurchargeProductIds();
         foreach ($products as $row) {
             // Presented rows are ProductListingLazyArray objects (ArrayAccess),
             // not plain arrays - isset()/[] work on both via the same syntax.
-            $reference = (is_array($row) || $row instanceof ArrayAccess) && isset($row['reference']) ? $row['reference'] : null;
-            if ($reference !== null && (string) $reference === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
+            if ((is_array($row) || $row instanceof ArrayAccess) && isset($row['id_product']) && $this->isTwoSurchargeRow($row['id_product'], isset($row['reference']) ? $row['reference'] : null, $feeProductIds)) {
                 continue;
             }
             $filteredProducts[] = $row;
@@ -15903,10 +15901,11 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        $surchargeProductId = $this->getTwoSurchargeCartProductId(false);
-        if ($surchargeProductId <= 0 || (int) $orderDetail->product_id !== $surchargeProductId) {
+        $reference = isset($orderDetail->product_reference) ? $orderDetail->product_reference : null;
+        if (!$this->isTwoSurchargeRow($orderDetail->product_id, $reference, $this->getTwoSurchargeProductIds())) {
             return;
         }
+        $surchargeProductId = (int) $orderDetail->product_id;
 
         // Manual back-office adds are NEVER legitimate for this product:
         // only the module's own automated cart-sync + order creation may

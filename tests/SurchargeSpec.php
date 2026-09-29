@@ -64,6 +64,7 @@ final class SurchargeSpec
         self::testSurchargeLineItemTaxRateSelfConsistentAtHighPrecision();
         self::testSurchargeLineItemHonorsExplicitTermOverride();
         self::testOrderPayloadInjectsSurchargeLineAndBumpsTotals();
+        self::testCreatePayloadKnowsTheFeeRowByIdAndReference();
         self::testUpdatePayloadReplaysThePlacedSurchargeLine();
         self::testAdminOrderHooksWarnInsteadOfThrowingAFailedUpdate();
         self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
@@ -1615,11 +1616,13 @@ final class SurchargeSpec
             [fn () => Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 0), [$fee($v17)], '1/5.00/1.25/6.25/0.25/Stored fee label/111.75', 'empty live label falls back to the stored row name'],
             [fn () => null, [$fee($v17), $fee($v17 + ['total_price_tax_excl' => '2.000000', 'total_price_tax_incl' => '2.200000', 'odt' => [10.0]])], 'throws TWO-26076', 'fee rows at different rates fail loud'],
             [fn () => null, [$fee($v17 + ['total_price_tax_incl' => '6.300000'])], 'throws TWO-26076', 'back-office edit off the rate by more than the tolerance fails loud'],
-            [fn () => null, [$fee($v17), $fee($v17 + ['product_id' => 555])], 'throws TWO-26076', 'a row carrying the fee reference under another product id fails loud'],
+            [fn () => null, [$fee($v17), $fee($v17 + ['product_id' => 555])], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'the fee reference under an id the fee never had is not the fee'],
+            [fn () => [Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS', '12'), StubStore::$products[12] = ['reference' => 'SKU-12', 'id_tax_rules_group' => 500]], [$fee($v17), $fee($v17 + ['product_id' => 12, 'product_reference' => 'SKU-12', 'product_name' => 'Real item', 'total_price_tax_excl' => '20.000000', 'total_price_tax_incl' => '21.100000', 'odt' => [5.5]])], '1/5.00/1.25/6.25/0.25/' . $label . '/132.85', 'a real product that reused a retired fee id is sold, not the fee'],
+            [fn () => [Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '88'), StubStore::$products[88] = StubStore::$products[77], Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS', '77')], [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'the fee under a retired id is the fee'],
             [fn ($m) => [StubStore::$products[77]['reference'] = 'EDITED', $m->getTwoSurchargeCartProductId(true)], [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'live id changed after the order: reference edited, fee product recreated'],
             [function () { unset(StubStore::$products[77]); }, [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'merchant deleted the fee product'],
             [fn () => [Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '0'), Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS', '12,77')], [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'live id 0, placed id retired'],
-            [function () { Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '0'); unset(StubStore::$products[77]); }, [$fee($v17)], 'throws TWO-26076', 'live id 0, placed id deleted but never recorded as ours'],
+            [function () { Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '0'); unset(StubStore::$products[77]); }, [$fee($v17)], '0/-/-/-/-/-/105.50', 'live id 0, placed id deleted but never recorded as ours: not the fee'],
             [fn () => null, [$fee($taxes(1, '5.000000', '5.750000'))], '1/5.00/0.75/5.75/0.15/' . $label . '/111.25', 'combined 10% + 5% on 5.00 adds the rates'],
             [fn () => null, [$fee($taxes(1, '2.000000', '2.300000'))], '1/2.00/0.30/2.30/0.15/' . $label . '/107.80', 'combined 10% + 5% on 2.00 adds the rates'],
             [fn () => null, [$fee($taxes(2, '5.000000', '5.780000'))], '1/5.00/0.78/5.78/0.155/' . $label . '/111.28', 'one after another 10% then 5% on 5.00 compounds the rates'],
@@ -1663,7 +1666,7 @@ final class SurchargeSpec
             StubStore::$cartProducts[7001] = [$item];
             // One cart row per product; core's Cart::getProducts joins product_shop, so a deleted product's row drops out.
             foreach (array_filter($rows, fn ($row) => isset(StubStore::$products[$row['product_id']])) as $row) {
-                $cartRow = StubStore::$cartProducts[7001][$row['product_id']] ?? ['id_product' => $row['product_id'], 'name' => $row['product_name'], 'cart_quantity' => 0, 'total' => 0.0, 'total_wt' => 0.0, 'rate' => 0.0] + $item;
+                $cartRow = StubStore::$cartProducts[7001][$row['product_id']] ?? ['id_product' => $row['product_id'], 'reference' => StubStore::$products[$row['product_id']]['reference'] ?? '', 'name' => $row['product_name'], 'cart_quantity' => 0, 'total' => 0.0, 'total_wt' => 0.0, 'rate' => 0.0] + $item;
                 $cartRow['cart_quantity'] += $row['product_quantity'];
                 $cartRow['total'] += (float) $row['total_price_tax_excl'];
                 $cartRow['total_wt'] += (float) $row['total_price_tax_incl'];
@@ -1701,6 +1704,71 @@ final class SurchargeSpec
             }
         }
         TinyAssert::same([], $failures, "fee lines/net/tax/gross/rate/name/order gross\n  " . implode("\n  ", $failures));
+    }
+
+    /**
+     * TWO-26076: a cart row is the fee only when its id is a current or retired
+     * fee id AND it carries the fee reference, so an id MySQL reused for a real
+     * product is sold. Surcharge off: the payload carries exactly the product rows.
+     */
+    private static function testCreatePayloadKnowsTheFeeRowByIdAndReference(): void
+    {
+        $row = fn (int $id, string $reference, float $net, float $gross) => [
+            'id_product' => $id, 'reference' => $reference, 'link_rewrite' => 'item', 'name' => 'Item ' . $id, 'description_short' => '',
+            'manufacturer_name' => '', 'ean13' => '', 'upc' => '', 'total' => $net, 'total_wt' => $gross,
+            'cart_quantity' => 1, 'rate' => 5.5, 'price' => $net, 'reduction' => 0,
+        ];
+        $fee = Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE;
+        $cases = [
+            // [retired ids, extra cart row, want product lines/payload gross, description]
+            ['12', $row(12, 'SKU-12', 20.00, 21.10), '2/126.60', 'a real product that reused a retired fee id is sold'],
+            ['12', $row(12, $fee, 5.00, 6.25), '1/105.50', 'the fee under a retired id is not sold'],
+            ['', $row(77, $fee, 5.00, 6.25), '1/105.50', 'the fee under the live id is not sold'],
+            ['', $row(555, $fee, 20.00, 21.10), '2/126.60', 'the fee reference under an id the fee never had is sold'],
+        ];
+        $failures = [];
+        foreach ($cases as [$retired, $extra, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'none');
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '77');
+            Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS', $retired);
+            StubStore::$products[77] = ['reference' => $fee, 'is_virtual' => 1, 'visibility' => 'none'];
+            foreach ([9301, 12, 555] as $id) {
+                StubStore::$products[$id]['id_tax_rules_group'] = 500;
+            }
+            StubStore::$taxRuleRates[500] = 5.5;
+            StubStore::$customers[7001] = ['email' => 'buyer@example.com', 'firstname' => 'Eva', 'lastname' => 'Martin', 'secure_key' => 'k', 'loaded' => true];
+            StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+            StubStore::$addresses[7101] = ['id_country' => 33, 'company' => 'Acme FR SAS', 'companyid' => 'FR123456789', 'address1' => '10 Rue de Paris', 'city' => 'Paris', 'postcode' => '75001', 'phone' => '+33100000000', 'loaded' => true];
+            StubStore::$countries[33] = 'FR';
+            $cart = new Cart(7001);
+            $cart->id_customer = 7001;
+            $cart->id_currency = 978;
+            $cart->id_address_invoice = 7101;
+            $cart->id_address_delivery = 7101;
+            $cart->id_carrier = 0;
+            $cart->id_lang = 1;
+            StubStore::$cartProducts[7001] = [$row(9301, 'SKU-9301', 100.00, 105.50), $extra];
+            StubStore::$cartTotals[7001] = [
+                true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => array_sum(array_column(StubStore::$cartProducts[7001], 'total_wt'))],
+                false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => array_sum(array_column(StubStore::$cartProducts[7001], 'total'))],
+                'average_products_tax_rate' => 5.5,
+            ];
+            try {
+                $payload = (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-7001', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm', 'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '', 'merchant_order_verification_failed_url' => '', 'merchant_invoice_url' => '', 'merchant_shipping_document_url' => '',
+                ], false);
+                $products = array_filter($payload['line_items'], fn ($item) => ($item['type'] ?? '') !== 'SHIPPING_FEE');
+                $actual = count($products) . '/' . $payload['gross_amount'];
+            } catch (Exception $e) {
+                $actual = 'throws: ' . $e->getMessage();
+            }
+            if ($actual !== $expected) {
+                $failures[] = $description . ': want ' . $expected . ', got ' . $actual;
+            }
+        }
+        TinyAssert::same([], $failures, "product lines/payload gross\n  " . implode("\n  ", $failures));
     }
 
     /**
