@@ -169,7 +169,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                     $snapshot_includes_secure_key = false;
                 } else {
                     // Cart changed between provider order creation and callback finalization.
-                    $this->module->setTwoPaymentRequest('/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST');
+                    $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'snapshot_mismatch', '/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST', $cart);
                     $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
                     PrestaShopLogger::addLog(
                         'TwoPayment: Cart snapshot mismatch for attempt ' . $attempt_token . '. Stored=' . $stored_snapshot_hash . ', Current=' . $current_snapshot_hash,
@@ -220,7 +220,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         $final_state = isset($response['state']) ? $response['state'] : 'VERIFIED';
         $final_status = isset($response['status']) ? $response['status'] : null;
         if ($two_state === 'VERIFIED') {
-            $confirm_result = $this->module->confirmTwoOrder($two_order_id);
+            $confirm_result = $this->module->confirmTwoOrder($two_order_id, 'confirmation', $cart);
             if ($confirm_result['success']) {
                 $final_state = $confirm_result['state'];
                 $final_status = $confirm_result['status'] ?: $final_status;
@@ -267,7 +267,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
 
                 // Best effort: cancel incoming duplicate provider order to avoid orphaned external state.
                 if (!Tools::isEmpty($attempt['two_order_id'])) {
-                    $this->module->setTwoPaymentRequest('/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST');
+                    $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'rebinding_guard', '/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST', $cart);
                 }
 
                 $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
@@ -319,7 +319,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 }
 
                 if (!hash_equals($stored_snapshot_hash, $final_snapshot_hash)) {
-                    $this->module->setTwoPaymentRequest('/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST');
+                    $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'snapshot_drift', '/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST', $cart);
                     $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
                     PrestaShopLogger::addLog(
                         'TwoPayment: Cart snapshot drifted between verification and order creation for attempt ' . $attempt_token .
@@ -476,7 +476,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
 
         try {
             // Also records the hash that lets later unchanged saves skip their PUT (TWO-26085).
-            $update_response = $this->module->putTwoOrderUpdate($order, $payment_data);
+            $update_response = $this->module->putTwoOrderUpdate($order, $payment_data, $update_payload, 'merchant_order_id');
             if ($update_response === null) {
                 // A repeated callback: Two already holds exactly this order, merchant_order_id included.
                 return true;
@@ -571,7 +571,8 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $attempt['merchant_order_id'],
             $cart,
             $comparison_urls,
-            (bool) $sync_surcharge_cart_line
+            (bool) $sync_surcharge_cart_line,
+            'snapshot_hash'
         );
 
         return $this->module->calculateTwoCheckoutSnapshotHash($cart, $comparison_payload);
@@ -626,7 +627,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             }
 
             if ($two_state === 'VERIFIED') {
-                $confirm_result = $this->module->confirmTwoOrder($two_order_id);
+                $confirm_result = $this->module->confirmTwoOrder($two_order_id, 'legacy_confirmation', null, $order);
                 $final_state = $confirm_result['success'] ? $confirm_result['state'] : $response['state'];
                 $final_status = ($confirm_result['success'] && $confirm_result['status']) ? $confirm_result['status'] : $response['status'];
                 $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(

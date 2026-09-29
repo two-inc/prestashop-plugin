@@ -67,7 +67,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         $extra_data = array();
         if (!empty($attempt['two_order_id'])) {
             $two_order_id = $attempt['two_order_id'];
-            $cancel_response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
+            $cancel_response = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', new Cart((int) $attempt['id_cart']));
             $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
             if ($cancel_http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST) {
                 PrestaShopLogger::addLog(
@@ -153,7 +153,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
 
         $two_order_id = (string)$orderpaymentdata['two_order_id'];
 
-        $cancel_response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
+        $cancel_response = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
         $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
 
         $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
