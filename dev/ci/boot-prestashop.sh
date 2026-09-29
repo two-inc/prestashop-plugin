@@ -49,6 +49,8 @@ TWO_API_BASE_URL="${TWO_API_BASE_URL:-}"
 # error.
 pull_with_retry() {
   local image="$1" n=0
+  # A local run reuses a cached image; CI runners start empty, so they always pull.
+  docker image inspect "$image" >/dev/null 2>&1 && return 0
   until docker pull "$image"; do
     n=$((n + 1))
     if [ "$n" -ge 5 ]; then

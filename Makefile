@@ -190,9 +190,9 @@ carrierless-shop:
 
 # Configs 4/5 (merchant override) run only with MERCHANT_OVERRIDE_PATH,
 # MERCHANT_SHIM_PATH and MERCHANT_RATE_CONFIG_KEY set; see tests/integration/README.md.
-## Cross carrier-less shipping modes A/B/C with Default shipping tax code configs; prints a results table
-carrierless-matrix: carrierless-shop
-	PS_CONTAINER=$(CONTAINER) dev/ci/run-carrierless-matrix.sh
+## Cross carrier-less shipping modes with Default shipping tax code configs on a throwaway shop; prints a results table
+carrierless-matrix:
+	dev/ci/run-carrierless-matrix.sh
 
 ## Run the tests/integration probes against the running local shop (run make carrierless-shop first)
 test-integration:
