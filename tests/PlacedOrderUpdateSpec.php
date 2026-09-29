@@ -165,7 +165,39 @@ final class PlacedOrderUpdateSpec
             }, $editQty, 'edit', 'no PUT, paid 35.00', 'another module\'s order: its payment is untouched'],
             [function ($o) {
                 $o->payments = [self::payment('Two', 20.00), self::payment('Bank wire', 15.00)];
-            }, $editQty, 'edit', 'PUT PHYSICAL 30.00/7.50/37.50@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 47.50 NOK, paid 20.00+15.00', 'split payment is untouched'],        ];
+            }, $editQty, 'edit', 'PUT PHYSICAL 30.00/7.50/37.50@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 47.50 NOK, paid 20.00+15.00', 'split payment is untouched'],
+            [function ($o) {
+                StubStore::$orderDetails[0]['ecotax'] = 1.00;
+                StubStore::$orderDetails[0]['ecotax_tax_rate'] = 25.0;
+            }, function ($o) use ($track) {
+                Configuration::updateValue('PS_ECOTAX_TAX_RULES_GROUP_ID', 511);
+                StubStore::$taxRuleRates[511] = 15.0;
+                $track($o);
+            }, 'tracking', 'PUT PHYSICAL 18.00/4.50/22.50@0.25; SERVICE 2.00/0.50/2.50@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 35.00 NOK', 'ecotax at its recorded rate'],
+            [$twoRates, function ($o) {
+                array_shift(StubStore::$orderDetails);
+                $o->total_paid_tax_excl -= 20.00;
+                $o->total_paid_tax_incl -= 25.00;
+            }, 'edit', 'PUT PHYSICAL 40.00/6.00/46.00@0.15; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 56.00 NOK, paid 56.00', 'product removed'],
+            [$none, function ($o) use ($track) {
+                StubStore::$twoPaymentRows[self::ORDER]['two_update_hash'] = null;
+                $track($o);
+            }, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 NOK', 'no stored hash PUTs'],
+            [$none, function ($o, $module) use ($editQty, $track) {
+                $editQty($o);
+                $module->hookActionOrderEdited(['order' => $o]);
+                $track($o);
+            }, 'tracking', 'PUT PHYSICAL 30.00/7.50/37.50@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 47.50 NOK', 'admin edit then tracking carries both'],
+            [$none, function ($o, $module) use ($editQty) {
+                $editQty($o);
+                $module->hookActionOrderEdited(['order' => $o]);
+            }, 'tracking', 'no PUT', 'admin edit then an unchanged tracking save PUTs nothing more'],
+            [function ($o) {
+                StubStore::$currencies[978] = ['iso_code' => 'EUR', 'conversion_rate' => 0.085, 'loaded' => true];
+                StubStore::$carts[self::CART]['id_currency'] = 978;
+                $o->id_currency = 978;
+            }, $track, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 EUR', 'order in a currency other than the shop default'],
+        ];
 
         $failures = [];
         foreach ($cases as [$shape, $change, $hook, $expected, $description]) {
