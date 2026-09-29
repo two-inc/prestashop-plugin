@@ -21,7 +21,7 @@ namespace {
     if (!defined('_DB_PREFIX_')) {
         define('_DB_PREFIX_', 'ps_');
     }
-    // Upgrade scripts and ensureTwoOrderCompanyColumns() interpolate this into
+    // Upgrade scripts and ensureTwoPaymentColumns() interpolate this into
     // their information_schema existence checks, so it has to exist offline for
     // those paths to be testable at all.
     if (!defined('_DB_NAME_')) {
@@ -2409,7 +2409,7 @@ namespace {
                 return isset(StubStore::$dbTriggers[$m[1]]) ? '1' : '0';
             }
             // Column existence, as the upgrade scripts and
-            // ensureTwoOrderCompanyColumns() ask it. Answered from the schema
+            // ensureTwoPaymentColumns() ask it. Answered from the schema
             // Db::execute() has recorded, so an already-added column reads as
             // present and the guarded ALTER is genuinely skipped.
             if (preg_match(

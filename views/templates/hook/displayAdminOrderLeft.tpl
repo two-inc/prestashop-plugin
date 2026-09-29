@@ -11,6 +11,11 @@
         </div>
     </div>
     <div class="panel-body two-admin-content">
+        {if isset($two_not_sent_since) && $two_not_sent_since}
+        <div class="alert alert-danger two-not-sent-alert">
+            {l s='Changes to this order since %s were saved in PrestaShop but have not reached %s, so its invoice may not match this order. Do not repeat an edit to retry it; please contact support.' mod='twopayment' sprintf=[$two_not_sent_since, $two_product_name]}
+        </div>
+        {/if}
         {if isset($two_invoice_notice) && $two_invoice_notice}
         <div class="alert {if $two_invoice_notice.level == 'error'}alert-danger{else}alert-info{/if}">
             {$two_invoice_notice.message|escape:'html':'UTF-8'}

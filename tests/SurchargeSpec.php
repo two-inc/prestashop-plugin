@@ -67,6 +67,7 @@ final class SurchargeSpec
         self::testCreatePayloadKnowsTheFeeRowByIdAndReference();
         self::testUpdatePayloadReplaysThePlacedSurchargeLine();
         self::testAdminOrderHooksWarnInsteadOfThrowingAFailedUpdate();
+        self::testOrderPageShowsAnUpdateTwoNeverReceivedUntilOneLands();
         self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
         self::testSurchargeGridEmptyStateReplacesTheHeadings();
     }
@@ -1706,11 +1707,7 @@ final class SurchargeSpec
         TinyAssert::same([], $failures, "fee lines/net/tax/gross/rate/name/order gross\n  " . implode("\n  ", $failures));
     }
 
-    /**
-     * TWO-26076: a cart row is the fee only when its id is a current or retired
-     * fee id AND it carries the fee reference, so an id MySQL reused for a real
-     * product is sold. Surcharge off: the payload carries exactly the product rows.
-     */
+    /** TWO-26076: an id MySQL reused for a real product is sold; the fee needs its id AND its reference. */
     private static function testCreatePayloadKnowsTheFeeRowByIdAndReference(): void
     {
         $row = fn (int $id, string $reference, float $net, float $gross) => [
@@ -1846,6 +1843,91 @@ final class SurchargeSpec
             }
         }
         TinyAssert::same([], $failures, "PUTs sent/warnings/logs\n  " . implode("\n  ", $failures));
+    }
+
+    /** TWO-26076: 1.7 drops the hooks' warnings, so a failed PUT marks the order until one lands. */
+    private static function testOrderPageShowsAnUpdateTwoNeverReceivedUntilOneLands(): void
+    {
+        $prior = '2026-09-29 10:00:00';
+        $cases = [
+            // [hook, PUT outcome (throw or HTTP status), marker before, want marker/private notes/order page, description]
+            ['hookActionOrderEdited', 'throw', null, 'new/1/shown', 'edit payload fails'],
+            ['hookActionOrderEdited', 400, null, 'new/1/shown', 'edit rejected by Two'],
+            ['hookActionOrderEdited', 'throw', $prior, 'kept/1/shown', 'a second failure keeps the first time'],
+            ['hookActionOrderEdited', 200, $prior, 'none/0/hidden', 'a landed edit clears it'],
+            ['hookActionAdminOrdersTrackingNumberUpdate', 'throw', null, 'new/1/shown', 'tracking payload fails'],
+            ['hookActionAdminOrdersTrackingNumberUpdate', 400, null, 'new/1/shown', 'tracking rejected by Two'],
+            ['hookActionAdminOrdersTrackingNumberUpdate', 200, $prior, 'none/0/hidden', 'a landed tracking number clears it'],
+        ];
+        $failures = [];
+        foreach ($cases as [$hook, $outcome, $before, $expected, $description]) {
+            self::reset();
+            StubStore::$twoPaymentRows[8001] = ['id_order' => 8001, 'two_order_id' => 'two-order-uuid', 'two_not_sent_at' => $before];
+            $module = new class extends TwopaymentTestHarness {
+                /** @var int|string */
+                public $outcome = 200;
+                public array $notes = [];
+
+                public function getTwoUpdateOrderData($order, $orderpaymentdata)
+                {
+                    if ($this->outcome === 'throw') {
+                        throw new Exception('stubbed payload failure');
+                    }
+                    return ['gross_amount' => '1.00'];
+                }
+
+                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                {
+                    return ['http_status' => $this->outcome];
+                }
+
+                public function addTwoBackOfficeWarning($message)
+                {
+                    return true;
+                }
+
+                protected function addTwoOrderPrivateNote($idOrder, $text)
+                {
+                    $this->notes[] = $text;
+                }
+
+                protected function syncTwoAdminOrderPaymentDataFromProvider($id_order, $twopaymentdata)
+                {
+                    return $twopaymentdata;
+                }
+
+                protected function enrichTwoAdminOrderPaymentData($id_order, $twopaymentdata)
+                {
+                    return $twopaymentdata;
+                }
+            };
+            $module->outcome = $outcome;
+            $order = new class {
+                public bool $loaded = true;
+                public int $id = 8001;
+                public int $id_cart = 0;
+                public string $module = 'twopayment';
+
+                public function getOrderPaymentCollection(): array
+                {
+                    return [];
+                }
+            };
+            $module->$hook(['order' => $order]);
+            $marker = (string) (StubStore::$twoPaymentRows[8001]['two_not_sent_at'] ?? '');
+            $module->context->smarty->assigned = [];
+            $module->hookDisplayAdminOrderLeft(['id_order' => 8001]);
+            $shown = (string) ($module->context->smarty->assigned['two_not_sent_since'] ?? '');
+            $actual = implode('/', [
+                $marker === '' ? 'none' : ($marker === $before ? 'kept' : 'new'),
+                count(array_filter($module->notes, fn ($note) => strpos($note, 'not sent to the invoice provider') !== false)),
+                $shown === '' ? 'hidden' : ($shown === substr($marker, 0, 16) . ' UTC' ? 'shown' : 'wrong: ' . $shown),
+            ]);
+            if ($actual !== $expected) {
+                $failures[] = $description . ': want ' . $expected . ', got ' . $actual;
+            }
+        }
+        TinyAssert::same([], $failures, "marker/private notes/order page\n  " . implode("\n  ", $failures));
     }
 
     /**

@@ -300,7 +300,14 @@ An order update (a back-office edit, a tracking number) replays the buyer surcha
 
 PrestaShop's own admin actions can rewrite that record: on 8 and 9 an address change re-taxes every order line from the live rates, and on 1.7 editing a line re-taxes it from the product's live tax group. The update then sends what PrestaShop now holds.
 
-Where the stored data cannot be replayed as recorded (fee lines at different rates, or amounts that disagree with the recorded rate), the update fails loudly with a `TWO-26076` entry in the shop log rather than send the order without its fee. The admin's edit stays saved in PrestaShop, and the back office warns that it was not sent to Two and must not be repeated.
+Where the stored data cannot be replayed as recorded (fee lines at different rates, or amounts that disagree with the recorded rate), the update fails loudly with a `TWO-26076` entry in the shop log rather than send the order without its fee.
+
+When an order edit or a tracking number does not reach Two (its payload cannot be built, or Two rejects it), the change stays saved in PrestaShop and the order is marked as not sent. PrestaShop itself reports the save as a success: on 1.7 an edit returns core's own AJAX result and a tracking number redirects to "Successful update."; on 8 and 9 an edit returns core's own JSON and a tracking number redirects with core's own flash. So on every version the admin sees the failure on the order page, from its next load (at once after a tracking number, on reload after an edit):
+
+- a red panel at the top of the Two payment block: "Changes to this order since `<time>` UTC were saved in PrestaShop but have not reached Two, so its invoice may not match this order. Do not repeat an edit to retry it; please contact support."
+- a private message in the order's Messages for each failure, giving the reason.
+
+The panel stays until an edit or tracking number update is accepted by Two.
 
 #### Recognising the fee row
 

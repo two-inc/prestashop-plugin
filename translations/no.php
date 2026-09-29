@@ -577,3 +577,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_0592fff84c41da1f5de791af5d35bb18'] 
 $_MODULE['<{twopayment}prestashop>twopayment_17ff44377a631de2e9afb533c9a34063'] = 'Beklager, vi kunne ikke legge dette i handlekurven. Prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Denne endringen av bestillingen ble lagret i PrestaShop, men ble ikke sendt til fakturaleverandøren. Ikke gjenta endringen. Kontakt kundestøtte.';
 $_MODULE['<{twopayment}prestashop>twopayment_d9e8fd0ca4e27bc560c15e7ac3e5c1ff'] = 'Sporingsnummeret ble lagret i PrestaShop, men ble ikke sendt til fakturaleverandøren. Kontakt kundestøtte.';
+$_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] = 'Denne endringen ble lagret i PrestaShop, men ble ikke sendt til fakturaleverandøren: %s';
+$_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Endringer i denne bestillingen siden %s ble lagret i PrestaShop, men har ikke nådd %s, så fakturaen stemmer kanskje ikke med denne bestillingen. Ikke gjenta en endring for å prøve på nytt; kontakt kundestøtte.';

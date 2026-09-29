@@ -366,7 +366,7 @@ class Twopayment extends PaymentModule
      *           It records the answer rather than merely "we looked", because a
      *           failed `ALTER` must remove the column from the write instead of
      *           being logged and written anyway - see
-     *           ensureTwoOrderCompanyColumns().
+     *           ensureTwoPaymentColumns().
      *
      *           An INSTANCE property rather than a function static: a static is
      *           process-wide, which makes the guard unreachable from a test and lets
@@ -830,7 +830,7 @@ class Twopayment extends PaymentModule
         // company the order was CREATED with, kept on the module's own
         // order-scoped table because nothing later in the order's life can
         // re-derive it. See getTwoOrderCompanySnapshot() for why, and
-        // upgrade-2.7.7.php / ensureTwoOrderCompanyColumns() for the shops that
+        // upgrade-2.7.7.php / ensureTwoPaymentColumns() for the shops that
         // predate the columns.
         $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment` (
             `id_two` int(11) NOT NULL AUTO_INCREMENT,
@@ -849,6 +849,7 @@ class Twopayment extends PaymentModule
             `two_invoice_uploaded_at` DATETIME NULL,
             `two_organization_number` VARCHAR(64) NULL,
             `two_company_name` VARCHAR(255) NULL,
+            `two_not_sent_at` DATETIME NULL,
             PRIMARY KEY  (`id_two`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
 
@@ -4316,7 +4317,12 @@ class Twopayment extends PaymentModule
             if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
                 $two_order_id = $orderpaymentdata['two_order_id'];
                 $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
-                $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, $paymentdata, 'PUT');
+                $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, $paymentdata, 'PUT');
+                $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+                if ($http_status < 200 || $http_status >= 300) {
+                    throw new Exception('HTTP ' . $http_status . ' ' . (string) $this->getTwoErrorMessage($response));
+                }
+                $this->recordTwoOrderSync($order->id, null);
             }
         } catch (Throwable $e) {
             PrestaShopLogger::addLog(
@@ -4327,6 +4333,7 @@ class Twopayment extends PaymentModule
             $this->addTwoBackOfficeWarning(
                 $this->l('This order edit was saved in PrestaShop but was not sent to the invoice provider. Do not repeat the edit. Please contact support.')
             );
+            $this->recordTwoOrderSync($order->id, $e->getMessage());
         }
     }
 
@@ -4378,6 +4385,9 @@ class Twopayment extends PaymentModule
                 $this->addTwoBackOfficeWarning(
                     $this->l('The tracking number could not be forwarded to the invoice provider; the invoice will be sent without it.')
                 );
+                $this->recordTwoOrderSync($order->id, 'HTTP ' . $http_status . ' ' . (string) $this->getTwoErrorMessage($response));
+            } else {
+                $this->recordTwoOrderSync($order->id, null);
             }
         } catch (Throwable $e) {
             // e.g. the order's cart no longer loads (purged carts, deleted
@@ -4393,7 +4403,66 @@ class Twopayment extends PaymentModule
             $this->addTwoBackOfficeWarning(
                 $this->l('The tracking number was saved in PrestaShop but was not sent to the invoice provider. Please contact support.')
             );
+            $this->recordTwoOrderSync($order->id, $e->getMessage());
         }
+    }
+
+    /**
+     * Mark or clear the order as holding changes Two has not received: core drops a hook's warnings on every version (TWO-26076).
+     *
+     * @param int $idOrder
+     * @param string|null $failure why the change did not reach Two; null when the PUT succeeded
+     */
+    public function recordTwoOrderSync($idOrder, $failure)
+    {
+        try {
+            $row = $this->getTwoOrderPaymentData((int) $idOrder);
+            $since = is_array($row) && !empty($row['two_not_sent_at']) ? (string) $row['two_not_sent_at'] : '';
+            if ($failure === null) {
+                if ($since !== '') {
+                    Db::getInstance()->update('twopayment', array('two_not_sent_at' => null), 'id_order = ' . (int) $idOrder, 0, true);
+                }
+                return;
+            }
+            if (is_array($row) && $since === '' && in_array('two_not_sent_at', $this->ensureTwoPaymentColumns(), true)) {
+                Db::getInstance()->update('twopayment', array('two_not_sent_at' => gmdate('Y-m-d H:i:s')), 'id_order = ' . (int) $idOrder);
+            }
+            $this->addTwoOrderPrivateNote((int) $idOrder, sprintf($this->l('This change was saved in PrestaShop but was not sent to the invoice provider: %s'), $failure));
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog('TwoPayment: TWO-26076 could not record that order ' . (int) $idOrder . ' is not sent to Two - ' . $e->getMessage(), 3);
+        }
+    }
+
+    /**
+     * A private message on the order, as core's own order-page note form writes it.
+     *
+     * @param int $idOrder
+     * @param string $text
+     */
+    protected function addTwoOrderPrivateNote($idOrder, $text)
+    {
+        $order = new Order((int) $idOrder);
+        $customer = new Customer((int) $order->id_customer);
+        $threadId = (int) CustomerThread::getIdCustomerThreadByEmailAndIdOrder($customer->email, (int) $order->id);
+        if (!$threadId) {
+            $thread = new CustomerThread();
+            $thread->id_contact = 0;
+            $thread->id_customer = (int) $order->id_customer;
+            $thread->id_shop = (int) $order->id_shop;
+            $thread->id_order = (int) $order->id;
+            $thread->id_lang = (int) $order->id_lang;
+            $thread->email = $customer->email;
+            $thread->status = 'open';
+            $thread->token = Tools::passwdGen(12);
+            $thread->add();
+            $threadId = (int) $thread->id;
+        }
+        $message = new CustomerMessage();
+        $message->id_customer_thread = $threadId;
+        $message->id_employee = isset($this->context->employee->id) ? (int) $this->context->employee->id : 0;
+        $message->message = $text;
+        $message->private = 1;
+        $message->add();
     }
 
     /**
@@ -14855,12 +14924,12 @@ class Twopayment extends PaymentModule
      * this repo already memoises on the instance elsewhere
      * ($twoApiKeyStatusMemo).
      *
-     * @return string[] the company columns this request has CONFIRMED are writable.
+     * @return string[] the columns this request has CONFIRMED are writable.
      *                  A column whose `ALTER` failed is absent, and the caller must
      *                  drop it from the write rather than name it - see the failure
      *                  branch below for what naming it costs.
      */
-    protected function ensureTwoOrderCompanyColumns()
+    protected function ensureTwoPaymentColumns()
     {
         if (is_array($this->twoOrderCompanyColumnsEnsured)) {
             return $this->twoOrderCompanyColumnsEnsured;
@@ -14871,6 +14940,7 @@ class Twopayment extends PaymentModule
         $columns = array(
             'two_organization_number' => 'ALTER TABLE `' . $table . '` ADD `two_organization_number` VARCHAR(64) NULL',
             'two_company_name' => 'ALTER TABLE `' . $table . '` ADD `two_company_name` VARCHAR(255) NULL',
+            'two_not_sent_at' => 'ALTER TABLE `' . $table . '` ADD `two_not_sent_at` DATETIME NULL',
         );
 
         foreach ($columns as $column => $ddl) {
@@ -14904,7 +14974,7 @@ class Twopayment extends PaymentModule
             // exactly the pre-TWO-40 behaviour.
             PrestaShopLogger::addLog(
                 'TwoPayment: Failed to add column ' . $column . ' to ' . $table
-                . ' - the order company snapshot cannot be persisted on this shop,'
+                . ' - its value cannot be persisted on this shop,'
                 . ' and this column will be omitted from writes rather than'
                 . ' failing them',
                 3
@@ -18893,7 +18963,7 @@ class Twopayment extends PaymentModule
             // Ask FIRST, then write only what came back guaranteed. The reverse
             // order - stage the columns, then try to create them - is how a failed
             // ALTER turns a missing company snapshot into a lost payment row.
-            $writable = $this->ensureTwoOrderCompanyColumns();
+            $writable = $this->ensureTwoPaymentColumns();
             foreach ($offered as $company_column => $company_value) {
                 if (in_array($company_column, $writable, true)) {
                     $data[$company_column] = $company_value;
@@ -19822,6 +19892,7 @@ class Twopayment extends PaymentModule
                 'two_pdf_url' => $pdf_url,
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
+                'two_not_sent_since' => !empty($twopaymentdata['two_not_sent_at']) ? substr((string) $twopaymentdata['two_not_sent_at'], 0, 16) . ' UTC' : '',
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderLeft.tpl');
