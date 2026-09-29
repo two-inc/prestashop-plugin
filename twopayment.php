@@ -7283,6 +7283,8 @@ class Twopayment extends PaymentModule
                 'TwoPayment: ' . $contextLabel . ' reconciliation drift logged as warning-only (intent precheck path).',
                 2
             );
+            // Tolerated here, so a later refusal must not be reported as this gate.
+            $this->twoDiscrepancyGate = null;
         }
 
         $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
