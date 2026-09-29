@@ -14,11 +14,8 @@
  * merchant never declared, which is the one thing the shipping-VAT design
  * forbids. install() likewise does not seed the key.
  *
- * The admin field is additionally hidden unless the install opts in with
- * `define('_TWO_ENABLE_DEFAULT_SHIPPING_TAX_CODE_', true);` in
- * config/defines_custom.inc.php - see README.md. That constant is a
- * per-install file edit and is not something an upgrade script can or should
- * write.
+ * The admin field is always shown; leaving it unset is the opt-out. See the
+ * "Default shipping tax code" section of README.md.
  *
  * Created: 2026-07-27
  */
