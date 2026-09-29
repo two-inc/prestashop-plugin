@@ -970,6 +970,17 @@ namespace {
     {
     }
 
+    class Hook
+    {
+        /** @var array<string,array<int,array{module:string}>> modules registered per hook */
+        public static array $execLists = [];
+
+        public static function getHookModuleExecList($hookName = null)
+        {
+            return self::$execLists[$hookName] ?? false;
+        }
+    }
+
     class PrestaShopLogger
     {
         /** @var array<int,array{message:string,severity:int,object_type:?string,object_id:?int}> */

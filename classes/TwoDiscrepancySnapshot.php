@@ -27,6 +27,9 @@ class TwoDiscrepancySnapshot
     const MATERIAL_SHARE = 0.01;
     const MATERIAL_FLOOR = 1.0;
 
+    /** @var bool set once a Cart read has thrown during the build in progress */
+    private static $cartReadFailed = false;
+
     const HOOKS = array(
         'actionCartGetPackageShippingCost',
         'actionProductPriceCalculation',
@@ -72,6 +75,7 @@ class TwoDiscrepancySnapshot
         // A failed rate lookup logs a row of its own, so each group is asked once per snapshot.
         $rates = array();
         $truncated = array();
+        self::$cartReadFailed = false;
         $declaredRate = function ($group) use (&$rates, $declaredRate) {
             if (!array_key_exists($group, $rates)) {
                 $rates[$group] = round((float) call_user_func($declaredRate, $group), 6);
@@ -87,22 +91,30 @@ class TwoDiscrepancySnapshot
                 return self::totals($cart);
             }),
             'products' => self::guard(function () use ($cart, $declaredRate, &$truncated) {
-                return self::products(self::cap((array) $cart->getProducts(), 'products', $truncated), $declaredRate);
+                $products = self::cartRead(function () use ($cart) {
+                    return (array) $cart->getProducts();
+                });
+
+                return isset($products['error']) ? $products : self::products(self::cap($products, 'products', $truncated), $declaredRate);
             }),
             'shipping' => self::guard(function () use ($cart) {
                 return self::shipping($cart);
             }),
-            'delivery_options' => self::guard(function () use ($cart) {
-                return self::deliveryOptions($cart);
+            'delivery_options' => self::guard(function () use ($cart, &$truncated) {
+                return self::deliveryOptions($cart, $truncated);
             }),
-            'overrides' => self::guard(function () {
-                return self::overrides();
+            'overrides' => self::guard(function () use (&$truncated) {
+                return self::overrides($truncated);
             }),
-            'hooks' => self::guard(function () {
-                return self::hooks();
+            'hooks' => self::guard(function () use (&$truncated) {
+                return self::hooks($truncated);
             }),
             'cart_rules' => self::guard(function () use ($cart, &$truncated) {
-                return self::cartRules(self::cap((array) $cart->getCartRules(), 'cart_rules', $truncated));
+                $rules = self::cartRead(function () use ($cart) {
+                    return (array) $cart->getCartRules();
+                });
+
+                return isset($rules['error']) ? $rules : self::cartRules(self::cap($rules, 'cart_rules', $truncated));
             }),
             'config' => self::guard(function () use ($cart, $defaultShippingGroup) {
                 return self::config($cart, $defaultShippingGroup);
@@ -221,6 +233,10 @@ class TwoDiscrepancySnapshot
             if (strlen(addslashes($json)) <= self::MAX_BYTES) {
                 break;
             }
+            // A shed list counts all its rows as cut, on top of any the row cap already cut.
+            if (isset($snapshot[$key][0])) {
+                $snapshot['truncated'][$key] = count($snapshot[$key]) + (isset($snapshot['truncated'][$key]) ? $snapshot['truncated'][$key] : 0);
+            }
             $snapshot[$key] = array('dropped' => 'size');
             $json = (string) json_encode($snapshot, $flags);
         }
@@ -251,6 +267,24 @@ class TwoDiscrepancySnapshot
         }
     }
 
+    /**
+     * A guarded Cart read that stops once one has thrown: core does not cache a failed
+     * price, so each repeat would re-run a slow throwing carrier module.
+     *
+     * @param callable $read
+     * @return mixed
+     */
+    private static function cartRead($read)
+    {
+        if (self::$cartReadFailed) {
+            return array('error' => 'skipped');
+        }
+        $result = self::guard($read);
+        self::$cartReadFailed = is_array($result) && isset($result['error']);
+
+        return $result;
+    }
+
     private static function totals($cart)
     {
         $totals = array();
@@ -260,10 +294,10 @@ class TwoDiscrepancySnapshot
             }
             $type = constant('Cart::' . $name);
             $totals[$name] = array(
-                'incl' => self::guard(function () use ($cart, $type) {
+                'incl' => self::cartRead(function () use ($cart, $type) {
                     return round((float) $cart->getOrderTotal(true, $type), 2);
                 }),
-                'excl' => self::guard(function () use ($cart, $type) {
+                'excl' => self::cartRead(function () use ($cart, $type) {
                     return round((float) $cart->getOrderTotal(false, $type), 2);
                 }),
             );
@@ -331,29 +365,36 @@ class TwoDiscrepancySnapshot
             }) : 0,
             'delivery_option' => is_array($option) ? $option : self::str($raw),
             // What ONLY_SHIPPING is priced from: core auto-selects the best option when the stored one is empty or stale.
-            'priced_option' => self::guard(function () use ($cart) {
-                return $cart->getDeliveryOption(null, false);
+            'priced_option' => self::cartRead(function () use ($cart) {
+                return $cart->getDeliveryOption(null, false, false);
             }),
-            'package_cost_incl' => self::guard(function () use ($cart, $idCarrier) {
+            'package_cost_incl' => self::cartRead(function () use ($cart, $idCarrier) {
                 return round((float) $cart->getPackageShippingCost($idCarrier > 0 ? $idCarrier : null, true), 2);
             }),
-            'package_cost_excl' => self::guard(function () use ($cart, $idCarrier) {
+            'package_cost_excl' => self::cartRead(function () use ($cart, $idCarrier) {
                 return round((float) $cart->getPackageShippingCost($idCarrier > 0 ? $idCarrier : null, false), 2);
             }),
         );
     }
 
-    private static function deliveryOptions($cart)
+    private static function deliveryOptions($cart, array &$truncated)
     {
+        $list = self::cartRead(function () use ($cart) {
+            return (array) $cart->getDeliveryOptionList();
+        });
+        if (isset($list['error'])) {
+            return $list;
+        }
         $summary = array();
-        foreach ((array) $cart->getDeliveryOptionList() as $idAddress => $options) {
+        $seen = 0;
+        foreach ($list as $idAddress => $options) {
             foreach ((array) $options as $key => $option) {
-                if (count($summary) >= self::MAX_ROWS) {
-                    break 2;
+                if (++$seen > self::MAX_ROWS) {
+                    continue;
                 }
                 $carriers = array();
-                $list = isset($option['carrier_list']) && is_array($option['carrier_list']) ? $option['carrier_list'] : array();
-                foreach ($list as $idCarrier => $entry) {
+                $carrierList = isset($option['carrier_list']) && is_array($option['carrier_list']) ? $option['carrier_list'] : array();
+                foreach ($carrierList as $idCarrier => $entry) {
                     $instance = isset($entry['instance']) ? $entry['instance'] : null;
                     $carriers[] = array(
                         'id_carrier' => (int) $idCarrier,
@@ -373,11 +414,14 @@ class TwoDiscrepancySnapshot
                 );
             }
         }
+        if ($seen > self::MAX_ROWS) {
+            $truncated['delivery_options'] = $seen - self::MAX_ROWS;
+        }
 
         return $summary;
     }
 
-    private static function overrides()
+    private static function overrides(array &$truncated)
     {
         $files = array();
         foreach (array('Cart', 'Product', 'Carrier', 'Order') as $class) {
@@ -390,7 +434,7 @@ class TwoDiscrepancySnapshot
         }
         $overridden = array();
         foreach (array_keys(self::PRICE_METHODS) as $class) {
-            $overridden[$class] = self::guard(function () use ($class) {
+            $overridden[$class] = self::guard(function () use ($class, &$truncated) {
                 $names = array();
                 if (class_exists($class . 'Core', false) && get_parent_class($class) === $class . 'Core') {
                     foreach ((new ReflectionClass($class))->getMethods() as $method) {
@@ -400,25 +444,25 @@ class TwoDiscrepancySnapshot
                     }
                 }
 
-                return array_slice($names, 0, self::MAX_ROWS);
+                return self::cap($names, 'overrides.' . $class, $truncated);
             });
         }
 
         return array('files' => $files, 'methods_overridden' => $overridden);
     }
 
-    private static function hooks()
+    private static function hooks(array &$truncated)
     {
         $hooks = array();
         foreach (self::HOOKS as $hook) {
-            $hooks[$hook] = self::guard(function () use ($hook) {
+            $hooks[$hook] = self::guard(function () use ($hook, &$truncated) {
                 $names = array();
                 $list = Hook::getHookModuleExecList($hook);
                 foreach (is_array($list) ? $list : array() as $row) {
                     $names[] = self::str((string) (isset($row['module']) ? $row['module'] : ''));
                 }
 
-                return array_slice($names, 0, self::MAX_ROWS);
+                return self::cap($names, 'hooks.' . $hook, $truncated);
             });
         }
 
@@ -591,6 +635,21 @@ class TwoDiscrepancySnapshot
         }
 
         return is_numeric($array) ? (float) $array : null;
+    }
+
+    /**
+     * Where an exception was thrown, relative to the module (else the shop) root: never an absolute path.
+     *
+     * @param Throwable $e
+     * @return string file:line
+     */
+    public static function throwSite($e)
+    {
+        $file = (string) $e->getFile();
+        $module = dirname(__DIR__) . '/';
+        $file = strpos($file, $module) === 0 ? substr($file, strlen($module)) : self::relativePath($file);
+
+        return (strpos($file, '/') === 0 ? basename($file) : $file) . ':' . (int) $e->getLine();
     }
 
     private static function relativePath($file)

@@ -804,8 +804,11 @@ it also writes one for every cart that passes, as a baseline to compare against.
   number is present, nothing else. The sent lines' names can carry merchant-authored text
   (product, cart rule and carrier names). A section that failed to read holds only
   `{error, code}`: the exception class and code, never its message.
-- **Size**: products, cart rules and sent lines keep their first 40 rows; `truncated`
-  counts the rows cut from each.
+- **Size**: products, cart rules, delivery options, sent lines and each hook's and class's
+  list keep their first 40 rows; `truncated` counts the rows cut from each, including a
+  whole section shed to fit the size limit.
+- **Cost**: once one `Cart` pricing read throws, the remaining ones are recorded as
+  `{error: "skipped"}` rather than re-run, since core does not cache a failed price.
 - **Log growth**: one row per refused order, and with Debug Mode on two or three per order
   (each pricing pass leaves a baseline), so switch Debug Mode off once done.
 - **Reading it**: the record's `shape` field applies this decision tree, first match wins:
@@ -836,12 +839,16 @@ it also writes one for every cart that passes, as a baseline to compare against.
 - The snapshot never changes, fails or slows a checkout. Every one of its own failures is
   swallowed, including its fallback logging.
 - Every refusal of the pricing build writes exactly one snapshot, named after the gate that
-  recorded its numbers or else after the exception class. Nothing is written when nothing
+  recorded its numbers (also when that exception arrives wrapped) or else after the
+  exception class. Nothing is written when nothing
   refused (the Debug Mode baseline aside), nor for a cart with no valid line items.
 - No buyer PII leaves the address section. Third-party exception messages are never
   stored, only the class and code.
 - D means a material untaxed component, |delta| > max(1% of the line's gross, 1.00), with
   no tolerance per round type, round mode or currency precision.
+- A `Cart` pricing read that throws is made once per snapshot, never repeated.
+- An unrecorded refusal names its exception class, code and throw site (module-relative
+  file and line), never its message.
 - The shape is a positive identification only. Any errored, missing or ambiguous input
   yields `other`, never A, B, C or D.
 - The stored JSON survives PrestaShop's log storage on 1.7, 8 and 9 byte-for-byte: `<` and

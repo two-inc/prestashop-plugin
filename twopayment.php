@@ -7145,9 +7145,16 @@ class Twopayment extends PaymentModule
             $pricing = $this->computeTwoOrderPricingData($cart, $contextLabel, $strictReconciliation, $paymentTermDays, $syncSurchargeCartLine, $placedOrder);
         } catch (Throwable $e) {
             $gate = $this->twoDiscrepancyGate;
-            // A gate exception a fallback caught (Default shipping tax code) is not the one that refused the order.
-            if ($gate === null || ($gate['exception'] !== null && $gate['exception'] !== $e)) {
-                $gate = array('name' => get_class($e), 'label' => 'unrecorded refusal', 'numbers' => array(), 'line_items' => null);
+            $cause = $gate !== null && $gate['exception'] === null ? $e : null;
+            // A gate exception a fallback caught (Default shipping tax code) is not the one that refused the order; a wrapped one is.
+            for ($link = $e; $cause === null && $gate !== null && $link !== null; $link = $link->getPrevious()) {
+                $cause = $link === $gate['exception'] ? $link : null;
+            }
+            if ($cause === null) {
+                $gate = array('name' => get_class($e), 'label' => 'unrecorded refusal', 'numbers' => array(
+                    'site' => TwoDiscrepancySnapshot::throwSite($e),
+                    'code' => $e->getCode(),
+                ), 'line_items' => null);
             }
             if ($gate['name'] !== null) {
                 $this->logTwoDiscrepancySnapshot($cart, $gate);
