@@ -1,0 +1,8 @@
+# TWO-26082. `file` because the module ships no Composer autoloader.
+services:
+  twopayment.command.shipping_tax_fallback:
+    class: TwoShippingTaxFallbackCommand
+    file: '%kernel.project_dir%/modules/twopayment/classes/TwoShippingTaxFallbackCommand.php'
+    public: true
+    tags:
+      - { name: console.command, command: 'twopayment:shipping-tax-fallback' }

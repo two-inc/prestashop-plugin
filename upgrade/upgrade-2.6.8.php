@@ -14,7 +14,10 @@
  * merchant never declared, which is the one thing the shipping-VAT design
  * forbids. install() likewise does not seed the key.
  *
- * The admin field is always shown; leaving it unset is the opt-out. See the
+ * Since TWO-26082 the fallback is also off, and the admin field hidden, until
+ * Two enables it for a merchant with
+ * `php bin/console twopayment:shipping-tax-fallback enable` (PS 1.7.6+). That
+ * switch has no default either, so nothing here seeds it. See the
  * "Default shipping tax code" section of README.md.
  *
  * Created: 2026-07-27

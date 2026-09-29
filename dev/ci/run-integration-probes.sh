@@ -38,6 +38,9 @@ docker exec "$PS_CONTAINER" mkdir -p /tmp/two-integration
 tar -cf - -C "$REPO_ROOT/tests/integration" --exclude=fixtures . \
   | docker exec -i "$PS_CONTAINER" tar -xf - -C /tmp/two-integration
 
+# The carrier-less probe needs the gated fallback (TWO-26082), switched on the way Two does it for a merchant.
+docker exec -u www-data -w /var/www/html "$PS_CONTAINER" php -d memory_limit=512M bin/console twopayment:shipping-tax-fallback enable
+
 status=0
 for probe in "${PROBES[@]}"; do
   echo "--- $probe"
