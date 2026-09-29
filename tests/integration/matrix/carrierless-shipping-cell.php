@@ -23,9 +23,6 @@ const CELL_MODES = array(
     'C' => array('gross' => '29.00', 'net' => '29.00', 'mode' => 'external_only', 'surcharge' => '0'),
     'D' => array('gross' => '0', 'net' => '0', 'mode' => 'product_surcharge', 'surcharge' => '120.00'),
 );
-// Mode D's seeded carrier (dev/ci/seed-carrierless-cart.php): 10.00 net under the 21% group.
-const CELL_TAXED_CARRIER_NET = 10.0;
-const CELL_TAXED_RATE = 0.21;
 // group: '' unset, 'TRG_21' the seeded 21% group, '0' core's "No tax".
 const CELL_CONFIGS = array(
     '1' => array('group' => '', 'override' => false, 'merchant_rate' => null),
@@ -94,17 +91,19 @@ $invalid = array();
 if ($surcharged) {
     $id_taxed_carrier = (int) Configuration::get('TWO_CARRIERLESS_TEST_ID_TAXED_CARRIER');
     $trg_21 = (int) Configuration::get('TWO_CARRIERLESS_TEST_TRG_21');
+    $carrier_net = (float) Configuration::get('TWO_CARRIERLESS_TEST_TAXED_CARRIER_NET');
+    $rate = (float) Configuration::get('TWO_CARRIERLESS_TEST_MATRIX_RATE') / 100;
     if ((int) $cart->id_carrier !== $id_taxed_carrier || (int) (new Carrier($id_taxed_carrier))->getIdTaxRulesGroup() !== $trg_21) {
         $invalid[] = 'carrier ' . (int) $cart->id_carrier . ' is not the seeded 21% carrier';
     }
-    if (array($totals['ship_incl'], $totals['ship_excl']) !== array(round(CELL_TAXED_CARRIER_NET * (1 + CELL_TAXED_RATE), 2), CELL_TAXED_CARRIER_NET)) {
+    if (array($totals['ship_incl'], $totals['ship_excl']) !== array(round($carrier_net * (1 + $rate), 2), $carrier_net)) {
         $invalid[] = 'ONLY_SHIPPING=' . $totals['ship_incl'] . '/' . $totals['ship_excl'];
     }
     $lines_gross = 0.0;
     foreach ($cart->getProducts(true) as $row) {
         $base = round((float) $row['total'] - (float) $mode['surcharge'], 2);
         if ((int) Product::getIdTaxRulesGroupByIdProduct((int) $row['id_product']) !== $trg_21
-            || round((float) $row['total_wt'] - (float) $row['total'], 2) !== round($base * CELL_TAXED_RATE, 2)) {
+            || round((float) $row['total_wt'] - (float) $row['total'], 2) !== round($base * $rate, 2)) {
             $invalid[] = 'product ' . (int) $row['id_product'] . ' is not 21% on its base plus an untaxed ' . $mode['surcharge'];
         }
         $lines_gross += (float) $row['total_wt'];

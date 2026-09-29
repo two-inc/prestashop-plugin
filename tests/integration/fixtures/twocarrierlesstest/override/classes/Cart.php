@@ -74,7 +74,7 @@ class Cart extends CartCore
             $total += $this->getExternalShippingCost();
         }
         // Core prices product rows itself, so the rows' surcharge has to be added to the totals too.
-        // 7 and 9 are literal: PS 8 has only ONLY_PRODUCTS_WITHOUT_SHIPPING (7), PS 9 only ONLY_PRODUCTS_WITHOUT_GIFTS (9).
+        // 7 and 9 are literal: PS 8 has only ONLY_PRODUCTS_WITHOUT_SHIPPING (7), PS 9.1+ only ONLY_PRODUCTS_WITHOUT_GIFTS (9).
         $product_types = array(Cart::ONLY_PRODUCTS, Cart::BOTH, Cart::BOTH_WITHOUT_SHIPPING, 7, Cart::ONLY_PHYSICAL_PRODUCTS_WITHOUT_SHIPPING, 9);
         if ($products === null && in_array((int) $type, $product_types, true)) {
             $total += $this->getProductSurcharge() * count(parent::getProducts());
