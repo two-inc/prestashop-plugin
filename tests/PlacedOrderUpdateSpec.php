@@ -91,6 +91,14 @@ final class PlacedOrderUpdateSpec
                 self::moveCart(2.00, 2.50);
                 $track($o);
             }, 'tracking', 'PUT ' . self::PLACED . '; DIGITAL 2.00/0.50/2.50@0.25 = 37.50 NOK', 'gift wrapping'],
+            [function ($o) use ($wrapping) {
+                $wrapping($o);
+                StubStore::$orderInvoiceTaxes[self::ORDER] = [['type' => 'wrapping', 'id_tax' => 31, 'rate' => '25.000']];
+            }, function ($o) use ($track) {
+                Configuration::updateValue('PS_GIFT_WRAPPING_TAX_RULES_GROUP', 511);
+                StubStore::$taxRuleRates[511] = 15.0;
+                $track($o);
+            }, 'tracking', 'PUT ' . self::PLACED . '; DIGITAL 2.00/0.50/2.50@0.25 = 37.50 NOK', 'gift wrapping at the invoiced rate after the wrapping tax group changed'],
             [function ($o) {
                 $o->carrier_tax_rate = 0.0;
             }, $track, 'edit', 'no PUT, paid 35.00, logged TwoPayment: Order 9601 records shipping 8.00 net, 2.00 tax at carrier_tax_rate 0.000%, which do not agree: the order holds no usable shipping rate',

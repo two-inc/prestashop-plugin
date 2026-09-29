@@ -7281,11 +7281,13 @@ class Twopayment extends PaymentModule
         $cartRules = array();
         $wrappingNet = 0.0;
         $wrappingGross = 0.0;
+        $orderIds = array();
         $discountGross = 0.0;
         $paidGross = 0.0;
         $paidNet = 0.0;
         foreach ($this->getTwoOrderGroup($order) as $member) {
             $orderId = (int) $member->id;
+            $orderIds[] = $orderId;
             foreach ($this->getTwoPlacedOrderDetailRows($orderId) as $row) {
                 // The fee replay decides on every row carrying the fee reference, and fails loud on an id the fee never had.
                 if ((string) $row['product_reference'] === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
@@ -7373,7 +7375,12 @@ class Twopayment extends PaymentModule
             'products' => $products,
             'fee_rows' => $feeRows,
             'shipping' => $shipping,
-            'wrapping' => array('net' => $wrappingNet, 'tax' => round($wrappingGross - $wrappingNet, 2), 'gross' => $wrappingGross),
+            'wrapping' => array(
+                'net' => $wrappingNet,
+                'tax' => round($wrappingGross - $wrappingNet, 2),
+                'gross' => $wrappingGross,
+                'rate' => $wrappingGross > 0 ? $this->getTwoInvoicedWrappingRate($orderIds) : null,
+            ),
             'cart_rules' => $cartRules,
             'discount_gross' => round($discountGross, 2),
             'totals' => array(
@@ -7381,6 +7388,31 @@ class Twopayment extends PaymentModule
                 'net' => round($paidNet - $feeNet, 2),
             ),
         );
+    }
+
+    /**
+     * The wrapping rate core recorded on the orders' invoices; no order column holds it, so null until an invoice exists.
+     *
+     * @param int[] $orderIds
+     * @return float|null a decimal rate
+     */
+    private function getTwoInvoicedWrappingRate($orderIds)
+    {
+        $rows = Db::getInstance()->executeS(
+            'SELECT DISTINCT oit.`id_tax`, t.`rate` FROM `' . _DB_PREFIX_ . 'order_invoice_tax` oit'
+            . ' INNER JOIN `' . _DB_PREFIX_ . 'order_invoice` oi ON oi.`id_order_invoice` = oit.`id_order_invoice`'
+            . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = oit.`id_tax`'
+            . " WHERE oit.`type` = 'wrapping' AND oi.`id_order` IN (" . implode(', ', array_map('intval', $orderIds)) . ')'
+        );
+        if (!is_array($rows) || $rows === array()) {
+            return null;
+        }
+        $rate = 0.0;
+        foreach ($rows as $row) {
+            $rate += (float) $row['rate'];
+        }
+
+        return $this->normalizeTwoTaxRateToPercentPrecision($rate / 100);
     }
 
     /**
@@ -7999,10 +8031,13 @@ class Twopayment extends PaymentModule
             } else {
                 // DECLARED-RATE RELAY: wrapping is taxed by the shop's
                 // configured PS_GIFT_WRAPPING_TAX_RULES_GROUP.
-                $wrapping_rate_decimal = $this->getTwoConfiguredTaxRateDecimalForGroup(
-                    (int) Configuration::get('PS_GIFT_WRAPPING_TAX_RULES_GROUP'),
-                    $cart
-                );
+                // Nothing stored holds the rate before an invoice does, so the configured one must then reconcile below.
+                $wrapping_rate_decimal = $placed !== null && $placed['wrapping']['rate'] !== null
+                    ? $placed['wrapping']['rate']
+                    : $this->getTwoConfiguredTaxRateDecimalForGroup(
+                        (int) Configuration::get('PS_GIFT_WRAPPING_TAX_RULES_GROUP'),
+                        $cart
+                    );
                 $this->assertTwoDeclaredRateReconcilesWithAmounts(
                     'gift wrapping',
                     $wrapping_totals['net'],
