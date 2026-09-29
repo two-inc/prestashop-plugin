@@ -165,15 +165,19 @@ The setting has **no default value**. An install that never sets it behaves exac
 
 #### Enabling it
 
-Two enables the fallback per shop with the module's console command, run from the PrestaShop root by someone with shell access to the server (PrestaShop 1.7.6 and later):
+Two enables the fallback with the module's console command, run from the PrestaShop root by someone with shell access to the server (PrestaShop 1.7.6 and later). Without `--shop`, `enable` and `disable` write the global setting, which applies to every shop. With `--shop=<n>` they write that shop's own setting, which wins over the global one, so a multistore merchant can have the fallback on one shop only:
 
 ```bash
-php bin/console twopayment:shipping-tax-fallback enable    # show the field and use the fallback
-php bin/console twopayment:shipping-tax-fallback status    # report the switch and the stored group
-php bin/console twopayment:shipping-tax-fallback disable   # hide the field and stop using the fallback
+php bin/console twopayment:shipping-tax-fallback enable              # every shop: show the field and use the fallback
+php bin/console twopayment:shipping-tax-fallback enable --shop=2     # shop 2 only
+php bin/console twopayment:shipping-tax-fallback disable --shop=2    # shop 2 off, whatever the global setting says
+php bin/console twopayment:shipping-tax-fallback disable             # the global setting off; a shop's own setting still wins
+php bin/console twopayment:shipping-tax-fallback status              # each shop's effective state, where it comes from, and its stored group
 ```
 
-The switch is stored in configuration as `PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED`. If the command is not listed, clear the cache (`php bin/console cache:clear`) so PrestaShop picks up the module's services.
+Every action ends by printing each shop's effective state. On PrestaShop 1.7.6 to 8, core's own `--id_shop=<n>` is accepted as a synonym for `--shop=<n>`; `--id_shop_group` is refused. PrestaShop 9 does not offer `--id_shop`, so use `--shop` there.
+
+The switch is stored in configuration as `PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED`: the global row, or one row per shop. An order reads the setting of the shop its cart belongs to. If the command is not listed (`There are no commands defined in the "twopayment" namespace`), clear the cache with `php bin/console cache:clear` so PrestaShop picks up the module's services. That is needed after the module's files are updated on a shop whose cache is already built.
 
 While it is disabled, orders that no carrier can price are refused as described above, and a group already stored is kept but not used. Saving the Order management tab never changes that stored group while the field is hidden, so enabling again restores the earlier selection.
 

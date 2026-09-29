@@ -16,7 +16,7 @@
  *
  * Since TWO-26082 the fallback is also off, and the admin field hidden, until
  * Two enables it for a merchant with
- * `php bin/console twopayment:shipping-tax-fallback enable` (PS 1.7.6+). That
+ * `php bin/console twopayment:shipping-tax-fallback enable [--shop=<n>]` (PS 1.7.6+). That
  * switch has no default either, so nothing here seeds it. See the
  * "Default shipping tax code" section of README.md.
  *
