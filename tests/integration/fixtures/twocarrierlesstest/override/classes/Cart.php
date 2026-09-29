@@ -39,9 +39,10 @@ class Cart extends CartCore
             : 0.0;
     }
 
-    public function getProducts($refresh = false, $id_product = false, $id_country = null, $fullInfos = true, bool $keepOrderPrices = false)
+    // PS 9 core adds the sixth parameter; PS 8 core ignores the extra argument.
+    public function getProducts($refresh = false, $id_product = false, $id_country = null, $fullInfos = true, bool $keepOrderPrices = false, bool $shouldSplitGiftProductsQuantity = false)
     {
-        $products = parent::getProducts($refresh, $id_product, $id_country, $fullInfos, $keepOrderPrices);
+        $products = parent::getProducts($refresh, $id_product, $id_country, $fullInfos, $keepOrderPrices, $shouldSplitGiftProductsQuantity);
         $surcharge = $this->getProductSurcharge();
         if ($surcharge > 0) {
             // Untaxed: lands on the net and the gross alike, while the line keeps its declared tax rules group.
