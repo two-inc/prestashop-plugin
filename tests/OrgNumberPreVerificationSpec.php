@@ -144,15 +144,15 @@ final class OrgNumberPreVerificationSpec
         $cookie = Context::getContext()->cookie;
         TinyAssert::same(
             'B12345678',
-            (string) ($cookie->two_company_id ?? ''),
+            (string) (TwoSessionRecord::get($cookie, 'company', 'id') ?? ''),
             'no org number other than the address\'s own may be cached for this buyer'
         );
         TinyAssert::same(
             'Tienda Ejemplo SL',
-            (string) ($cookie->two_company_name ?? ''),
+            (string) (TwoSessionRecord::get($cookie, 'company', 'name') ?? ''),
             'no company name other than the address\'s own may be cached for this buyer'
         );
-        TinyAssert::same('ES', (string) ($cookie->two_company_country ?? ''));
+        TinyAssert::same('ES', (string) (TwoSessionRecord::get($cookie, 'company', 'country') ?? ''));
     }
 
     /**

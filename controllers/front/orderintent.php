@@ -417,7 +417,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
 
         $fields = [];
-        foreach (array_keys(Twopayment::MIRROR_WRITE_SESSION_KEYS) as $field) {
+        foreach (Twopayment::MIRROR_WRITE_SESSION_FIELDS as $field) {
             $posted = Tools::getValue($field, null);
             if ($posted === null || $posted === false) {
                 continue;

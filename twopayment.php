@@ -12065,23 +12065,25 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The cookie keys that make up one stored company selection, keyed by the
-     * short field name the helpers below take and return.
+     * The fields that make up one stored company selection, as the short names
+     * the helpers below take and return.
      *
      * Centralised (TWO-40) so that a write site cannot add a field without the
      * cart stamp, and a clear site cannot miss one.
      */
-    const COMPANY_SESSION_KEYS = array(
-        'name' => 'two_company_name',
-        'id' => 'two_company_id',
-        'country' => 'two_company_country',
-        'address_id' => 'two_company_address_id',
-    );
+    const COMPANY_SESSION_FIELDS = array('name', 'id', 'country', 'address_id');
 
-    /**
-     * The cart id a stored company selection is scoped to (TWO-40).
-     */
-    const COMPANY_SESSION_CART_KEY = 'two_company_cart_id';
+    /** The whole record and its cart stamp as one encoded value, so a write replaces it whole (TWO-26094). */
+    const COMPANY_SESSION_COOKIE_KEY = 'two_company_record';
+
+    /** Per-field keys written before TWO-26094; read as absent and purged, so the buyer re-picks. */
+    const LEGACY_COMPANY_SESSION_KEYS = array(
+        'two_company_name',
+        'two_company_id',
+        'two_company_country',
+        'two_company_address_id',
+        'two_company_cart_id',
+    );
 
     /**
      * Cart the current request belongs to, or 0 when there is no loaded cart.
@@ -12100,101 +12102,47 @@ class Twopayment extends PaymentModule
     /**
      * Store a company selection against the current cart (TWO-40).
      *
-     * Takes any subset of the short field names in COMPANY_SESSION_KEYS. A field
-     * given as null is removed rather than written, which is how a caller drops
-     * part of a record (an organisation number that no longer belongs to the name
-     * beside it) without clearing the whole thing.
+     * Takes any subset of COMPANY_SESSION_FIELDS, merged into the record already
+     * stored for this cart. A field given as null is removed rather than written,
+     * which is how a caller drops part of a record (an organisation number that no
+     * longer belongs to the name beside it) without clearing the whole thing.
      *
-     * With no loaded cart this writes NOTHING and clears nothing - see the guard
-     * below. Deliberately still `void`: a caller has no useful second move if the
-     * write is declined (there is nowhere else to keep the selection until a cart
-     * exists), every call site ignores the result today, and reporting one would
-     * invite a caller to branch on it. "Stored, or there was no cart to store it
-     * against" is the whole contract.
+     * With no loaded cart this writes NOTHING and clears nothing - see
+     * storeTwoCartScopedRecord(). Deliberately still `void`: a caller has no useful
+     * second move if the write is declined (there is nowhere else to keep the
+     * selection until a cart exists), every call site ignores the result today,
+     * and reporting one would invite a caller to branch on it. "Stored, or there
+     * was no cart to store it against" is the whole contract.
+     *
+     * The cookie's EXPIRY is deliberately left alone here. Cookie::setExpire()
+     * assigns a SINGLE expiry for the whole cookie, so a call from this helper
+     * would silently re-time every other key sharing it; and the shop's default
+     * front-office lifetime (PS_COOKIE_LIFETIME_FO) can be longer or shorter than
+     * an hour, so dropping the callers' own setExpire() would not be neutral
+     * either. Cart scoping, not the expiry, bounds how long this record stays
+     * usable, so callers keep whatever setExpire they already had.
      *
      * @param array $fields
      * @return void
      */
     public function storeTwoCartScopedCompany(array $fields)
     {
-        if (!isset($this->context->cookie)) {
-            return;
-        }
-
-        $cartId = $this->getTwoCurrentCartId();
-        if ($cartId <= 0) {
-            // No cart, so there is nothing worth writing. A record stamped 0 is
-            // unreadable by construction - readTwoCartScopedCompany() only
-            // returns a record whose stamp equals the current cart id, and that
-            // is always > 0 - and the first read that DOES have a cart would see
-            // the mismatch and clear it, taking any earlier record with it. That
-            // would also contradict the reader's own no-cart policy of never
-            // destroying a record it cannot judge.
-            //
-            // Reachable: hookActionCustomerAddressSave() fires on the My-Account
-            // address page, where the buyer need not have a cart at all.
-            //
-            // Writing nothing and clearing nothing is the only outcome that
-            // leaves an existing selection exactly as it was.
-            return;
-        }
-
-        foreach ($fields as $field => $value) {
-            if (!isset(self::COMPANY_SESSION_KEYS[$field])) {
-                // Centralising the keys exists to stop a write site inventing its
-                // own field name, so an unrecognised one is reported rather than
-                // silently skipped - a mistyped 'addressId' for 'address_id' would
-                // otherwise drop the buyer's address marker with no trace.
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Ignored unknown company session field "' . (string) $field
-                    . '" - known fields are ' . implode(', ', array_keys(self::COMPANY_SESSION_KEYS)),
-                    2
-                );
-                continue;
-            }
-
-            $key = self::COMPANY_SESSION_KEYS[$field];
-            if ($value === null) {
-                unset($this->context->cookie->$key);
-                continue;
-            }
-
-            $this->context->cookie->$key = (string) $value;
-        }
-
-        // Stamped on every write that happens at all: the reader treats a stamp
-        // that does not match the current cart as absent, so an unstamped record
-        // would be unreadable and a record left over from another cart would be
-        // readable - both are drift this single line prevents.
-        $cartKey = self::COMPANY_SESSION_CART_KEY;
-        $this->context->cookie->$cartKey = (string) $cartId;
-
-        // The cookie's EXPIRY is deliberately left alone here, and the reason is
-        // the cookie's own shape rather than any other key needing the hour.
-        // Cookie::setExpire() assigns a SINGLE expiry scalar for the whole cookie,
-        // which is the one value handed to setcookie() when the cookie is written -
-        // there is no per-key expiry to set. So a setExpire() call from this helper
-        // would silently re-time every other key sharing the cookie, whatever those
-        // keys are, and that is sufficient reason not to add one.
-        //
-        // Dropping the callers' existing setExpire() would not be neutral either.
-        // The lifetime would fall back to whatever config.inc.php computed for the
-        // front office from PS_COOKIE_LIFETIME_FO, which is shop configuration: a
-        // positive value yields that many hours, and 0 yields a cookie that dies
-        // with the browser session. It can therefore be LONGER or SHORTER than an
-        // hour depending on the shop, so it is not a safe substitute for anything.
-        //
-        // Cart scoping, not the expiry, is what bounds how long this record stays
-        // usable, so callers keep whatever setExpire they already had and this
-        // helper adds none.
+        $this->storeTwoCartScopedRecord(
+            self::COMPANY_SESSION_COOKIE_KEY,
+            self::COMPANY_SESSION_FIELDS,
+            self::LEGACY_COMPANY_SESSION_KEYS,
+            $fields,
+            'company'
+        );
     }
 
     /**
      * Read the company selection stored against the current cart (TWO-40).
      *
-     * Returns null - absent - unless a stored record carries a cart stamp equal
-     * to the current cart id. A record belonging to another cart, or one carrying
-     * no stamp at all, is cleared on the way out.
+     * Returns null - absent - unless the stored record carries a cart stamp equal
+     * to the current cart id. A record belonging to another cart, one that does
+     * not decode, or one in the per-field format written before TWO-26094, is
+     * cleared on the way out.
      *
      * A selection made for one order cannot be read back on a later one, because
      * an ordered cart is never carried again. Once an order references the cart,
@@ -12214,62 +12162,23 @@ class Twopayment extends PaymentModule
      */
     public function readTwoCartScopedCompany()
     {
-        if (!isset($this->context->cookie)) {
-            return null;
-        }
+        $discardedCartId = null;
+        $record = $this->readTwoCartScopedRecord(
+            self::COMPANY_SESSION_COOKIE_KEY,
+            self::COMPANY_SESSION_FIELDS,
+            self::LEGACY_COMPANY_SESSION_KEYS,
+            $discardedCartId
+        );
 
-        $cartKey = self::COMPANY_SESSION_CART_KEY;
-        $storedCartId = isset($this->context->cookie->$cartKey)
-            ? (int) $this->context->cookie->$cartKey
-            : 0;
-        $cartId = $this->getTwoCurrentCartId();
-
-        if ($cartId <= 0) {
-            // Nothing to match against on this request. Report absent, but do not
-            // clear: an address hook can fire outside checkout, and wiping a
-            // record the buyer is still mid-way through using would be worse than
-            // declining to read it here.
-            return null;
-        }
-
-        if ($storedCartId > 0 && $storedCartId === $cartId) {
-            $record = array();
-            foreach (self::COMPANY_SESSION_KEYS as $field => $key) {
-                $record[$field] = isset($this->context->cookie->$key)
-                    ? (string) $this->context->cookie->$key
-                    : '';
-            }
-
-            return $record;
-        }
-
-        // Either the record belongs to a different cart, or it has no stamp at
-        // all - which is exactly what a record written by a version before TWO-40
-        // looks like. Both are absent and both are cleared. The unstamped case is
-        // deliberately NOT migrated: the selection is only needed up to order
-        // placement, so the entire cost of discarding one is that the buyer
-        // re-picks their company. Treat this as intended, not an oversight.
-        $hasStoredRecord = $storedCartId !== 0;
-        if (!$hasStoredRecord) {
-            foreach (self::COMPANY_SESSION_KEYS as $key) {
-                if (isset($this->context->cookie->$key)) {
-                    $hasStoredRecord = true;
-                    break;
-                }
-            }
-        }
-
-        if ($hasStoredRecord) {
-            $this->clearTwoCartScopedCompany();
-
+        if ($discardedCartId !== null) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Discarded session company not scoped to the current cart. Stored cart=' .
-                $storedCartId . ', current cart=' . $cartId,
+                $discardedCartId . ', current cart=' . $this->getTwoCurrentCartId(),
                 2
             );
         }
 
-        return null;
+        return $record;
     }
 
     /**
@@ -12279,25 +12188,12 @@ class Twopayment extends PaymentModule
      */
     public function clearTwoCartScopedCompany()
     {
-        if (!isset($this->context->cookie)) {
-            return;
-        }
-
-        foreach (self::COMPANY_SESSION_KEYS as $key) {
-            unset($this->context->cookie->$key);
-        }
-
-        $cartKey = self::COMPANY_SESSION_CART_KEY;
-        unset($this->context->cookie->$cartKey);
-
-        if (method_exists($this->context->cookie, 'write')) {
-            $this->context->cookie->write();
-        }
+        $this->clearTwoCartScopedRecord(self::COMPANY_SESSION_COOKIE_KEY, self::LEGACY_COMPANY_SESSION_KEYS);
     }
 
     /**
-     * The cookie keys holding the LAST VALUE THE MIRROR WROTE into each field of
-     * the secondary address, keyed by the short field name the helpers below take
+     * The fields of the record holding the LAST VALUE THE MIRROR WROTE into each
+     * field of the secondary address, as the short names the helpers below take
      * and return (TWO-40).
      *
      * This record is the comparison basis for the secondary address's sync pin, and
@@ -12315,139 +12211,89 @@ class Twopayment extends PaymentModule
      * syncing would stop forever after the first divergence. Only "still holds what
      * we put there" makes "still matches, so still synced" true.
      *
-     * SEPARATE from COMPANY_SESSION_KEYS, deliberately, and it must stay separate.
+     * SEPARATE from the company selection, deliberately, and it must stay separate.
      * The company record is destructible by design - the country guards clear it
      * outright, and the address-save hook drops part of it - whereas this record has
      * to outlive all of that: a buyer who typed their own street into the secondary
      * address still owns that street after changing company. Folding the two
-     * together would mean either a clear site exempting one of its own keys, which
-     * contradicts the contract that a clear cannot miss a field, or this record
-     * dying on a path that has nothing to do with it.
+     * together would mean either a clear site exempting part of its own record,
+     * which contradicts the contract that a clear cannot miss a field, or this
+     * record dying on a path that has nothing to do with it.
      *
      * The country is stored as an ISO-3166-1 alpha-2 code, never as a country id or
      * an option label: the id is shop-local and the label is locale-dependent, and
      * the browser resolves the live select to an ISO before comparing.
      */
-    const MIRROR_WRITE_SESSION_KEYS = array(
-        'company' => 'two_mirror_company',
-        'organization' => 'two_mirror_org',
-        'country' => 'two_mirror_country',
-        'address1' => 'two_mirror_address1',
-        'address2' => 'two_mirror_address2',
-        'postcode' => 'two_mirror_postcode',
-        'city' => 'two_mirror_city',
-        'state' => 'two_mirror_state',
+    const MIRROR_WRITE_SESSION_FIELDS = array(
+        'company',
+        'organization',
+        'country',
+        'address1',
+        'address2',
+        'postcode',
+        'city',
+        'state',
     );
 
-    /**
-     * The cart id a stored mirror-write record is scoped to (TWO-40).
-     */
-    const MIRROR_WRITE_SESSION_CART_KEY = 'two_mirror_cart_id';
+    /** As COMPANY_SESSION_COOKIE_KEY, for the mirror-write record (TWO-26094). */
+    const MIRROR_WRITE_SESSION_COOKIE_KEY = 'two_mirror_record';
+
+    /** Per-field keys written before TWO-26094; read as absent and purged. */
+    const LEGACY_MIRROR_WRITE_SESSION_KEYS = array(
+        'two_mirror_company',
+        'two_mirror_org',
+        'two_mirror_country',
+        'two_mirror_address1',
+        'two_mirror_address2',
+        'two_mirror_postcode',
+        'two_mirror_city',
+        'two_mirror_state',
+        'two_mirror_cart_id',
+    );
 
     /**
      * Record what the mirror has written into the secondary address, against the
      * current cart (TWO-40).
      *
-     * Takes any subset of the short field names in MIRROR_WRITE_SESSION_KEYS; a
-     * field given as null is removed rather than written, which is how a caller
-     * disowns a value it has just cleared. Same stamp discipline as
-     * storeTwoCartScopedCompany(), and declined the same way when there is no cart
-     * to stamp against.
+     * Takes any subset of MIRROR_WRITE_SESSION_FIELDS; a field given as null is
+     * removed rather than written, which is how a caller disowns a value it has
+     * just cleared. Same stamp discipline as storeTwoCartScopedCompany(), and
+     * declined the same way when there is no cart to stamp against.
      *
      * @param array $fields
      * @return void
      */
     public function storeTwoCartScopedMirrorWrites(array $fields)
     {
-        if (!isset($this->context->cookie)) {
-            return;
-        }
-
-        $cartId = $this->getTwoCurrentCartId();
-        if ($cartId <= 0) {
-            // A record stamped 0 is unreadable by construction, and the first read
-            // that DOES have a cart would see the mismatch and clear it - taking
-            // any earlier record with it. Writing nothing is the only outcome that
-            // leaves an existing record exactly as it was.
-            return;
-        }
-
-        foreach ($fields as $field => $value) {
-            if (!isset(self::MIRROR_WRITE_SESSION_KEYS[$field])) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Ignored unknown mirror-write session field "' . (string) $field
-                    . '" - known fields are ' . implode(', ', array_keys(self::MIRROR_WRITE_SESSION_KEYS)),
-                    2
-                );
-                continue;
-            }
-
-            $key = self::MIRROR_WRITE_SESSION_KEYS[$field];
-            if ($value === null) {
-                unset($this->context->cookie->$key);
-                continue;
-            }
-
-            $this->context->cookie->$key = (string) $value;
-        }
-
-        $cartKey = self::MIRROR_WRITE_SESSION_CART_KEY;
-        $this->context->cookie->$cartKey = (string) $cartId;
+        $this->storeTwoCartScopedRecord(
+            self::MIRROR_WRITE_SESSION_COOKIE_KEY,
+            self::MIRROR_WRITE_SESSION_FIELDS,
+            self::LEGACY_MIRROR_WRITE_SESSION_KEYS,
+            $fields,
+            'mirror-write'
+        );
     }
 
     /**
      * Read what the mirror has written into the secondary address on this cart
      * (TWO-40).
      *
-     * Absent - null - unless a stored record carries a stamp equal to the current
-     * cart id, exactly as readTwoCartScopedCompany() decides absence. A record
-     * belonging to another cart is cleared on the way out; with no cart on the
-     * request nothing is read and nothing is destroyed.
+     * Absent - null - exactly when readTwoCartScopedCompany() would report its own
+     * record absent, and cleared on the way out in the same cases; with no cart on
+     * the request nothing is read and nothing is destroyed.
      *
-     * @return array|null keyed by the short field names of MIRROR_WRITE_SESSION_KEYS
+     * @return array|null keyed by MIRROR_WRITE_SESSION_FIELDS
      */
     public function readTwoCartScopedMirrorWrites()
     {
-        if (!isset($this->context->cookie)) {
-            return null;
-        }
+        $discardedCartId = null;
 
-        $cartKey = self::MIRROR_WRITE_SESSION_CART_KEY;
-        $storedCartId = isset($this->context->cookie->$cartKey)
-            ? (int) $this->context->cookie->$cartKey
-            : 0;
-        $cartId = $this->getTwoCurrentCartId();
-
-        if ($cartId <= 0) {
-            return null;
-        }
-
-        if ($storedCartId > 0 && $storedCartId === $cartId) {
-            $record = array();
-            foreach (self::MIRROR_WRITE_SESSION_KEYS as $field => $key) {
-                $record[$field] = isset($this->context->cookie->$key)
-                    ? (string) $this->context->cookie->$key
-                    : '';
-            }
-
-            return $record;
-        }
-
-        $hasStoredRecord = $storedCartId !== 0;
-        if (!$hasStoredRecord) {
-            foreach (self::MIRROR_WRITE_SESSION_KEYS as $key) {
-                if (isset($this->context->cookie->$key)) {
-                    $hasStoredRecord = true;
-                    break;
-                }
-            }
-        }
-
-        if ($hasStoredRecord) {
-            $this->clearTwoCartScopedMirrorWrites();
-        }
-
-        return null;
+        return $this->readTwoCartScopedRecord(
+            self::MIRROR_WRITE_SESSION_COOKIE_KEY,
+            self::MIRROR_WRITE_SESSION_FIELDS,
+            self::LEGACY_MIRROR_WRITE_SESSION_KEYS,
+            $discardedCartId
+        );
     }
 
     /**
@@ -12462,20 +12308,174 @@ class Twopayment extends PaymentModule
      */
     public function clearTwoCartScopedMirrorWrites()
     {
+        $this->clearTwoCartScopedRecord(self::MIRROR_WRITE_SESSION_COOKIE_KEY, self::LEGACY_MIRROR_WRITE_SESSION_KEYS);
+    }
+
+    /**
+     * Merge $fields into this cart's record under $cookieKey and write it back as one value.
+     *
+     * @param string $cookieKey
+     * @param array $knownFields
+     * @param array $legacyKeys
+     * @param array $fields
+     * @param string $label names the record in the unknown-field log line
+     * @return void
+     */
+    private function storeTwoCartScopedRecord($cookieKey, array $knownFields, array $legacyKeys, array $fields, $label)
+    {
         if (!isset($this->context->cookie)) {
             return;
         }
 
-        foreach (self::MIRROR_WRITE_SESSION_KEYS as $key) {
+        $cartId = $this->getTwoCurrentCartId();
+        if ($cartId <= 0) {
+            // No cart, so there is nothing worth writing. A record stamped 0 is
+            // unreadable by construction, and the first read that DOES have a cart
+            // would see the mismatch and clear it, taking any earlier record with
+            // it. Reachable: hookActionCustomerAddressSave() fires on the
+            // My-Account address page, where the buyer need not have a cart.
+            return;
+        }
+
+        $stored = $this->decodeTwoCartScopedRecord($cookieKey);
+        $values = ($stored !== null && $stored['cart'] === $cartId) ? $stored['fields'] : array();
+
+        foreach ($fields as $field => $value) {
+            if (!in_array($field, $knownFields, true)) {
+                // Reported, not skipped silently: a mistyped 'addressId' would otherwise vanish without trace.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Ignored unknown ' . $label . ' session field "' . (string) $field
+                    . '" - known fields are ' . implode(', ', $knownFields),
+                    2
+                );
+                continue;
+            }
+
+            if ($value === null) {
+                unset($values[$field]);
+                continue;
+            }
+
+            $values[$field] = (string) $value;
+        }
+
+        foreach ($legacyKeys as $key) {
             unset($this->context->cookie->$key);
         }
 
-        $cartKey = self::MIRROR_WRITE_SESSION_CART_KEY;
-        unset($this->context->cookie->$cartKey);
+        $encoded = $this->encodeTwoCartScopedRecord($cartId, $values);
+        if ($encoded === null) {
+            // Clearing beats keeping the previous record: the caller meant to replace it.
+            unset($this->context->cookie->$cookieKey);
+            PrestaShopLogger::addLog('TwoPayment: Could not encode the ' . $label . ' session record; cleared it', 3);
+
+            return;
+        }
+
+        $this->context->cookie->$cookieKey = $encoded;
+    }
+
+    /**
+     * This cart's record under $cookieKey with every known field present, or null.
+     *
+     * @param string $cookieKey
+     * @param array $knownFields
+     * @param array $legacyKeys
+     * @param int|null $discardedCartId set to the stamp (0 if unknown) of a record discarded here
+     * @return array|null
+     */
+    private function readTwoCartScopedRecord($cookieKey, array $knownFields, array $legacyKeys, &$discardedCartId)
+    {
+        $discardedCartId = null;
+        if (!isset($this->context->cookie)) {
+            return null;
+        }
+
+        $cartId = $this->getTwoCurrentCartId();
+        if ($cartId <= 0) {
+            // Nothing to match against on this request. Report absent, but do not
+            // clear: an address hook can fire outside checkout, and wiping a
+            // record the buyer is still mid-way through using would be worse than
+            // declining to read it here.
+            return null;
+        }
+
+        $stored = $this->decodeTwoCartScopedRecord($cookieKey);
+        if ($stored !== null && $stored['cart'] === $cartId) {
+            $record = array();
+            foreach ($knownFields as $field) {
+                $value = isset($stored['fields'][$field]) ? $stored['fields'][$field] : '';
+                $record[$field] = is_scalar($value) ? (string) $value : '';
+            }
+
+            return $record;
+        }
+
+        $hasStoredRecord = isset($this->context->cookie->$cookieKey);
+        foreach ($legacyKeys as $key) {
+            $hasStoredRecord = $hasStoredRecord || isset($this->context->cookie->$key);
+        }
+
+        if ($hasStoredRecord) {
+            $this->clearTwoCartScopedRecord($cookieKey, $legacyKeys);
+            $discardedCartId = $stored !== null ? $stored['cart'] : 0;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param string $cookieKey
+     * @param array $legacyKeys
+     * @return void
+     */
+    private function clearTwoCartScopedRecord($cookieKey, array $legacyKeys)
+    {
+        if (!isset($this->context->cookie)) {
+            return;
+        }
+
+        unset($this->context->cookie->$cookieKey);
+        foreach ($legacyKeys as $key) {
+            unset($this->context->cookie->$key);
+        }
 
         if (method_exists($this->context->cookie, 'write')) {
             $this->context->cookie->write();
         }
+    }
+
+    /**
+     * Base64 over JSON: base64 can never hold the '|' or '¤' core's Cookie::__set throws on.
+     *
+     * @param int $cartId
+     * @param array $values
+     * @return string|null null when the fields cannot be encoded
+     */
+    private function encodeTwoCartScopedRecord($cartId, array $values)
+    {
+        $json = json_encode(array('cart' => (int) $cartId, 'fields' => $values));
+
+        return $json === false ? null : base64_encode($json);
+    }
+
+    /**
+     * @param string $cookieKey
+     * @return array|null ['cart' => int, 'fields' => array], or null when absent or undecodable
+     */
+    private function decodeTwoCartScopedRecord($cookieKey)
+    {
+        if (!isset($this->context->cookie->$cookieKey)) {
+            return null;
+        }
+
+        $json = base64_decode((string) $this->context->cookie->$cookieKey, true);
+        $data = $json === false ? null : json_decode($json, true);
+        if (!is_array($data) || !isset($data['cart'], $data['fields']) || !is_int($data['cart']) || !is_array($data['fields'])) {
+            return null;
+        }
+
+        return $data;
     }
 
     /**

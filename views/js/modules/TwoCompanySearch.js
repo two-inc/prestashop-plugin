@@ -2856,7 +2856,7 @@ class TwoCompanySearch {
     /**
      * The fields of the secondary address whose contents decide whether it is still
      * in sync (TWO-40), in the short-name vocabulary the server's mirror-write
-     * record uses (`Twopayment::MIRROR_WRITE_SESSION_KEYS`).
+     * record uses (`Twopayment::MIRROR_WRITE_SESSION_FIELDS`).
      *
      * These are exactly the fields the plugin can ATTRIBUTE. Every other field of
      * a PrestaShop address (the name fields, the phone) is one the plugin never
@@ -2880,7 +2880,7 @@ class TwoCompanySearch {
      * server published it (TWO-40).
      *
      * This, and not the primary address's live value, is the comparison basis for
-     * the pin - see `Twopayment::MIRROR_WRITE_SESSION_KEYS` for why comparing
+     * the pin - see `Twopayment::MIRROR_WRITE_SESSION_FIELDS` for why comparing
      * against the primary is provably self-defeating.
      *
      * @returns {Object} short field name to last-written value; missing keys mean
@@ -6823,7 +6823,7 @@ class TwoCompanySearch {
      * returns early and fills no phone either.
      *
      * `address2` and `state` were added to MIRRORED_ADDRESS_FIELDS and to
-     * `Twopayment::MIRROR_WRITE_SESSION_KEYS` so these writes stay ATTRIBUTABLE
+     * `Twopayment::MIRROR_WRITE_SESSION_FIELDS` so these writes stay ATTRIBUTABLE
      * across a page load, and so the pin judges them: a buyer typing a second
      * address line is stating an independent answer exactly as much as one typing a
      * city. A writable field missing from that record would have made the

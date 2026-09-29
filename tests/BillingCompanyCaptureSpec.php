@@ -55,10 +55,10 @@ final class BillingCompanyCaptureSpec
 
         TinyAssert::same(
             '0',
-            (string) $cookie->two_company_address_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'address_id'),
             'an explicit id_address=0 must be stored as unknown, not as the cart address'
         );
-        TinyAssert::same('55667788', (string) $cookie->two_company_id);
+        TinyAssert::same('55667788', (string) TwoSessionRecord::get($cookie, 'company', 'id'));
     }
 
     /**
@@ -71,7 +71,7 @@ final class BillingCompanyCaptureSpec
 
         TinyAssert::same(
             (string) self::SHIPPING_ADDRESS_ID,
-            (string) $cookie->two_company_address_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'address_id'),
             'a missing id_address must still take the cart fallback'
         );
     }
@@ -88,7 +88,7 @@ final class BillingCompanyCaptureSpec
 
         TinyAssert::same(
             '0',
-            (string) $cookie->two_company_address_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'address_id'),
             'the previous selection address must not survive a new selection'
         );
     }
@@ -99,7 +99,7 @@ final class BillingCompanyCaptureSpec
 
         TinyAssert::same(
             '55667788',
-            (string) $cookie->two_company_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'id'),
             'a name-only resolution must leave the stored organisation number alone'
         );
     }
@@ -114,7 +114,7 @@ final class BillingCompanyCaptureSpec
 
         TinyAssert::same(
             '99887766',
-            (string) $cookie->two_company_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'id'),
             'a resolved organisation number must still be stored'
         );
     }
@@ -124,11 +124,11 @@ final class BillingCompanyCaptureSpec
     private static function seedSession(string $addressId, string $companyId): Cookie
     {
         $cookie = new Cookie();
-        $cookie->two_company_name = 'Billing Trading Ltd';
-        $cookie->two_company_id = $companyId;
-        $cookie->two_company_country = 'GB';
-        $cookie->two_company_address_id = $addressId;
-        $cookie->two_company_cart_id = (string) self::CART_ID;
+        TwoSessionRecord::set($cookie, 'company', 'name', 'Billing Trading Ltd');
+        TwoSessionRecord::set($cookie, 'company', 'id', $companyId);
+        TwoSessionRecord::set($cookie, 'company', 'country', 'GB');
+        TwoSessionRecord::set($cookie, 'company', 'address_id', $addressId);
+        TwoSessionRecord::set($cookie, 'company', 'cart', (string) self::CART_ID);
         Context::getContext()->cookie = $cookie;
 
         return $cookie;
