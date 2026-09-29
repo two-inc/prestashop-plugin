@@ -784,6 +784,33 @@ The module builds order payloads that exactly match PrestaShop invoices:
     group assigned
   - Contact Two support with the log entry if the configuration looks correct
 
+### Discrepancy snapshot
+When an order is refused by a tax or totals gate (order lines not reconciling with the
+cart total, a declared tax rate contradicting the applied amounts, or shipping with no
+declared tax rate), the module writes one JSON record for that cart to the PrestaShop
+log (object type `TwoDiscrepancySnapshot`, object id = the cart id). With Debug Mode on
+it also writes one for every cart that passes, as a baseline to compare against.
+
+- **Where**: Module Configuration → Diagnostics → "View last 100 error log records" lists
+  the snapshots with a **Download JSON** link each (employee login and token required).
+- **What it holds**: `Cart::getOrderTotal` with and without tax for every total type, and
+  `residual` = BOTH − (PRODUCTS + SHIPPING + WRAPPING − DISCOUNTS); each product line's
+  amounts, declared and implied rate and `delta` = total_wt − total × (1 + declared rate);
+  the carrier, delivery options and package shipping cost; which core classes are
+  overridden and which modules sit on price and shipping hooks; cart rules, gift wrapping
+  and the tax and rounding settings; the failed gate and the lines that would have been
+  sent. Of the buyer's addresses it keeps the country, the state id and whether a VAT
+  number is present, nothing else.
+- **Reading it**: the record's `shape` field applies this decision tree, first match wins:
+
+  | Shape | Snapshot values | Cart shape |
+  | --- | --- | --- |
+  | C | `residual` ≠ 0 and `ONLY_SHIPPING` = 0 | a cost is added to the cart total outside the shipping total, so no tax rule covers it |
+  | A | `ONLY_SHIPPING` > 0, incl = excl, no carrier tax rules group | shipping priced without a carrier and without tax |
+  | B | `ONLY_SHIPPING` incl > excl, no carrier tax rules group | shipping priced without a carrier, with tax nothing declares |
+  | D | a product line with a non-zero `delta`, plus a Cart/Product override or a price-hook module | an amount added to a product line that its tax rate does not cover |
+  | other | anything else | read the gate numbers and product lines directly |
+
 ### Debug Mode
 - **When to use**: Only enable when requested by Two support for troubleshooting
 - **How to enable**: 
@@ -791,7 +818,8 @@ The module builds order payloads that exactly match PrestaShop invoices:
   2. Toggle "Enable Debug Mode" to Yes
   3. Save settings
   4. Reproduce the issue
-  5. Check PrestaShop logs (`var/logs/`)
+  5. Check PrestaShop logs (`var/logs/`); each cart priced while it is on also leaves a
+     baseline discrepancy snapshot (see above)
   6. Disable Debug Mode when done
 
 ## Security
