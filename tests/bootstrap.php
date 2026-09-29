@@ -1979,6 +1979,7 @@ namespace {
                     'total_wt' => round($net * $quantity * (1 + $rate / 100), 2),
                     'rate' => $rate,
                     'reduction' => 0,
+                    'reference' => $product->loaded ? (string) $product->reference : '',
                     'is_virtual' => $product->loaded ? (int) $product->is_virtual : 0,
                 ];
                 $rows[] = $row;
@@ -2469,18 +2470,12 @@ namespace {
                 $next = array_shift(StubStore::$dbExecuteSResponses);
                 return is_array($next) ? $next : [];
             }
-            // The placed fee rows, each with its order_detail_tax rates listed as `placed_rates`.
-            if (preg_match(
-                "/FROM `" . _DB_PREFIX_ . "order_detail` od WHERE od\\.`id_order` = (\\d+) AND \\(od\\.`product_id` IN \\(([\\d,]+)\\) OR od\\.`product_reference` = '([^']+)'\\)/",
-                (string) $sql,
-                $m
-            )) {
-                $ids = array_map('intval', explode(',', $m[2]));
+            // The order's rows, each with its order_detail_tax rates listed as `placed_rates`.
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "order_detail` od WHERE od\\.`id_order` = (\\d+)$/", (string) $sql, $m)) {
                 $rows = [];
                 foreach (StubStore::$orderDetails as $row) {
-                    if ((int) $row['id_order'] === (int) $m[1]
-                        && (in_array((int) $row['product_id'], $ids, true) || ($row['product_reference'] ?? '') === $m[3])) {
-                        $rows[] = $row + ['tax_computation_method' => '0', 'placed_rates' => implode(',', $row['odt'] ?? [])];
+                    if ((int) $row['id_order'] === (int) $m[1]) {
+                        $rows[] = $row + ['product_reference' => '', 'tax_computation_method' => '0', 'placed_rates' => implode(',', $row['odt'] ?? [])];
                     }
                 }
                 return $rows;
