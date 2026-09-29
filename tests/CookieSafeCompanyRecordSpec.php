@@ -64,7 +64,7 @@ final class CookieSafeCompanyRecordSpec
 
     private static function runCase(string $record, array $seed, array $first, array $second, $expected, string $description): void
     {
-        $cookie = new CoreFaithfulCookie();
+        $cookie = new Cookie();
         foreach ($seed as $key => $value) {
             $cookie->{$key} = $value;
         }
@@ -100,35 +100,3 @@ final class CookieSafeCompanyRecordSpec
     }
 }
 
-// Core's magic accessors (classes/Cookie.php, 1.7.6 to 9). Copied from PR #303 (TWO-26084); drop once that stub is in bootstrap.php.
-final class CoreFaithfulCookie extends Cookie
-{
-    /** @var array<string, mixed> */
-    private array $content = [];
-
-    public function __set($key, $value)
-    {
-        if (is_array($value)) {
-            throw new Exception('Cookie value can\'t be an array.');
-        }
-        if (preg_match('/¤|\|/', $key . $value)) {
-            throw new Exception('Forbidden chars in cookie');
-        }
-        $this->content[$key] = $value;
-    }
-
-    public function __get($key)
-    {
-        return isset($this->content[$key]) ? $this->content[$key] : false;
-    }
-
-    public function __isset($key)
-    {
-        return isset($this->content[$key]);
-    }
-
-    public function __unset($key)
-    {
-        unset($this->content[$key]);
-    }
-}
