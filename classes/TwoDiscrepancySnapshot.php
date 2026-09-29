@@ -23,6 +23,9 @@ class TwoDiscrepancySnapshot
     const MAX_ROWS = 40;
     const MAX_STRING = 120;
     const AMOUNT_TOLERANCE = 0.01;
+    // D is a material untaxed amount on a line: its delta beyond 1% of the line's gross and this floor.
+    const MATERIAL_SHARE = 0.01;
+    const MATERIAL_FLOOR = 1.0;
 
     const HOOKS = array(
         'actionCartGetPackageShippingCost',
@@ -142,7 +145,7 @@ class TwoDiscrepancySnapshot
         if ($shipIncl > self::AMOUNT_TOLERANCE && $carrierGroups === array(0)) {
             return abs($shipIncl - $shipExcl) <= self::AMOUNT_TOLERANCE ? 'A' : 'B';
         }
-        if (self::hasUnexplainedProductDelta($snapshot) && self::hasPriceOverrideOrHook($snapshot)) {
+        if (self::hasMaterialProductDelta($snapshot) && self::hasPriceOverrideOrHook($snapshot)) {
             return 'D';
         }
 
@@ -151,6 +154,7 @@ class TwoDiscrepancySnapshot
 
     /**
      * total_wt - total x (1 + declared rate), less what ecotax taxed at its own rate adds.
+     * Ecotax is subtracted because its rate gap alone can exceed 1% of a line's gross.
      *
      * @param array $row a products row
      * @return float|null null when an input is missing or errored
@@ -501,30 +505,21 @@ class TwoDiscrepancySnapshot
         return array_slice($rows, 0, self::MAX_ROWS);
     }
 
-    // Every row is readable and one exceeds what PS_ROUND_TYPE's rounding can explain.
-    private static function hasUnexplainedProductDelta(array $snapshot)
+    // Every row is readable and one carries a material delta: rounding in any round type, mode or precision stays below it.
+    private static function hasMaterialProductDelta(array $snapshot)
     {
         $rows = isset($snapshot['products']) && is_array($snapshot['products']) && !isset($snapshot['products']['error'])
             ? $snapshot['products'] : array();
-        $roundType = self::num($snapshot, array('config', 'PS_ROUND_TYPE'));
-        $unexplained = false;
+        $material = false;
         foreach ($rows as $row) {
             $delta = is_array($row) ? self::productDelta($row) : null;
             if ($delta === null) {
                 return false;
             }
-            if ($roundType === 1.0) {
-                // ROUND_ITEM rounds unit net and unit gross apart (Cart.php:977-983@1.7.6.5), each by up to half a cent.
-                $tolerance = $row['qty'] * 0.005 * (2 + $row['declared_rate']);
-            } elseif ($roundType === 2.0 || $roundType === 3.0) {
-                $tolerance = 0.011;
-            } else {
-                return false;
-            }
-            $unexplained = $unexplained || abs($delta) > $tolerance;
+            $material = $material || abs($delta) > max(self::MATERIAL_SHARE * abs((float) $row['total_wt']), self::MATERIAL_FLOOR);
         }
 
-        return $unexplained;
+        return $material;
     }
 
     private static function hasPriceOverrideOrHook(array $snapshot)
