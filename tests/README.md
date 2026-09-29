@@ -25,7 +25,7 @@ This folder contains deterministic tests for order-building and payload safety l
 - Buyer company resolution across the intent, create and update payloads: the invoice address wins, the shipping address is the fallback, and the name and organisation number always come from the same address
 - Tracking number sourcing (order_carrier vs legacy shipping_number) and the admin tracking-update hook
 - Partial refunds via credit slips: amount+currency payload, slip-ID idempotency key, remaining-balance guard, and duplicate-refund suppression
-- Default shipping tax code: no-default-value refusal parity, an omitted-field save never wiping the stored selection, the carrier-wins resolution order, and the TWO-26082 gate (field hidden and fallback ignored until the `twopayment:shipping-tax-fallback` console command enables it)
+- Default shipping tax code: no-default-value refusal parity, an omitted-field save never wiping the stored selection, the carrier-wins resolution order, and the TWO-26082 gate (field hidden and fallback ignored until the `twopayment:shipping-tax-fallback` console command enables it, globally or per shop, with an order following its cart's shop), and a check that the module's service files reference only parameters PrestaShop 1.7.6 defines in the container that loads them
 
 - Dev-mode service URL overrides (`TWO_API_BASE_URL`, `TWO_PORTAL_BASE_URL`,
   `TWO_CHECKOUT_BASE_URL`): each resolves independently of the other two, and every

@@ -53,6 +53,16 @@ final class ShippingTaxFallbackGateSpec
                 self::assertCommand(...$row);
             };
         }
+        foreach (self::multishopResolutionRows() as $row) {
+            $checks[] = static function () use ($row): void {
+                self::assertMultishopResolution(...$row);
+            };
+        }
+        foreach (self::multishopCommandRows() as $row) {
+            $checks[] = static function () use ($row): void {
+                self::assertMultishopCommand(...$row);
+            };
+        }
 
         return $checks;
     }
@@ -89,6 +99,8 @@ final class ShippingTaxFallbackGateSpec
             ['0', '4100', '4210', 'hidden save posting another group keeps the stored group'],
             ['1', '4100', '4100', 'visible save stores the posted group'],
             ['1', null, '4210', 'visible save omitting the field keeps the stored group'],
+            [null, '4100', '4210', 'hidden save on a never-enabled shop keeps the stored group'],
+            [null, '', '4210', 'hidden blank save on a never-enabled shop keeps the stored group'],
         ];
     }
 
@@ -102,6 +114,37 @@ final class ShippingTaxFallbackGateSpec
             ['1', 'status', 0, '1', 'enabled', 'command status when enabled'],
             [null, 'status', 0, null, 'disabled', 'command status when never set writes nothing'],
             ['1', 'bogus', 1, '1', 'enable|disable|status', 'command rejects an unknown action unchanged'],
+        ];
+    }
+
+    // Two shops in one group, admin context on shop 1 throughout, so only the cart can point the read at shop 2.
+    // global flag, shop 2 flag, cart shop, expect resolved, description
+    private static function multishopResolutionRows(): array
+    {
+        return [
+            ['1', null, 2, true, 'multishop, global on: shop 2 cart resolved'],
+            ['1', null, 1, true, 'multishop, global on: shop 1 cart resolved'],
+            [null, '1', 2, true, 'multishop, shop 2 on only: shop 2 cart resolved'],
+            [null, '1', 1, false, 'multishop, shop 2 on only: shop 1 cart refused'],
+            ['0', '1', 2, true, 'multishop, shop 2 on with global off: shop 2 cart resolved'],
+            ['0', '1', 1, false, 'multishop, shop 2 on with global off: shop 1 cart refused'],
+            ['1', '0', 2, false, 'multishop, global on with shop 2 off: shop 2 cart refused'],
+        ];
+    }
+
+    // global before, shop 2 before, command input, exit code, global after, shop 2 after, output fragments, description
+    private static function multishopCommandRows(): array
+    {
+        return [
+            [null, null, ['action' => 'enable'], 0, '1', null, ['shop 1: enabled', 'shop 2: enabled'], 'multishop, enable with no shop writes the global row'],
+            [null, null, ['action' => 'enable', '--shop' => '2'], 0, null, '1', ['shop 1: disabled', 'shop 2: enabled'], 'multishop, enable --shop=2 writes only the shop 2 row'],
+            ['1', null, ['action' => 'disable', '--shop' => '2'], 0, '1', '0', ['shop 1: enabled', 'shop 2: disabled'], 'multishop, disable --shop=2 leaves global on'],
+            ['1', '1', ['action' => 'disable'], 0, '0', '1', ['shop 1: disabled', 'shop 2: enabled (shop setting)'], 'multishop, disable with no shop keeps a shop override'],
+            ['0', '1', ['action' => 'status'], 0, '0', '1', ['global: disabled', 'shop 1: disabled (global setting)', 'shop 2: enabled (shop setting)'], 'multishop, status reports each shop'],
+            [null, null, ['action' => 'enable', '--id_shop' => '2'], 0, null, '1', ['shop 2: enabled'], 'multishop, core\'s --id_shop=2 on PS 1.7.6-8 writes only the shop 2 row'],
+            [null, null, ['action' => 'enable', '--id_shop_group' => '1'], 1, null, null, ['--id_shop_group is not supported'], 'multishop, core\'s --id_shop_group writes nothing'],
+            [null, null, ['action' => 'enable', '--shop' => '9'], 1, null, null, ['Unknown shop "9"'], 'multishop, an unknown shop writes nothing'],
+            [null, null, ['action' => 'enable', '--shop' => 'two'], 1, null, null, ['Unknown shop "two"'], 'multishop, a non-numeric shop writes nothing'],
         ];
     }
 
@@ -183,6 +226,55 @@ final class ShippingTaxFallbackGateSpec
         TinyAssert::same($after, $stored === false ? null : (string) $stored, $description . ': stored flag');
         TinyAssert::same('4210', (string) Configuration::get(self::GROUP_KEY), $description . ': the stored group is never touched');
         TinyAssert::true(strpos($output->fetch(), $fragment) !== false, $description . ': output mentions ' . $fragment);
+    }
+
+    private static function seedMultishop(?string $global, ?string $shop2): void
+    {
+        self::seed(null, '4210');
+        StubStore::$multistore = true;
+        StubStore::$shops = [1 => 1, 2 => 1];
+        Shop::setContext(Shop::CONTEXT_SHOP, 1);
+        if ($global !== null) {
+            StubStore::$configuration[self::ENABLED_KEY] = $global;
+        }
+        if ($shop2 !== null) {
+            StubStore::$configurationShop[2][self::ENABLED_KEY] = $shop2;
+        }
+    }
+
+    private static function assertMultishopResolution(?string $global, ?string $shop2, int $cartShop, bool $resolved, string $description): void
+    {
+        self::seedMultishop($global, $shop2);
+        $cart = self::seedCarrierlessCart(9402);
+        $cart->id_shop = $cartShop;
+        $cart->id_shop_group = 1;
+
+        try {
+            $payload = (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-9402', $cart, self::merchantUrls());
+            $outcome = 'resolved at rate ' . self::shippingRate($payload);
+        } catch (Exception $e) {
+            $outcome = strpos($e->getMessage(), self::REFUSAL) !== false ? 'refused' : 'threw ' . $e->getMessage();
+        }
+
+        TinyAssert::same($resolved ? 'resolved at rate 0.21' : 'refused', $outcome, $description . ' (got: ' . $outcome . ')');
+    }
+
+    private static function assertMultishopCommand(?string $globalBefore, ?string $shop2Before, array $input, int $exitCode, ?string $globalAfter, ?string $shop2After, array $fragments, string $description): void
+    {
+        self::seedMultishop($globalBefore, $shop2Before);
+        require_once self::COMMAND_FILE;
+
+        $output = new Symfony\Component\Console\Output\BufferedOutput();
+        $code = (new TwoShippingTaxFallbackCommand())->run(new Symfony\Component\Console\Input\ArrayInput($input), $output);
+        $text = $output->fetch();
+
+        TinyAssert::same($exitCode, $code, $description . ': exit code');
+        TinyAssert::same($globalAfter, StubStore::$configuration[self::ENABLED_KEY] ?? null, $description . ': global row');
+        TinyAssert::same(null, StubStore::$configurationShop[1][self::ENABLED_KEY] ?? null, $description . ': shop 1 row is never written');
+        TinyAssert::same($shop2After, StubStore::$configurationShop[2][self::ENABLED_KEY] ?? null, $description . ': shop 2 row');
+        foreach ($fragments as $fragment) {
+            TinyAssert::true(strpos($text, $fragment) !== false, $description . ': output mentions "' . $fragment . '" (got: ' . trim($text) . ')');
+        }
     }
 
     private static function seedCarrierlessCart(int $id): Cart

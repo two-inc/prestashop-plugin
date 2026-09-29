@@ -9051,7 +9051,7 @@ class Twopayment extends PaymentModule
      */
     private function resolveTwoDefaultShippingRateClasses($cart, $shipping_gross, $carrier_failure = '')
     {
-        $group_id = $this->getTwoDefaultShippingTaxRulesGroupId();
+        $group_id = $this->getTwoDefaultShippingTaxRulesGroupId($cart);
         if ($group_id === null) {
             return null;
         }
@@ -9115,16 +9115,20 @@ class Twopayment extends PaymentModule
     /**
      * The merchant's stored default shipping tax rules group.
      *
+     * @param Cart|null $cart Read for the cart's shop; null reads the context's (the admin form)
      * @return int|null Group id (0 = "No tax"), or null when unset/invalid or
      *                  the fallback is not enabled (TWO-26082) - null being
      *                  the shipped state and the loud-refusal path
      */
-    private function getTwoDefaultShippingTaxRulesGroupId()
+    private function getTwoDefaultShippingTaxRulesGroupId($cart = null)
     {
-        if (!TwoShippingTaxFallbackGate::isEnabled()) {
+        // The cart's shop, not the context's: a webhook or cron run can price a cart for another shop.
+        $id_shop = $cart ? ((int) $cart->id_shop ?: null) : null;
+        $id_shop_group = $cart ? ((int) $cart->id_shop_group ?: null) : null;
+        if (!TwoShippingTaxFallbackGate::isEnabled($id_shop, $id_shop_group)) {
             return null;
         }
-        $stored = Configuration::get(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP);
+        $stored = Configuration::get(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, null, $id_shop_group, $id_shop);
         if ($stored === false || $stored === null) {
             return null;
         }
@@ -9427,7 +9431,7 @@ class Twopayment extends PaymentModule
         // catches the exception and relays that declaration instead. Logging
         // it at error severity anyway would put a permanent red line in every
         // such merchant's log for the designed behaviour.
-        $default_configured = $this->getTwoDefaultShippingTaxRulesGroupId() !== null;
+        $default_configured = $this->getTwoDefaultShippingTaxRulesGroupId($cart) !== null;
 
         PrestaShopLogger::addLog(
             'TwoPayment: No deliverable carrier for the cart shipping cost, so no declared shipping ' .

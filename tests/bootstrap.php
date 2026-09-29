@@ -874,6 +874,12 @@ namespace {
             return true;
         }
 
+        /** Core passes 0, 0: an explicit "no shop, no group", so the row is global whatever the context. */
+        public static function updateGlobalValue($key, $value, $html = false): bool
+        {
+            return self::updateValue($key, $value, $html, 0, 0);
+        }
+
         public static function hasKey($key, $idLang = null, $idShopGroup = null, $idShop = null): bool
         {
             if ($idLang !== null) {
@@ -1848,6 +1854,7 @@ namespace {
         public bool $loaded = true;
         public int $id = 0;
         public int $id_shop = 1;
+        public int $id_shop_group = 1;
         public int $id_guest = 0;
         public int $id_customer = 0;
         public int $id_currency = 0;

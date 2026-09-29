@@ -12,6 +12,17 @@ namespace Symfony\Component\Console\Input {
     {
         /** @return mixed */
         public function getArgument($name);
+
+        /** @return mixed */
+        public function getOption($name);
+
+        /** @return bool */
+        public function hasOption($name);
+    }
+
+    class InputOption
+    {
+        const VALUE_REQUIRED = 2;
     }
 
     class InputArgument
@@ -33,6 +44,17 @@ namespace Symfony\Component\Console\Input {
         public function getArgument($name)
         {
             return $this->parameters[$name] ?? null;
+        }
+
+        public function getOption($name)
+        {
+            return $this->parameters['--' . $name] ?? null;
+        }
+
+        /** The command's own --shop, plus the --id_shop and --id_shop_group PrestaShop 1.7.6-8 bind onto every command. */
+        public function hasOption($name)
+        {
+            return in_array($name, ['shop', 'id_shop', 'id_shop_group'], true);
         }
     }
 }
@@ -119,6 +141,11 @@ namespace Symfony\Component\Console\Command {
         }
 
         public function addArgument($name, $mode = null, $description = '', $default = null)
+        {
+            return $this;
+        }
+
+        public function addOption($name, $shortcut = null, $mode = null, $description = '', $default = null)
         {
             return $this;
         }
