@@ -17,7 +17,7 @@
 class TwoDiscrepancySnapshot
 {
     const LOG_OBJECT_TYPE = 'TwoDiscrepancySnapshot';
-    const SCHEMA_VERSION = 1;
+    const SCHEMA_VERSION = 2;
     // ps_log.message is TEXT (64KB) on 1.7.x, which also stores it addslashes()-escaped.
     const MAX_BYTES = 32000;
     const MAX_ROWS = 40;
@@ -58,9 +58,10 @@ class TwoDiscrepancySnapshot
      * @param array|null $lineItems the payload lines built so far, if any
      * @param callable $declaredRate fn(int $id_tax_rules_group): float decimal rate
      * @param int|null $defaultShippingGroup the module's Default shipping tax code
+     * @param array|null $postprocessing the order_postprocessing block (TWO-26092), when the hook ran
      * @return array
      */
-    public static function build($cart, $gate, $lineItems, $declaredRate, $defaultShippingGroup)
+    public static function build($cart, $gate, $lineItems, $declaredRate, $defaultShippingGroup, $postprocessing = null)
     {
         // A failed rate lookup logs a row of its own, so each group is asked once per snapshot.
         $rates = array();
@@ -116,6 +117,10 @@ class TwoDiscrepancySnapshot
             }),
             'sent_line_items' => is_array($lineItems) ? self::lineItems(self::cap($lineItems, 'sent_line_items', $truncated)) : null,
         );
+        if (is_array($postprocessing)) {
+            $postprocessing['diff'] = self::cap(isset($postprocessing['diff']) ? (array) $postprocessing['diff'] : array(), 'order_postprocessing.diff', $truncated);
+            $snapshot['order_postprocessing'] = $postprocessing;
+        }
         if ($truncated !== array()) {
             $snapshot['truncated'] = $truncated;
         }
@@ -218,6 +223,12 @@ class TwoDiscrepancySnapshot
         // Core strip_tags() every log message (pSQL without html_ok), so no raw < or > may reach it.
         $flags = JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | (defined('JSON_PARTIAL_OUTPUT_ON_ERROR') ? JSON_PARTIAL_OUTPUT_ON_ERROR : 0);
         $json = (string) json_encode($snapshot, $flags);
+        // The hook's diff gives way, one entry at a time, before any section is shed.
+        while (strlen(addslashes($json)) > self::MAX_BYTES && !empty($snapshot['order_postprocessing']['diff'])) {
+            array_pop($snapshot['order_postprocessing']['diff']);
+            $snapshot['truncated']['order_postprocessing.diff'] = 1 + (isset($snapshot['truncated']['order_postprocessing.diff']) ? $snapshot['truncated']['order_postprocessing.diff'] : 0);
+            $json = (string) json_encode($snapshot, $flags);
+        }
         foreach (self::SHEDDABLE as $key) {
             if (strlen(addslashes($json)) <= self::MAX_BYTES) {
                 break;
@@ -234,6 +245,7 @@ class TwoDiscrepancySnapshot
                 'v' => self::SCHEMA_VERSION,
                 'id_cart' => isset($snapshot['id_cart']) ? $snapshot['id_cart'] : 0,
                 'gate' => array('name' => isset($snapshot['gate']['name']) ? $snapshot['gate']['name'] : null),
+                'order_postprocessing' => isset($snapshot['order_postprocessing']['outcome']) ? array('outcome' => $snapshot['order_postprocessing']['outcome']) : null,
                 'shape' => isset($snapshot['shape']) ? $snapshot['shape'] : 'other',
                 'dropped' => 'size',
             ), $flags);
