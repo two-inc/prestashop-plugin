@@ -1583,26 +1583,47 @@ final class SurchargeSpec
     /**
      * TWO-26076: an order update (admin edit, tracking number) PUTs the fee
      * line PrestaShop recorded on the order, whatever the surcharge config
-     * says now. Placed: 5.00 net at 25% on a 105.50 order.
+     * says now. Placed: 5.00 net at 25% on a 105.50 order. `tax_rate` is the
+     * order_detail column (8.x writes it, 1.7 leaves it 0.000); `odt` is the
+     * row's order_detail_tax rates, which every version writes.
      */
     private static function testUpdatePayloadReplaysThePlacedSurchargeLine(): void
     {
+        $fee = fn (array $over = []) => $over + [
+            'id_order' => 8001, 'product_id' => 77, 'product_reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE,
+            'product_name' => 'Stored fee label', 'product_quantity' => 1,
+            'total_price_tax_excl' => '5.000000', 'total_price_tax_incl' => '6.250000', 'tax_rate' => '25.000', 'odt' => [25.0],
+        ];
+        $v17 = ['tax_rate' => '0.000'];
+        $exempt = ['total_price_tax_incl' => '5.000000', 'odt' => []];
+        $label = 'Payment terms fee - 30 days';
         $cases = [
-            // [change after the order, placed gross, expected tax, expected rate, description]
-            [fn () => Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '401'), 6.25, '1.25', '0.25', 'tax group changed after order'],
-            [fn () => Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'none'), 6.25, '1.25', '0.25', 'surcharge disabled after order'],
-            [fn () => StubStore::$taxRuleRates[400] = [33 => 12.0], 6.25, '1.25', '0.25', 'rate rule edited after order'],
-            [fn () => self::$quotedFee = '9.00', 6.25, '1.25', '0.25', 'fee re-quotes differently after order'],
-            [fn () => null, 6.25, '1.25', '0.25', 'unchanged'],
-            [fn () => null, 5.00, '0.00', '0', 'VAT-number exempt at placement: core keeps the group rate, applies none'],
+            // [change after the order, order_detail rows, want fee lines/net/tax/gross/rate/name/order gross, description]
+            [fn () => Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '401'), [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'tax group changed after order'],
+            [fn () => Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'none'), [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'surcharge disabled after order'],
+            [fn () => StubStore::$taxRuleRates[400] = [33 => 12.0], [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'rate rule edited after order'],
+            [fn () => self::$quotedFee = '9.00', [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'fee re-quotes differently after order'],
+            [fn () => null, [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'unchanged'],
+            [fn () => null, [$fee($exempt)], '1/5.00/0.00/5.00/0/' . $label . '/110.50', 'VAT-number exempt at placement: core keeps the group rate, applies none'],
+            [fn () => null, [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'PS 1.7 shape: order_detail.tax_rate is 0.000, the rate lives in order_detail_tax'],
+            [fn () => null, [$fee($v17 + ['product_quantity' => 2, 'total_price_tax_excl' => '10.000000', 'total_price_tax_incl' => '12.500000'])], '1/10.00/2.50/12.50/0.25/' . $label . '/118.00', 'quantity 2 replays the row total'],
+            [fn () => null, [$fee($v17), $fee($v17 + ['total_price_tax_excl' => '2.000000', 'total_price_tax_incl' => '2.500000'])], '1/7.00/1.75/8.75/0.25/' . $label . '/114.25', 'two fee rows are summed'],
+            [fn () => null, [], '0/-/-/-/-/-/105.50', 'no fee row: deleted, or placed before the feature'],
+            [fn () => Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 0), [$fee($v17)], '1/5.00/1.25/6.25/0.25/Stored fee label/111.75', 'empty live label falls back to the stored row name'],
+            [fn () => null, [$fee($v17), $fee($v17 + ['total_price_tax_excl' => '2.000000', 'total_price_tax_incl' => '2.200000', 'odt' => [10.0]])], 'throws TWO-26076', 'fee rows at different rates fail loud'],
+            [fn () => null, [$fee($v17 + ['total_price_tax_incl' => '6.300000'])], 'throws TWO-26076', 'back-office edit off the rate by more than the tolerance fails loud'],
+            [fn () => null, [$fee($v17), $fee($v17 + ['product_id' => 555])], 'throws TWO-26076', 'a row carrying the fee reference under another product id fails loud'],
         ];
         $failures = [];
-        foreach ($cases as [$change, $placedGross, $tax, $rate, $description]) {
+        foreach ($cases as [$change, $rows, $expected, $description]) {
             self::reset();
+            PrestaShopLogger::reset();
             self::$quotedFee = '5.00';
             Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
             Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
             Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '77');
+            StubStore::$products[77] = ['reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, 'is_virtual' => 1, 'visibility' => 'none'];
             StubStore::$taxRuleRates[400] = [33 => 25.0];
             StubStore::$taxRuleRates[401] = [33 => 0.0];
             StubStore::$taxRuleRates[500] = 5.5;
@@ -1622,10 +1643,9 @@ final class SurchargeSpec
                 'average_products_tax_rate' => 5.5,
             ];
             StubStore::$carts[7001] = ['id_customer' => 7001, 'id_currency' => 978, 'id_address_invoice' => 7101, 'id_address_delivery' => 7101, 'id_carrier' => 0, 'id_lang' => 1];
-            StubStore::$orderDetails[] = [
-                'id_order' => 8001, 'product_id' => 77, 'product_reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE,
-                'total_price_tax_excl' => '5.000000', 'total_price_tax_incl' => number_format($placedGross, 6, '.', ''), 'tax_rate' => '25.000',
-            ];
+            foreach ($rows as $i => $row) {
+                StubStore::$orderDetails[] = $row + ['id_order_detail' => 9000 + $i];
+            }
             $change();
 
             $module = new class extends TwopaymentTestHarness {
@@ -1646,17 +1666,20 @@ final class SurchargeSpec
                     return 0;
                 }
             };
-            $payload = $module->getTwoUpdateOrderData($order, ['two_order_reference' => 'ref-8001', 'two_day_on_invoice' => '30']);
-
-            $feeLines = array_values(array_filter($payload['line_items'], fn ($item) => ($item['type'] ?? '') === 'SERVICE'));
-            $fee = $feeLines[0] ?? [];
-            $expected = ['1 fee line', '5.00', $tax, number_format($placedGross, 2, '.', ''), $rate, number_format(105.50 + $placedGross, 2, '.', '')];
-            $actual = [count($feeLines) . ' fee line', $fee['net_amount'] ?? '-', $fee['tax_amount'] ?? '-', $fee['gross_amount'] ?? '-', $fee['tax_rate'] ?? '-', $payload['gross_amount']];
+            try {
+                $payload = $module->getTwoUpdateOrderData($order, ['two_order_reference' => 'ref-8001', 'two_day_on_invoice' => '30']);
+                $feeLines = array_values(array_filter($payload['line_items'], fn ($item) => ($item['type'] ?? '') === 'SERVICE'));
+                $line = $feeLines[0] ?? [];
+                $actual = implode('/', [count($feeLines), $line['net_amount'] ?? '-', $line['tax_amount'] ?? '-', $line['gross_amount'] ?? '-', $line['tax_rate'] ?? '-', $line['name'] ?? '-', $payload['gross_amount']]);
+            } catch (Exception $e) {
+                $named = array_filter(PrestaShopLogger::$logs, fn ($log) => $log['severity'] === 3 && strpos($log['message'], 'TWO-26076') !== false);
+                $actual = $named !== [] ? 'throws TWO-26076' : 'throws without a TWO-26076 log: ' . $e->getMessage();
+            }
             if ($actual !== $expected) {
-                $failures[] = $description . ': want ' . implode('/', $expected) . ', got ' . implode('/', $actual);
+                $failures[] = $description . ': want ' . $expected . ', got ' . $actual;
             }
         }
-        TinyAssert::same([], $failures, "fee line count/net/tax/gross/rate/order gross\n  " . implode("\n  ", $failures));
+        TinyAssert::same([], $failures, "fee lines/net/tax/gross/rate/name/order gross\n  " . implode("\n  ", $failures));
     }
 
     /**

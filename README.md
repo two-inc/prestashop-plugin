@@ -294,6 +294,10 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 
 ### Order Management
 
+#### Buyer surcharge on order updates
+
+An order update (a back-office edit, a tracking number) replays the buyer surcharge exactly as PrestaShop recorded it on the order. Its amounts and rate come from the stored order data, never from the live surcharge configuration, so changing the surcharge settings, tax rules or tax treatment later does not change an existing order's fee at Two. Where the stored data cannot be replayed as recorded (fee lines at different rates, amounts that disagree with the recorded rate, or a line carrying the fee's reference under another product), the update fails loudly with a `TWO-26076` entry in the shop log rather than send the order without its fee.
+
 #### Order Fulfillment
 
 **How It Works:**

@@ -14234,47 +14234,92 @@ class Twopayment extends PaymentModule
         $taxRateString = $this->formatTwoTaxRate($this->getTwoSurchargeTaxRateForCart($cart));
         $tax = round($net * (float) $taxRateString, 2);
 
-        return $this->formatTwoSurchargeLineItem($days, $net, $tax, $taxRateString);
+        return $this->formatTwoSurchargeLineItem($this->getTwoSurchargeLineLabel($days), $net, $tax, $taxRateString);
     }
 
     /**
-     * The fee row PrestaShop recorded on the order, keyed by reference because the product id is live config.
+     * The fee rows PrestaShop recorded on the order, summed, at the rate core recorded for them (TWO-26076).
+     * Identified by the fee product id, as getTwoProductItems excludes it: a primary key, where a reference is neither unique nor ours alone.
      *
      * @param int $orderId
      * @param int|null $paymentTermDays the placed term (label only)
      * @return array|null null when the order carries no fee row
+     * @throws Exception when the recorded rows cannot be replayed exactly
      */
     public function getTwoPlacedSurchargeLineItem($orderId, $paymentTermDays)
     {
-        $row = Db::getInstance()->getRow(
-            'SELECT `total_price_tax_excl`, `total_price_tax_incl`, `tax_rate` FROM `' . _DB_PREFIX_ . 'order_detail`'
-            . ' WHERE `id_order` = ' . (int) $orderId
-            . " AND `product_reference` = '" . pSQL(self::TWO_SURCHARGE_PRODUCT_REFERENCE) . "'"
+        $orderId = (int) $orderId;
+        $productId = $this->getTwoSurchargeCartProductId(false);
+        // order_detail.tax_rate is only written from PS 8; order_detail_tax holds the placement rate on every version.
+        $rows = Db::getInstance()->executeS(
+            'SELECT od.`product_id`, od.`product_name`, od.`total_price_tax_excl`, od.`total_price_tax_incl`,'
+            . ' (SELECT COALESCE(SUM(t.`rate`), 0) FROM `' . _DB_PREFIX_ . 'order_detail_tax` odt'
+            . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = odt.`id_tax`'
+            . ' WHERE odt.`id_order_detail` = od.`id_order_detail`) AS `placed_rate`'
+            . ' FROM `' . _DB_PREFIX_ . 'order_detail` od WHERE od.`id_order` = ' . $orderId
+            . ' AND (od.`product_id` = ' . (int) $productId
+            . " OR od.`product_reference` = '" . pSQL(self::TWO_SURCHARGE_PRODUCT_REFERENCE) . "')"
         );
-        if (!is_array($row) || round((float) $row['total_price_tax_excl'], 2) <= 0) {
+        if (!is_array($rows) || $rows === array()) {
             return null;
         }
-        $net = round((float) $row['total_price_tax_excl'], 2);
-        $tax = round((float) $row['total_price_tax_incl'] - $net, 2);
-        // Core stores the group's rate even where it applied no tax (VAT-number exemption).
-        $taxRateString = $this->formatTwoTaxRate($tax != 0.0 ? (float) $row['tax_rate'] / 100 : 0.0);
+        $net = 0.0;
+        $gross = 0.0;
+        $rates = array();
+        $storedName = '';
+        foreach ($rows as $row) {
+            if ((int) $row['product_id'] !== $productId) {
+                $this->failTwoPlacedSurchargeReplay($orderId, 'a row for product ' . (int) $row['product_id']
+                    . ' carries the fee reference, but the fee product is ' . $productId);
+            }
+            $rowNet = round((float) $row['total_price_tax_excl'], 2);
+            $rowGross = round((float) $row['total_price_tax_incl'], 2);
+            // A VAT-number exemption applies no tax, whatever rate the row records.
+            $rates[$this->formatTwoTaxRate($rowGross != $rowNet ? (float) $row['placed_rate'] / 100 : 0.0)] = true;
+            $net += $rowNet;
+            $gross += $rowGross;
+            $storedName = $storedName !== '' ? $storedName : (string) $row['product_name'];
+        }
+        $net = round($net, 2);
+        if ($net <= 0) {
+            return null;
+        }
+        if (count($rates) !== 1) {
+            $this->failTwoPlacedSurchargeReplay($orderId, 'the fee rows carry different rates (' . implode(', ', array_keys($rates)) . ')');
+        }
         $days = $paymentTermDays !== null ? (int) $paymentTermDays : $this->getSelectedPaymentTerm();
+        $label = $this->getTwoSurchargeLineLabel($days);
+        $line = $this->formatTwoSurchargeLineItem($label !== '' ? $label : $storedName, $net, round($gross - $net, 2), (string) key($rates));
+        if (!$this->validateTwoLineItems(array($line))) {
+            $this->failTwoPlacedSurchargeReplay($orderId, 'net ' . $line['net_amount'] . ', tax ' . $line['tax_amount']
+                . ' do not agree with the recorded rate ' . $line['tax_rate']);
+        }
 
-        return $this->formatTwoSurchargeLineItem($days, $net, $tax, $taxRateString);
+        return $line;
     }
 
     /**
-     * @param int $days
+     * @param int $orderId
+     * @param string $reason
+     * @throws Exception always: an update without the fee would cut it from the Two order
+     */
+    private function failTwoPlacedSurchargeReplay($orderId, $reason)
+    {
+        PrestaShopLogger::addLog('TwoPayment: TWO-26076 placed surcharge replay failed (order_id=' . (int) $orderId . '): ' . $reason, 3);
+        throw new Exception('The placed surcharge line cannot be replayed: ' . $reason);
+    }
+
+    /**
+     * @param string $label
      * @param float $net
      * @param float $tax
      * @param string $taxRateString as sent, from formatTwoTaxRate
      * @return array
      */
-    private function formatTwoSurchargeLineItem($days, $net, $tax, $taxRateString)
+    private function formatTwoSurchargeLineItem($label, $net, $tax, $taxRateString)
     {
         $sentRate = (float) $taxRateString;
         $gross = round($net + $tax, 2);
-        $label = $this->getTwoSurchargeLineLabel($days);
 
         return array(
             'name' => $label,

@@ -2469,6 +2469,21 @@ namespace {
                 $next = array_shift(StubStore::$dbExecuteSResponses);
                 return is_array($next) ? $next : [];
             }
+            // The placed fee rows, each with its order_detail_tax rates summed as `placed_rate`.
+            if (preg_match(
+                "/FROM `" . _DB_PREFIX_ . "order_detail` od WHERE od\\.`id_order` = (\\d+) AND \\(od\\.`product_id` = (\\d+) OR od\\.`product_reference` = '([^']+)'\\)/",
+                (string) $sql,
+                $m
+            )) {
+                $rows = [];
+                foreach (StubStore::$orderDetails as $row) {
+                    if ((int) $row['id_order'] === (int) $m[1]
+                        && ((int) $row['product_id'] === (int) $m[2] || ($row['product_reference'] ?? '') === $m[3])) {
+                        $rows[] = $row + ['placed_rate' => (string) array_sum($row['odt'] ?? [])];
+                    }
+                }
+                return $rows;
+            }
             return [];
         }
 
@@ -2498,19 +2513,6 @@ namespace {
                 $m
             )) {
                 return StubStore::$twoPaymentRows[(int) $m[1]] ?? false;
-            }
-
-            if (preg_match(
-                "/FROM `" . _DB_PREFIX_ . "order_detail` WHERE `id_order` = (\\d+) AND `product_reference` = '([^']+)'/",
-                $sql,
-                $m
-            )) {
-                foreach (StubStore::$orderDetails as $row) {
-                    if ((int) $row['id_order'] === (int) $m[1] && ($row['product_reference'] ?? '') === $m[2]) {
-                        return $row;
-                    }
-                }
-                return false;
             }
 
             if (preg_match(
