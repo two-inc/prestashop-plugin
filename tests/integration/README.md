@@ -31,6 +31,8 @@ Configs 1–3 set the Default shipping tax code to unset / a 21% group / "No tax
 | `MERCHANT_SHIM_PATH` | a dir with a `Cart.php` that replaces the fixture's Cart override for those cells (adapting it to what the override calls), plus an optional `install.php` run in the shop before them |
 | `MERCHANT_RATE_CONFIG_KEY` | the Configuration key the override reads its tax rate from |
 
+The matrix reuses locally cached images; `PULL=1 make carrierless-matrix` forces a fresh pull.
+
 #### Matrix invariants
 
 - The matrix runs only on a container it created, and removes that container on exit, whether the run passes, fails or is killed. A later run never depends on or inherits a previous run's state. A run killed with SIGKILL cannot clean up, so the next run removes its leftovers before booting.
