@@ -4942,17 +4942,17 @@ class Twopayment extends PaymentModule
      * Best-effort: any failure is logged and swallowed so the admin's
      * credit-slip action is never broken.
      *
-     * @param array $params PrestaShop hook params; expects order_slip.
+     * @param array $params PrestaShop hook params; see resolveTwoHookOrderSlip().
      * @return void
      */
     public function hookActionOrderSlipAdd($params)
     {
         try {
-            if (!is_array($params) || !isset($params['order_slip']) || !is_object($params['order_slip'])) {
+            $slip = is_array($params) ? $this->resolveTwoHookOrderSlip($params) : null;
+            if ($slip === null) {
                 return;
             }
 
-            $slip = $params['order_slip'];
             $slip_id = isset($slip->id) ? (int)$slip->id : 0;
             if ($slip_id <= 0) {
                 PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - credit slip has no usable ID.', 2);
@@ -5101,6 +5101,46 @@ class Twopayment extends PaymentModule
         } catch (Exception $e) {
             PrestaShopLogger::addLog('TwoPayment: Exception during partial refund. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
         }
+    }
+
+    /**
+     * The credit slip an actionOrderSlipAdd call is about. Core passes no
+     * slip on 1.7.x and 8.x (only order, productList and qtyList) and fires
+     * the hook straight after creating it, so the order's newest slip is the
+     * one; 9.x also passes it as orderSlipCreated.
+     *
+     * @param array $params Hook params
+     * @return object|null OrderSlip
+     */
+    public function resolveTwoHookOrderSlip($params)
+    {
+        foreach (array('order_slip', 'orderSlipCreated') as $key) {
+            if (isset($params[$key]) && is_object($params[$key])) {
+                return $params[$key];
+            }
+        }
+        if (isset($params['order']) && is_object($params['order']) && !empty($params['order']->id)) {
+            return $this->getTwoLatestOrderSlip((int)$params['order']->id);
+        }
+
+        return null;
+    }
+
+    /**
+     * @param int $id_order
+     * @return object|null the order's newest OrderSlip
+     */
+    public function getTwoLatestOrderSlip($id_order)
+    {
+        $id_order_slip = (int)Db::getInstance()->getValue(
+            'SELECT MAX(`id_order_slip`) FROM `' . _DB_PREFIX_ . 'order_slip` WHERE `id_order` = ' . (int)$id_order
+        );
+        if ($id_order_slip <= 0) {
+            return null;
+        }
+        $slip = new OrderSlip($id_order_slip);
+
+        return Validate::isLoadedObject($slip) ? $slip : null;
     }
 
     /**
