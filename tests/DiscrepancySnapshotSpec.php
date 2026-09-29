@@ -14,6 +14,7 @@ final class DiscrepancySnapshotSpec
         self::testClassifiesEachCartShape();
         self::testEncodeStaysUnderTheLimitAndDecodesBack();
         self::testTruncatedSectionsCountWhatWasCut();
+        self::testCartReadsStopAfterTheFirstThrow();
         self::testGateOutcomesWriteTheExpectedSnapshot();
     }
 
@@ -116,6 +117,8 @@ final class DiscrepancySnapshotSpec
             if ($kept) {
                 TinyAssert::true(strpos($json, '47.8,') !== false, 'encode: ' . $description);
             }
+            $shed = $kept ? null : count($snapshot['products']);
+            TinyAssert::same($shed, json_decode($json, true)['truncated']['products'] ?? null, 'encode: truncated counts every shed row - ' . $description);
         }
         TinyAssert::same(null, TwoDiscrepancySnapshot::decodeStored('TwoPayment: not json'), 'decodeStored: a plain log line');
     }
@@ -125,21 +128,82 @@ final class DiscrepancySnapshotSpec
         $cases = [
             // [rows per section, expected truncated, description]
             [TwoDiscrepancySnapshot::MAX_ROWS, null, 'at the cap nothing is cut'],
-            [TwoDiscrepancySnapshot::MAX_ROWS + 5, ['products' => 5, 'cart_rules' => 5, 'sent_line_items' => 5], 'over the cap each section counts its cut rows'],
+            [TwoDiscrepancySnapshot::MAX_ROWS + 5, ['products' => 5, 'delivery_options' => 5, 'hooks.actionCartSave' => 5, 'cart_rules' => 5, 'sent_line_items' => 5], 'over the cap each section counts its cut rows'],
         ];
         foreach ($cases as $i => [$rows, $expected, $description]) {
             StubStore::reset();
             $cart = new Cart(9500 + $i);
             StubStore::$cartProducts[$cart->id] = array_fill(0, $rows, ['id_product' => 1, 'total' => 1.0, 'total_wt' => 1.21, 'cart_quantity' => 1]);
             StubStore::$cartRules[$cart->id] = array_fill(0, $rows, ['id_cart_rule' => 1]);
+            StubStore::$cartDeliveryOptionLists[$cart->id] = [5 => array_fill_keys(array_map(static function (int $n): string {
+                return $n . ',';
+            }, range(1, $rows)), ['carrier_list' => []])];
+            Hook::$execLists = ['actionCartSave' => array_fill(0, $rows, ['module' => 'somemodule'])];
             $snapshot = TwoDiscrepancySnapshot::build($cart, null, array_fill(0, $rows, ['type' => 'PHYSICAL']), static function (): float {
                 return 0.21;
             }, null);
             TinyAssert::same($expected, $snapshot['truncated'] ?? null, 'truncated: ' . $description);
-            foreach (['products', 'cart_rules', 'sent_line_items'] as $section) {
+            foreach (['products', 'delivery_options', 'cart_rules', 'sent_line_items'] as $section) {
                 TinyAssert::count(min($rows, TwoDiscrepancySnapshot::MAX_ROWS), $snapshot[$section], 'rows kept in ' . $section . ': ' . $description);
             }
+            TinyAssert::count(min($rows, TwoDiscrepancySnapshot::MAX_ROWS), $snapshot['hooks']['actionCartSave'], 'rows kept in hooks: ' . $description);
         }
+        Hook::$execLists = [];
+    }
+
+    /** Core caches no failed pricing, so a slow throwing carrier module must run once per snapshot, not once per read. */
+    private static function testCartReadsStopAfterTheFirstThrow(): void
+    {
+        StubStore::reset();
+        $cart = new class (9600) extends Cart {
+            public $reads = 0;
+
+            private function fail()
+            {
+                ++$this->reads;
+                throw new RuntimeException('carrier module failed for Calle Uno 28001');
+            }
+
+            public function getOrderTotal($withTaxes, $type)
+            {
+                return $this->fail();
+            }
+
+            public function getProducts($refresh = false): array
+            {
+                return $this->fail();
+            }
+
+            public function getPackageShippingCost($idCarrier, $useTax, $defaultCountry = null, $productList = null, $idZone = null)
+            {
+                return $this->fail();
+            }
+
+            public function getCartRules(): array
+            {
+                return $this->fail();
+            }
+
+            public function getDeliveryOptionList($defaultCountry = null, $flush = false): array
+            {
+                return $this->fail();
+            }
+
+            public function getDeliveryOption($defaultCountry = null, $dontAutoSelectOptions = false, $useCache = true)
+            {
+                return $this->fail();
+            }
+        };
+        $snapshot = TwoDiscrepancySnapshot::build($cart, null, null, static function (): float {
+            return 0.21;
+        }, null);
+        TinyAssert::same(1, $cart->reads, 'circuit breaker: the throwing Cart is read once');
+        TinyAssert::same(['error' => 'RuntimeException', 'code' => 0], $snapshot['totals']['ONLY_DISCOUNTS']['incl'], 'circuit breaker: the first read records its error');
+        foreach (['products', 'cart_rules', 'delivery_options'] as $section) {
+            TinyAssert::same(['error' => 'skipped'], $snapshot[$section], 'circuit breaker: ' . $section . ' is skipped');
+        }
+        TinyAssert::same(['error' => 'skipped'], $snapshot['shipping']['priced_option'], 'circuit breaker: priced_option is skipped');
+        TinyAssert::same('other', $snapshot['shape'], 'circuit breaker: a skipped read classifies as other');
     }
 
     /** DefaultShippingTaxCodeSpec's cart fixtures, reused rather than copied. */
@@ -167,6 +231,13 @@ final class DiscrepancySnapshotSpec
             {
                 if ($this->fault instanceof Throwable) {
                     throw $this->fault;
+                }
+                if ($this->fault === 'wrapped') {
+                    try {
+                        return parent::getTwoProductItems($cart);
+                    } catch (Exception $e) {
+                        throw new RuntimeException('line build failed', 7, $e);
+                    }
                 }
 
                 return $this->fault === 'noLines' ? [] : parent::getTwoProductItems($cart);
@@ -197,6 +268,7 @@ final class DiscrepancySnapshotSpec
             ['4210', '0', 121.00, 150.00, null, null, 0, false, 'shipping gate caught by the Default shipping tax code is not a failure'],
             ['4210', '1', 121.00, 150.00, null, '', 1, true, 'debug mode leaves a baseline for a passing cart'],
             ['4210', '0', 131.00, 160.00, null, 'declared_rate', 3, false, 'product tax contradicts its declared rate'],
+            ['4210', '0', 131.00, 160.00, 'wrapped', 'declared_rate', 3, false, 'a wrapped gate exception keeps its gate'],
             ['4210', '0', 121.00, 170.00, null, 'reconciliation', 3, true, 'order lines do not reconcile with the cart total'],
             ['4210', '0', 121.00, 150.00, 'badFormulas', 'line_formulas', 3, true, 'line item formulas do not hold'],
             ['4210', '0', 121.00, 150.00, 'badSubtotals', 'tax_subtotals', 3, true, 'tax subtotals do not reconcile with the lines'],
@@ -246,6 +318,11 @@ final class DiscrepancySnapshotSpec
             TinyAssert::same($severity, $rows[0]['severity'], 'severity: ' . $description);
             TinyAssert::same($gate === '' ? null : $gate, $snapshot['gate']['name'] ?? null, 'gate: ' . $description);
             TinyAssert::same($hasLines, is_array($snapshot['sent_line_items']), 'sent line items: ' . $description);
+            if ($gate === 'Exception') {
+                // An unrecorded refusal names where it was thrown, relative to the module root, and its code.
+                TinyAssert::true((bool) preg_match('#^(tests/DiscrepancySnapshotSpec|twopayment)\.php:\d+$#', (string) ($snapshot['gate']['numbers']['site'] ?? '')), 'throw site: ' . $description);
+                TinyAssert::same(0, $snapshot['gate']['numbers']['code'] ?? null, 'exception code: ' . $description);
+            }
             if ($caught !== null) {
                 TinyAssert::false(strpos($rows[0]['message'], $caught->getMessage()) !== false, 'no exception message: ' . $description);
             }
