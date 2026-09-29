@@ -1841,6 +1841,11 @@ final class SurchargeSpec
                 {
                     return 0;
                 }
+
+                public function getBrother(): array
+                {
+                    return [];
+                }
             };
             try {
                 $module->$hook(['order' => $order]);
@@ -1924,6 +1929,11 @@ final class SurchargeSpec
                 public string $module = 'twopayment';
 
                 public function getOrderPaymentCollection(): array
+                {
+                    return [];
+                }
+
+                public function getBrother(): array
                 {
                     return [];
                 }

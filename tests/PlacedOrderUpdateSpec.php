@@ -64,6 +64,10 @@ final class PlacedOrderUpdateSpec
                 self::moveCart(12.00, 15.00);
                 $track($o);
             }, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 NOK', 'carrier price changed'],
+            [$none, function ($o) use ($track) {
+                StubStore::$taxRuleRates[520] = 15.0;
+                $track($o);
+            }, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 NOK', 'carrier tax rule changed'],
             [function ($o) {
                 self::addCartRule($o, 'Spring', 5.00, 4.00, false);
             }, function ($o) use ($track) {
@@ -87,6 +91,30 @@ final class PlacedOrderUpdateSpec
                 self::moveCart(2.00, 2.50);
                 $track($o);
             }, 'tracking', 'PUT ' . self::PLACED . '; DIGITAL 2.00/0.50/2.50@0.25 = 37.50 NOK', 'gift wrapping'],
+            [function ($o) {
+                $o->carrier_tax_rate = 0.0;
+            }, $track, 'edit', 'no PUT, paid 35.00, logged TwoPayment: Order 9601 records shipping 8.00 net, 2.00 tax at carrier_tax_rate 0.000%, which do not agree: the order holds no usable shipping rate',
+                'no stored shipping rate fails loud rather than resolving a live one'],
+            [$none, function ($o) {
+                // PS 8 AddProductToOrderHandler adds an order_carrier row for the new invoice, then OrderAmountUpdater sets the first row to the whole order's shipping.
+                self::addLine($o, 9503, 1, 10.00, 25.0, 510);
+                StubStore::$placedCarriers[self::ORDER][] = ['shipping_cost_tax_excl' => '8.000000', 'shipping_cost_tax_incl' => '10.000000'];
+            }, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; PHYSICAL 10.00/2.50/12.50@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 47.50 NOK, paid 47.50',
+                'PS 8 product added on a new invoice counts shipping once'],
+            [self::splitCart(...), $track, 'tracking',
+                'PUT PHYSICAL 20.00/5.00/25.00@0.25; PHYSICAL 40.00/6.00/46.00@0.15; SHIPPING_FEE 12.00/3.00/15.00@0.25 = 86.00 NOK',
+                'multi-carrier split: the update carries both orders'],
+            [self::splitCart(...), function ($o) {
+                $sibling = StubStore::$placedOrders[self::SIBLING];
+                StubStore::$orderDetails[1]['product_quantity'] = 2;
+                StubStore::$orderDetails[1]['total_price_tax_excl'] = '80.000000';
+                StubStore::$orderDetails[1]['total_price_tax_incl'] = '92.000000';
+                $sibling->total_paid_tax_excl += 40.00;
+                $sibling->total_paid_tax_incl += 46.00;
+
+                return $sibling;
+            }, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; PHYSICAL 80.00/12.00/92.00@0.15; SHIPPING_FEE 12.00/3.00/15.00@0.25 = 132.00 NOK, paid 132.00',
+                'multi-carrier split: editing the other order PUTs the whole Two order and pays the whole reference'],
             [function ($o) {
                 $o->module = 'ps_wirepayment';
                 $o->payment = 'Bank wire';
@@ -118,6 +146,7 @@ final class PlacedOrderUpdateSpec
                 $target = $change($order, $module);
                 $target = $target instanceof PlacedOrderStub ? $target : $order;
                 $module->puts = [];
+                PrestaShopLogger::reset();
                 if ($hook === 'edit') {
                     $module->hookActionOrderEdited(['order' => $target]);
                 } else {
@@ -126,6 +155,10 @@ final class PlacedOrderUpdateSpec
                 $actual = $module->puts === [] ? 'no PUT' : 'PUT ' . self::summarise(end($module->puts));
                 if ($hook === 'edit') {
                     $actual .= ', paid ' . implode('+', array_map(fn ($p) => number_format((float) $p->amount, 2, '.', ''), $target->payments));
+                }
+                $errors = array_column(array_filter(PrestaShopLogger::$logs, fn ($l) => $l['severity'] === 3), 'message');
+                if ($errors !== []) {
+                    $actual .= ', logged ' . $errors[0];
                 }
             } catch (Throwable $e) {
                 $actual = 'throws ' . $e->getMessage();

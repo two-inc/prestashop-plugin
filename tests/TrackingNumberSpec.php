@@ -48,6 +48,11 @@ final class TrackingNumberSpec
             {
                 return $this->idOrderCarrier;
             }
+
+            public function getBrother(): array
+            {
+                return [];
+            }
         };
     }
 
