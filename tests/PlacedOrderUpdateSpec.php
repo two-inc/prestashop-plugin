@@ -114,6 +114,11 @@ final class PlacedOrderUpdateSpec
                 StubStore::$placedCarriers[self::ORDER][] = ['shipping_cost_tax_excl' => '8.000000', 'shipping_cost_tax_incl' => '10.000000'];
             }, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; PHYSICAL 10.00/2.50/12.50@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 47.50 NOK, paid 47.50',
                 'PS 8 product added on a new invoice counts shipping once'],
+            [$none, function ($o) {
+                StubStore::$products[9501]['description_short'] = 'Rewritten catalogue copy';
+                StubStore::$products[9501]['manufacturer_name'] = 'Renamed brand';
+                StubStore::$images[9501] = ['id_image' => 7];
+            }, 'tracking', 'no PUT', 'catalogue text and image changes alone PUT nothing'],
             [self::splitCart(...), $track, 'tracking',
                 'PUT PHYSICAL 20.00/5.00/25.00@0.25; PHYSICAL 40.00/6.00/46.00@0.15; SHIPPING_FEE 12.00/3.00/15.00@0.25 = 86.00 NOK',
                 'multi-carrier split: the update carries both orders'],
