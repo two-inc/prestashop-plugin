@@ -805,6 +805,10 @@ document without re-deciding them:
   alongside the existing four instead. Restructuring the record would have rewritten the shape every
   read site consumes for no gain the requirement asks for. The keys are centralised in
   `Twopayment::COMPANY_SESSION_KEYS` so they cannot drift, which is what the blob was really for.
+  **Superseded by TWO-26094:** the record is now that blob after all, one base64-encoded JSON value
+  under `two_company_record` (the mirror-write record likewise under `two_mirror_record`). Core's
+  cookie throws on `|` and `¤`, which a company name can hold, so per-key writes could fail part way
+  and leave a half-updated record behind a matching stamp. The read shape callers see is unchanged.
 - **Step 2 (drop the company writes' `setExpire`) — not done, and it was wrong.** PrestaShop's cookie
   has one expiry for the whole cookie, not one per key: `Cookie::setExpire()` assigns the single
   expiry scalar that the cookie's own `setcookie()` call uses. So removing those calls would not

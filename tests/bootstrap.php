@@ -3153,5 +3153,68 @@ namespace {
         }
     }
 
+    /**
+     * Field-level view of the encoded company and mirror-write cookie records
+     * (TWO-26094), so a spec can seed or inspect one field; 'cart' is the stamp.
+     */
+    final class TwoSessionRecord
+    {
+        private const COOKIE_KEYS = ['company' => 'two_company_record', 'mirror' => 'two_mirror_record'];
+
+        public static function get(Cookie $cookie, string $record, string $field): ?string
+        {
+            $data = self::load($cookie, $record);
+            if ($field === 'cart') {
+                return isset($data['cart']) ? (string) $data['cart'] : null;
+            }
+
+            return isset($data['fields'][$field]) ? (string) $data['fields'][$field] : null;
+        }
+
+        public static function has(Cookie $cookie, string $record, string $field): bool
+        {
+            return self::get($cookie, $record, $field) !== null;
+        }
+
+        /** A record never given a 'cart' is stored unstamped, which the module reads as absent. */
+        public static function set(Cookie $cookie, string $record, string $field, ?string $value): void
+        {
+            $data = self::load($cookie, $record) ?? ['fields' => []];
+            if ($field === 'cart') {
+                $data['cart'] = (int) $value;
+            } elseif ($value === null) {
+                unset($data['fields'][$field]);
+            } else {
+                $data['fields'][$field] = $value;
+            }
+            $key = self::COOKIE_KEYS[$record];
+            $cookie->{$key} = base64_encode((string) json_encode($data));
+        }
+
+        public static function remove(Cookie $cookie, string $record, string $field): void
+        {
+            if ($field === 'cart') {
+                $data = self::load($cookie, $record) ?? ['fields' => []];
+                unset($data['cart']);
+                $key = self::COOKIE_KEYS[$record];
+                $cookie->{$key} = base64_encode((string) json_encode($data));
+
+                return;
+            }
+            self::set($cookie, $record, $field, null);
+        }
+
+        private static function load(Cookie $cookie, string $record): ?array
+        {
+            $key = self::COOKIE_KEYS[$record];
+            if (!isset($cookie->{$key})) {
+                return null;
+            }
+            $data = json_decode((string) base64_decode((string) $cookie->{$key}), true);
+
+            return is_array($data) ? $data : null;
+        }
+    }
+
     StubStore::reset();
 }

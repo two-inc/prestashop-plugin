@@ -34,11 +34,11 @@ final class SessionCompanyClearSpec
 
     /** @var array<int,string> */
     private const COMPANY_COOKIE_KEYS = [
-        'two_company_name',
-        'two_company_id',
-        'two_company_country',
-        'two_company_address_id',
-        'two_company_cart_id',
+        'name',
+        'id',
+        'country',
+        'address_id',
+        'cart',
     ];
 
     public static function runAll(): void
@@ -133,7 +133,7 @@ final class SessionCompanyClearSpec
     {
         self::seedBillingAddress('gb');
         $cookie = Context::getContext()->cookie;
-        $cookie->two_company_address_id = (string) (self::ADDRESS_ID + 500);
+        TwoSessionRecord::set($cookie, 'company', 'address_id', (string) (self::ADDRESS_ID + 500));
         $module = self::makeModule(self::CART_ID);
 
         TinyAssert::same(
@@ -152,7 +152,7 @@ final class SessionCompanyClearSpec
     {
         self::seedBillingAddress('gb');
         $cookie = Context::getContext()->cookie;
-        unset($cookie->two_company_id);
+        TwoSessionRecord::remove($cookie, 'company', 'id');
         $module = self::makeModule(self::CART_ID);
 
         TinyAssert::same(
@@ -187,13 +187,13 @@ final class SessionCompanyClearSpec
 
         foreach (self::COMPANY_COOKIE_KEYS as $key) {
             TinyAssert::true(
-                isset($cookie->{$key}),
+                TwoSessionRecord::has($cookie, 'company', $key),
                 'rendering a page must not destroy the buyer\'s selection: ' . $key . ' was cleared'
             );
         }
         TinyAssert::same(
             '12345678',
-            (string) $cookie->two_company_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'id'),
             'the withheld record must survive the render intact'
         );
         // And the consuming path must still be able to reach its own verdict on it
@@ -201,7 +201,7 @@ final class SessionCompanyClearSpec
         $validated = $module->getTwoValidatedSessionCompanyData('FR');
         TinyAssert::same('', (string) $validated['company_name']);
         TinyAssert::false(
-            isset($cookie->two_company_id),
+            TwoSessionRecord::has($cookie, 'company', 'id'),
             'the consuming path keeps the clear'
         );
     }
@@ -210,7 +210,7 @@ final class SessionCompanyClearSpec
     {
         self::seedBillingAddress('gb');
         $cookie = Context::getContext()->cookie;
-        unset($cookie->two_company_country);
+        TwoSessionRecord::remove($cookie, 'company', 'country');
         $module = self::makeModule(self::CART_ID);
 
         TinyAssert::same(
@@ -219,11 +219,11 @@ final class SessionCompanyClearSpec
             'a record with no country marker must be withheld'
         );
         TinyAssert::true(
-            isset($cookie->two_company_id),
+            TwoSessionRecord::has($cookie, 'company', 'id'),
             'rendering a page must not destroy a record carrying no country marker'
         );
         TinyAssert::true(
-            isset($cookie->two_company_name),
+            TwoSessionRecord::has($cookie, 'company', 'name'),
             'rendering a page must not destroy a record carrying no country marker'
         );
     }
@@ -280,7 +280,7 @@ final class SessionCompanyClearSpec
 
         foreach (self::COMPANY_COOKIE_KEYS as $key) {
             TinyAssert::false(
-                isset($cookie->{$key}),
+                TwoSessionRecord::has($cookie, 'company', $key),
                 'a record belonging to another cart must be cleared, not merely ignored: ' . $key
             );
         }
@@ -303,11 +303,11 @@ final class SessionCompanyClearSpec
             'an unstamped legacy record must not be readable'
         );
         TinyAssert::false(
-            isset($cookie->two_company_id),
+            TwoSessionRecord::has($cookie, 'company', 'id'),
             'an unstamped legacy record must be cleared'
         );
         TinyAssert::false(
-            isset($cookie->two_company_name),
+            TwoSessionRecord::has($cookie, 'company', 'name'),
             'an unstamped legacy record must be cleared'
         );
     }
@@ -328,7 +328,7 @@ final class SessionCompanyClearSpec
 
         TinyAssert::same(
             (string) self::CART_ID,
-            (string) $cookie->two_company_cart_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'cart'),
             'the address-save hook must stamp the cart it wrote under'
         );
 
@@ -345,10 +345,10 @@ final class SessionCompanyClearSpec
 
         TinyAssert::same(
             (string) self::CART_ID,
-            (string) $cookie->two_company_cart_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'cart'),
             'the save action must stamp the cart it wrote under'
         );
-        TinyAssert::same('55555555', (string) $cookie->two_company_id);
+        TinyAssert::same('55555555', (string) TwoSessionRecord::get($cookie, 'company', 'id'));
 
         // Third write site: the order-intent handler stores the company identity
         // it resolved back into the session on its way to building the payload.
@@ -361,13 +361,13 @@ final class SessionCompanyClearSpec
 
         TinyAssert::same(
             'Intent Trading Ltd',
-            (string) $cookie->two_company_name,
+            (string) TwoSessionRecord::get($cookie, 'company', 'name'),
             'the order-intent handler must store the company it resolved - if it did not, ' .
             'this spec is not reaching the write site it exists to cover'
         );
         TinyAssert::same(
             (string) self::CART_ID,
-            (string) $cookie->two_company_cart_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'cart'),
             'the order-intent store-back must stamp the cart it wrote under'
         );
     }
@@ -389,7 +389,7 @@ final class SessionCompanyClearSpec
             'with no loaded cart nothing can be matched, so the record must read absent'
         );
         TinyAssert::true(
-            isset($cookie->two_company_id),
+            TwoSessionRecord::has($cookie, 'company', 'id'),
             'a request with no cart must not destroy a record it cannot judge'
         );
 
@@ -406,7 +406,7 @@ final class SessionCompanyClearSpec
             'a fresh unsaved cart has no id to match against, so the record must read absent'
         );
         TinyAssert::true(
-            isset($cookie->two_company_id),
+            TwoSessionRecord::has($cookie, 'company', 'id'),
             'a request whose cart is unsaved must not destroy a record it cannot judge'
         );
     }
@@ -432,22 +432,22 @@ final class SessionCompanyClearSpec
             $module->storeTwoCartScopedCompany(['name' => 'Late Arrival Ltd', 'id' => '99999999']);
 
             TinyAssert::false(
-                isset($cookie->{'two_company_name'}) && (string) $cookie->two_company_name === 'Late Arrival Ltd',
+                TwoSessionRecord::has($cookie, 'company', 'name') && (string) TwoSessionRecord::get($cookie, 'company', 'name') === 'Late Arrival Ltd',
                 'with ' . $shape . ' the writer must store nothing - a record it cannot stamp is unreadable'
             );
             TinyAssert::same(
                 'Example Trading Ltd',
-                (string) $cookie->two_company_name,
+                (string) TwoSessionRecord::get($cookie, 'company', 'name'),
                 'with ' . $shape . ' the existing record must survive untouched'
             );
             TinyAssert::same(
                 '12345678',
-                (string) $cookie->two_company_id,
+                (string) TwoSessionRecord::get($cookie, 'company', 'id'),
                 'with ' . $shape . ' the existing organisation number must survive untouched'
             );
             TinyAssert::same(
                 (string) self::CART_ID,
-                (string) $cookie->two_company_cart_id,
+                (string) TwoSessionRecord::get($cookie, 'company', 'cart'),
                 'with ' . $shape . ' the existing stamp must not be overwritten with 0'
             );
         }
@@ -467,7 +467,7 @@ final class SessionCompanyClearSpec
 
         TinyAssert::same(
             (string) self::ADDRESS_ID,
-            (string) $cookie->two_company_address_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'address_id'),
             'a bogus field name must not be mistaken for the address marker'
         );
 
@@ -502,7 +502,7 @@ final class SessionCompanyClearSpec
         TinyAssert::same('', (string) $validated['organization_number']);
         foreach (self::COMPANY_COOKIE_KEYS as $key) {
             TinyAssert::false(
-                isset($cookie->{$key}),
+                TwoSessionRecord::has($cookie, 'company', $key),
                 'the country-mismatch wipe must still clear ' . $key
             );
         }
@@ -516,7 +516,7 @@ final class SessionCompanyClearSpec
     private static function testLegacyRecordWithoutCountryMarkerStillWipesTheRecord(): void
     {
         $cookie = self::seedSessionCompany();
-        unset($cookie->two_company_country);
+        TwoSessionRecord::remove($cookie, 'company', 'country');
         $module = self::makeModule(self::CART_ID);
 
         $validated = $module->getTwoValidatedSessionCompanyData('GB');
@@ -527,7 +527,7 @@ final class SessionCompanyClearSpec
             'a record with no country marker must not be reused against a known address country'
         );
         TinyAssert::false(
-            isset($cookie->two_company_id),
+            TwoSessionRecord::has($cookie, 'company', 'id'),
             'the no-country-marker guard must still clear the record'
         );
     }
@@ -570,7 +570,7 @@ final class SessionCompanyClearSpec
 
         foreach (self::COMPANY_COOKIE_KEYS as $key) {
             TinyAssert::false(
-                isset($cookie->{$key}),
+                TwoSessionRecord::has($cookie, 'company', $key),
                 'clearCompany left ' . $key . ' behind, so the disowned company survives the clear'
             );
         }
@@ -592,7 +592,7 @@ final class SessionCompanyClearSpec
         TinyAssert::count(1, $controller->emitted, 'the action switch must dispatch clearCompany');
         TinyAssert::true($controller->emitted[0]['success']);
         TinyAssert::false(
-            isset($cookie->two_company_id),
+            TwoSessionRecord::has($cookie, 'company', 'id'),
             'the clear reached through the switch must actually clear'
         );
     }
@@ -627,7 +627,7 @@ final class SessionCompanyClearSpec
 
         foreach (self::COMPANY_COOKIE_KEYS as $key) {
             TinyAssert::true(
-                isset($cookie->{$key}),
+                TwoSessionRecord::has($cookie, 'company', $key),
                 'a refused clear must leave ' . $key . ' untouched'
             );
         }
@@ -651,17 +651,17 @@ final class SessionCompanyClearSpec
         self::runAddressSave('Unregistered Trading Name', '');
 
         TinyAssert::false(
-            isset($cookie->two_company_id),
+            TwoSessionRecord::has($cookie, 'company', 'id'),
             'the disowned company\'s organisation number survived the address save'
         );
         TinyAssert::false(
-            isset($cookie->two_company_country),
+            TwoSessionRecord::has($cookie, 'company', 'country'),
             'a country marker with no organisation number behind it is the half-record state'
         );
         // The name the buyer actually typed is kept - it is theirs, and the
         // resolver needs a company name for the order either way.
-        TinyAssert::same('Unregistered Trading Name', (string) $cookie->two_company_name);
-        TinyAssert::same((string) self::ADDRESS_ID, (string) $cookie->two_company_address_id);
+        TinyAssert::same('Unregistered Trading Name', (string) TwoSessionRecord::get($cookie, 'company', 'name'));
+        TinyAssert::same((string) self::ADDRESS_ID, (string) TwoSessionRecord::get($cookie, 'company', 'address_id'));
     }
 
     /**
@@ -673,8 +673,8 @@ final class SessionCompanyClearSpec
         $cookie = self::seedSessionCompany();
         self::runAddressSave('Another Trading Ltd', '87654321');
 
-        TinyAssert::same('87654321', (string) $cookie->two_company_id);
-        TinyAssert::same('Another Trading Ltd', (string) $cookie->two_company_name);
+        TinyAssert::same('87654321', (string) TwoSessionRecord::get($cookie, 'company', 'id'));
+        TinyAssert::same('Another Trading Ltd', (string) TwoSessionRecord::get($cookie, 'company', 'name'));
     }
 
     /**
@@ -688,8 +688,8 @@ final class SessionCompanyClearSpec
         $cookie = self::seedSessionCompany();
         self::runAddressSave('Example Trading Ltd', '');
 
-        TinyAssert::same('12345678', (string) $cookie->two_company_id);
-        TinyAssert::same('GB', (string) $cookie->two_company_country);
+        TinyAssert::same('12345678', (string) TwoSessionRecord::get($cookie, 'company', 'id'));
+        TinyAssert::same('GB', (string) TwoSessionRecord::get($cookie, 'company', 'country'));
     }
 
     /**
@@ -706,7 +706,7 @@ final class SessionCompanyClearSpec
 
         TinyAssert::same(
             '12345678',
-            (string) $cookie->two_company_id,
+            (string) TwoSessionRecord::get($cookie, 'company', 'id'),
             'a capitalisation tidy-up is not a disowning and must not cost the organisation number'
         );
     }
@@ -729,17 +729,17 @@ final class SessionCompanyClearSpec
     private static function testAddressSaveKeepsCountryMarkerWhenNumberWasAlreadyEmpty(): void
     {
         $cookie = self::seedSessionCompany();
-        $cookie->two_company_id = '';
+        TwoSessionRecord::set($cookie, 'company', 'id', '');
         PrestaShopLogger::reset();
 
         self::runAddressSave('A Different Trading Name', '');
 
         TinyAssert::true(
-            isset($cookie->two_company_country),
+            TwoSessionRecord::has($cookie, 'company', 'country'),
             'a country marker with no organisation number behind it was not this guard\'s to clear'
         );
-        TinyAssert::same('GB', (string) $cookie->two_company_country);
-        TinyAssert::same('A Different Trading Name', (string) $cookie->two_company_name);
+        TinyAssert::same('GB', (string) TwoSessionRecord::get($cookie, 'company', 'country'));
+        TinyAssert::same('A Different Trading Name', (string) TwoSessionRecord::get($cookie, 'company', 'name'));
 
         foreach (PrestaShopLogger::$logs as $entry) {
             TinyAssert::false(
@@ -762,12 +762,12 @@ final class SessionCompanyClearSpec
     private static function seedSessionCompany($cartId = self::CART_ID): Cookie
     {
         $cookie = new Cookie();
-        $cookie->two_company_name = 'Example Trading Ltd';
-        $cookie->two_company_id = '12345678';
-        $cookie->two_company_country = 'GB';
-        $cookie->two_company_address_id = (string) self::ADDRESS_ID;
+        TwoSessionRecord::set($cookie, 'company', 'name', 'Example Trading Ltd');
+        TwoSessionRecord::set($cookie, 'company', 'id', '12345678');
+        TwoSessionRecord::set($cookie, 'company', 'country', 'GB');
+        TwoSessionRecord::set($cookie, 'company', 'address_id', (string) self::ADDRESS_ID);
         if ($cartId !== null) {
-            $cookie->two_company_cart_id = (string) $cartId;
+            TwoSessionRecord::set($cookie, 'company', 'cart', (string) $cartId);
         }
         Context::getContext()->cookie = $cookie;
         self::attachCart(self::CART_ID);

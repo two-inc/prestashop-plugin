@@ -39,22 +39,22 @@ final class MirrorWriteRecordSpec
 
     /** @var array<int,string> */
     private const MIRROR_COOKIE_KEYS = [
-        'two_mirror_company',
-        'two_mirror_org',
-        'two_mirror_country',
-        'two_mirror_address1',
-        'two_mirror_postcode',
-        'two_mirror_city',
-        'two_mirror_cart_id',
+        'company',
+        'organization',
+        'country',
+        'address1',
+        'postcode',
+        'city',
+        'cart',
     ];
 
     /** @var array<int,string> */
     private const COMPANY_COOKIE_KEYS = [
-        'two_company_name',
-        'two_company_id',
-        'two_company_country',
-        'two_company_address_id',
-        'two_company_cart_id',
+        'name',
+        'id',
+        'country',
+        'address_id',
+        'cart',
     ];
 
     public static function runAll(): void
@@ -100,13 +100,13 @@ final class MirrorWriteRecordSpec
 
     /**
      * ANY address field the buyer has entered pins the address, and the pin's test
-     * is a content match against what the mirror last wrote. A field with nowhere
-     * to keep its last-written value cannot be judged that way, so the set of keys
-     * IS the set of fields the rule covers - asserted here explicitly.
+     * is a content match against what the mirror last wrote. A field the record
+     * cannot hold cannot be judged that way, so the record's field set IS the set
+     * of fields the rule covers - asserted here explicitly.
      */
     private static function testEveryComparableFieldHasItsOwnKey(): void
     {
-        $fields = array_keys(Twopayment::MIRROR_WRITE_SESSION_KEYS);
+        $fields = Twopayment::MIRROR_WRITE_SESSION_FIELDS;
         sort($fields);
 
         // `address2` and `state` are in the set because sole-trader autofill routes
@@ -117,11 +117,6 @@ final class MirrorWriteRecordSpec
             ['address1', 'address2', 'city', 'company', 'country', 'organization', 'postcode', 'state'],
             $fields,
             'the record must carry a last-written value for every field the pin compares'
-        );
-        TinyAssert::same(
-            8,
-            count(array_unique(array_values(Twopayment::MIRROR_WRITE_SESSION_KEYS))),
-            'two fields sharing a cookie key would make one of them unreadable'
         );
     }
 
@@ -137,7 +132,7 @@ final class MirrorWriteRecordSpec
         );
         foreach (self::MIRROR_COOKIE_KEYS as $key) {
             TinyAssert::false(
-                isset($cookie->{$key}),
+                TwoSessionRecord::has($cookie, 'mirror', $key),
                 'a record belonging to another cart must be cleared, not merely ignored: ' . $key
             );
         }
@@ -153,8 +148,8 @@ final class MirrorWriteRecordSpec
             $module->readTwoCartScopedMirrorWrites(),
             'an unstamped record must not be readable'
         );
-        TinyAssert::false(isset($cookie->two_mirror_company), 'an unstamped record must be cleared');
-        TinyAssert::false(isset($cookie->two_mirror_address1), 'an unstamped record must be cleared');
+        TinyAssert::false(TwoSessionRecord::has($cookie, 'mirror', 'company'), 'an unstamped record must be cleared');
+        TinyAssert::false(TwoSessionRecord::has($cookie, 'mirror', 'address1'), 'an unstamped record must be cleared');
     }
 
     /**
@@ -173,7 +168,7 @@ final class MirrorWriteRecordSpec
             'with no loaded cart nothing can be matched, so the record must read absent'
         );
         TinyAssert::true(
-            isset($cookie->two_mirror_address1),
+            TwoSessionRecord::has($cookie, 'mirror', 'address1'),
             'a record that merely could not be judged must survive intact'
         );
     }
@@ -187,12 +182,12 @@ final class MirrorWriteRecordSpec
 
         TinyAssert::same(
             'Example Trading Ltd',
-            (string) $cookie->two_mirror_company,
+            (string) TwoSessionRecord::get($cookie, 'mirror', 'company'),
             'with no cart to stamp against, the write must leave the existing record exactly as it was'
         );
         TinyAssert::same(
             (string) self::CART_ID,
-            (string) $cookie->two_mirror_cart_id,
+            (string) TwoSessionRecord::get($cookie, 'mirror', 'cart'),
             'a stamp of 0 would make the record unreadable and then destroy it on the next read'
         );
     }
@@ -222,7 +217,7 @@ final class MirrorWriteRecordSpec
         $module->storeTwoCartScopedMirrorWrites(['organization' => null]);
 
         TinyAssert::false(
-            isset($cookie->two_mirror_org),
+            TwoSessionRecord::has($cookie, 'mirror', 'organization'),
             'a field given as null must be removed'
         );
         $record = $module->readTwoCartScopedMirrorWrites();
@@ -268,7 +263,7 @@ final class MirrorWriteRecordSpec
 
         foreach (self::COMPANY_COOKIE_KEYS as $key) {
             TinyAssert::false(
-                isset($cookie->{$key}),
+                TwoSessionRecord::has($cookie, 'company', $key),
                 'clearing the company selection must still clear every company key: ' . $key
             );
         }
@@ -294,7 +289,7 @@ final class MirrorWriteRecordSpec
 
         foreach (self::MIRROR_COOKIE_KEYS as $key) {
             TinyAssert::false(
-                isset($cookie->{$key}),
+                TwoSessionRecord::has($cookie, 'mirror', $key),
                 'clearing the mirror-write record must clear every one of its keys: ' . $key
             );
         }
@@ -344,12 +339,12 @@ final class MirrorWriteRecordSpec
         }
 
         TinyAssert::same(true, $controller->emitted[0]['success'] ?? null);
-        TinyAssert::same('Acme Trading Ltd', (string) $cookie->two_mirror_company);
-        TinyAssert::same('87654321', (string) $cookie->two_mirror_org);
-        TinyAssert::same('GB', (string) $cookie->two_mirror_country);
+        TinyAssert::same('Acme Trading Ltd', (string) TwoSessionRecord::get($cookie, 'mirror', 'company'));
+        TinyAssert::same('87654321', (string) TwoSessionRecord::get($cookie, 'mirror', 'organization'));
+        TinyAssert::same('GB', (string) TwoSessionRecord::get($cookie, 'mirror', 'country'));
         TinyAssert::same(
             (string) self::CART_ID,
-            (string) $cookie->two_mirror_cart_id,
+            (string) TwoSessionRecord::get($cookie, 'mirror', 'cart'),
             'the action must stamp the cart it wrote under'
         );
     }
@@ -364,7 +359,7 @@ final class MirrorWriteRecordSpec
     {
         $controller = self::makeController('token', 'saveMirrorWrites');
         $cookie = self::attachCookie(self::CART_ID);
-        $cookie->two_mirror_city = 'London';
+        TwoSessionRecord::set($cookie, 'mirror', 'city', 'London');
         Tools::setTestValue('city', '');
 
         try {
@@ -375,7 +370,7 @@ final class MirrorWriteRecordSpec
 
         TinyAssert::same(
             '',
-            (string) $cookie->two_mirror_city,
+            (string) TwoSessionRecord::get($cookie, 'mirror', 'city'),
             'an empty report must overwrite the recorded value, not be treated as an omission'
         );
     }
@@ -394,7 +389,7 @@ final class MirrorWriteRecordSpec
 
         TinyAssert::same(
             'GB',
-            (string) $cookie->two_mirror_country,
+            (string) TwoSessionRecord::get($cookie, 'mirror', 'country'),
             'the country is compared as an ISO code, so it is stored in one case'
         );
     }
@@ -413,7 +408,7 @@ final class MirrorWriteRecordSpec
 
         TinyAssert::same(false, $controller->emitted[0]['success'] ?? null);
         TinyAssert::false(
-            isset($cookie->two_mirror_company),
+            TwoSessionRecord::has($cookie, 'mirror', 'company'),
             'an unauthenticated request must not write into the record'
         );
     }
@@ -434,7 +429,7 @@ final class MirrorWriteRecordSpec
 
         TinyAssert::same(false, $controller->emitted[0]['success'] ?? null);
         TinyAssert::false(
-            isset($cookie->two_mirror_company),
+            TwoSessionRecord::has($cookie, 'mirror', 'company'),
             'a state-changing action must refuse a GET'
         );
     }
@@ -452,7 +447,7 @@ final class MirrorWriteRecordSpec
 
         TinyAssert::same(false, $controller->emitted[0]['success'] ?? null);
         TinyAssert::false(
-            isset($cookie->two_mirror_cart_id),
+            TwoSessionRecord::has($cookie, 'mirror', 'cart'),
             'a body carrying nothing to record must not stamp an empty record into existence'
         );
     }
@@ -487,14 +482,14 @@ final class MirrorWriteRecordSpec
     private static function seedMirrorRecord($cartId = self::CART_ID): Cookie
     {
         $cookie = new Cookie();
-        $cookie->two_mirror_company = 'Example Trading Ltd';
-        $cookie->two_mirror_org = '12345678';
-        $cookie->two_mirror_country = 'GB';
-        $cookie->two_mirror_address1 = '1 Register Street';
-        $cookie->two_mirror_postcode = 'EC1A 1BB';
-        $cookie->two_mirror_city = 'London';
+        TwoSessionRecord::set($cookie, 'mirror', 'company', 'Example Trading Ltd');
+        TwoSessionRecord::set($cookie, 'mirror', 'organization', '12345678');
+        TwoSessionRecord::set($cookie, 'mirror', 'country', 'GB');
+        TwoSessionRecord::set($cookie, 'mirror', 'address1', '1 Register Street');
+        TwoSessionRecord::set($cookie, 'mirror', 'postcode', 'EC1A 1BB');
+        TwoSessionRecord::set($cookie, 'mirror', 'city', 'London');
         if ($cartId !== null) {
-            $cookie->two_mirror_cart_id = (string) $cartId;
+            TwoSessionRecord::set($cookie, 'mirror', 'cart', (string) $cartId);
         }
         Context::getContext()->cookie = $cookie;
         self::attachCart(self::CART_ID);
@@ -505,11 +500,11 @@ final class MirrorWriteRecordSpec
     private static function seedBothRecords(int $cartId = self::CART_ID): Cookie
     {
         $cookie = self::seedMirrorRecord($cartId);
-        $cookie->two_company_name = 'Example Trading Ltd';
-        $cookie->two_company_id = '12345678';
-        $cookie->two_company_country = 'GB';
-        $cookie->two_company_address_id = (string) self::ADDRESS_ID;
-        $cookie->two_company_cart_id = (string) $cartId;
+        TwoSessionRecord::set($cookie, 'company', 'name', 'Example Trading Ltd');
+        TwoSessionRecord::set($cookie, 'company', 'id', '12345678');
+        TwoSessionRecord::set($cookie, 'company', 'country', 'GB');
+        TwoSessionRecord::set($cookie, 'company', 'address_id', (string) self::ADDRESS_ID);
+        TwoSessionRecord::set($cookie, 'company', 'cart', (string) $cartId);
 
         return $cookie;
     }
@@ -518,7 +513,7 @@ final class MirrorWriteRecordSpec
     {
         $cookie = new Cookie();
         if ($cartId !== null) {
-            $cookie->two_mirror_cart_id = (string) $cartId;
+            TwoSessionRecord::set($cookie, 'mirror', 'cart', (string) $cartId);
         }
         Context::getContext()->cookie = $cookie;
 
