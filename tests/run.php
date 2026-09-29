@@ -5800,6 +5800,7 @@ require __DIR__ . '/IntentDeclinedNoticeSpec.php';
 require __DIR__ . '/DeprecatedCustomPaymentTermSpec.php';
 require __DIR__ . '/CheckoutWithholdReasonSpec.php';
 require __DIR__ . '/PaymentTileAboutControlSpec.php';
+require __DIR__ . '/ReconciliationDriftMessageSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5867,6 +5868,7 @@ $tests = [
     'IntentDeclinedNoticeSpec::runAll' => [IntentDeclinedNoticeSpec::class, 'runAll'],
     'DeprecatedCustomPaymentTermSpec::runAll' => [DeprecatedCustomPaymentTermSpec::class, 'runAll'],
     'CheckoutWithholdReasonSpec::runAll' => [CheckoutWithholdReasonSpec::class, 'runAll'],
+    'ReconciliationDriftMessageSpec::runAll' => [ReconciliationDriftMessageSpec::class, 'runAll'],
 ];
 
 $failed = 0;

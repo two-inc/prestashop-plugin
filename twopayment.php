@@ -6288,7 +6288,8 @@ class Twopayment extends PaymentModule
 
         $lineTotals = $this->calculateTwoLineItemTotals($line_items);
         $max_reconciliation_diff_cents = 0;
-        if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, $max_reconciliation_diff_cents)) {
+        $reconciliation_drift = '';
+        if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, $max_reconciliation_diff_cents, $reconciliation_drift)) {
             if ($this->shouldBlockOnReconciliationDrift($contextLabel, $max_reconciliation_diff_cents, (bool)$strictReconciliation)) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: ' . $contextLabel . ' blocked by reconciliation policy. ' .
@@ -6302,10 +6303,7 @@ class Twopayment extends PaymentModule
                 // of email to diagnose. TwoCheckoutAmountException is what
                 // authorises that relay — see the class docblock.
                 throw new TwoCheckoutAmountException(
-                    'Order totals do not reconcile with cart totals: cart total ' .
-                    $this->getTwoRoundAmount(round((float)$cart->getOrderTotal(true, Cart::BOTH), 2)) .
-                    ' vs order lines ' . $this->getTwoRoundAmount($lineTotals['gross']) .
-                    ' (difference ' . $this->getTwoRoundAmount($max_reconciliation_diff_cents / 100) . ')'
+                    'Order totals do not reconcile with cart totals: ' . $reconciliation_drift
                 );
             }
 
@@ -6441,21 +6439,24 @@ class Twopayment extends PaymentModule
      * @param Cart $cart
      * @param array $lineTotals
      * @param string $contextLabel
+     * @param int $maxDiffCents Set to the largest net/tax/gross drift, in cents
+     * @param string $driftDetail Set to the figures that drifted, e.g. "net cart 60.00 vs order lines 64.00 (difference 4.00)"
      * @return bool
      */
-    private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, &$maxDiffCents = 0)
+    private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, &$maxDiffCents = 0, &$driftDetail = '')
     {
         $maxDiffCents = 0;
+        $driftDetail = '';
         $lineNet = round((float)$lineTotals['net'], 2);
         $lineTax = round((float)$lineTotals['tax'], 2);
         $lineGross = round((float)$lineTotals['gross'], 2);
 
         if (!$this->isTwoAmountWithinTolerance($lineGross, $lineNet + $lineTax)) {
             $maxDiffCents = PHP_INT_MAX;
+            $driftDetail = 'order lines gross ' . $this->getTwoRoundAmount($lineGross) .
+                ' vs order lines net+tax ' . $this->getTwoRoundAmount($lineNet + $lineTax);
             PrestaShopLogger::addLog(
-                'TwoPayment: ' . $contextLabel . ' reconciliation mismatch - line totals fail gross equation. ' .
-                'gross=' . $this->getTwoRoundAmount($lineGross) . ', net+tax=' .
-                $this->getTwoRoundAmount($lineNet + $lineTax),
+                'TwoPayment: ' . $contextLabel . ' reconciliation mismatch - line totals fail gross equation: ' . $driftDetail,
                 3
             );
             return false;
@@ -6491,22 +6492,23 @@ class Twopayment extends PaymentModule
         $taxDiffCents = $this->convertAmountToCents($taxDiff);
         $maxDiffCents = max($grossDiffCents, $netDiffCents, $taxDiffCents);
 
-        if (
-            $grossDiffCents > $toleranceCents ||
-            $netDiffCents > $toleranceCents ||
-            $taxDiffCents > $toleranceCents
-        ) {
+        $drifted = [];
+        foreach ([
+            'gross' => [$cartGross, $lineGross, $grossDiffCents],
+            'net' => [$cartNet, $lineNet, $netDiffCents],
+            'tax' => [$cartTax, $lineTax, $taxDiffCents],
+        ] as $figure => [$cartAmount, $lineAmount, $diffCents]) {
+            if ($diffCents > $toleranceCents) {
+                $drifted[] = $figure . ' cart ' . $this->getTwoRoundAmount($cartAmount) .
+                    ' vs order lines ' . $this->getTwoRoundAmount($lineAmount) .
+                    ' (difference ' . $this->getTwoRoundAmount($diffCents / 100) . ')';
+            }
+        }
+
+        if (!empty($drifted)) {
+            $driftDetail = implode('; ', $drifted);
             PrestaShopLogger::addLog(
-                'TwoPayment: ' . $contextLabel . ' reconciliation mismatch - order totals mismatch cart totals. ' .
-                'Line(net/tax/gross)=(' . $this->getTwoRoundAmount($lineNet) . '/' .
-                $this->getTwoRoundAmount($lineTax) . '/' .
-                $this->getTwoRoundAmount($lineGross) . '), ' .
-                'Cart=(' . $this->getTwoRoundAmount($cartNet) . '/' .
-                $this->getTwoRoundAmount($cartTax) . '/' .
-                $this->getTwoRoundAmount($cartGross) . '), ' .
-                'Diff=(' . $this->getTwoRoundAmount($netDiffCents / 100) . '/' .
-                $this->getTwoRoundAmount($taxDiffCents / 100) . '/' .
-                $this->getTwoRoundAmount($grossDiffCents / 100) . ')',
+                'TwoPayment: ' . $contextLabel . ' reconciliation mismatch - order totals mismatch cart totals: ' . $driftDetail,
                 3
             );
             return false;
