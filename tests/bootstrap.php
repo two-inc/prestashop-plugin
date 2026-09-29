@@ -874,6 +874,11 @@ namespace {
             return true;
         }
 
+        /** Core's set() only refreshes the in-process cache; the stub's store is the database itself, so there is nothing to do. */
+        public static function set($key, $values, $idShopGroup = null, $idShop = null): void
+        {
+        }
+
         /** Core passes 0, 0: an explicit "no shop, no group", so the row is global whatever the context. */
         public static function updateGlobalValue($key, $value, $html = false): bool
         {
@@ -2518,8 +2523,17 @@ namespace {
             return false;
         }
 
-        public function insert($table, $data): bool
+        public function insert($table, $data, $nullValues = false): bool
         {
+            if ((string) $table === 'configuration') {
+                if (!empty($data['id_shop'])) {
+                    StubStore::$configurationShop[(int) $data['id_shop']][$data['name']] = $data['value'];
+                } elseif (!empty($data['id_shop_group'])) {
+                    StubStore::$configurationGroup[(int) $data['id_shop_group']][$data['name']] = $data['value'];
+                } else {
+                    StubStore::$configuration[$data['name']] = $data['value'];
+                }
+            }
             if ((string) $table === 'twopayment') {
                 StubStore::$twoPaymentWrites[] = ['op' => 'insert', 'data' => $data];
                 StubStore::$twoPaymentRows[(int) $data['id_order']] = $data;
