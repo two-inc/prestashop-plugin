@@ -681,6 +681,173 @@ The module builds order payloads that exactly match PrestaShop invoices:
 - The optional buyer reference fields the buyer filled in at the payment step
   (see "Optional buyer reference fields" above)
 
+## Stable extension contract: order postprocessing
+
+A shop is not always the merchant's accounting source of record. When the order the
+shop recorded is not the order the merchant wants invoiced (a charge the shop left
+untaxed that the business books as VAT-inclusive, say), the merchant fixes it up in
+their own module on this hook, before the order reaches Two's API. The module is an
+aid here, not an authority: it fires the hook consistently, checks what the hook
+returns, and names the failure when a subscriber broke something. Two's API validates
+whatever arrives, and a payload that passes is accepted as the merchant declared it.
+
+### The hook
+
+| | |
+| --- | --- |
+| Name | `actionTwoOrderPostprocessing` |
+| Call | `Hook::exec('actionTwoOrderPostprocessing', ['payload' => &$payload, 'context' => $context])` |
+| Subscribe | `$this->registerHook('actionTwoOrderPostprocessing')` in your module's `install()`, and a `hookActionTwoOrderPostprocessing($params)` method |
+| Return | none: edit `$params['payload']` in place. It is a reference, the same idiom as core's `actionPresentCart` |
+| Order | subscribers run in hook-position order (Design > Positions), each seeing the previous one's edits |
+| Supported | PrestaShop 1.7.6, 8 and 9 |
+
+`payload` (array) is the complete request body exactly as the module would send it:
+2-decimal amount strings, `line_items`, `tax_subtotals` (when the "Validate tax
+subtotals" setting sends them), the order-level `net_amount` / `tax_amount` /
+`gross_amount`, buyer, addresses and everything else. A request that has no body
+passes an empty array. Any part of it may be changed, including gross amounts, lines,
+totals and fields the module does not itself send.
+
+`context` (array):
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `request_type` | string | `order_intent`, `order_create`, `order_update`, `order_confirm`, `capture`, `refund` or `cancel` |
+| `trigger` | string | What caused the request, for diagnosis: `precheck`, `strict_intent`, `checkout`, `snapshot_hash`, `admin_edit`, `tracking_number`, `merchant_order_id`, `confirmation`, `payment_return`, `status_change`, `credit_slip`, `buyer_cancel`, and others |
+| `endpoint` | string | The API path the request goes to, e.g. `/v1/order/{id}/refund` with the real id |
+| `cart` | `Cart` or null | The cart the order was or will be placed from |
+| `order` | `Order` or null | The PrestaShop order; null before it exists |
+| `shipping_tax_rate` | float or null | The rate the carrier's tax rules group applies at the cart's tax address, whether or not the shipping line was actually taxed. `0.21` means 21%. `0.0` for a "No tax" group, null with no carrier or no such group |
+| `fallback_shipping_tax_rate` | float or null | The rate of the module's Default shipping tax code, null when it is not set |
+| `contract_version` | int | `1` |
+
+### When it fires
+
+Once per outbound order request, immediately before it is sent:
+
+| `request_type` | When |
+| --- | --- |
+| `order_intent` | The checkout's order-intent pre-check (`precheck`; its payload goes to the browser, which relays it) and the authoritative check at payment submit (`strict_intent`) |
+| `order_create` | Order creation at checkout (`checkout`), and the rebuild the confirmation step hashes to detect a cart changed during payment (`snapshot_hash`, not sent) |
+| `order_update` | An admin order edit, a tracking number, and the merchant order id sync after confirmation |
+| `order_confirm` | The buyer's return from verification |
+| `capture` | The fulfilment status |
+| `refund` | The refunded status (full refund, no body) and a credit slip (partial refund, `{amount, currency}`) |
+| `cancel` | The cancelled status, a buyer cancel, and the module's own clean-up cancels |
+
+The hook also runs on every order-intent pre-check during checkout, so keep
+subscribers cheap.
+
+### What the module checks afterwards
+
+The module's own consistency gates run on the payload the subscribers leave. With no
+subscriber, or one that changes nothing, every gate sees what it always has and refuses
+exactly as before. When a subscriber changed the payload, a failing gate refuses with a
+named code instead:
+
+| Code | Gate |
+| --- | --- |
+| `TWO_ORDER_POSTPROCESSING_HOOK_FAILED` | A subscriber threw, or left something other than an array |
+| `TWO_ORDER_POSTPROCESSING_BODY_NOT_ACCEPTED` | A request sent with no body (confirm, capture, full refund, cancel) was given one |
+| `TWO_ORDER_POSTPROCESSING_LINE_INCONSISTENT` | A line's net, tax and gross disagree (`gross = net + tax` exactly, `tax = net x tax_rate` and `net = quantity x unit_price - discount` within tolerance), or a line is malformed |
+| `TWO_ORDER_POSTPROCESSING_TOTALS_INCONSISTENT` | The order `net_amount` / `tax_amount` / `gross_amount` do not equal the sum of the lines, or gross is not net + tax |
+| `TWO_ORDER_POSTPROCESSING_SUBTOTALS_INCONSISTENT` | `tax_subtotals` do not match the lines grouped by `tax_rate` |
+
+A refusal never falls back to the unedited payload. The request is not sent, the
+merchant log gets the code, the request type, the failing figures and a diff of what
+the subscribers changed, and the back office shows a notice on admin actions. The buyer
+sees the module's existing generic refusal.
+
+**Comparisons against the cart are skipped when the payload changed.** The checks of
+the order lines against the cart's own totals, and of the buyer fee line against the
+cart's hidden fee product, run only on an unchanged payload. A deliberate edit
+legitimately diverges from the shop, so the skip is logged at warning level with the
+diff, and recorded in the discrepancy snapshot as `skipped_payload_changed`. With a
+subscriber that changes amounts, the invoice Two issues can therefore differ from what
+the shop charged: that is the merchant's decision, and the merchant owns what their
+code declares.
+
+The module never recomputes totals or subtotals after the hook, since that would
+overwrite a subscriber's edits. A subscriber that changes a line also updates the
+totals and `tax_subtotals` it affects. The module offers a helper for exactly that:
+
+```php
+$payload = Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
+```
+
+It rebuilds the order `net_amount` / `tax_amount` / `gross_amount`, and `tax_subtotals`
+when the payload carries them, from `line_items` with the module's own arithmetic, and
+changes nothing else. It is opt-in and part of this contract.
+
+### Requirements on a subscriber
+
+- **Deterministic.** It must be a pure function of its inputs. The confirmation step
+  rebuilds the order and compares a hash of it with the one taken at payment, over the
+  post-hook payload; a subscriber whose output varies refuses confirmation as a
+  tampered cart.
+- **Cheap.** It runs on every order-intent check.
+- **Present.** A disabled subscriber module, or PrestaShop's "Disable non PrestaShop
+  modules" switch, means no subscriber: orders then go out as the shop recorded them
+  and every gate passes. The module cannot tell "no subscriber" from "subscriber
+  switched off".
+
+### Example
+
+Re-split shipping the shop recorded untaxed, at the rate the carrier's tax rules group
+declares, and keep the totals consistent:
+
+```php
+public function hookActionTwoOrderPostprocessing($params)
+{
+    $rate = $params['context']['shipping_tax_rate'];
+    if (!$rate || empty($params['payload']['line_items'])) {
+        return;
+    }
+    foreach ($params['payload']['line_items'] as &$line) {
+        if ($line['type'] !== 'SHIPPING_FEE' || (float) $line['tax_amount'] != 0.0) {
+            continue;
+        }
+        $gross = (float) $line['gross_amount'];
+        $net = round($gross / (1 + $rate), 2);
+        $line['net_amount'] = number_format($net, 2, '.', '');
+        $line['tax_amount'] = number_format($gross - $net, 2, '.', '');
+        $line['unit_price'] = $line['net_amount'];
+        $line['tax_rate'] = (string) $rate;
+        $line['tax_class_name'] = 'VAT ' . number_format($rate * 100, 2) . '%';
+    }
+    unset($line);
+    $params['payload'] = Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($params['payload']);
+}
+```
+
+On a 100.00 product at 21% with 29.00 of untaxed shipping, the shipping line becomes
+23.97 net + 5.03 tax = 29.00, and the order 123.97 + 26.03 = 150.00: the same gross,
+split the way the merchant books it. Leaving out the last line refuses the order with
+`TWO_ORDER_POSTPROCESSING_TOTALS_INCONSISTENT`, and the logged diff names only the
+shipping line's fields, which points straight at the missing update.
+
+A PrestaShop refund carries no lines: the full refund has no body and a credit slip
+sends `{amount, currency}`, so Two reverses VAT against the order it holds, which is
+the post-hook one.
+
+A working subscriber, exercised on every request type in CI, is
+`tests/integration/fixtures/twoorderpostprocessingtest`.
+
+### Versioning
+
+- The hook is permanent. It is never removed or renamed, it fires consistently on the
+  same events, and its version 1 context keys and `request_type` values keep their
+  meaning.
+- Allowed without a version change: new context keys, new `request_type` or `trigger`
+  values, and relaxing a gate.
+- Never: removing or renaming a context key, changing units (rates stay decimal
+  fractions), tightening a gate that a version 1 subscriber could already satisfy, or
+  firing on fewer request types.
+- A genuinely incompatible version 2 would be a new hook name, with version 1 still
+  firing beside it. `CHANGELOG.md` records any change to this contract, and the CI
+  fixture pins version 1.
+
 ## Troubleshooting
 
 ### Company Search Not Working
@@ -807,7 +974,8 @@ An update to a placed order is priced from that order, not its cart, so it write
   `{error, code}`: the exception class and code, never its message.
 - **Size**: products, cart rules, delivery options, sent lines and each hook's and class's
   list keep their first 40 rows; `truncated` counts the rows cut from each, including a
-  whole section shed to fit the size limit.
+  whole section shed to fit the size limit. The hook's `diff` keeps its first 40 entries
+  and gives way, entry by entry, before any section is shed.
 - **Cost**: once one `Cart` pricing read throws, the remaining ones are recorded as
   `{error: "skipped"}` rather than re-run, since core does not cache a failed price.
   `products` is read first, so a carrier that throws never skips it.
@@ -833,6 +1001,16 @@ An update to a placed order is priced from that order, not its cart, so it write
   Product lines carry no shape label: their raw `declared_rate`, `implied_rate` and
   `delta` (which already allows for ecotax taxed under its own group) are read directly,
   beside the overrides and hooks sections.
+
+  The `order_postprocessing` block (schema `v` 2) records the order postprocessing hook
+  when it ran for the request: `request_type`, `trigger`, the `subscribers` registered on
+  it, whether they `changed` the payload, the `outcome` (`unchanged`, `changed` or
+  `refused:<code>`), `cart_reconciliation` and a `diff` of `{path, before, after}` entries
+  keyed by JSON pointer (buyer and address fields by path only). A `changed` outcome
+  explains figures that differ from the shop's own records, and
+  `cart_reconciliation: skipped_payload_changed` explains why no cart comparison ran.
+  `sent_line_items` are always the post-hook lines. See "Stable extension contract:
+  order postprocessing".
 
 #### Snapshot invariants
 - The snapshot never changes, fails or slows a checkout. Every one of its own failures is
