@@ -291,6 +291,7 @@ class Twopayment extends PaymentModule
     const CONFIG_SURCHARGE_PRODUCT_ID = 'PS_TWO_SURCHARGE_PRODUCT_ID';
     // Earlier fee product ids, so orders placed under them still replay their fee (TWO-26076).
     const CONFIG_SURCHARGE_RETIRED_PRODUCT_IDS = 'PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS';
+    const CONFIG_SURCHARGE_RETIRED_IDS_SEEDED = 'PS_TWO_SURCHARGE_RETIRED_IDS_SEEDED';
     // Merchant-selected TaxRulesGroup applied to the hidden surcharge
     // product - the SAME id_tax_rules_group field every real Product uses,
     // so the fee line gets PrestaShop's full native tax capability
@@ -14352,6 +14353,10 @@ class Twopayment extends PaymentModule
         $storedName = '';
         foreach (is_array($rows) ? $rows : array() as $row) {
             if (!$this->isTwoSurchargeRow($row['product_id'], $row['product_reference'], $productIds)) {
+                if ((string) $row['product_reference'] === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
+                    $this->failTwoPlacedSurchargeReplay($orderId, 'a row carries the fee reference under product id '
+                        . (int) $row['product_id'] . ', which the fee never had');
+                }
                 continue;
             }
             $rowNet = round((float) $row['total_price_tax_excl'], 2);
@@ -14685,6 +14690,30 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Retire every id the fee reference was sold under before retirements were recorded, once (TWO-26076).
+     */
+    public function seedTwoRetiredSurchargeProductIds()
+    {
+        if ((int) Configuration::get(self::CONFIG_SURCHARGE_RETIRED_IDS_SEEDED) === 1) {
+            return;
+        }
+        $rows = Db::getInstance()->executeS(
+            'SELECT DISTINCT `product_id` FROM `' . _DB_PREFIX_ . "order_detail` WHERE `product_reference` = '"
+            . pSQL(self::TWO_SURCHARGE_PRODUCT_REFERENCE) . "'"
+        );
+        if (!is_array($rows)) {
+            return;
+        }
+        $liveId = $this->getTwoSurchargeCartProductId(false);
+        foreach ($rows as $row) {
+            if ((int) $row['product_id'] !== $liveId) {
+                $this->retireTwoSurchargeProductId($row['product_id']);
+            }
+        }
+        Configuration::updateValue(self::CONFIG_SURCHARGE_RETIRED_IDS_SEEDED, 1);
+    }
+
+    /**
      * Every id the fee product has had: the live one first, then the retired ones.
      * Placed orders and their carts keep the id the fee had at placement (TWO-26076).
      *
@@ -14692,6 +14721,8 @@ class Twopayment extends PaymentModule
      */
     public function getTwoSurchargeProductIds()
     {
+        // Fallback for a shop whose files were swapped without core running upgrade-2.7.16.
+        $this->seedTwoRetiredSurchargeProductIds();
         $liveId = $this->getTwoSurchargeCartProductId(false);
 
         return array_values(array_unique(array_merge($liveId > 0 ? array($liveId) : array(), $this->getTwoRetiredSurchargeProductIds())));
