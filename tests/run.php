@@ -155,6 +155,7 @@ final class OrderBuilderSpec
         self::testGetTwoErrorMessageReadsNestedDataMessage();
         self::testGetTwoErrorMessageIgnoresSuccessMessagePayload();
         self::testGetTwoProductItemsSkipsEmptyBarcodeEntries();
+        self::testGetTwoProductItemsSourcesImageFromCartRow();
         self::testGetTwoProductItemsThrowsOnNegativeDiscount();
         self::testGetTwoProductItemsThrowsOnNegativeReduction();
         self::testGetTwoProductItemsAllowsPositiveDiscount();
@@ -5638,6 +5639,53 @@ final class OrderBuilderSpec
 
         TinyAssert::count(1, $items);
         TinyAssert::same([], $items[0]['details']['barcodes']);
+    }
+
+    /**
+     * TWO-26071: the image comes from the cart row's own id_image, which core
+     * resolves per combination; a product with no image sends no image_url.
+     */
+    private static function testGetTwoProductItemsSourcesImageFromCartRow(): void
+    {
+        // [id_product_attribute, cart row id_image, expected image_url, description]
+        $cases = [
+            [0, '702-55', 'https://img.local/702-55', 'product with a cover image (PS 1.7/8 id_image form)'],
+            [0, '55', 'https://img.local/55', 'product with a cover image (PS 9 id_image form)'],
+            [31, '702-77', 'https://img.local/702-77', 'combination with its own image'],
+            [0, 'en-default', '', 'product with no image'],
+        ];
+        foreach ($cases as [$idProductAttribute, $idImage, $expected, $description]) {
+            self::reset();
+            $module = new TwopaymentTestHarness();
+
+            $cart = new Cart(812);
+            $cart->id_lang = 1;
+            $cart->id_carrier = 999;
+            StubStore::$cartProducts[812] = [[
+                'id_product' => 702,
+                'id_product_attribute' => $idProductAttribute,
+                'id_image' => $idImage,
+                'link_rewrite' => 'desk-lamp',
+                'name' => 'Desk Lamp',
+                'description_short' => 'Lamp',
+                'manufacturer_name' => 'Acme',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 100.00,
+                'total_wt' => 121.00,
+                'cart_quantity' => 1,
+                'rate' => 21.0,
+                'price' => 100.00,
+                'reduction' => 0,
+            ]];
+            StubStore::$productCategories[702] = [['name' => 'Lighting']];
+            self::declareProductRate($cart, 702, 21.0);
+
+            $items = $module->getTwoProductItems($cart);
+
+            TinyAssert::count(1, $items);
+            TinyAssert::same($expected, $items[0]['image_url'], $description);
+        }
     }
 
     /**
