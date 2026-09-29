@@ -972,12 +972,12 @@ namespace {
 
     class PrestaShopLogger
     {
-        /** @var array<int,array{message:string,severity:int}> */
+        /** @var array<int,array{message:string,severity:int,object_type:?string,object_id:?int}> */
         public static array $logs = [];
 
         public static function addLog($message, $severity = 1, $errorCode = null, $objectType = null, $objectId = null, $allowDuplicate = false): bool
         {
-            self::$logs[] = ['message' => (string) $message, 'severity' => (int) $severity];
+            self::$logs[] = ['message' => (string) $message, 'severity' => (int) $severity, 'object_type' => $objectType, 'object_id' => $objectId];
             return true;
         }
 
