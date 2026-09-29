@@ -65,6 +65,7 @@ final class SurchargeSpec
         self::testSurchargeLineItemHonorsExplicitTermOverride();
         self::testOrderPayloadInjectsSurchargeLineAndBumpsTotals();
         self::testUpdatePayloadReplaysThePlacedSurchargeLine();
+        self::testAdminOrderHooksWarnInsteadOfThrowingAFailedUpdate();
         self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
         self::testSurchargeGridEmptyStateReplacesTheHeadings();
     }
@@ -1585,7 +1586,8 @@ final class SurchargeSpec
      * line PrestaShop recorded on the order, whatever the surcharge config
      * says now. Placed: 5.00 net at 25% on a 105.50 order. `tax_rate` is the
      * order_detail column (8.x writes it, 1.7 leaves it 0.000); `odt` is the
-     * row's order_detail_tax rates, which every version writes.
+     * row's order_detail_tax rates, which every version writes. The order's
+     * cart holds the same rows, under the fee id they were placed with, while that product exists.
      */
     private static function testUpdatePayloadReplaysThePlacedSurchargeLine(): void
     {
@@ -1597,6 +1599,7 @@ final class SurchargeSpec
         $v17 = ['tax_rate' => '0.000'];
         $exempt = ['total_price_tax_incl' => '5.000000', 'odt' => []];
         $label = 'Payment terms fee - 30 days';
+        $taxes = fn (int $method, string $net, string $gross) => $v17 + ['odt' => [10.0, 5.0], 'tax_computation_method' => (string) $method, 'total_price_tax_excl' => $net, 'total_price_tax_incl' => $gross];
         $cases = [
             // [change after the order, order_detail rows, want fee lines/net/tax/gross/rate/name/order gross, description]
             [fn () => Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '401'), [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'tax group changed after order'],
@@ -1613,6 +1616,14 @@ final class SurchargeSpec
             [fn () => null, [$fee($v17), $fee($v17 + ['total_price_tax_excl' => '2.000000', 'total_price_tax_incl' => '2.200000', 'odt' => [10.0]])], 'throws TWO-26076', 'fee rows at different rates fail loud'],
             [fn () => null, [$fee($v17 + ['total_price_tax_incl' => '6.300000'])], 'throws TWO-26076', 'back-office edit off the rate by more than the tolerance fails loud'],
             [fn () => null, [$fee($v17), $fee($v17 + ['product_id' => 555])], 'throws TWO-26076', 'a row carrying the fee reference under another product id fails loud'],
+            [fn ($m) => [StubStore::$products[77]['reference'] = 'EDITED', $m->getTwoSurchargeCartProductId(true)], [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'live id changed after the order: reference edited, fee product recreated'],
+            [function () { unset(StubStore::$products[77]); }, [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'merchant deleted the fee product'],
+            [fn () => [Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '0'), Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS', '12,77')], [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'live id 0, placed id retired'],
+            [function () { Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '0'); unset(StubStore::$products[77]); }, [$fee($v17)], 'throws TWO-26076', 'live id 0, placed id deleted but never recorded as ours'],
+            [fn () => null, [$fee($taxes(1, '5.000000', '5.750000'))], '1/5.00/0.75/5.75/0.15/' . $label . '/111.25', 'combined 10% + 5% on 5.00 adds the rates'],
+            [fn () => null, [$fee($taxes(1, '2.000000', '2.300000'))], '1/2.00/0.30/2.30/0.15/' . $label . '/107.80', 'combined 10% + 5% on 2.00 adds the rates'],
+            [fn () => null, [$fee($taxes(2, '5.000000', '5.780000'))], '1/5.00/0.78/5.78/0.155/' . $label . '/111.28', 'one after another 10% then 5% on 5.00 compounds the rates'],
+            [fn () => null, [$fee($taxes(2, '2.000000', '2.310000'))], '1/2.00/0.31/2.31/0.155/' . $label . '/107.81', 'one after another 10% then 5% on 2.00 compounds the rates, not 15% inside tolerance'],
         ];
         $failures = [];
         foreach ($cases as [$change, $rows, $expected, $description]) {
@@ -1632,21 +1643,10 @@ final class SurchargeSpec
             StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
             StubStore::$addresses[7101] = ['id_country' => 33, 'company' => 'Acme FR SAS', 'companyid' => 'FR123456789', 'address1' => '10 Rue de Paris', 'city' => 'Paris', 'postcode' => '75001', 'phone' => '+33100000000', 'loaded' => true];
             StubStore::$countries[33] = 'FR';
-            StubStore::$cartProducts[7001] = [[
-                'id_product' => 9301, 'link_rewrite' => 'item', 'name' => 'Reduced VAT item', 'description_short' => '',
-                'manufacturer_name' => '', 'ean13' => '', 'upc' => '', 'total' => 100.00, 'total_wt' => 105.50,
-                'cart_quantity' => 1, 'rate' => 5.5, 'price' => 100.00, 'reduction' => 0,
-            ]];
-            StubStore::$cartTotals[7001] = [
-                true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => 105.50],
-                false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => 100.00],
-                'average_products_tax_rate' => 5.5,
-            ];
             StubStore::$carts[7001] = ['id_customer' => 7001, 'id_currency' => 978, 'id_address_invoice' => 7101, 'id_address_delivery' => 7101, 'id_carrier' => 0, 'id_lang' => 1];
             foreach ($rows as $i => $row) {
                 StubStore::$orderDetails[] = $row + ['id_order_detail' => 9000 + $i];
             }
-            $change();
 
             $module = new class extends TwopaymentTestHarness {
                 public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
@@ -1654,6 +1654,27 @@ final class SurchargeSpec
                     return ['http_status' => 200, 'buyer_fee_share' => SurchargeSpec::$quotedFee, 'currency' => 'EUR'];
                 }
             };
+            $change($module);
+            $item = [
+                'id_product' => 9301, 'link_rewrite' => 'item', 'name' => 'Reduced VAT item', 'description_short' => '',
+                'manufacturer_name' => '', 'ean13' => '', 'upc' => '', 'total' => 100.00, 'total_wt' => 105.50,
+                'cart_quantity' => 1, 'rate' => 5.5, 'price' => 100.00, 'reduction' => 0,
+            ];
+            StubStore::$cartProducts[7001] = [$item];
+            // One cart row per product; core's Cart::getProducts joins product_shop, so a deleted product's row drops out.
+            foreach (array_filter($rows, fn ($row) => isset(StubStore::$products[$row['product_id']])) as $row) {
+                $cartRow = StubStore::$cartProducts[7001][$row['product_id']] ?? ['id_product' => $row['product_id'], 'name' => $row['product_name'], 'cart_quantity' => 0, 'total' => 0.0, 'total_wt' => 0.0, 'rate' => 0.0] + $item;
+                $cartRow['cart_quantity'] += $row['product_quantity'];
+                $cartRow['total'] += (float) $row['total_price_tax_excl'];
+                $cartRow['total_wt'] += (float) $row['total_price_tax_incl'];
+                StubStore::$cartProducts[7001][$row['product_id']] = $cartRow;
+            }
+            StubStore::$cartProducts[7001] = array_values(StubStore::$cartProducts[7001]);
+            StubStore::$cartTotals[7001] = [
+                true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => array_sum(array_column(StubStore::$cartProducts[7001], 'total_wt'))],
+                false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => array_sum(array_column(StubStore::$cartProducts[7001], 'total'))],
+                'average_products_tax_rate' => 5.5,
+            ];
             $order = new class {
                 public bool $loaded = true;
                 public int $id = 8001;
@@ -1680,6 +1701,83 @@ final class SurchargeSpec
             }
         }
         TinyAssert::same([], $failures, "fee lines/net/tax/gross/rate/name/order gross\n  " . implode("\n  ", $failures));
+    }
+
+    /**
+     * TWO-26076: core has already saved the admin's edit when these hooks run.
+     * A payload that cannot be built must not reach core's AJAX (on 1.7 a 500,
+     * so the admin retries and duplicates the line): it is logged, and the
+     * admin is told the edit was saved but not sent.
+     */
+    private static function testAdminOrderHooksWarnInsteadOfThrowingAFailedUpdate(): void
+    {
+        $cases = [
+            // [hook, want warning fragment, want log fragment, description]
+            ['hookActionOrderEdited', 'This order edit was saved in PrestaShop but was not sent', 'TWO-26076 order edit saved but not sent to Two', 'order edit'],
+            ['hookActionAdminOrdersTrackingNumberUpdate', 'The tracking number was saved in PrestaShop but was not sent', 'tracking number update skipped', 'tracking number'],
+        ];
+        $failures = [];
+        foreach ($cases as [$hook, $wantWarning, $wantLog, $description]) {
+            self::reset();
+            PrestaShopLogger::reset();
+            $module = new class extends TwopaymentTestHarness {
+                public array $requests = [];
+                public array $warnings = [];
+
+                public function getTwoOrderPaymentData($id_order)
+                {
+                    return ['two_order_id' => 'two-order-uuid'];
+                }
+
+                public function getTwoUpdateOrderData($order, $orderpaymentdata)
+                {
+                    throw new Exception('The placed surcharge line cannot be replayed: stubbed');
+                }
+
+                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                {
+                    $this->requests[] = $endpoint;
+                    return ['http_status' => 200];
+                }
+
+                public function addTwoBackOfficeWarning($message)
+                {
+                    $this->warnings[] = $message;
+                    return true;
+                }
+            };
+            $order = new class {
+                public bool $loaded = true;
+                public int $id = 8001;
+                public int $id_cart = 0;
+                public string $module = 'twopayment';
+
+                public function getOrderPaymentCollection(): array
+                {
+                    return [];
+                }
+
+                public function getIdOrderCarrier(): int
+                {
+                    return 0;
+                }
+            };
+            try {
+                $module->$hook(['order' => $order]);
+                $logged = array_filter(PrestaShopLogger::$logs, fn ($log) => $log['severity'] === 3 && strpos($log['message'], $wantLog) !== false);
+                $actual = implode('/', [
+                    count($module->requests) . ' sent',
+                    count(array_filter($module->warnings, fn ($w) => strpos($w, $wantWarning) === 0)) . ' warned',
+                    count($logged) . ' logged',
+                ]);
+            } catch (Throwable $e) {
+                $actual = 'rethrown: ' . $e->getMessage();
+            }
+            if ($actual !== '0 sent/1 warned/1 logged') {
+                $failures[] = $description . ': want 0 sent/1 warned/1 logged, got ' . $actual;
+            }
+        }
+        TinyAssert::same([], $failures, "PUTs sent/warnings/logs\n  " . implode("\n  ", $failures));
     }
 
     /**
