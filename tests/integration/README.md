@@ -10,6 +10,7 @@ These run in CI on every pull request — `.github/workflows/integration.yml`, P
 | Probe | What it pins down |
 | --- | --- |
 | `default-shipping-tax-code.php` | The optional **Default shipping tax code** on a cart whose shipping is priced but whose delivery option belongs to no carrier. Asserts the real order-intent `SHIPPING_FEE` line (`gross_amount` / `net_amount` / `tax_amount` / `tax_rate` / `tax_class_name`) and the log severity, across four states: unset → refuse at severity 3; group declared → that group's rate relayed at severity 2; core's "No tax" sentinel → 0%; a since-deleted group → refuse at severity 3. |
+| `line-item-image.php` | The line-item `image_url` against the cart rows core builds (TWO-26071). A combination with its own image sends that image rather than the product cover, a combination without one sends the cover, and a product with no image sends an empty `image_url`. Builds its own products and cart. |
 
 ### Why a probe and not another unit spec
 

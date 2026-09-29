@@ -566,7 +566,7 @@ final class ShippingCostSourcingSpec
             static function () use ($module, $cart): void {
                 $module->getTwoNewOrderData('merchant-attempt-9102', $cart, self::merchantUrls());
             },
-            'Order totals do not reconcile with cart totals: cart total 150.00 vs order lines 121.00 (difference 29.00)'
+            'Order totals do not reconcile with cart totals: gross cart 150.00 vs order lines 121.00 (difference 29.00)'
         );
     }
 

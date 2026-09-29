@@ -87,12 +87,15 @@ if command -v rsync &> /dev/null; then
     rsync -av \
         --exclude='.git' \
         --exclude='.gitignore' \
+        --exclude='.gitattributes' \
         --exclude='.DS_Store' \
         --exclude='__MACOSX' \
         --exclude='.cursor' \
         --exclude='.ai' \
         --exclude='.review' \
         --exclude='.phpunit.cache' \
+        --exclude='/tests' \
+        --exclude='/dev' \
         --exclude='CLAUDE.md' \
         --exclude='PRODUCTION_REVIEW.md' \
         --exclude='package-release.sh' \
@@ -117,7 +120,10 @@ else
         ! -path './.ai/*' \
         ! -path './.review/*' \
         ! -path './.phpunit.cache/*' \
+        ! -path './tests/*' \
+        ! -path './dev/*' \
         ! -name '.gitignore' \
+        ! -name '.gitattributes' \
         ! -name '.DS_Store' \
         ! -name 'CLAUDE.md' \
         ! -name 'PRODUCTION_REVIEW.md' \
@@ -188,6 +194,7 @@ echo "  ✗ .cursor directory (IDE config)"
 echo "  ✗ .ai directory (AI context files)"
 echo "  ✗ CLAUDE.md (AI context file)"
 echo "  ✗ PRODUCTION_REVIEW.md (internal docs)"
+echo "  ✗ tests/ and dev/ (test suite and development tooling)"
 echo "  ✗ Development files (.DS_Store, logs, etc.)"
 echo ""
 echo "Ready for distribution! 🚀"
