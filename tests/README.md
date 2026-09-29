@@ -73,7 +73,7 @@ registration. See `tests/js/README.md` for how the harness stands the browser up
 ## Playwright checkout suite
 
 `tests/e2e/` drives a real checkout against a provisioned PrestaShop container; CI runs it
-on the PrestaShop 8 and 9 images (`.github/workflows/e2e.yml`).
+on the PrestaShop 1.7.6, 8 and 9 images (`.github/workflows/e2e.yml`).
 
 ## Real-engine integration matrix
 

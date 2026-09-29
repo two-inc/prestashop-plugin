@@ -29,13 +29,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Same matrix as e2e.yml, and the same reason the 1.7 line is missing:
-        # Docker Hub's prestashop/prestashop repo has dropped all 1.6/1.7 tags.
-        # See the skip job in e2e.yml for the full explanation.
-        ps-version: ["8", "9"]
+        # Same matrix as e2e.yml (see its header for the 1.7.6 leg).
+        include:
+          - ps-version: "1.7.6"
+            ps-tag: "1.7.6.5-7.2"
+          - ps-version: "8"
+            ps-tag: "8"
+          - ps-version: "9"
+            ps-tag: "9"
     env:
       SFX: integration-${{ matrix.ps-version }}-${{ github.run_id }}
-      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-version }}-apache
+      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-tag }}-apache
       # The probes never call Two — but the module primes checkout media on
       # some paths, so point that at a port nothing listens on so it fails
       # fast instead of reaching Two's real sandbox from public CI.
