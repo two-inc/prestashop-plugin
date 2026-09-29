@@ -12,6 +12,7 @@ final class ReconciliationDriftMessageSpec
     public static function runAll(): void
     {
         self::testDriftDetailNamesOnlyTheFiguresThatDiffer();
+        self::testBlockedOrderNamesTheKindOfMismatch();
     }
 
     private static function testDriftDetailNamesOnlyTheFiguresThatDiffer(): void
@@ -24,6 +25,9 @@ final class ReconciliationDriftMessageSpec
             [100.00, 21.00, 121.00, 123.97, 150.00, false, 'gross cart 150.00 vs order lines 121.00 (difference 29.00); net cart 123.97 vs order lines 100.00 (difference 23.97); tax cart 26.03 vs order lines 21.00 (difference 5.03)', 'all three drift'],
             [100.00, 21.00, 121.00, 100.02, 121.02, true, '', 'drift within tolerance names nothing'],
             [100.00, 21.00, 125.00, 100.00, 125.00, false, 'order lines gross 125.00 vs order lines net+tax 121.00', 'order lines failing gross = net + tax'],
+            [100.00, 21.00, 121.00, 95.00, 115.00, false, 'gross cart 115.00 vs order lines 121.00 (difference 6.00); net cart 95.00 vs order lines 100.00 (difference 5.00); tax cart 20.00 vs order lines 21.00 (difference 1.00)', 'negative drift, order lines above the cart'],
+            [100.00, 21.00, 121.00, 100.03, 121.03, false, 'gross cart 121.03 vs order lines 121.00 (difference 0.03); net cart 100.03 vs order lines 100.00 (difference 0.03)', 'exactly 0.03, just outside tolerance'],
+            [100.00, 21.00, 121.00, 100.02, 121.03, false, 'gross cart 121.03 vs order lines 121.00 (difference 0.03)', 'net at 0.02 is within tolerance, gross at 0.03 is not'],
         ];
 
         $method = new ReflectionMethod(Twopayment::class, 'validateTwoOrderReconciliationAgainstCart');
@@ -49,6 +53,57 @@ final class ReconciliationDriftMessageSpec
             if ($expected !== '') {
                 TinyAssert::true(self::loggedContains($expected), $description . ': the log must carry the same drift detail');
             }
+        }
+    }
+
+    private static function testBlockedOrderNamesTheKindOfMismatch(): void
+    {
+        // [line net, line tax, line gross, cart net, cart gross, expected exception message, description]
+        $cases = [
+            [100.00, 21.00, 121.00, 110.00, 131.00, 'Order totals do not reconcile with cart totals: gross cart 131.00 vs order lines 121.00 (difference 10.00); net cart 110.00 vs order lines 100.00 (difference 10.00)', 'order lines drift from the cart'],
+            [100.00, 21.00, 125.00, 100.00, 125.00, 'Order line totals are internally inconsistent: order lines gross 125.00 vs order lines net+tax 121.00', 'order lines failing gross = net + tax'],
+        ];
+
+        $method = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
+        foreach ($cases as [$lineNet, $lineTax, $lineGross, $cartNet, $cartGross, $expected, $description]) {
+            StubStore::reset();
+            PrestaShopLogger::reset();
+            $line = ['name' => 'Lamp', 'net_amount' => $lineNet, 'tax_amount' => $lineTax, 'gross_amount' => $lineGross];
+            // Per-line validation normally stops a line failing gross = net + tax earlier; bypass it to reach the totals gate.
+            $module = new class ($line) extends TwopaymentTestHarness {
+                private array $line;
+
+                public function __construct(array $line)
+                {
+                    parent::__construct();
+                    $this->line = $line;
+                }
+
+                public function getTwoProductItems($cart)
+                {
+                    return [$this->line];
+                }
+
+                public function validateTwoLineItems($line_items)
+                {
+                    return true;
+                }
+            };
+
+            $cart = new Cart(9602);
+            StubStore::$cartProducts[9602] = [['id_product' => 1, 'cart_quantity' => 1]];
+            StubStore::$cartTotals[9602] = [
+                true => [Cart::BOTH => $cartGross],
+                false => [Cart::BOTH => $cartNet],
+            ];
+
+            $message = null;
+            try {
+                $method->invoke($module, $cart, 'order create payload', true);
+            } catch (TwoCheckoutAmountException $e) {
+                $message = $e->getMessage();
+            }
+            TinyAssert::same($expected, $message, $description . ': exception message');
         }
     }
 
