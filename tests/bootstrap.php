@@ -771,6 +771,18 @@ namespace {
         {
             ++$this->writes;
         }
+
+        /** Core's size check in encryptAndSetCookie(): name plus hex defuse ciphertext (84 bytes overhead) of write()'s serialisation. */
+        public function coreSetCookieBytes(): int
+        {
+            $serialised = '';
+            foreach ($this->content as $key => $value) {
+                $serialised .= $key . '|' . $value . '¤';
+            }
+            $serialised .= 'checksum|' . hash('sha256', $serialised);
+
+            return strlen('PrestaShop-' . md5('')) + 2 * (84 + strlen($serialised));
+        }
     }
 
     class Link
@@ -3188,7 +3200,7 @@ namespace {
                 $data['fields'][$field] = $value;
             }
             $key = self::COOKIE_KEYS[$record];
-            $cookie->{$key} = base64_encode((string) json_encode($data));
+            $cookie->{$key} = str_replace(['|', '¤'], ['\\u007c', '\\u00a4'], (string) json_encode($data, JSON_UNESCAPED_UNICODE));
         }
 
         public static function remove(Cookie $cookie, string $record, string $field): void
@@ -3197,7 +3209,7 @@ namespace {
                 $data = self::load($cookie, $record) ?? ['fields' => []];
                 unset($data['cart']);
                 $key = self::COOKIE_KEYS[$record];
-                $cookie->{$key} = base64_encode((string) json_encode($data));
+                $cookie->{$key} = str_replace(['|', '¤'], ['\\u007c', '\\u00a4'], (string) json_encode($data, JSON_UNESCAPED_UNICODE));
 
                 return;
             }
@@ -3210,7 +3222,7 @@ namespace {
             if (!isset($cookie->{$key})) {
                 return null;
             }
-            $data = json_decode((string) base64_decode((string) $cookie->{$key}), true);
+            $data = json_decode((string) $cookie->{$key}, true);
 
             return is_array($data) ? $data : null;
         }
