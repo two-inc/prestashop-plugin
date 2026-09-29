@@ -7146,7 +7146,10 @@ class Twopayment extends PaymentModule
         } catch (Throwable $e) {
             $gate = $this->twoDiscrepancyGate;
             // A gate exception a fallback caught (Default shipping tax code) is not the one that refused the order.
-            if ($gate !== null && ($gate['exception'] === null || $gate['exception'] === $e)) {
+            if ($gate === null || ($gate['exception'] !== null && $gate['exception'] !== $e)) {
+                $gate = array('name' => get_class($e), 'label' => 'unrecorded refusal', 'numbers' => array(), 'line_items' => null);
+            }
+            if ($gate['name'] !== null) {
                 $this->logTwoDiscrepancySnapshot($cart, $gate);
             }
             throw $e;
@@ -7159,9 +7162,9 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Remember the gate that is refusing the current pricing build.
+     * Remember the gate that is refusing the current pricing build, for numbers the exception alone would not carry.
      *
-     * @param string $name
+     * @param string|null $name null when the refusal is no discrepancy and writes no snapshot
      * @param string $label
      * @param array $numbers
      * @param Throwable|null $exception the exception the gate throws, null when its caller throws
@@ -7247,6 +7250,7 @@ class Twopayment extends PaymentModule
         $line_items = $placed !== null ? $this->buildTwoLineItems($cart, $placed) : $this->getTwoProductItems($cart);
         if (empty($line_items)) {
             PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - no valid line items', 3);
+            $this->recordTwoDiscrepancyGate(null, $contextLabel, array());
             throw new Exception('No valid line items in cart');
         }
 

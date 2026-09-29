@@ -787,7 +787,8 @@ The module builds order payloads that exactly match PrestaShop invoices:
 ### Discrepancy snapshot
 When an order is refused by a tax or totals gate (order lines not reconciling with the
 cart total, line formulas or tax subtotals that do not hold, a declared tax rate
-contradicting the applied amounts, or shipping with no declared tax rate), the module writes one JSON record for that cart to the PrestaShop
+contradicting the applied amounts, shipping with no declared tax rate, or any other refusal while
+pricing the cart), the module writes one JSON record for that cart to the PrestaShop
 log (object type `TwoDiscrepancySnapshot`, object id = the cart id). With Debug Mode on
 it also writes one for every cart that passes, as a baseline to compare against.
 
@@ -803,6 +804,8 @@ it also writes one for every cart that passes, as a baseline to compare against.
   number is present, nothing else. The sent lines' names can carry merchant-authored text
   (product, cart rule and carrier names). A section that failed to read holds only
   `{error, code}`: the exception class and code, never its message.
+- **Size**: products, cart rules and sent lines keep their first 40 rows; `truncated`
+  counts the rows cut from each.
 - **Log growth**: one row per refused order, and with Debug Mode on two or three per order
   (each pricing pass leaves a baseline), so switch Debug Mode off once done.
 - **Reading it**: the record's `shape` field applies this decision tree, first match wins:
@@ -812,19 +815,21 @@ it also writes one for every cart that passes, as a baseline to compare against.
   | C | `residual` ≠ 0 and `ONLY_SHIPPING` = 0 | a cost is added to the cart total outside the shipping total, so no tax rule covers it |
   | A | `ONLY_SHIPPING` > 0, incl = excl, no carrier tax rules group | shipping priced without a carrier and without tax |
   | B | `ONLY_SHIPPING` incl > excl, no carrier tax rules group | shipping priced without a carrier, with tax nothing declares |
-  | D | a product line whose `delta` exceeds rounding (qty × 0.005 × (1 + rate)), plus an overridden Cart, Product or Carrier price method or a price-hook module | an amount added to a product line that its tax rate does not cover |
+  | D | a product line whose `delta` exceeds rounding (qty × 0.005 × (2 + rate) under `PS_ROUND_TYPE` item, 0.011 under line or total), plus an overridden Cart, Product or Carrier price method or a price-hook module | an amount added to a product line that its tax rate does not cover |
   | other | anything else, including any input that failed to read | read the gate numbers and product lines directly |
 
-  "No carrier tax rules group" means every carrier in the selected delivery option: a
-  multi-carrier option leaves `id_carrier` at 0, and its carriers' groups decide. C also
+  "No carrier tax rules group" means every carrier in `priced_option`, the delivery option
+  core prices shipping from: when the cart's own `delivery_option` is empty or stale, core
+  auto-selects one, and a multi-carrier option lists all its carriers. C also
   needs `BOTH` > 0, since stacked vouchers clamp it to 0. `delta` already allows for
   ecotax taxed under its own group.
 
 #### Snapshot invariants
 - The snapshot never changes, fails or slows a checkout. Every one of its own failures is
   swallowed, including its fallback logging.
-- Every gate that refuses an order writes exactly one snapshot. Nothing is written when
-  nothing refused (the Debug Mode baseline aside).
+- Every refusal of the pricing build writes exactly one snapshot, named after the gate that
+  recorded its numbers or else after the exception class. Nothing is written when nothing
+  refused (the Debug Mode baseline aside), nor for a cart with no valid line items.
 - No buyer PII leaves the address section. Third-party exception messages are never
   stored, only the class and code.
 - The shape is a positive identification only. Any errored, missing or ambiguous input
