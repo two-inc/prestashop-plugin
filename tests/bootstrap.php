@@ -704,6 +704,36 @@ namespace {
          */
         public int $writes = 0;
 
+        /** @var array<string, mixed> */
+        private array $content = [];
+
+        // Core's magic accessors (classes/Cookie.php, 1.7.6 to 9), so a value core would refuse fails here too (TWO-26084).
+        public function __set($key, $value)
+        {
+            if (is_array($value)) {
+                throw new Exception('Cookie value can\'t be an array.');
+            }
+            if (preg_match('/¤|\|/', $key . $value)) {
+                throw new Exception('Forbidden chars in cookie');
+            }
+            $this->content[$key] = $value;
+        }
+
+        public function __get($key)
+        {
+            return isset($this->content[$key]) ? $this->content[$key] : false;
+        }
+
+        public function __isset($key)
+        {
+            return isset($this->content[$key]);
+        }
+
+        public function __unset($key)
+        {
+            unset($this->content[$key]);
+        }
+
         public function setExpire(int $timestamp): void
         {
         }
