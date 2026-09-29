@@ -82,6 +82,11 @@ final class PlacedOrderUpdateSpec
                 StubStore::$orderDetails[0]['tax_rate'] = '0.000';
             }, $track, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 NOK', 'PS 1.7: order_detail.tax_rate is 0.000, the rate lives in order_detail_tax'],
             [$twoRates, $track, 'tracking', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; PHYSICAL 40.00/6.00/46.00@0.15; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 81.00 NOK', 'multi-rate order'],
+            [function ($o) use ($twoRates) {
+                $twoRates($o);
+                self::addCartRule($o, 'Ten pct', 7.10, 6.00, false);
+            }, $track, 'tracking', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; PHYSICAL 40.00/6.00/46.00@0.15; SHIPPING_FEE 8.00/2.00/10.00@0.25;'
+                . ' DIGITAL -2.00/-0.50/-2.50@0.25; DIGITAL -4.00/-0.60/-4.60@0.15 = 73.90 NOK', 'percentage discount over two rates splits over the products, as core charged it'],
             [function ($o) {
                 self::addCartRule($o, 'Free shipping', 10.00, 8.00, true);
             }, $track, 'tracking', 'PUT ' . self::PLACED . '; DIGITAL -8.00/-2.00/-10.00@0.25 = 25.00 NOK', 'free shipping'],

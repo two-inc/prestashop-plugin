@@ -7859,6 +7859,8 @@ class Twopayment extends PaymentModule
             }
         }
 
+        $product_items = $items;
+
         // SHIPPING AMOUNT SOURCING (TWO-25161): the CART is the authority, not
         // the Carrier object. Cart::getOrderTotal(..., Cart::ONLY_SHIPPING) is
         // the very figure PrestaShop folded into Cart::BOTH, so it is the only
@@ -8055,7 +8057,7 @@ class Twopayment extends PaymentModule
 
         // Add cart-level discounts as one or more lines split by tax context when applicable.
         $discount_lines = $placed !== null
-            ? $this->buildTwoPlacedDiscountLines($placed['cart_rules'], $items)
+            ? $this->buildTwoPlacedDiscountLines($placed['cart_rules'], $items, $product_items)
             : $this->buildTwoDiscountLinesFromCartTotals($cart, $items);
         if (!empty($discount_lines)) {
             foreach ($discount_lines as $discount_line) {
@@ -8493,9 +8495,10 @@ class Twopayment extends PaymentModule
      *
      * @param array $cart_rules order_cart_rule rows
      * @param array $items positive payload lines built so far
+     * @param array $product_items the product lines among them, which core's cart rules reduce
      * @return array
      */
-    private function buildTwoPlacedDiscountLines($cart_rules, $items)
+    private function buildTwoPlacedDiscountLines($cart_rules, $items, $product_items)
     {
         $lines = array();
         $gross = 0.0;
@@ -8528,14 +8531,14 @@ class Twopayment extends PaymentModule
                 $gross -= (float) $item['gross_amount'];
                 $net -= (float) $item['net_amount'];
             }
-            $items = $this->filterTwoShippingFeeItems($items);
         }
         $gross = round($gross, 2);
         if ($gross <= 0) {
             return $lines;
         }
 
-        return array_merge($lines, $this->buildTwoTaxContextDiscountLines($gross, max(0.0, round($net, 2)), $items, $this->buildTwoDiscountDescriptor($cart_rules)));
+        // Core computes a cart rule's reduction on the products alone, so shipping and wrapping carry none of its tax.
+        return array_merge($lines, $this->buildTwoTaxContextDiscountLines($gross, max(0.0, round($net, 2)), $product_items, $this->buildTwoDiscountDescriptor($cart_rules)));
     }
 
     /**
