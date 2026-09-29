@@ -350,6 +350,10 @@ namespace {
         public static array $placedCarriers = [];
         /** @var array<int,array<int,array<string,mixed>>> order_cart_rule rows, by id_order */
         public static array $orderCartRules = [];
+        /** @var array<int,PlacedOrderStub> orders Order::getBrother() finds, by id_order */
+        public static array $placedOrders = [];
+        /** @var array<int,array<int,array<string,mixed>>> order_invoice_tax rows joined to their tax (type, id_tax, rate), by id_order */
+        public static array $orderInvoiceTaxes = [];
         /** @var string[] Every SQL string passed to Db::execute() */
         public static array $dbExecuted = [];
         /**
@@ -473,6 +477,8 @@ namespace {
             self::$orderDetails = [];
             self::$placedCarriers = [];
             self::$orderCartRules = [];
+            self::$placedOrders = [];
+            self::$orderInvoiceTaxes = [];
             self::$orderStates = [];
             self::$dbExecuted = [];
             self::$dbFailOn = [];
@@ -2550,6 +2556,17 @@ namespace {
             if (preg_match("/FROM `" . _DB_PREFIX_ . "order_cart_rule` WHERE `id_order` = (\\d+)/", (string) $sql, $m)) {
                 return StubStore::$orderCartRules[(int) $m[1]] ?? [];
             }
+            if (preg_match("/`" . _DB_PREFIX_ . "order_invoice_tax`.* oit\\.`type` = '(\\w+)' AND oi\\.`id_order` IN \\(([\\d, ]+)\\)/", (string) $sql, $m)) {
+                $rows = [];
+                foreach (array_map('intval', explode(',', $m[2])) as $idOrder) {
+                    foreach (StubStore::$orderInvoiceTaxes[$idOrder] ?? [] as $row) {
+                        if ($row['type'] === $m[1]) {
+                            $rows[(int) $row['id_tax']] = ['id_tax' => $row['id_tax'], 'rate' => $row['rate']];
+                        }
+                    }
+                }
+                return array_values($rows);
+            }
             return [];
         }
 
@@ -2671,7 +2688,11 @@ namespace {
         public $id_lang = 1;
         public $module = 'twopayment';
         public $shipping_number = '';
+        public $reference = '';
+        public $payment = 'Two';
         public $carrier_tax_rate = 0.0;
+        public $total_shipping_tax_incl = 0.0;
+        public $total_shipping_tax_excl = 0.0;
         public $total_paid_tax_incl = 0.0;
         public $total_paid_tax_excl = 0.0;
         public $total_wrapping_tax_incl = 0.0;
@@ -2688,6 +2709,15 @@ namespace {
         public function getOrderPaymentCollection(): array
         {
             return $this->payments;
+        }
+
+        /** As core: the other orders placed from the same cart under the same reference. */
+        public function getBrother(): array
+        {
+            return array_values(array_filter(
+                StubStore::$placedOrders,
+                fn ($o) => $o->reference === $this->reference && $o->id_cart === $this->id_cart && $o->id !== $this->id
+            ));
         }
 
         public static function fromCart(int $orderId, int $cartId): self
@@ -2717,6 +2747,8 @@ namespace {
             $shippingGross = (float) ($totals[true][Cart::ONLY_SHIPPING] ?? 0);
             if ($shippingGross > 0) {
                 StubStore::$placedCarriers[$orderId] = [['shipping_cost_tax_excl' => $shippingNet, 'shipping_cost_tax_incl' => $shippingGross]];
+                $order->total_shipping_tax_excl = $shippingNet;
+                $order->total_shipping_tax_incl = $shippingGross;
                 $order->carrier_tax_rate = round(($shippingGross - $shippingNet) / $shippingNet * 100, 3);
             }
             $order->total_paid_tax_incl = (float) ($totals[true][Cart::BOTH] ?? 0);
