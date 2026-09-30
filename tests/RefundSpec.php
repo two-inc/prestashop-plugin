@@ -21,6 +21,9 @@ final class RefundSpec
         self::testGrossAmountSumsProductsAndShippingTaxIncl();
         self::testPayloadBuilderFormatsAmountAsTwoDecimalString();
         self::testPartialRefundSendsTaxSubtotalsFromStoredSlip();
+        self::testHookResolvesSlipAsCorePassesIt();
+        self::testRefundedStatusAfterPartialsRefundsTheRemainder();
+        self::testFailureAfterClaimTellsTheMerchant();
     }
 
     /**
@@ -81,6 +84,17 @@ final class RefundSpec
             public array $requests = [];
             /** False: one 0%-rate slip line per slip; true: read the Db stub (TWO-26093). */
             public bool $readSlipLinesFromDb = false;
+            /** The twopayment_refund rows, keyed by slip id ('r<n>' for a remainder), and the order's stored slips by id. */
+            public array $refundRows = [];
+            public array $storedSlips = [];
+            /** Throw from the Two order read, as an unexpected failure after a slip is claimed would. */
+            public bool $throwOnRead = false;
+            /** Throw from the order read that follows an accepted refund. */
+            public bool $throwOnReadAfterRefund = false;
+            /** Throw from recording a refund outcome. */
+            public bool $throwOnRecord = false;
+            /** What getTwoUpdateOrderData() reports as the order's tax_subtotals. */
+            public array $placedSubtotals = [];
             private array $twoOrder;
             private $paymentData;
 
@@ -109,6 +123,58 @@ final class RefundSpec
                 $this->notSent[] = [$idOrder, $slipId, $reason];
             }
 
+            protected function claimTwoCreditSlip($id_order, $id_order_slip)
+            {
+                if (isset($this->refundRows[$id_order_slip])) {
+                    return false;
+                }
+                $this->refundRows[$id_order_slip] = ['id_order_slip' => $id_order_slip, 'status' => 'CLAIMED', 'amount' => null, 'tax_subtotals' => []];
+                return true;
+            }
+
+            protected function claimTwoNewestUnsentSlip($id_order)
+            {
+                $ids = array_keys($this->storedSlips);
+                rsort($ids);
+                foreach ($ids as $id) {
+                    if ($this->claimTwoCreditSlip($id_order, $id)) {
+                        return $id;
+                    }
+                }
+                return 0;
+            }
+
+            protected function loadTwoOrderSlip($id_order_slip)
+            {
+                return $this->storedSlips[$id_order_slip] ?? null;
+            }
+
+            protected function recordTwoRefundOutcome($id_order, $id_order_slip, $status, $payload, $reason)
+            {
+                if ($this->throwOnRecord) {
+                    throw new RuntimeException('record failed');
+                }
+                $key = $id_order_slip ?? 'r' . count($this->refundRows);
+                $this->refundRows[$key] = [
+                    'id_order_slip' => $id_order_slip,
+                    'status' => $status,
+                    'amount' => $payload['amount'] ?? null,
+                    'tax_subtotals' => $payload['tax_subtotals'] ?? [],
+                ];
+            }
+
+            protected function getTwoSentRefunds($id_order)
+            {
+                return array_values(array_filter($this->refundRows, static function ($row) {
+                    return $row['status'] === 'SENT';
+                }));
+            }
+
+            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            {
+                return ['tax_subtotals' => $this->placedSubtotals];
+            }
+
             public function getTwoCreditSlipTaxLines($slip)
             {
                 if ($this->readSlipLinesFromDb) {
@@ -127,6 +193,12 @@ final class RefundSpec
                     'headers' => $additional_headers,
                 ];
 
+                if ($this->throwOnRead && $method === 'GET') {
+                    throw new RuntimeException('read failed');
+                }
+                if ($this->throwOnReadAfterRefund && $method === 'GET' && $this->refundCalls() !== []) {
+                    throw new Error('refresh failed');
+                }
                 if ($method === 'POST' && strpos($endpoint, '/refund') !== false) {
                     return ['http_status' => 201, 'id' => 'refund-uuid'];
                 }
@@ -411,6 +483,129 @@ final class RefundSpec
                 return (float)$t['taxable_amount'] + (float)$t['tax_amount'];
             }, $payload['tax_subtotals']));
             TinyAssert::same($payload['amount'], number_format($sum, 2, '.', ''), $desc . ': subtotals sum to amount');
+        }
+    }
+
+    /**
+     * TWO-26093: core never passes order_slip. 1.7.x and 8.x pass only
+     * order/productList/qtyList, 9.x adds orderSlipCreated. Each row fires
+     * the hook once per params entry against the order's stored slips.
+     * Columns: params per call, stored slip ids, expected refunded slip ids.
+     */
+    private static function testHookResolvesSlipAsCorePassesIt(): void
+    {
+        $core17 = ['productList' => [], 'qtyList' => []];
+        $cases = [
+            [[['order_slip' => self::makeSlip(701, 30.00)]], [], [701], 'explicit order_slip'],
+            [[['orderSlipCreated' => self::makeSlip(702, 30.00)]], [], [702], 'PS 9 orderSlipCreated'],
+            [[$core17], [703], [703], 'PS 1.7/8 params: newest slip of the order'],
+            [[$core17], [], [], 'PS 1.7/8 params, no stored slip'],
+            [[$core17, $core17], [801, 802], [802, 801], 'two slips created together are sent once each, not the newest twice'],
+            [[$core17, $core17], [803], [803], 'a second call finds no unsent slip'],
+            [[['orderSlipCreated' => self::makeSlip(804, 30.00)], ['orderSlipCreated' => self::makeSlip(804, 30.00)]], [], [804], 'a passed slip already handled is not sent again'],
+        ];
+
+        foreach ($cases as [$calls, $stored, $expectedSlipIds, $desc]) {
+            StubStore::reset();
+            $module = self::makeModule(self::fulfilledOrder(500.00));
+            foreach ($stored as $id) {
+                $module->storedSlips[$id] = self::makeSlip($id, 30.00);
+            }
+
+            foreach ($calls as $params) {
+                $module->hookActionOrderSlipAdd(['order' => self::makeOrder()] + $params);
+            }
+
+            $got = array_map(static function ($r) {
+                return (int)substr($r['headers'][0], strlen('X-Idempotency-Key: partial_refund_two-order-uuid_slip_'));
+            }, $module->refundCalls());
+            TinyAssert::same($expectedSlipIds, $got, $desc . ': got ' . json_encode($got));
+        }
+    }
+
+    /**
+     * TWO-26093: marking an order Refunded after credit slips were sent
+     * refunds what is left, split by what Two holds per rate less what the
+     * slips refunded. Columns: refunds recorded as sent, refunds Two reports,
+     * Two order gross, the order's tax_subtotals at Two, expected POST body
+     * (null: no call; [] the body-less full refund).
+     */
+    private static function testRefundedStatusAfterPartialsRefundsTheRemainder(): void
+    {
+        $sub = static function (string $rate, string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => $rate];
+        };
+        $slip = static function (int $id, string $amount, array $subtotals): array {
+            return ['id_order_slip' => $id, 'status' => 'SENT', 'amount' => $amount, 'tax_subtotals' => $subtotals];
+        };
+        $placed = [$sub('0.250000', '100.00', '25.00'), $sub('0.150000', '20.00', '3.00')];
+        $cases = [
+            [[$slip(1, '125.00', [$sub('0.250000', '100.00', '25.00')])], ['-125.00'], 148.00, $placed, ['amount' => '23.00', 'currency' => 'GBP', 'tax_subtotals' => [$sub('0.150000', '20.00', '3.00')]], 'remainder after one slip'],
+            [[$slip(1, '50.00', [$sub('0.250000', '40.00', '10.00')])], ['-50.00'], 148.00, $placed, ['amount' => '98.00', 'currency' => 'GBP', 'tax_subtotals' => [$sub('0.150000', '20.00', '3.00'), $sub('0.250000', '60.00', '15.00')]], 'remainder over two rates'],
+            [[$slip(1, '148.00', $placed)], ['-148.00'], 148.00, $placed, null, 'nothing left: no call'],
+            [[$slip(1, '125.00', [$sub('0.250000', '100.00', '25.00')])], ['-125.00', '-23.00'], 148.00, $placed, null, 'the rest already refunded in the portal: no call'],
+            [[], ['-50.00'], 148.00, $placed, ['amount' => '98.00', 'currency' => 'GBP', 'tax_subtotals' => [$sub('0.150000', '13.24', '1.99'), $sub('0.250000', '66.22', '16.55')]], 'refunded in the portal only, no slips sent: the rest is still refunded'],
+            [[], [], 148.00, $placed, [], 'no slips sent: the body-less full refund, as before'],
+        ];
+
+        foreach ($cases as [$sent, $twoRefunds, $gross, $placedSubtotals, $expected, $desc]) {
+            StubStore::reset();
+            StubStore::$orders[5100] = ['module' => 'twopayment'];
+            StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+            $refunds = array_map(static function ($amount) {
+                return ['total_amount' => $amount];
+            }, $twoRefunds);
+            $twoOrder = self::fulfilledOrder($gross, $refunds);
+            $twoOrder['state'] = empty($refunds) ? 'FULFILLED' : 'REFUNDED';
+            $module = self::makeModule($twoOrder);
+            $module->placedSubtotals = $placedSubtotals;
+            foreach ($sent as $row) {
+                $module->refundRows[$row['id_order_slip']] = $row;
+            }
+            $status = new OrderState();
+            $status->id = 7;
+            $status->name = 'Refunded';
+
+            $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+
+            $calls = $module->refundCalls();
+            if ($expected === null) {
+                TinyAssert::count(0, $calls, $desc);
+                continue;
+            }
+            TinyAssert::count(1, $calls, $desc);
+            TinyAssert::same($expected, $calls[0]['payload'], $desc . ': got ' . json_encode($calls[0]['payload']));
+        }
+    }
+
+    /**
+     * TWO-26093: once a slip is claimed no later call sends it. Invariants: a slip Two accepted is SENT and the
+     * merchant is never told to refund it in the portal; any other outcome reaches the merchant, even when
+     * recording it fails. Columns: harness failure switches, expected refund calls, recorded status, notes.
+     */
+    private static function testFailureAfterClaimTellsTheMerchant(): void
+    {
+        $cases = [
+            [['throwOnRead'], 0, 'NOT_SENT', 1, 'read failed', 'failure before Two accepts it: not sent, merchant told'],
+            [['throwOnReadAfterRefund'], 1, 'SENT', 0, 'refresh failed', 'refresh fails after Two accepted it: sent, no portal note'],
+            [['throwOnRead', 'throwOnRecord'], 0, 'CLAIMED', 1, 'record failed', 'recording fails too: the merchant is still told'],
+            [['throwOnReadAfterRefund', 'throwOnRecord'], 1, 'CLAIMED', 0, 'record failed', 'accepted, recording fails: still no portal note'],
+        ];
+        foreach ($cases as [$switches, $calls, $status, $notes, $logged, $desc]) {
+            StubStore::reset();
+            PrestaShopLogger::$logs = [];
+            $module = self::makeModule(self::fulfilledOrder(100.00));
+            foreach ($switches as $switch) {
+                $module->{$switch} = true;
+            }
+
+            $module->hookActionOrderSlipAdd(['order' => self::makeOrder(), 'orderSlipCreated' => self::makeSlip(905, 30.00)]);
+
+            TinyAssert::count($calls, $module->refundCalls(), $desc . ': refund calls');
+            TinyAssert::count($notes, $module->notSent, $desc . ': not-sent notes');
+            TinyAssert::same($status, $module->refundRows[905]['status'], $desc . ': recorded status');
+            $messages = implode(' | ', array_column(PrestaShopLogger::$logs, 'message'));
+            TinyAssert::true(strpos($messages, $logged) !== false, $desc . ': logged');
         }
     }
 }

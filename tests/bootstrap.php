@@ -2655,6 +2655,7 @@ namespace {
         public $id_cart = 0;
         public $id_customer = 0;
         public $total_paid = 0.0;
+        public $module = '';
         public bool $loaded = false;
 
         public function __construct($id = 0)
@@ -2664,6 +2665,7 @@ namespace {
                 $row = StubStore::$orders[$id];
                 $this->id = $id;
                 $this->loaded = true;
+                $this->module = (string) ($row['module'] ?? '');
                 $this->id_cart = (int) ($row['id_cart'] ?? 0);
                 $this->id_customer = (int) ($row['id_customer'] ?? 0);
                 $this->total_paid = (float) ($row['total_paid'] ?? 0.0);

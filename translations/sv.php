@@ -261,11 +261,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_78ed75859c56af62c3804c75ca86d7d8'] = 'Statusmappning för %s-order';
 $_MODULE['<{twopayment}prestashop>twopayment_779cdd79fa95885841e60852c8d17b1f'] = 'Aktiva statusar som utlöser leveransrapportering:';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Hantera fullständiga återbetalningar via PrestaShops adminpanel';
+$_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Skicka delåterbetalningar (kreditnotor) automatiskt till %s - återbetala dem inte också i handlarportalen';
 $_MODULE['<{twopayment}prestashop>twopayment_7aa0ef00af5612e50834b5bf969457e6'] = 'Företagssökningen är tillfälligt otillgänglig. Försök igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_7b7813f00f42b7e5366e7065aaa798c6'] = 'inklusive';
 $_MODULE['<{twopayment}prestashop>twopayment_7d211a5d9cccb0df11ba75b9db2e28a5'] = 'För många förfrågningar. Vänta en stund och försök igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_8c663cce717ad261932283cd6ca35073'] = 'Behandla B2C-betalningar (privatpersoner) - %s är endast B2B';
-$_MODULE['<{twopayment}prestashop>twopayment_35fba6fd0a77563c7b9e41075a751844'] = 'Behandla delåterbetalningar - använd %ss handlarportal för delåterbetalningar';
 $_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] = 'Du har inte behörighet att öppna denna faktura.';
 $_MODULE['<{twopayment}prestashop>twopayment_7e13e4b7dc934c4f24deede7949d856b'] = 'Fullständig återbetalning utfärdad från PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_7ea9d1186c856a865c57c49847891350'] = 'E-postadress för faktura';
@@ -581,3 +581,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] 
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Ändringar i ordern sedan %s sparades i PrestaShop men har inte nått %s, så fakturan kanske inte stämmer med ordern. Upprepa inte en ändring för att försöka igen; kontakta support.';
 $_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'Kreditnota #%1$s sparades i PrestaShop men skickades inte till %2$s, eftersom %3$s. Återbetala den i %2$ss handlarportal.';
 $_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'det återbetalda beloppet inte kunde fördelas på orderns momssatser';
+$_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] = 'ordern inte kunde läsas från leverantören';
+$_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'ordern inte är levererad ännu';
+$_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] = 'orderns totalbelopp inte kunde läsas från leverantören';
+$_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'den är mer än vad som återstår att återbetala på ordern';
+$_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'orderns valuta inte kunde fastställas';
+$_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'leverantören inte godtog den (HTTP %s)';
+$_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'Ordern markerades som återbetald i PrestaShop, men det som återstod att återbetala efter kreditnotorna skickades inte till %1$s, eftersom %2$s. Återbetala resten i %1$ss handlarportal.';
+$_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'ett oväntat fel stoppade den';
