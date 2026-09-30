@@ -96,7 +96,8 @@ jobs:
           - ps: "8"
             image: prestashop/prestashop:8-apache
           - ps: "9"
-            image: prestashop/prestashop:9-apache
+            # TWO-26105: pinned, as 9-apache from 2026-09-30 exits after install; unpin once upstream's entrypoint tolerates a missing install/.
+            image: prestashop/prestashop:9-apache@sha256:8e1d3596c5b2b8c4385ac1506a3978f7ae6ff15bf73649713458691308bd2fcc
     env:
       # Per-leg, or the two legs collide on container and network names.
       SFX: upgrade-${{ github.run_id }}-ps${{ matrix.ps }}

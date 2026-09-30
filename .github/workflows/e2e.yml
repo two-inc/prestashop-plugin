@@ -4,8 +4,8 @@ name: E2E (Playwright checkout flow)
 # (ps_versions_compliancy min in twopayment.php) is 1.7.6.0, and the 1.7.6
 # leg pins prestashop/prestashop:1.7.6.5-7.2-apache, which ships PHP 7.2,
 # the module's declared PHP floor. 1.7 is past PrestaShop's own support
-# window, but merchants still run it, so it stays covered. The 8 and 9 legs
-# follow the moving major tags.
+# window, but merchants still run it, so it stays covered. The 8 leg follows
+# the moving major tag; the 9 leg is pinned to a digest (TWO-26105).
 #
 # Scope (see tests/e2e/pages/checkout.ts and the spec file for the full
 # reasoning): this suite drives a real guest checkout — cart, address,
@@ -51,17 +51,18 @@ jobs:
         # isolated per-matrix-leg GitHub-hosted VMs.
         include:
           - ps-version: "1.7.6"
-            ps-tag: "1.7.6.5-7.2"
+            image: prestashop/prestashop:1.7.6.5-7.2-apache
             host-port: "18170"
           - ps-version: "8"
-            ps-tag: "8"
+            image: prestashop/prestashop:8-apache
             host-port: "18180"
           - ps-version: "9"
-            ps-tag: "9"
+            # TWO-26105: pinned, as 9-apache from 2026-09-30 exits after install; unpin once upstream's entrypoint tolerates a missing install/.
+            image: prestashop/prestashop:9-apache@sha256:8e1d3596c5b2b8c4385ac1506a3978f7ae6ff15bf73649713458691308bd2fcc
             host-port: "18190"
     env:
       SFX: e2e-${{ matrix.ps-version }}-${{ github.run_id }}
-      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-tag }}-apache
+      PS_IMAGE: ${{ matrix.image }}
       PS_HOST_PORT: ${{ matrix.host-port }}
       # Points the module at an in-container stub (dev/ci/two-api-stub.php,
       # started below) rather than at Two's real sandbox: this repo is public

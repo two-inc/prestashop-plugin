@@ -32,14 +32,15 @@ jobs:
         # Same matrix as e2e.yml (see its header for the 1.7.6 leg).
         include:
           - ps-version: "1.7.6"
-            ps-tag: "1.7.6.5-7.2"
+            image: prestashop/prestashop:1.7.6.5-7.2-apache
           - ps-version: "8"
-            ps-tag: "8"
+            image: prestashop/prestashop:8-apache
           - ps-version: "9"
-            ps-tag: "9"
+            # TWO-26105: pinned, as 9-apache from 2026-09-30 exits after install; unpin once upstream's entrypoint tolerates a missing install/.
+            image: prestashop/prestashop:9-apache@sha256:8e1d3596c5b2b8c4385ac1506a3978f7ae6ff15bf73649713458691308bd2fcc
     env:
       SFX: integration-${{ matrix.ps-version }}-${{ github.run_id }}
-      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-tag }}-apache
+      PS_IMAGE: ${{ matrix.image }}
       # The probes never call Two — but the module primes checkout media on
       # some paths, so point that at a port nothing listens on so it fails
       # fast instead of reaching Two's real sandbox from public CI.
@@ -93,9 +94,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ps-version: ["8", "9"]
+        include:
+          - ps-version: "8"
+            image: prestashop/prestashop:8-apache
+          - ps-version: "9"
+            # TWO-26105: pinned, as 9-apache from 2026-09-30 exits after install; unpin once upstream's entrypoint tolerates a missing install/.
+            image: prestashop/prestashop:9-apache@sha256:8e1d3596c5b2b8c4385ac1506a3978f7ae6ff15bf73649713458691308bd2fcc
     env:
-      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-version }}-apache
+      PS_IMAGE: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
 
