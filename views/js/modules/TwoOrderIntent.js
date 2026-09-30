@@ -203,8 +203,10 @@ class TwoOrderIntent {
         // Always let the backend resolve company data: it can check address
         // fields (dni, companyid) the frontend cannot see, and answers with
         // 'no_company'/'incomplete_company' when it finds nothing.
+        let buyerFields = {};
         return this.collectFormData(seq)
             .then(formData => {
+                buyerFields = formData;
                 return this.fetchOrderIntentPayload(formData);
             })
             .then(built => {
@@ -228,7 +230,7 @@ class TwoOrderIntent {
                         rawResponse: { approved: !!built.intentDecision.approved, deduped: true }
                     };
                 }
-                return this.callTwoOrderIntent(payload);
+                return this.callTwoOrderIntent(buyerFields);
             })
             .then(result => {
                 // The write that would otherwise overwrite a newer company's
@@ -595,7 +597,7 @@ class TwoOrderIntent {
         });
     }
 
-    callTwoOrderIntent(payload) {
+    callTwoOrderIntent(buyerFields) {
         return new Promise((resolve, reject) => {
             if (!window.twopayment || !window.twopayment.order_intent_url || !window.twopayment.ajax_token) {
                 reject(new Error('Two order intent failed: module endpoint unavailable'));
@@ -603,17 +605,23 @@ class TwoOrderIntent {
             }
 
             // Relayed through the module's own controller so the firewall token
-            // that Two may require stays server-side.
+            // that Two may require stays server-side. The server builds the
+            // payload from the cart (TWO-26092): only the buyer's own fields go.
+            const data = {
+                ajax: 1,
+                action: 'orderIntent',
+                token: window.twopayment.ajax_token
+            };
+            ['company', 'companyid', 'id_address_invoice', 'id_address_delivery'].forEach((key) => {
+                if (buyerFields && buyerFields[key] !== undefined) {
+                    data[key] = buyerFields[key];
+                }
+            });
             $.ajax({
                 url: window.twopayment.order_intent_url,
                 type: 'POST',
                 dataType: 'json',
-                data: {
-                    ajax: 1,
-                    action: 'orderIntent',
-                    token: window.twopayment.ajax_token,
-                    payload: JSON.stringify(payload)
-                },
+                data: data,
                 timeout: 15000,
                 success: (response) => {
                     if (response && typeof response === 'object') {

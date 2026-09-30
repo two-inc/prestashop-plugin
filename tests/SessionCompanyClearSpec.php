@@ -867,6 +867,7 @@ final class SessionCompanyClearSpec
         StubStore::$currencies[self::CURRENCY_ID] = ['iso_code' => 'GBP', 'loaded' => true];
         StubStore::$countries[self::COUNTRY_ID] = 'GB';
         StubStore::$addresses[self::ADDRESS_ID] = [
+            'id_customer' => self::CUSTOMER_ID,
             'id_country' => self::COUNTRY_ID,
             'company' => 'Intent Trading Ltd',
             'dni' => '',
