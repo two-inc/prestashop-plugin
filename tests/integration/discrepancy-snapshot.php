@@ -2,7 +2,8 @@
 
 /**
  * INTEGRATION PROBE - discrepancy snapshot (TWO-26064), against a real
- * PrestaShop engine: a refused carrier-less cart must leave one snapshot row
+ * PrestaShop engine: a refused carrier-less cart (the Default shipping tax code
+ * set and not reconciling, the one shipping refusal since TWO-26117) must leave one snapshot row
  * that classifies its own shape, carries no buyer PII and fits ps_log.message;
  * debug mode must also leave a baseline row for a cart that passes.
  *
@@ -21,10 +22,11 @@ if (!defined('_PS_VERSION_')) {
  */
 function snapshotScenarios()
 {
-    // group: '' unset, 'TRG' the seeded group; gross/net: the injected carrier-less option.
+    // group: '' unset, 'TRG' the seeded 25% group, 'TRG_21' the seeded 21% one; gross/net: the injected carrier-less option.
     return array(
-        'A' => array('gross' => '29.00', 'net' => '29.00', 'group' => '', 'debug' => '0', 'severity' => 3, 'gate' => 'shipping_rate_unresolvable', 'shape' => 'A', 'desc' => 'untaxed carrier-less shipping, refused'),
-        'B' => array('gross' => '29.00', 'net' => '23.20', 'group' => '', 'debug' => '0', 'severity' => 3, 'gate' => 'shipping_rate_unresolvable', 'shape' => 'B', 'desc' => 'taxed carrier-less shipping, refused'),
+        'A' => array('gross' => '29.00', 'net' => '29.00', 'group' => 'TRG', 'debug' => '0', 'severity' => 3, 'gate' => 'declared_rate', 'shape' => 'A', 'desc' => 'untaxed carrier-less shipping at a 25% Default shipping tax code, refused'),
+        'B' => array('gross' => '29.00', 'net' => '23.20', 'group' => 'TRG_21', 'debug' => '0', 'severity' => 3, 'gate' => 'declared_rate', 'shape' => 'B', 'desc' => 'shipping taxed at 25% with a 21% Default shipping tax code, refused'),
+        'blank' => array('gross' => '29.00', 'net' => '23.20', 'group' => '', 'debug' => '0', 'severity' => null, 'gate' => null, 'shape' => null, 'desc' => 'taxed carrier-less shipping with no Default shipping tax code goes out at 0%, not a refusal'),
         'baseline' => array('gross' => '29.00', 'net' => '23.20', 'group' => 'TRG', 'debug' => '1', 'severity' => 1, 'gate' => null, 'shape' => 'B', 'desc' => 'debug-mode baseline of a cart that passes'),
         'quiet' => array('gross' => '29.00', 'net' => '23.20', 'group' => 'TRG', 'debug' => '0', 'severity' => null, 'gate' => null, 'shape' => null, 'desc' => 'a cart that passes writes nothing outside debug mode'),
     );
@@ -97,7 +99,7 @@ function snapshotRun($name)
     Configuration::updateValue('TWO_CARRIERLESS_TEST_NET', $scenario['net']);
     Configuration::updateValue(
         'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP',
-        $scenario['group'] === 'TRG' ? (string) (int) Configuration::get('TWO_CARRIERLESS_TEST_TRG') : ''
+        $scenario['group'] === '' ? '' : (string) (int) Configuration::get('TWO_CARRIERLESS_TEST_' . $scenario['group'])
     );
     Configuration::updateValue('PS_TWO_DEBUG_MODE', $scenario['debug']);
     Db::getInstance()->delete('log', "object_type = 'TwoDiscrepancySnapshot' AND object_id = " . (int) $cart->id);
@@ -106,7 +108,7 @@ function snapshotRun($name)
     try {
         $module->getTwoIntentOrderData($cart, $customer, new Currency((int) $cart->id_currency), $address);
     } catch (Exception $e) {
-        // Refusal is the expected outcome for A and B; the snapshot row is what is asserted.
+        // Refusal is the expected outcome for A and B (TWO-26117); the snapshot row is what is asserted.
     }
     Configuration::updateValue('PS_TWO_DEBUG_MODE', '0');
 
