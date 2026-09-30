@@ -17521,7 +17521,14 @@ class Twopayment extends PaymentModule
                 if (!empty($settings['enabled'])) {
                     // Same basis derivation as buildTwoOrderPricingData:
                     // product+shipping line items, surcharge product excluded.
-                    $basisTotals = $this->calculateTwoLineItemTotals($this->getTwoProductItems($cart));
+                    $basisLines = $this->getTwoProductItems($cart);
+                    // With no subscriber to correct it, a declared-rate mismatch refuses the order: quote nothing, edit nothing.
+                    if (TwoOrderPostprocessing::runnableSubscribers() === array()) {
+                        foreach ($this->twoDeferredRateChecks as $check) {
+                            $this->assertTwoDeclaredRateReconcilesWithAmounts($check['label'], $check['net'], $check['tax'], $check['rate']);
+                        }
+                    }
+                    $basisTotals = $this->calculateTwoLineItemTotals($basisLines);
                     $basis = round((float) $basisTotals['gross'], 2);
                     if ($basis > 0) {
                         $quoteUnavailable = false;

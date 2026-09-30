@@ -105,32 +105,47 @@ class TwoOrderPostprocessing
      */
     public static function dispatch(array &$payload, array $context)
     {
-        if (defined('PS_INSTALLATION_IN_PROGRESS')
-            || (method_exists('Hook', 'getHookStatusByName') && !Hook::getHookStatusByName(self::HOOK))) {
-            return;
-        }
-        $list = Hook::getHookModuleExecList(self::HOOK);
-        if (!is_array($list)) {
-            return;
-        }
-        $nativeOnly = (bool) Configuration::get('PS_DISABLE_NON_NATIVE_MODULE');
-        $native = $nativeOnly ? Module::getNativeModuleList() : array();
         $core = Context::getContext();
         $args = array('payload' => &$payload, 'context' => $context, 'cookie' => $core->cookie, 'cart' => $core->cart);
         $method = 'hook' . ucfirst(self::HOOK);
         $altern = 0;
+        foreach (self::runnableSubscribers() as $module) {
+            $args['altern'] = ++$altern;
+            $module->{$method}($args);
+        }
+    }
+
+    /**
+     * The subscriber modules dispatch() would call, in hook-position order.
+     *
+     * @return Module[]
+     */
+    public static function runnableSubscribers()
+    {
+        if (defined('PS_INSTALLATION_IN_PROGRESS')
+            || (method_exists('Hook', 'getHookStatusByName') && !Hook::getHookStatusByName(self::HOOK))) {
+            return array();
+        }
+        $list = Hook::getHookModuleExecList(self::HOOK);
+        if (!is_array($list)) {
+            return array();
+        }
+        $nativeOnly = (bool) Configuration::get('PS_DISABLE_NON_NATIVE_MODULE');
+        $native = $nativeOnly ? Module::getNativeModuleList() : array();
+        $method = 'hook' . ucfirst(self::HOOK);
+        $out = array();
         foreach ($list as $row) {
             $name = isset($row['module']) ? (string) $row['module'] : '';
             if ($nativeOnly && is_array($native) && count($native) && !in_array($name, $native)) {
                 continue;
             }
             $module = Module::getInstanceByName($name);
-            if (!$module || !$module->active || !is_callable(array($module, $method))) {
-                continue;
+            if ($module && $module->active && is_callable(array($module, $method))) {
+                $out[] = $module;
             }
-            $args['altern'] = ++$altern;
-            $module->{$method}($args);
         }
+
+        return $out;
     }
 
     /**

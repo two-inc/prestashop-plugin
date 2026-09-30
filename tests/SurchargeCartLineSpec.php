@@ -25,6 +25,7 @@ final class SurchargeCartLineSpec
         self::testFreshRequestReplayLeavesNoDuplicateOrStaleLine();
         self::testTermChangeUpdatesAmountWithoutDuplicating();
         self::testQuoteFailureKeepsLineAndFailsLoudly();
+        self::testDeclaredRateMismatchRefusesBeforeQuoting();
         self::testUnrecognisedMethodKeepsLineAndFailsLoudly();
         self::testCartLineNetMatchesTwoPayloadFeeLine();
         self::testOrderCreateParityGateFailsClosedOnDivergence();
@@ -284,6 +285,35 @@ final class SurchargeCartLineSpec
      * earlier by isTwoSurchargeQuotableForCart withholding the payment option;
      * anything that only fails here reaches the order-create parity gate.
      */
+    /**
+     * A line whose declared rate disagrees with its amounts refuses the order,
+     * so the sync quotes no fee and edits no cart for it. Only an order
+     * postprocessing subscriber could still correct the line, and only then
+     * does the sync go ahead.
+     */
+    private static function testDeclaredRateMismatchRefusesBeforeQuoting(): void
+    {
+        // [declared rate, subscriber registered, expected success, expected quote calls, expected fee lines, description]
+        $cases = [
+            [21.0, false, false, 0, 0, 'a declared rate the amounts contradict: no quote, no cart edit'],
+            [21.0, true, true, 1, 1, 'a subscriber may correct the line, so the fee syncs'],
+            [5.5, false, true, 1, 1, 'a consistent line syncs as always'],
+        ];
+        foreach ($cases as [$rate, $subscriber, $success, $quotes, $lines, $description]) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            StubStore::$taxRuleRates[500] = $rate;
+            if ($subscriber) {
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK]['twoorderpostprocessingtest'] = static function (): void {
+                };
+            }
+            $result = $module->syncTwoSurchargeCartLine($cart, true);
+            TinyAssert::same($success, $result['success'], $description . ': success');
+            TinyAssert::count($quotes, $module->feeRequests, $description . ': fee quote calls');
+            TinyAssert::count($lines, self::feeLines(), $description . ': fee lines on the cart');
+        }
+    }
+
     private static function testQuoteFailureKeepsLineAndFailsLoudly(): void
     {
         $module = self::makeModule();
