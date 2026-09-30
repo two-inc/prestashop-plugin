@@ -91,12 +91,16 @@ class Twoorderpostprocessingtest extends Module
 
                 return;
         }
-        if (empty($params['payload']['line_items'])) {
-            return;
-        }
         $rate = (float) $params['context']['shipping_tax_rate'];
         if ($rate <= 0) {
             $rate = (float) Configuration::get(self::CONFIG_RATE);
+        }
+        if (empty($params['payload']['line_items'])) {
+            if (!empty($params['payload']['tax_subtotals'])) {
+                $params['payload'] = self::resplitUntaxedRefund($params['payload'], $rate);
+            }
+
+            return;
         }
         $before = $params['payload'];
         $params['payload'] = self::resplitShipping($params['payload'], $rate);
@@ -127,6 +131,47 @@ class Twoorderpostprocessingtest extends Module
         unset($line);
 
         return Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
+    }
+
+    /**
+     * The README example, verbatim: re-split a refund's untaxed share, which in this shop is shipping.
+     *
+     * @param array $payload
+     * @param float $rate
+     * @return array
+     */
+    public static function resplitUntaxedRefund(array $payload, $rate)
+    {
+        $untaxed = 0.0;
+        foreach ($payload['tax_subtotals'] as $i => $subtotal) {
+            if ((float) $subtotal['tax_rate'] == 0.0 && (float) $subtotal['tax_amount'] == 0.0) {
+                $untaxed += (float) $subtotal['taxable_amount'];
+                unset($payload['tax_subtotals'][$i]);
+            }
+        }
+        if ($untaxed == 0.0) {
+            return $payload;
+        }
+        $net = round($untaxed / (1 + $rate), 2);
+        $tax = round($untaxed - $net, 2);
+        foreach ($payload['tax_subtotals'] as &$subtotal) {
+            if (abs((float) $subtotal['tax_rate'] - $rate) < 0.000001) {
+                $subtotal['taxable_amount'] = number_format((float) $subtotal['taxable_amount'] + $net, 2, '.', '');
+                $subtotal['tax_amount'] = number_format((float) $subtotal['tax_amount'] + $tax, 2, '.', '');
+                $net = null;
+            }
+        }
+        unset($subtotal);
+        if ($net !== null) {
+            $payload['tax_subtotals'][] = array(
+                'taxable_amount' => number_format($net, 2, '.', ''),
+                'tax_amount' => number_format($tax, 2, '.', ''),
+                'tax_rate' => number_format($rate, 6, '.', ''),
+            );
+        }
+        $payload['tax_subtotals'] = array_values($payload['tax_subtotals']);
+
+        return $payload;
     }
 
     /**

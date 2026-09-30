@@ -406,11 +406,38 @@ function oppRunScenario($name, &$detail)
     Configuration::updateValue('PS_TWO_DEBUG_MODE', '0');
     Configuration::updateValue('PS_MAIL_METHOD', 3);
     $mode = in_array($name, array('unarmed', 'paths', 'context_rate', 'relay'), true) ? (in_array($name, array('paths', 'relay'), true) ? 'record' : '') : ($name === 'throws_prod' ? 'throws' : $name);
-    $mode = $name === 'carrierless' ? 'record' : ($name === 'carrierless_resplit' ? 'resplit' : $mode);
+    $mode = $name === 'carrierless' ? 'record' : (in_array($name, array('carrierless_resplit', 'refund_resplit'), true) ? 'resplit' : $mode);
     Configuration::updateValue('TWO_OPP_TEST_MODE', $mode);
     $module = new OppProbeTwopayment();
     $checks = array();
     $currency = new Currency((int) $cart->id_currency);
+
+    if ($name === 'refund_resplit') {
+        // A credit slip refunding the "No tax" carrier's 29.00: the README subscriber re-splits its untaxed share at 21%.
+        $module->twoState = 'FULFILLED';
+        $slip = new stdClass();
+        $slip->id = 8;
+        $slip->id_order = (int) $order->id;
+        $slip->total_products_tax_incl = 0.0;
+        $slip->total_shipping_tax_incl = 29.0;
+        Module::getInstanceByName('twoorderpostprocessingtest');
+        Twoorderpostprocessingtest::$calls = array();
+        $module->hookActionOrderSlipAdd(array('order' => $order, 'order_slip' => $slip));
+        $subtotals = function ($payload) {
+            return is_array($payload) && isset($payload['tax_subtotals']) ? array_map(function ($s) {
+                return array($s['tax_rate'], $s['taxable_amount'], $s['tax_amount']);
+            }, $payload['tax_subtotals']) : $payload;
+        };
+        $calls = Twoorderpostprocessingtest::$calls;
+        $refunds = array_values(array_filter($module->sent, function ($r) {
+            return strpos($r['endpoint'], '/refund') !== false;
+        }));
+        $checks[] = array(count($calls) === 1 ? $subtotals($calls[0]['payload_in']) : count($calls), array(array('0.000000', '29.00', '0.00')), 'the slip reaches the hook at 0%');
+        $checks[] = array(count($refunds) === 1 ? $subtotals($refunds[0]['payload']) : count($refunds), array(array('0.210000', '23.97', '5.03')), 'the re-split slip is sent as returned');
+        $checks[] = array(count($refunds) === 1 ? $refunds[0]['payload']['amount'] : null, '29.00', 'the amount is unchanged');
+
+        return $checks;
+    }
 
     if ($name === 'carrierless' || $name === 'carrierless_resplit') {
         return oppCarrierlessChecks($module, $name === 'carrierless');
@@ -747,7 +774,7 @@ if (!Module::isInstalled('twoorderpostprocessingtest')) {
 oppBootKernel();
 oppSeed();
 $exit = 0;
-$scenario_names = array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay');
+$scenario_names = array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit');
 // The carrier-less fixture injects through actionFilterDeliveryOptionList, which core only fires from 8.0.
 if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
     $scenario_names[] = 'carrierless';

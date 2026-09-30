@@ -315,7 +315,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 
 #### Order updates
 
-An order update (a back-office edit, a tracking number, the sync after checkout) carries the order exactly as PrestaShop currently records it, from its stored rows, and never from the live catalogue, cart or configuration. The Two order it updates is the whole Two order: a cart whose products ship with different carriers is split by PrestaShop into several orders sharing one reference, and the update carries all of them, whichever of them was edited. Each line's amounts and tax rate come from the order's own lines and the taxes recorded for them, shipping as each order's paid total charged it, discounts from the order's recorded vouchers, and gift wrapping from the order's totals. A catalogue price, tax rule, carrier price or voucher changed after placement therefore changes nothing at Two, while a back-office edit to the order itself does. Any rate used must agree with the stored amounts, or the update fails with a log entry, except for shipping, which follows the Default shipping tax code table from what placement recorded. Shipping a carrier provided a rate for takes the carrier rate recorded on the order, then the rates declared at placement, and if neither agrees it goes out at the declared rate as it is. Shipping no carrier provided a rate for takes the Default shipping tax code's rate recorded at placement, which must agree, or with none recorded goes out at 0% with the tax charged. A carrier-less order records no carrier rate. An order placed before the module kept that record also tries the Default shipping tax code as it is now configured. Gift wrapping takes the rate its invoice recorded (invoices disagreeing on it fail the update), then the rate declared at placement, then the configured rate. An order that records no shipping sends no shipping line, even when rounding the total leaves a cent over. A back-office edit sets the order's payment to the total of the orders it pays, and only when that payment is a single one recorded by this module; a split payment or another method's payment is left alone. An update whose amounts, lines, buyer, addresses, carrier and tracking number match the last one Two accepted is not sent at all, so saving an unchanged tracking number, or editing catalogue text, makes no request.
+An order update (a back-office edit, a tracking number, the sync after checkout) carries the order exactly as PrestaShop currently records it, from its stored rows, and never from the live catalogue, cart or configuration. The Two order it updates is the whole Two order: a cart whose products ship with different carriers is split by PrestaShop into several orders sharing one reference, and the update carries all of them, whichever of them was edited. Each line's amounts and tax rate come from the order's own lines and the taxes recorded for them, shipping as each order's paid total charged it, discounts from the order's recorded vouchers, and gift wrapping from the order's totals. A catalogue price, tax rule, carrier price or voucher changed after placement therefore changes nothing at Two, while a back-office edit to the order itself does. Any rate used must agree with the stored amounts, or the update fails with a log entry, except for shipping, which follows the Default shipping tax code table from what placement recorded. Shipping a carrier provided a rate for takes the carrier rate recorded on the order, then the rates declared at placement, and if neither agrees it goes out as it is, at the declared rate, else the order's carrier rate. Shipping no carrier provided a rate for takes the Default shipping tax code's rate recorded at placement, which must agree, or with none recorded goes out at 0% with the tax charged. A carrier-less order records no carrier rate. An order placed before the module kept that record also tries the Default shipping tax code as it is now configured. Gift wrapping takes the rate its invoice recorded (invoices disagreeing on it fail the update), then the rate declared at placement, then the configured rate. An order that records no shipping sends no shipping line, even when rounding the total leaves a cent over. A back-office edit sets the order's payment to the total of the orders it pays, and only when that payment is a single one recorded by this module; a split payment or another method's payment is left alone. An update whose amounts, lines, buyer, addresses, carrier and tracking number match the last one Two accepted is not sent at all, so saving an unchanged tracking number, or editing catalogue text, makes no request.
 
 #### Buyer surcharge on order updates
 
@@ -811,17 +811,20 @@ included, and it never writes `-0.00`. It is opt-in and part of this contract.
 ### Example
 
 Re-split shipping the shop recorded untaxed on a "No tax" carrier, at the rate the
-merchant's books apply to it, and keep the totals consistent:
+merchant's books apply to it, and keep the totals consistent, on the order and on its
+refunds:
 
 ```php
 public function hookActionTwoOrderPostprocessing($params)
 {
     // The rate the merchant books shipping at: the shop's carrier says "No tax".
     $rate = 0.21;
-    if (empty($params['payload']['line_items'])) {
-        return;
+    if (!empty($params['payload']['line_items'])) {
+        $params['payload'] = self::resplitShipping($params['payload'], $rate);
+    } elseif (!empty($params['payload']['tax_subtotals'])) {
+        // A refund carries no lines. Only shipping is untaxed in this shop, so its 0% share is shipping.
+        $params['payload'] = self::resplitUntaxedRefund($params['payload'], $rate);
     }
-    $params['payload'] = self::resplitShipping($params['payload'], $rate);
 }
 
 public static function resplitShipping(array $payload, $rate)
@@ -842,6 +845,40 @@ public static function resplitShipping(array $payload, $rate)
 
     return Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
 }
+
+public static function resplitUntaxedRefund(array $payload, $rate)
+{
+    $untaxed = 0.0;
+    foreach ($payload['tax_subtotals'] as $i => $subtotal) {
+        if ((float) $subtotal['tax_rate'] == 0.0 && (float) $subtotal['tax_amount'] == 0.0) {
+            $untaxed += (float) $subtotal['taxable_amount'];
+            unset($payload['tax_subtotals'][$i]);
+        }
+    }
+    if ($untaxed == 0.0) {
+        return $payload;
+    }
+    $net = round($untaxed / (1 + $rate), 2);
+    $tax = round($untaxed - $net, 2);
+    foreach ($payload['tax_subtotals'] as &$subtotal) {
+        if (abs((float) $subtotal['tax_rate'] - $rate) < 0.000001) {
+            $subtotal['taxable_amount'] = number_format((float) $subtotal['taxable_amount'] + $net, 2, '.', '');
+            $subtotal['tax_amount'] = number_format((float) $subtotal['tax_amount'] + $tax, 2, '.', '');
+            $net = null;
+        }
+    }
+    unset($subtotal);
+    if ($net !== null) {
+        $payload['tax_subtotals'][] = array(
+            'taxable_amount' => number_format($net, 2, '.', ''),
+            'tax_amount' => number_format($tax, 2, '.', ''),
+            'tax_rate' => number_format($rate, 6, '.', ''),
+        );
+    }
+    $payload['tax_subtotals'] = array_values($payload['tax_subtotals']);
+
+    return $payload;
+}
 ```
 
 On a 100.00 product at 21% with 29.00 of untaxed shipping, the shipping line becomes
@@ -854,12 +891,16 @@ missing update.
 A PrestaShop refund carries no lines: a full refund has no body, and a credit slip, or
 what is left after slips, sends `{amount, currency, tax_subtotals}`. Its `tax_subtotals`
 split the refund by the rates the order was placed at, shipping following the Default
-shipping tax code table, so a subscriber that re-splits shipping on the order re-splits
-the refund's `tax_subtotals` the same way.
+shipping tax code table, so a subscriber that re-splits shipping on the order must
+re-split the refund's `tax_subtotals` the same way, as `resplitUntaxedRefund()` does: a
+credit slip refunding the 29.00 of shipping goes out as 23.97 + 5.03 at 21%, the amount
+unchanged. It moves every untaxed share, so it suits a shop where only shipping is
+untaxed; a shop with untaxed products must tell the shares apart itself.
 
 A working subscriber, exercised on every request type in CI, is
-`tests/integration/fixtures/twoorderpostprocessingtest`. Its `resplitShipping()` is
-the method above, verbatim, and the offline suite fails if the two drift apart.
+`tests/integration/fixtures/twoorderpostprocessingtest`. Its `resplitShipping()` and
+`resplitUntaxedRefund()` are the methods above, verbatim, and the offline suite fails if
+they drift apart.
 
 ### Versioning
 
