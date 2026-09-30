@@ -148,6 +148,7 @@ final class OrderCompanyPersistenceSpec
         TinyAssert::same(
             [
                 'two_company_name',
+                'two_declared_rates',
                 'two_not_sent_at',
                 'two_organization_number',
                 'two_update_hash',

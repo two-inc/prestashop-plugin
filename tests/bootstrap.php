@@ -2561,7 +2561,8 @@ namespace {
                 foreach (array_map('intval', explode(',', $m[2])) as $idOrder) {
                     foreach (StubStore::$orderInvoiceTaxes[$idOrder] ?? [] as $row) {
                         if ($row['type'] === $m[1]) {
-                            $rows[(int) $row['id_tax']] = ['id_tax' => $row['id_tax'], 'rate' => $row['rate']];
+                            $invoice = $row['id_order_invoice'] ?? $idOrder;
+                            $rows[$invoice . '-' . $row['id_tax']] = ['id_order_invoice' => $invoice, 'id_tax' => $row['id_tax'], 'rate' => $row['rate']];
                         }
                     }
                 }

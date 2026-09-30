@@ -376,6 +376,9 @@ class Twopayment extends PaymentModule
      */
     protected $twoOrderCompanyColumnsEnsured = null;
 
+    /** @var array|null the charge rates the last create payload declared, persisted on the Two row for updates (TWO-26085) */
+    private $twoDeclaredChargeRates = null;
+
     // Module metadata fields ModuleCore does not declare on all supported
     // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
     // $author_address and $languages are never declared by core), plus this
@@ -853,6 +856,7 @@ class Twopayment extends PaymentModule
             `two_company_name` VARCHAR(255) NULL,
             `two_not_sent_at` DATETIME NULL,
             `two_update_hash` VARCHAR(32) NULL,
+            `two_declared_rates` TEXT NULL,
             PRIMARY KEY  (`id_two`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
 
@@ -4448,6 +4452,7 @@ class Twopayment extends PaymentModule
 
             $response = $this->putTwoOrderUpdate($placement['order'], $orderpaymentdata, $paymentdata);
             if ($response === null) {
+                $this->recordTwoOrderSync($syncId, null);
                 return;
             }
 
@@ -7286,6 +7291,8 @@ class Twopayment extends PaymentModule
         $discountGross = 0.0;
         $paidGross = 0.0;
         $paidNet = 0.0;
+        $carrierRatesReconcile = true;
+        $carrierRateLabels = array();
         foreach ($this->getTwoOrderGroup($order) as $member) {
             $orderId = (int) $member->id;
             $orderIds[] = $orderId;
@@ -7328,26 +7335,19 @@ class Twopayment extends PaymentModule
                 - (float) $member->total_wrapping_tax_excl + (float) $member->total_discounts_tax_excl, 2);
             $shippingGross = round((float) $member->total_paid_tax_incl - (float) $member->total_products_wt
                 - (float) $member->total_wrapping_tax_incl + (float) $member->total_discounts_tax_incl, 2);
-            if ($shippingGross > 0) {
+            // Total-level rounding can leave a cent here on an order that records no shipping.
+            $roundingOnly = $shippingGross <= self::TAX_FORMULA_TOLERANCE
+                && (float) $member->total_shipping_tax_incl == 0 && (float) $member->total_shipping_tax_excl == 0;
+            if ($shippingGross > 0 && !$roundingOnly) {
                 $shippingRate = $shippingGross != $shippingNet ? $this->normalizeTwoTaxRateToPercentPrecision((float) $member->carrier_tax_rate / 100) : 0.0;
-                // PS_ATCP_SHIPWRAP taxes shipping at the products' average, which the line builder splits over the product rates instead.
-                if (!$this->isTwoAtcpShipWrapEnabled()
-                    && abs(round($shippingGross - $shippingNet, 2) - round($shippingNet * $shippingRate, 2)) > self::TAX_FORMULA_TOLERANCE) {
-                    $message = sprintf(
-                        'Order %d records shipping %.2f net, %.2f tax at carrier_tax_rate %.3f%%, which do not agree: the order holds no usable shipping rate',
-                        $orderId,
-                        $shippingNet,
-                        round($shippingGross - $shippingNet, 2),
-                        (float) $member->carrier_tax_rate
-                    );
-                    PrestaShopLogger::addLog('TwoPayment: ' . $message, 3);
-                    throw new Exception($message);
-                }
                 $rateKey = (string) $shippingRate;
                 if (!isset($shipping['classes'][$rateKey])) {
                     $shipping['classes'][$rateKey] = array('rate' => $shippingRate, 'net_weight' => 0.0);
                 }
                 $shipping['classes'][$rateKey]['net_weight'] += $shippingNet;
+                $carrierRateLabels[] = $this->formatTwoRatePercent((float) $member->carrier_tax_rate / 100);
+                $carrierRatesReconcile = $carrierRatesReconcile
+                    && $this->doTwoRateClassesReconcile(array(array('rate' => $shippingRate, 'net_weight' => 1.0)), $shippingNet, $shippingGross - $shippingNet);
                 $shipping['net'] += $shippingNet;
                 $shipping['gross'] += $shippingGross;
             }
@@ -7373,6 +7373,17 @@ class Twopayment extends PaymentModule
         $shipping['classes'] = array_values($shipping['classes']);
         $wrappingNet = round($wrappingNet, 2);
         $wrappingGross = round($wrappingGross, 2);
+        $placement = $this->getTwoOrderGroupPaymentData($order);
+        $declared = $placement !== null ? $this->decodeTwoDeclaredChargeRates($placement['row']) : array('shipping' => array(), 'wrapping' => null);
+        // PS_ATCP_SHIPWRAP taxes shipping and wrapping at the products' average, which the line builder splits over the product rates instead.
+        $atcp = $this->isTwoAtcpShipWrapEnabled();
+        if (!$atcp && !$carrierRatesReconcile) {
+            $shipping['classes'] = $this->resolveTwoPlacedShippingClasses($order, $orderIds, $shipping, $declared['shipping'], $carrierRateLabels);
+        }
+        $wrappingRate = null;
+        if (!$atcp && $wrappingGross > 0) {
+            $wrappingRate = $this->resolveTwoPlacedWrappingRate($order, $orderIds, $wrappingNet, round($wrappingGross - $wrappingNet, 2), $declared['wrapping']);
+        }
 
         return array(
             'id_carrier' => (int) $order->id_carrier,
@@ -7383,7 +7394,7 @@ class Twopayment extends PaymentModule
                 'net' => $wrappingNet,
                 'tax' => round($wrappingGross - $wrappingNet, 2),
                 'gross' => $wrappingGross,
-                'rate' => $wrappingGross > 0 ? $this->getTwoInvoicedWrappingRate($orderIds) : null,
+                'rate' => $wrappingRate,
             ),
             'cart_rules' => $cartRules,
             'discount_gross' => round($discountGross, 2),
@@ -7395,28 +7406,189 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The placed shipping's rate classes when carrier_tax_rate does not reconcile, which a carrier-less order leaves at 0.
+     * The rates declared at placement, then the Default shipping tax code, each only if it reconciles with the stored amounts.
+     *
+     * @param Order $order
+     * @param int[] $orderIds
+     * @param array $shipping ['net', 'gross']
+     * @param array $declared the classes the create payload declared
+     * @param string[] $carrierRateLabels
+     * @return array
+     * @throws Exception when no candidate reconciles
+     */
+    private function resolveTwoPlacedShippingClasses($order, $orderIds, $shipping, $declared, $carrierRateLabels)
+    {
+        $tax = round($shipping['gross'] - $shipping['net'], 2);
+        if ($declared !== array() && $this->doTwoRateClassesReconcile($declared, $shipping['net'], $tax)) {
+            return $declared;
+        }
+        $cart = new Cart((int) $order->id_cart);
+        $default = null;
+        $groupId = Validate::isLoadedObject($cart) ? $this->getTwoDefaultShippingTaxRulesGroupId($cart) : null;
+        if ($groupId !== null) {
+            $default = array(array('rate' => $this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart), 'net_weight' => 1.0));
+            if ($this->doTwoRateClassesReconcile($default, $shipping['net'], $tax)) {
+                return $default;
+            }
+        }
+        $describe = function ($classes) {
+            return $classes === null || $classes === array() ? 'none' : implode(' + ', array_map(function ($class) {
+                return $this->formatTwoRatePercent($class['rate']);
+            }, $classes));
+        };
+        $message = sprintf(
+            'Order %s records shipping %.2f net, %.2f tax, which no stored or configured rate reconciles with'
+            . ' (carrier_tax_rate %s, declared at placement %s, Default shipping tax code %s)',
+            implode(', ', $orderIds),
+            $shipping['net'],
+            $tax,
+            implode(' + ', array_unique($carrierRateLabels)),
+            $describe($declared),
+            $describe($default)
+        );
+        PrestaShopLogger::addLog('TwoPayment: ' . $message, 3);
+        throw new Exception($message);
+    }
+
+    /**
+     * The placed wrapping's rate: the invoices', then the one declared at placement, then the configured one,
+     * each only if it reconciles with the stored amounts.
+     *
+     * @param Order $order
+     * @param int[] $orderIds
+     * @param float $net
+     * @param float $tax
+     * @param float|null $declared
+     * @return float a decimal rate
+     * @throws Exception when the invoices disagree or no candidate reconciles
+     */
+    private function resolveTwoPlacedWrappingRate($order, $orderIds, $net, $tax, $declared)
+    {
+        $invoiced = $this->getTwoInvoicedWrappingRate($orderIds);
+        $cart = new Cart((int) $order->id_cart);
+        $configured = $this->getTwoConfiguredTaxRateDecimalForGroup((int) Configuration::get('PS_GIFT_WRAPPING_TAX_RULES_GROUP'), $cart);
+        foreach (array($invoiced, $declared, $configured) as $rate) {
+            if ($rate !== null && $this->doTwoRateClassesReconcile(array(array('rate' => $rate, 'net_weight' => 1.0)), $net, $tax)) {
+                return $rate;
+            }
+        }
+        $describe = function ($rate) {
+            return $rate === null ? 'none' : $this->formatTwoRatePercent($rate);
+        };
+        $message = sprintf(
+            'Order %s records gift wrapping %.2f net, %.2f tax, which no stored or configured rate reconciles with (invoiced %s, declared at placement %s, configured %s)',
+            implode(', ', $orderIds),
+            $net,
+            $tax,
+            $describe($invoiced),
+            $describe($declared),
+            $describe($configured)
+        );
+        PrestaShopLogger::addLog('TwoPayment: ' . $message, 3);
+        throw new Exception($message);
+    }
+
+    /**
      * The wrapping rate core recorded on the orders' invoices; no order column holds it, so null until an invoice exists.
      *
      * @param int[] $orderIds
      * @return float|null a decimal rate
+     * @throws Exception when two invoices record different rates
      */
     private function getTwoInvoicedWrappingRate($orderIds)
     {
         $rows = Db::getInstance()->executeS(
-            'SELECT DISTINCT oit.`id_tax`, t.`rate` FROM `' . _DB_PREFIX_ . 'order_invoice_tax` oit'
+            'SELECT oi.`id_order_invoice`, oit.`id_tax`, t.`rate` FROM `' . _DB_PREFIX_ . 'order_invoice_tax` oit'
             . ' INNER JOIN `' . _DB_PREFIX_ . 'order_invoice` oi ON oi.`id_order_invoice` = oit.`id_order_invoice`'
             . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = oit.`id_tax`'
             . " WHERE oit.`type` = 'wrapping' AND oi.`id_order` IN (" . implode(', ', array_map('intval', $orderIds)) . ')'
+            . ' GROUP BY oi.`id_order_invoice`, oit.`id_tax`, t.`rate`'
         );
         if (!is_array($rows) || $rows === array()) {
             return null;
         }
-        $rate = 0.0;
+        // A combined tax rule records one row per tax on an invoice, so the invoice's rate is their sum.
+        $perInvoice = array();
         foreach ($rows as $row) {
-            $rate += (float) $row['rate'];
+            $invoice = (int) $row['id_order_invoice'];
+            $perInvoice[$invoice] = (isset($perInvoice[$invoice]) ? $perInvoice[$invoice] : 0.0) + (float) $row['rate'];
+        }
+        $rates = array_values(array_unique(array_map(function ($rate) {
+            return $this->normalizeTwoTaxRateToPercentPrecision($rate / 100);
+        }, $perInvoice), SORT_REGULAR));
+        if (count($rates) > 1) {
+            $message = sprintf(
+                'Order %s invoices record gift wrapping at different rates (%s): the order holds no single wrapping rate',
+                implode(', ', $orderIds),
+                implode(', ', array_map(array($this, 'formatTwoRatePercent'), $rates))
+            );
+            PrestaShopLogger::addLog('TwoPayment: ' . $message, 3);
+            throw new Exception($message);
         }
 
-        return $this->normalizeTwoTaxRateToPercentPrecision($rate / 100);
+        return $rates[0];
+    }
+
+    /**
+     * Whether rate classes, splitting the net by their weights, give the recorded tax.
+     *
+     * @param array $classes [['rate' => decimal, 'net_weight' => float], ...]
+     * @param float $net
+     * @param float $tax
+     * @return bool
+     */
+    private function doTwoRateClassesReconcile($classes, $net, $tax)
+    {
+        $weights = array();
+        foreach ($classes as $key => $class) {
+            $weights[$key] = (float) $class['net_weight'];
+        }
+        $expected = 0.0;
+        foreach ($this->allocateTwoAmountByWeights($net, $weights) as $key => $share) {
+            $expected += round((float) $share * (float) $classes[$key]['rate'], 2);
+        }
+
+        return abs(round($tax, 2) - round($expected, 2)) <= self::TAX_FORMULA_TOLERANCE;
+    }
+
+    /**
+     * @param float $rate a decimal rate
+     * @return string e.g. "25%"
+     */
+    private function formatTwoRatePercent($rate)
+    {
+        return $this->formatTwoTaxRate((float) $rate * 100, 2) . '%';
+    }
+
+    /**
+     * The shipping classes and wrapping rate the create payload declared, as the Two row keeps them.
+     *
+     * @param array $row the Two row
+     * @return array ['shipping' => classes, 'wrapping' => decimal rate|null]
+     */
+    private function decodeTwoDeclaredChargeRates($row)
+    {
+        $decoded = isset($row['two_declared_rates']) ? json_decode((string) $row['two_declared_rates'], true) : null;
+        $shipping = array();
+        foreach (is_array($decoded) && isset($decoded['shipping']) && is_array($decoded['shipping']) ? $decoded['shipping'] : array() as $class) {
+            if (is_array($class) && isset($class['rate'], $class['net_weight']) && is_numeric($class['rate']) && is_numeric($class['net_weight'])) {
+                $shipping[] = array('rate' => (float) $class['rate'], 'net_weight' => (float) $class['net_weight']);
+            }
+        }
+        $wrapping = is_array($decoded) && isset($decoded['wrapping']) && is_numeric($decoded['wrapping']) ? (float) $decoded['wrapping'] : null;
+
+        return array('shipping' => $shipping, 'wrapping' => $wrapping);
+    }
+
+    /**
+     * The shipping classes and wrapping rate the last create payload built in this request declared, for the Two row.
+     *
+     * @return string|null JSON; null when no create payload was built
+     */
+    public function getTwoDeclaredChargeRates()
+    {
+        return $this->twoDeclaredChargeRates === null ? null : json_encode($this->twoDeclaredChargeRates);
     }
 
     /**
@@ -7658,6 +7830,9 @@ class Twopayment extends PaymentModule
     private function buildTwoLineItems($cart, $placed)
     {
         $items = [];
+        if ($placed === null) {
+            $this->twoDeclaredChargeRates = array('shipping' => array(), 'wrapping' => null);
+        }
         $carrier = new Carrier($placed !== null ? $placed['id_carrier'] : $cart->id_carrier, $cart->id_lang);
         $line_items = $placed !== null ? $placed['products'] : $cart->getProducts(true);
 
@@ -7965,6 +8140,9 @@ class Twopayment extends PaymentModule
                         $shipping_gross,
                         $carrier_is_loaded ? $carrier : null
                     );
+                if ($placed === null) {
+                    $this->twoDeclaredChargeRates['shipping'] = array_values($shipping_rate_classes);
+                }
 
                 if (count($shipping_rate_classes) > 1) {
                     // MIXED DECLARED RATES: the delivery option spans carriers
@@ -8037,13 +8215,15 @@ class Twopayment extends PaymentModule
             } else {
                 // DECLARED-RATE RELAY: wrapping is taxed by the shop's
                 // configured PS_GIFT_WRAPPING_TAX_RULES_GROUP.
-                // Nothing stored holds the rate before an invoice does, so the configured one must then reconcile below.
-                $wrapping_rate_decimal = $placed !== null && $placed['wrapping']['rate'] !== null
+                $wrapping_rate_decimal = $placed !== null
                     ? $placed['wrapping']['rate']
                     : $this->getTwoConfiguredTaxRateDecimalForGroup(
                         (int) Configuration::get('PS_GIFT_WRAPPING_TAX_RULES_GROUP'),
                         $cart
                     );
+                if ($placed === null) {
+                    $this->twoDeclaredChargeRates['wrapping'] = $wrapping_rate_decimal;
+                }
                 $this->assertTwoDeclaredRateReconcilesWithAmounts(
                     'gift wrapping',
                     $wrapping_totals['net'],
@@ -15366,6 +15546,7 @@ class Twopayment extends PaymentModule
             'two_company_name' => 'ALTER TABLE `' . $table . '` ADD `two_company_name` VARCHAR(255) NULL',
             'two_not_sent_at' => 'ALTER TABLE `' . $table . '` ADD `two_not_sent_at` DATETIME NULL',
             'two_update_hash' => 'ALTER TABLE `' . $table . '` ADD `two_update_hash` VARCHAR(32) NULL',
+            'two_declared_rates' => 'ALTER TABLE `' . $table . '` ADD `two_declared_rates` TEXT NULL',
         );
 
         foreach ($columns as $column => $ddl) {
@@ -19377,6 +19558,7 @@ class Twopayment extends PaymentModule
         $company_columns = array(
             'two_organization_number',
             'two_company_name',
+            'two_declared_rates',
         );
         $offered = array();
         foreach ($company_columns as $company_column) {

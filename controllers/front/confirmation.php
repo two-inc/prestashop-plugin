@@ -426,6 +426,11 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             'two_company_name' => $company_snapshot['two_company_name'],
             'two_organization_number' => $company_snapshot['two_organization_number'],
         );
+        // The rates the pre-order re-check just declared for this cart; an update falls back to them (TWO-26085).
+        $declared_rates = $this->module->getTwoDeclaredChargeRates();
+        if ($declared_rates !== null) {
+            $payment_data['two_declared_rates'] = $declared_rates;
+        }
         $this->module->setTwoOrderPaymentData($order->id, $payment_data);
 
         // Best effort: replace provisional merchant_order_id with real PrestaShop id_order in Two.
