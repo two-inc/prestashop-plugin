@@ -285,11 +285,46 @@ function oppSeed()
         $order->total_paid_real = 150.00;
         $order->total_products = 100.00;
         $order->total_products_wt = 121.00;
+        // An update replays the placed order (TWO-26085): 29.00 of shipping on the "No tax" carrier.
+        $order->total_paid_tax_incl = 150.00;
+        $order->total_paid_tax_excl = 129.00;
+        $order->total_shipping = 29.00;
+        $order->total_shipping_tax_incl = 29.00;
+        $order->total_shipping_tax_excl = 29.00;
+        $order->carrier_tax_rate = 0;
         $order->reference = 'OPPPROBE';
         if (!$order->add()) {
             throw new RuntimeException('could not create the probe order');
         }
         Configuration::updateValue('TWO_OPP_TEST_ID_ORDER', (int) $order->id);
+    }
+
+    $id_order = (int) Configuration::get('TWO_OPP_TEST_ID_ORDER');
+    if (!(int) Db::getInstance()->getValue('SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'order_detail` WHERE id_order = ' . $id_order)) {
+        // The product line as core records it at placement, so the update has a placed order to replay.
+        Db::getInstance()->insert('order_detail', array(
+            'id_order' => $id_order,
+            'id_shop' => (int) $context->shop->id,
+            'id_warehouse' => 0,
+            'product_id' => (int) $product->id,
+            'product_attribute_id' => 0,
+            'product_name' => pSQL(OPP_LABEL . ' lamp'),
+            'product_quantity' => 1,
+            'product_price' => 100.0,
+            'unit_price_tax_excl' => 100.0,
+            'unit_price_tax_incl' => 121.0,
+            'total_price_tax_excl' => 100.0,
+            'total_price_tax_incl' => 121.0,
+            'id_tax_rules_group' => (int) $group->id,
+            'tax_computation_method' => 0,
+        ));
+        $id_tax = (int) Db::getInstance()->getValue('SELECT id_tax FROM `' . _DB_PREFIX_ . 'tax_rule` WHERE id_tax_rules_group = ' . (int) $group->id);
+        Db::getInstance()->insert('order_detail_tax', array(
+            'id_order_detail' => (int) Db::getInstance()->Insert_ID(),
+            'id_tax' => $id_tax,
+            'unit_amount' => 21.0,
+            'total_amount' => 21.0,
+        ));
     }
 }
 
