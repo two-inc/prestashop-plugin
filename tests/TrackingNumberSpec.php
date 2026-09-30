@@ -48,6 +48,11 @@ final class TrackingNumberSpec
             {
                 return $this->idOrderCarrier;
             }
+
+            public function getBrother(): array
+            {
+                return [];
+            }
         };
     }
 
@@ -350,8 +355,8 @@ final class TrackingNumberSpec
         StubStore::$carriers[602] = ['name' => 'Order Carrier Express', 'max_delivery_days' => 5];
         StubStore::$orderCarriers[91] = ['tracking_number' => 'NO123456789'];
 
-        $order = self::makeOrder(91);
-        $order->id_cart = 7300;
+        $order = PlacedOrderStub::fromCart(4201, 7300);
+        $order->idOrderCarrier = 91;
         $order->id_carrier = 602;
 
         $payload = $module->getTwoUpdateOrderData($order, [

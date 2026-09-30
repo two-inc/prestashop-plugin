@@ -24,8 +24,9 @@ This folder contains deterministic tests for order-building and payload safety l
 - Cart-rule monetary (`value_real`/`value_tax_exc`) discount line attribution
 - Buyer company resolution across the intent, create and update payloads: the invoice address wins, the shipping address is the fallback, and the name and organisation number always come from the same address
 - Tracking number sourcing (order_carrier vs legacy shipping_number) and the admin tracking-update hook
+- Order updates replaying the placed order (order lines, recorded taxes, the shipping each order charged, vouchers, invoiced wrapping rate) across every order of a multi-carrier split rather than the live cart, skipping an unchanged update, and leaving other payments alone
 - Partial refunds via credit slips: amount+currency payload, slip-ID idempotency key, remaining-balance guard, and duplicate-refund suppression
-- Default shipping tax code: no-default-value refusal parity, an omitted-field save never wiping the stored selection, and the carrier-wins resolution order
+- Default shipping tax code: no-default-value refusal parity, an omitted-field save never wiping the stored selection, the carrier-wins resolution order, and the TWO-26082 gate (field hidden and fallback ignored until the `twopayment:shipping-tax-fallback` console command enables it, globally or per shop, with an order following its cart's shop), and a check that the module's service files reference only parameters PrestaShop 1.7.6 defines in the container that loads them
 
 - Dev-mode service URL overrides (`TWO_API_BASE_URL`, `TWO_PORTAL_BASE_URL`,
   `TWO_CHECKOUT_BASE_URL`): each resolves independently of the other two, and every
@@ -73,7 +74,7 @@ registration. See `tests/js/README.md` for how the harness stands the browser up
 ## Playwright checkout suite
 
 `tests/e2e/` drives a real checkout against a provisioned PrestaShop container; CI runs it
-on the PrestaShop 8 and 9 images (`.github/workflows/e2e.yml`).
+on the PrestaShop 1.7.6, 8 and 9 images (`.github/workflows/e2e.yml`).
 
 ## Real-engine integration matrix
 

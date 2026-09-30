@@ -21,7 +21,7 @@ namespace {
     if (!defined('_DB_PREFIX_')) {
         define('_DB_PREFIX_', 'ps_');
     }
-    // Upgrade scripts and ensureTwoOrderCompanyColumns() interpolate this into
+    // Upgrade scripts and ensureTwoPaymentColumns() interpolate this into
     // their information_schema existence checks, so it has to exist offline for
     // those paths to be testable at all.
     if (!defined('_DB_NAME_')) {
@@ -344,8 +344,16 @@ namespace {
         public static array $checkoutSessionData = [];
         /** @var array<string,array{window_start:int,hit_count:int}> TwoRateLimiter's twopayment_rate_limit rows, by rate_key */
         public static array $rateLimitRows = [];
-        /** @var array<int,array{id_order:int,product_id:int}> order_detail rows */
+        /** @var array<int,array<string,mixed>> order_detail rows (id_order, product_id, product_reference, totals, tax_rate) */
         public static array $orderDetails = [];
+        /** @var array<int,array<int,array<string,mixed>>> order_carrier cost rows, by id_order */
+        public static array $placedCarriers = [];
+        /** @var array<int,array<int,array<string,mixed>>> order_cart_rule rows, by id_order */
+        public static array $orderCartRules = [];
+        /** @var array<int,PlacedOrderStub> orders Order::getBrother() finds, by id_order */
+        public static array $placedOrders = [];
+        /** @var array<int,array<int,array<string,mixed>>> order_invoice_tax rows joined to their tax (type, id_tax, rate), by id_order */
+        public static array $orderInvoiceTaxes = [];
         /** @var string[] Every SQL string passed to Db::execute() */
         public static array $dbExecuted = [];
         /**
@@ -467,6 +475,10 @@ namespace {
             self::$checkoutSessionData = [];
             self::$rateLimitRows = [];
             self::$orderDetails = [];
+            self::$placedCarriers = [];
+            self::$orderCartRules = [];
+            self::$placedOrders = [];
+            self::$orderInvoiceTaxes = [];
             self::$orderStates = [];
             self::$dbExecuted = [];
             self::$dbFailOn = [];
@@ -704,6 +716,36 @@ namespace {
          */
         public int $writes = 0;
 
+        /** @var array<string, mixed> */
+        private array $content = [];
+
+        // Core's magic accessors (classes/Cookie.php, 1.7.6 to 9), so a value core would refuse fails here too (TWO-26084).
+        public function __set($key, $value)
+        {
+            if (is_array($value)) {
+                throw new Exception('Cookie value can\'t be an array.');
+            }
+            if (preg_match('/¤|\|/', $key . $value)) {
+                throw new Exception('Forbidden chars in cookie');
+            }
+            $this->content[$key] = $value;
+        }
+
+        public function __get($key)
+        {
+            return isset($this->content[$key]) ? $this->content[$key] : false;
+        }
+
+        public function __isset($key)
+        {
+            return isset($this->content[$key]);
+        }
+
+        public function __unset($key)
+        {
+            unset($this->content[$key]);
+        }
+
         public function setExpire(int $timestamp): void
         {
         }
@@ -872,6 +914,17 @@ namespace {
             }
 
             return true;
+        }
+
+        /** Core's set() only refreshes the in-process cache; the stub's store is the database itself, so there is nothing to do. */
+        public static function set($key, $values, $idShopGroup = null, $idShop = null): void
+        {
+        }
+
+        /** Core passes 0, 0: an explicit "no shop, no group", so the row is global whatever the context. */
+        public static function updateGlobalValue($key, $value, $html = false): bool
+        {
+            return self::updateValue($key, $value, $html, 0, 0);
         }
 
         public static function hasKey($key, $idLang = null, $idShopGroup = null, $idShop = null): bool
@@ -1084,6 +1137,8 @@ namespace {
         public $name = [];
         public $link_rewrite = [];
         public $reference = '';
+        public $description_short = '';
+        public $manufacturer_name = '';
         public $price = 0;
         public $id_tax_rules_group = 0;
         public $active = 0;
@@ -1848,6 +1903,7 @@ namespace {
         public bool $loaded = true;
         public int $id = 0;
         public int $id_shop = 1;
+        public int $id_shop_group = 1;
         public int $id_guest = 0;
         public int $id_customer = 0;
         public int $id_currency = 0;
@@ -1979,6 +2035,7 @@ namespace {
                     'total_wt' => round($net * $quantity * (1 + $rate / 100), 2),
                     'rate' => $rate,
                     'reduction' => 0,
+                    'reference' => $product->loaded ? (string) $product->reference : '',
                     'is_virtual' => $product->loaded ? (int) $product->is_virtual : 0,
                 ];
                 $rows[] = $row;
@@ -2408,7 +2465,7 @@ namespace {
                 return isset(StubStore::$dbTriggers[$m[1]]) ? '1' : '0';
             }
             // Column existence, as the upgrade scripts and
-            // ensureTwoOrderCompanyColumns() ask it. Answered from the schema
+            // ensureTwoPaymentColumns() ask it. Answered from the schema
             // Db::execute() has recorded, so an already-added column reads as
             // present and the guarded ALTER is genuinely skipped.
             if (preg_match(
@@ -2469,6 +2526,48 @@ namespace {
                 $next = array_shift(StubStore::$dbExecuteSResponses);
                 return is_array($next) ? $next : [];
             }
+            // Every id the fee reference was ever sold under, for the retired-id seed.
+            if (preg_match("/SELECT DISTINCT `product_id` FROM `" . _DB_PREFIX_ . "order_detail` WHERE `product_reference` = '([^']*)'$/", (string) $sql, $m)) {
+                $ids = [];
+                foreach (StubStore::$orderDetails as $row) {
+                    if (($row['product_reference'] ?? '') === $m[1]) {
+                        $ids[(int) $row['product_id']] = ['product_id' => (string) $row['product_id']];
+                    }
+                }
+                return array_values($ids);
+            }
+            // The order's rows, each with its order_detail_tax rates listed as `placed_rates`.
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "order_detail` od WHERE od\\.`id_order` = (\\d+)( ORDER BY .*)?$/", (string) $sql, $m)) {
+                $rows = [];
+                foreach (StubStore::$orderDetails as $row) {
+                    if ((int) $row['id_order'] === (int) $m[1]) {
+                        $rows[] = $row + [
+                            'placed_rates' => implode(',', $row['odt'] ?? []), 'tax_computation_method' => '0', 'product_reference' => '', 'product_ean13' => '',
+                            'product_upc' => '', 'product_quantity' => 1, 'unit_price_tax_excl' => $row['total_price_tax_excl'] ?? 0,
+                            'ecotax' => '0.000000', 'ecotax_tax_rate' => '0.000',
+                        ];
+                    }
+                }
+                return $rows;
+            }
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "order_carrier` WHERE `id_order` = (\\d+)/", (string) $sql, $m)) {
+                return StubStore::$placedCarriers[(int) $m[1]] ?? [];
+            }
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "order_cart_rule` WHERE `id_order` = (\\d+)/", (string) $sql, $m)) {
+                return StubStore::$orderCartRules[(int) $m[1]] ?? [];
+            }
+            if (preg_match("/`" . _DB_PREFIX_ . "order_invoice_tax`.* oit\\.`type` = '(\\w+)' AND oi\\.`id_order` IN \\(([\\d, ]+)\\)/", (string) $sql, $m)) {
+                $rows = [];
+                foreach (array_map('intval', explode(',', $m[2])) as $idOrder) {
+                    foreach (StubStore::$orderInvoiceTaxes[$idOrder] ?? [] as $row) {
+                        if ($row['type'] === $m[1]) {
+                            $invoice = $row['id_order_invoice'] ?? $idOrder;
+                            $rows[$invoice . '-' . $row['id_tax']] = ['id_order_invoice' => $invoice, 'id_tax' => $row['id_tax'], 'rate' => $row['rate']];
+                        }
+                    }
+                }
+                return array_values($rows);
+            }
             return [];
         }
 
@@ -2511,8 +2610,17 @@ namespace {
             return false;
         }
 
-        public function insert($table, $data): bool
+        public function insert($table, $data, $nullValues = false): bool
         {
+            if ((string) $table === 'configuration') {
+                if (!empty($data['id_shop'])) {
+                    StubStore::$configurationShop[(int) $data['id_shop']][$data['name']] = $data['value'];
+                } elseif (!empty($data['id_shop_group'])) {
+                    StubStore::$configurationGroup[(int) $data['id_shop_group']][$data['name']] = $data['value'];
+                } else {
+                    StubStore::$configuration[$data['name']] = $data['value'];
+                }
+            }
             if ((string) $table === 'twopayment') {
                 StubStore::$twoPaymentWrites[] = ['op' => 'insert', 'data' => $data];
                 StubStore::$twoPaymentRows[(int) $data['id_order']] = $data;
@@ -2560,6 +2668,113 @@ namespace {
                 $this->id_customer = (int) ($row['id_customer'] ?? 0);
                 $this->total_paid = (float) ($row['total_paid'] ?? 0.0);
             }
+        }
+    }
+
+    /**
+     * The placed-order members the update payload reads (TWO-26085). fromCart() places a stubbed cart as core
+     * would: one order_detail row per cart row at the row's `rate`, its shipping as an order_carrier row, its totals.
+     */
+    #[\AllowDynamicProperties]
+    class PlacedOrderStub
+    {
+        public bool $loaded = true;
+        public $id = 0;
+        public $id_cart = 0;
+        public $id_carrier = 0;
+        public $id_currency = 0;
+        public $id_customer = 0;
+        public $id_address_invoice = 0;
+        public $id_address_delivery = 0;
+        public $id_lang = 1;
+        public $module = 'twopayment';
+        public $shipping_number = '';
+        public $reference = '';
+        public $payment = 'Two';
+        public $carrier_tax_rate = 0.0;
+        public $total_shipping_tax_incl = 0.0;
+        public $total_shipping_tax_excl = 0.0;
+        public $total_paid_tax_incl = 0.0;
+        public $total_paid_tax_excl = 0.0;
+        public $total_wrapping_tax_incl = 0.0;
+        public $total_wrapping_tax_excl = 0.0;
+        public $total_discounts_tax_incl = 0.0;
+        public int $idOrderCarrier = 0;
+        public array $payments = [];
+
+        public function getIdOrderCarrier(): int
+        {
+            return $this->idOrderCarrier;
+        }
+
+        public function getOrderPaymentCollection(): array
+        {
+            return $this->payments;
+        }
+
+        /** The product and discount totals core keeps on the order, as its order_detail and order_cart_rule rows add up. */
+        public function __get(string $name)
+        {
+            $sum = function (array $rows, string $field): float {
+                return round(array_sum(array_map(fn ($row) => (float) $row[$field], $rows)), 2);
+            };
+            $details = array_filter(StubStore::$orderDetails, fn ($row) => (int) $row['id_order'] === (int) $this->id);
+            switch ($name) {
+                case 'total_products':
+                    return $sum($details, 'total_price_tax_excl');
+                case 'total_products_wt':
+                    return $sum($details, 'total_price_tax_incl');
+                case 'total_discounts_tax_excl':
+                    return $sum(StubStore::$orderCartRules[$this->id] ?? [], 'value_tax_excl');
+            }
+            throw new LogicException('PlacedOrderStub has no ' . $name);
+        }
+
+        /** As core: the other orders placed from the same cart under the same reference. */
+        public function getBrother(): array
+        {
+            return array_values(array_filter(
+                StubStore::$placedOrders,
+                fn ($o) => $o->reference === $this->reference && $o->id_cart === $this->id_cart && $o->id !== $this->id
+            ));
+        }
+
+        public static function fromCart(int $orderId, int $cartId): self
+        {
+            $order = new self();
+            $order->id = $orderId;
+            $order->id_cart = $cartId;
+            $cart = StubStore::$carts[$cartId] ?? [];
+            foreach (['id_carrier', 'id_currency', 'id_customer', 'id_address_invoice', 'id_address_delivery'] as $field) {
+                $order->$field = (int) ($cart[$field] ?? 0);
+            }
+            StubStore::$orderDetails = array_values(array_filter(StubStore::$orderDetails, fn ($row) => (int) $row['id_order'] !== $orderId));
+            foreach (StubStore::$cartProducts[$cartId] ?? [] as $row) {
+                StubStore::$products[$row['id_product']] = (StubStore::$products[$row['id_product']] ?? []) + [
+                    'link_rewrite' => $row['link_rewrite'] ?? '', 'description_short' => $row['description_short'] ?? '',
+                    'manufacturer_name' => $row['manufacturer_name'] ?? '',
+                ];
+                StubStore::$orderDetails[] = [
+                    'id_order' => $orderId, 'id_order_detail' => count(StubStore::$orderDetails) + 1,
+                    'product_id' => $row['id_product'], 'product_name' => $row['name'], 'product_quantity' => $row['cart_quantity'],
+                    'unit_price_tax_excl' => $row['price'], 'total_price_tax_excl' => $row['total'], 'total_price_tax_incl' => $row['total_wt'],
+                    'odt' => [(float) ($row['rate'] ?? 0)],
+                ];
+            }
+            $totals = StubStore::$cartTotals[$cartId] ?? [];
+            $shippingNet = (float) ($totals[false][Cart::ONLY_SHIPPING] ?? 0);
+            $shippingGross = (float) ($totals[true][Cart::ONLY_SHIPPING] ?? 0);
+            if ($shippingGross > 0) {
+                StubStore::$placedCarriers[$orderId] = [['shipping_cost_tax_excl' => $shippingNet, 'shipping_cost_tax_incl' => $shippingGross]];
+                $order->total_shipping_tax_excl = $shippingNet;
+                $order->total_shipping_tax_incl = $shippingGross;
+                $order->carrier_tax_rate = round(($shippingGross - $shippingNet) / $shippingNet * 100, 3);
+            }
+            $order->total_paid_tax_incl = (float) ($totals[true][Cart::BOTH] ?? 0);
+            $order->total_paid_tax_excl = (float) ($totals[false][Cart::BOTH] ?? 0);
+            $order->total_discounts_tax_incl = (float) ($totals[true][Cart::ONLY_DISCOUNTS] ?? 0);
+
+            return $order;
         }
     }
 

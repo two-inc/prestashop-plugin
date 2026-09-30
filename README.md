@@ -100,7 +100,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Account Type | Show account type selector | Enabled |
 | SSL Verification | Verify SSL certificates | Enabled |
 | Debug Mode | Enable detailed diagnostic logging | Disabled |
-| Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved — see below | Not set |
+| Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved. Hidden until Two enables it — see below | Not set |
 
 ### Optional buyer reference fields
 
@@ -153,7 +153,7 @@ relay decodes it back to plain text.
 
 PrestaShop declares shipping VAT per carrier, in `carrier_tax_rules_group_shop`, and nowhere else — there is no shop-level shipping tax rules group. The module relays that declaration; it never derives a VAT rate from the amounts. A shop whose shipping is priced outside the carrier table leaves `id_carrier = 0`, PrestaShop then hands the module an empty delivery-option list, and with no carrier there is no declared rate to relay — so the order is refused rather than shipped with a guessed rate.
 
-The **Default shipping tax code** setting, in **Module Configuration → Order management**, lets such a merchant make that declaration on the module instead. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
+The **Default shipping tax code** setting, in **Module Configuration → Order management**, lets such a merchant make that declaration on the module instead. It is **off, and the field hidden, until Two enables it for the shop**: talk to Two first, since assuming a shipping rate is a tax decision we want to review with you. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
 
 Resolution order:
 
@@ -162,6 +162,24 @@ Resolution order:
 3. Refuse the order (the pre-existing behaviour), if neither
 
 The setting has **no default value**. An install that never sets it behaves exactly as it did before the setting existed.
+
+#### Enabling it
+
+Two enables the fallback with the module's console command, run from the PrestaShop root by someone with shell access to the server (PrestaShop 1.7.6 and later). Without `--shop`, `enable` and `disable` write the global setting, which applies to every shop. With `--shop=<n>` they write that shop's own setting, which wins over the global one, so a multistore merchant can have the fallback on one shop only:
+
+```bash
+php bin/console twopayment:shipping-tax-fallback enable              # every shop: show the field and use the fallback
+php bin/console twopayment:shipping-tax-fallback enable --shop=2     # shop 2 only
+php bin/console twopayment:shipping-tax-fallback disable --shop=2    # shop 2 off, whatever the global setting says
+php bin/console twopayment:shipping-tax-fallback disable             # the global setting off; a shop's own setting still wins
+php bin/console twopayment:shipping-tax-fallback status              # each shop's effective state, where it comes from, and its stored group
+```
+
+Every action ends by printing each shop's effective state. On PrestaShop 1.7.6 to 8, core's own `--id_shop=<n>` is accepted as a synonym for `--shop=<n>`; `--id_shop_group` and a bare `--id_shop` are refused. PrestaShop 9 does not offer `--id_shop`, so use `--shop` there.
+
+The switch is stored in configuration as `PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED`: the global row, or one row per shop. An order reads the setting of the shop its cart belongs to. If the command is not listed (`There are no commands defined in the "twopayment" namespace`), clear the cache with `php bin/console cache:clear` so PrestaShop picks up the module's services. That is needed after the module's files are updated on a shop whose cache is already built.
+
+While it is disabled, orders that no carrier can price are refused as described above, and a group already stored is kept but not used. Saving the Order management tab never changes that stored group while the field is hidden, so enabling again restores the earlier selection.
 
 Notes:
 
@@ -293,6 +311,33 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Customer is redirected to native PrestaShop order confirmation page
 
 ### Order Management
+
+#### Order updates
+
+An order update (a back-office edit, a tracking number, the sync after checkout) carries the order exactly as PrestaShop currently records it, from its stored rows, and never from the live catalogue, cart or configuration. The Two order it updates is the whole Two order: a cart whose products ship with different carriers is split by PrestaShop into several orders sharing one reference, and the update carries all of them, whichever of them was edited. Each line's amounts and tax rate come from the order's own lines and the taxes recorded for them, shipping as each order's paid total charged it, discounts from the order's recorded vouchers, and gift wrapping from the order's totals. A catalogue price, tax rule, carrier price or voucher changed after placement therefore changes nothing at Two, while a back-office edit to the order itself does. Any rate used must agree with the stored amounts, or the update fails with a log entry. Shipping takes the carrier rate recorded on the order, then the rates the module declared for it at placement, then the Default shipping tax code where that fallback is enabled for the shop; a carrier-less order records no carrier rate, so it relies on the later two. Gift wrapping takes the rate its invoice recorded (invoices disagreeing on it fail the update), then the rate declared at placement, then the configured rate. An order that records no shipping sends no shipping line, even when rounding the total leaves a cent over. A back-office edit sets the order's payment to the total of the orders it pays, and only when that payment is a single one recorded by this module; a split payment or another method's payment is left alone. An update whose amounts, lines, buyer, addresses, carrier and tracking number match the last one Two accepted is not sent at all, so saving an unchanged tracking number, or editing catalogue text, makes no request.
+
+#### Buyer surcharge on order updates
+
+An order update (a back-office edit, a tracking number) replays the buyer surcharge exactly as PrestaShop currently records it on the order. Its amounts and rate come from the stored order data, never from the live surcharge configuration, so changing the surcharge settings, tax rules or tax treatment later does not change an existing order's fee at Two. Rates stacked one after another are compounded, as PrestaShop applied them. The fee is recognised under any product id the hidden fee product has had, so recreating or deleting that product does not orphan older orders (see [Recognising the fee row](#recognising-the-fee-row)).
+
+PrestaShop's own admin actions can rewrite that record: on 8 and 9 an address change re-taxes every order line from the live rates, and on 1.7 editing a line re-taxes it from the product's live tax group. The update then sends what PrestaShop now holds.
+
+Where the stored data cannot be replayed as recorded (fee lines at different rates, amounts that disagree with the recorded rate, or a row carrying the fee reference under an id the fee never had), the update fails loudly with a `TWO-26076` entry in the shop log rather than send the order without its fee.
+
+When an order edit or a tracking number does not reach Two (its payload cannot be built, or Two rejects it), the change stays saved in PrestaShop and the order is marked as not sent. PrestaShop itself reports the save as a success: on 1.7 an edit returns core's own AJAX result and a tracking number redirects to "Successful update."; on 8 and 9 an edit returns core's own JSON and a tracking number redirects with core's own flash. So on every version the admin sees the failure on the order page, from its next load (at once after a tracking number, on reload after an edit):
+
+- a red panel at the top of the Two payment block: "Changes to this order since `<time>` UTC were saved in PrestaShop but have not reached Two, so its invoice may not match this order. Do not repeat an edit to retry it; please contact support."
+- a private message in the order's Messages for each failure, giving the reason.
+
+The panel stays until an edit or tracking number update is accepted by Two.
+
+#### Recognising the fee row
+
+A cart or order row is the surcharge fee if and only if its product id is the current or a retired fee product id AND its reference (cart row `reference` / order_detail `product_reference`) equals `TWO_SURCHARGE_PRODUCT_REFERENCE`.
+
+Every place the module tells the fee apart from merchandise (the order payload, the cart and order parity checks, the update replay, the cart display and the order-row guard) applies this one test, `Twopayment::isTwoSurchargeRow`. An id alone is not enough: MySQL can hand a retired fee id to a new catalog product, and that product must still be sold.
+
+Retired ids are recorded whenever the fee product is replaced. Ids from before that recording began are seeded once, by the 2.7.16 upgrade (or on first use where core never ran it), from every `product_id` that `order_detail` holds under the fee reference other than the current one. An order update that meets the fee reference under any other id fails loudly rather than send the order without that fee.
 
 #### Order Fulfillment
 

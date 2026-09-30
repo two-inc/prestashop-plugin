@@ -96,7 +96,7 @@ final class OrderCompanyPersistenceSpec
 
         // A fresh install has no work for the runtime guard to do. Asserted so
         // the guard cannot quietly become an every-request ALTER attempt.
-        $ensure = new ReflectionMethod(Twopayment::class, 'ensureTwoOrderCompanyColumns');
+        $ensure = new ReflectionMethod(Twopayment::class, 'ensureTwoPaymentColumns');
         $ensure->invoke($module);
 
         TinyAssert::same(
@@ -110,7 +110,7 @@ final class OrderCompanyPersistenceSpec
      * The upgrade path, and the file-swap path behind it. `createTwoTables()`
      * runs only at install, so an existing shop reaches the columns through
      * this script - or, if its files were swapped in place without core running
-     * an upgrade at all, through ensureTwoOrderCompanyColumns(). Both are
+     * an upgrade at all, through ensureTwoPaymentColumns(). Both are
      * guarded on information_schema, so both have to be re-runnable.
      */
     private static function testUpgradeScriptAddsTheColumnsAndIsRerunnable(): void
@@ -142,16 +142,19 @@ final class OrderCompanyPersistenceSpec
         // never touched, which is the file-swap window this exists for.
         self::reset();
         $swapped = new TwopaymentTestHarness();
-        $ensure = new ReflectionMethod(Twopayment::class, 'ensureTwoOrderCompanyColumns');
+        $ensure = new ReflectionMethod(Twopayment::class, 'ensureTwoPaymentColumns');
         $ensure->invoke($swapped);
 
         TinyAssert::same(
             [
                 'two_company_name',
+                'two_declared_rates',
+                'two_not_sent_at',
                 'two_organization_number',
+                'two_update_hash',
             ],
             self::alterStatements(),
-            'the runtime guard must add both columns on a file-swapped shop'
+            'the runtime guard must add every column on a file-swapped shop'
         );
     }
 
@@ -588,20 +591,7 @@ final class OrderCompanyPersistenceSpec
      */
     private static function makeOrder(): object
     {
-        $order = new class {
-            public bool $loaded = true;
-            public int $id = 0;
-            public int $id_cart = 0;
-            public int $id_carrier = 0;
-            public string $shipping_number = '';
-
-            public function getIdOrderCarrier(): int
-            {
-                return 0;
-            }
-        };
-        $order->id = self::ORDER_ID;
-        $order->id_cart = self::CART_ID;
+        $order = PlacedOrderStub::fromCart(self::ORDER_ID, self::CART_ID);
         $order->id_carrier = self::CARRIER_ID;
 
         return $order;

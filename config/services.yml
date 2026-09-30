@@ -1,0 +1,9 @@
+# TWO-26082: here, not config/admin/, because PS 1.7.6's legacy admin container has no kernel.project_dir and every back-office page would fail to build it.
+# `file` as there is no Composer autoloader; the tag description spares Symfony 6 reflecting the class.
+services:
+  twopayment.command.shipping_tax_fallback:
+    class: TwoShippingTaxFallbackCommand
+    file: '%kernel.project_dir%/modules/twopayment/classes/TwoShippingTaxFallbackCommand.php'
+    public: true
+    tags:
+      - { name: console.command, command: 'twopayment:shipping-tax-fallback', description: 'Enable, disable or show the Two Default shipping tax code fallback, globally or for one shop.' }

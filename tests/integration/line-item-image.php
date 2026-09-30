@@ -66,10 +66,17 @@ function imageProbeProduct($name, $id_lang)
     $product->link_rewrite = array($id_lang => Tools::str2url($name));
     $product->price = 10;
     $product->active = 1;
+    // Untaxed: the cart has no address. PrestaShop 1.7 otherwise gives a new
+    // product a tax rules group (in CI, the carrier-less seed's 25% one), which
+    // core applies at the default country but the module declares at no address.
+    $product->id_tax_rules_group = 0;
     $product->id_category_default = (int) Configuration::get('PS_HOME_CATEGORY');
     $product->add();
     $product->addToCategories(array((int) Configuration::get('PS_HOME_CATEGORY')));
-    StockAvailable::setQuantity((int) $product->id, 0, 100);
+    // No stock movement (last argument): PrestaShop 1.7 builds the movement
+    // repository through an admin shop-context init that switches a CLI run to
+    // all-shops context and then refuses it. Stock movements are not under test.
+    StockAvailable::setQuantity((int) $product->id, 0, 100, null, false);
 
     return $product;
 }
@@ -127,7 +134,7 @@ foreach (array('with_image' => $own_image, 'without_image' => 0) as $key => $id_
     if ($id_image) {
         $combination->setImages(array($id_image));
     }
-    StockAvailable::setQuantity((int) $combo_product->id, (int) $combination->id, 100);
+    StockAvailable::setQuantity((int) $combo_product->id, (int) $combination->id, 100, null, false);
     $combinations[$key] = (int) $combination->id;
 }
 $simple_product = imageProbeProduct('Probe simple lamp', $id_lang);
