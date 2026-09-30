@@ -4806,9 +4806,9 @@ class Twopayment extends PaymentModule
                         // This handles cases where admin changes status away from "Refunded" then back to "Refunded"
                         // Note: We don't just rely on order `state` as it shows "REFUNDED" even for partial refunds
                         
-                        // Partial refunds already sent from credit slips: refund only what is left (TWO-26093).
+                        // Partial refunds already made, from credit slips or in the portal: refund only what is left (TWO-26093).
                         $sent = $this->getTwoSentRefunds((int)$order->id);
-                        if (!empty($sent)) {
+                        if (!empty($sent) || $this->getTwoOrderRefundedTotal($current_two_order) > 0) {
                             $this->refundTwoRemainder($order, $orderpaymentdata, $current_two_order, $sent);
                             return;
                         }
@@ -4989,12 +4989,19 @@ class Twopayment extends PaymentModule
             }
 
             $sent = null;
-            $reason = $this->sendTwoCreditSlipRefund($slip, $order, $orderpaymentdata, $sent);
+            try {
+                $reason = $this->sendTwoCreditSlipRefund($slip, $order, $orderpaymentdata, $sent);
+            } catch (Throwable $e) {
+                // Claimed, so no later call will send it: the merchant must hear it was not sent.
+                PrestaShopLogger::addLog('TwoPayment: Exception during partial refund of slip ' . (int)$slip->id . ' on order ' . $id_order . '. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+                $sent = null;
+                $reason = $this->l('an unexpected error stopped it');
+            }
             $this->recordTwoRefundOutcome($id_order, (int)$slip->id, $reason === null ? 'SENT' : 'NOT_SENT', $sent, $reason);
             if ($reason !== null && $reason !== '') {
                 $this->flagTwoCreditSlipNotSent($id_order, (int)$slip->id, $reason);
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             PrestaShopLogger::addLog('TwoPayment: Exception during partial refund. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
         }
     }
@@ -5350,7 +5357,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Refund what is left of an order whose partial refunds were already sent, when the merchant marks it Refunded (TWO-26093).
+     * Refund what is left of an order already partly refunded, from credit slips or in the portal, when the merchant marks it Refunded (TWO-26093).
      * Two reports REFUNDED after any refund, so the body-less full refund's guards would skip it and leave the rest owed.
      *
      * @param Order $order

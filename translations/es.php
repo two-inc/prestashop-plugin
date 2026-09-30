@@ -588,3 +588,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] 
 $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'no se ha podido determinar la moneda del pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'el proveedor no lo ha aceptado (HTTP %s)';
 $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'El pedido se ha marcado como reembolsado en PrestaShop, pero lo que quedaba por reembolsar tras sus facturas por abono no se ha enviado a %1$s porque %2$s. Reembolsa el resto en el Portal de Comerciantes de %1$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'un error inesperado lo ha impedido';

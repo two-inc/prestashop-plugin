@@ -588,3 +588,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] 
 $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'de valuta van de bestelling niet kon worden bepaald';
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'de aanbieder het niet heeft geaccepteerd (HTTP %s)';
 $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'De bestelling is in PrestaShop als terugbetaald gemarkeerd, maar wat na de creditnota\'s nog terug te betalen was, is niet naar %1$s verzonden, omdat %2$s. Betaal de rest terug in de %1$s Merchant Portal.';
+$_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'een onverwachte fout dit verhinderde';

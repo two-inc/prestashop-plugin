@@ -13,7 +13,8 @@
  *  - a slip for 1 of 3 units, a specific-amount slip and a compound-tax slip
  *    each send the amount core refunded, with tax_subtotals summing to it;
  *  - two slips created before either hook call runs are sent once each;
- *  - marking the order Refunded afterwards sends only what is left.
+ *  - marking the order Refunded afterwards sends only what is left, also when
+ *    the earlier refund was made in the portal rather than from a slip.
  *
  * Hermetic: no browser, no network, no Two credentials.
  *
@@ -151,6 +152,8 @@ class SlipProbeModule extends Twopayment
     public $refunds = array();
     /** @var array Two orders by id: gross_amount, currency */
     public $twoOrders = array();
+    /** @var array refunds made in the portal, by Two order id: amounts */
+    public $portalRefunds = array();
 
     public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
     {
@@ -161,6 +164,9 @@ class SlipProbeModule extends Twopayment
         }
         if (preg_match('#^/v1/order/([^/]+)$#', $endpoint, $m) && $method === 'GET' && isset($this->twoOrders[$m[1]])) {
             $refunds = array();
+            foreach (isset($this->portalRefunds[$m[1]]) ? $this->portalRefunds[$m[1]] : array() as $amount) {
+                $refunds[] = array('total_amount' => '-' . $amount);
+            }
             foreach ($this->refunds as $refund) {
                 if ($refund['two_order_id'] === $m[1]) {
                     $refunds[] = array('total_amount' => '-' . $refund['payload']['amount']);
@@ -461,6 +467,17 @@ $n = count($module->refunds);
 slipProbeRefund($order2, $detail_c, 1, 0);
 $new = $sent_since($n);
 $check('compound 10% then 5%', isset($new[0]) ? $new[0] : null, number_format((float) (new OrderDetail($detail_c))->unit_price_tax_incl, 2, '.', ''), array('0.155000'));
+
+// Order 3: refunded in part in the portal, then marked Refunded.
+$order3 = slipProbePlaceOrder($module, $customer, $address, $carrier, array(array($product_a, 1), array($product_b, 1)));
+$module->portalRefunds['probe-slip-' . (int) $order3->id] = array('50.00');
+$n = count($module->refunds);
+$history = new OrderHistory();
+$history->id_order = (int) $order3->id;
+$history->id_employee = (int) $context->employee->id;
+$history->changeIdOrderState((int) Configuration::get('PS_TWO_OS_REFUNDED_MAP'), new Order((int) $order3->id));
+$new = $sent_since($n);
+$check('Refunded after 50.00 refunded in the portal', isset($new[0]) ? $new[0] : null, number_format(round((float) $order3->total_paid_tax_incl, 2) - 50.00, 2, '.', ''), array('0.150000', '0.250000'));
 
 if (!empty($failures)) {
     fwrite(STDERR, implode(PHP_EOL, $failures) . PHP_EOL);

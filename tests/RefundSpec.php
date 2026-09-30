@@ -23,6 +23,7 @@ final class RefundSpec
         self::testPartialRefundSendsTaxSubtotalsFromStoredSlip();
         self::testHookResolvesSlipAsCorePassesIt();
         self::testRefundedStatusAfterPartialsRefundsTheRemainder();
+        self::testFailureAfterClaimTellsTheMerchant();
     }
 
     /**
@@ -86,6 +87,8 @@ final class RefundSpec
             /** The twopayment_refund rows, keyed by slip id ('r<n>' for a remainder), and the order's stored slips by id. */
             public array $refundRows = [];
             public array $storedSlips = [];
+            /** Throw from the Two order read, as an unexpected failure after a slip is claimed would. */
+            public bool $throwOnRead = false;
             /** What getTwoUpdateOrderData() reports as the order's tax_subtotals. */
             public array $placedSubtotals = [];
             private array $twoOrder;
@@ -183,6 +186,9 @@ final class RefundSpec
                     'headers' => $additional_headers,
                 ];
 
+                if ($this->throwOnRead && $method === 'GET') {
+                    throw new RuntimeException('read failed');
+                }
                 if ($method === 'POST' && strpos($endpoint, '/refund') !== false) {
                     return ['http_status' => 201, 'id' => 'refund-uuid'];
                 }
@@ -528,6 +534,7 @@ final class RefundSpec
             [[$slip(1, '50.00', [$sub('0.250000', '40.00', '10.00')])], ['-50.00'], 148.00, $placed, ['amount' => '98.00', 'currency' => 'GBP', 'tax_subtotals' => [$sub('0.150000', '20.00', '3.00'), $sub('0.250000', '60.00', '15.00')]], 'remainder over two rates'],
             [[$slip(1, '148.00', $placed)], ['-148.00'], 148.00, $placed, null, 'nothing left: no call'],
             [[$slip(1, '125.00', [$sub('0.250000', '100.00', '25.00')])], ['-125.00', '-23.00'], 148.00, $placed, null, 'the rest already refunded in the portal: no call'],
+            [[], ['-50.00'], 148.00, $placed, ['amount' => '98.00', 'currency' => 'GBP', 'tax_subtotals' => [$sub('0.150000', '13.24', '1.99'), $sub('0.250000', '66.22', '16.55')]], 'refunded in the portal only, no slips sent: the rest is still refunded'],
             [[], [], 148.00, $placed, [], 'no slips sent: the body-less full refund, as before'],
         ];
 
@@ -559,5 +566,19 @@ final class RefundSpec
             TinyAssert::count(1, $calls, $desc);
             TinyAssert::same($expected, $calls[0]['payload'], $desc . ': got ' . json_encode($calls[0]['payload']));
         }
+    }
+
+    /** TWO-26093: a claimed slip is never sent by a later call, so a failure after the claim must reach the merchant. */
+    private static function testFailureAfterClaimTellsTheMerchant(): void
+    {
+        StubStore::reset();
+        $module = self::makeModule(self::fulfilledOrder(100.00));
+        $module->throwOnRead = true;
+
+        $module->hookActionOrderSlipAdd(['order' => self::makeOrder(), 'orderSlipCreated' => self::makeSlip(905, 30.00)]);
+
+        TinyAssert::count(0, $module->refundCalls());
+        TinyAssert::count(1, $module->notSent, 'the merchant is told the slip was not sent');
+        TinyAssert::same('NOT_SENT', $module->refundRows[905]['status'], 'the claim records it was not sent');
     }
 }
