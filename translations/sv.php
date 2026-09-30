@@ -588,3 +588,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] 
 $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'orderns valuta inte kunde fastställas';
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'leverantören inte godtog den (HTTP %s)';
 $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'Ordern markerades som återbetald i PrestaShop, men det som återstod att återbetala efter kreditnotorna skickades inte till %1$s, eftersom %2$s. Återbetala resten i %1$ss handlarportal.';
+$_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'ett oväntat fel stoppade den';
