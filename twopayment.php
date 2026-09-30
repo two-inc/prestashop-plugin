@@ -376,6 +376,9 @@ class Twopayment extends PaymentModule
      */
     protected $twoOrderCompanyColumnsEnsured = null;
 
+    /** @var array[] getTwoCreditSlipTaxLines() rows by slip id: the gross amount and the tax subtotals read the same lines (TWO-26093) */
+    private $twoCreditSlipTaxLines = array();
+
     /** @var array|null the charge rates the last create payload declared, persisted on the Two row for updates (TWO-26085) */
     private $twoDeclaredChargeRates = null;
 
@@ -4556,6 +4559,30 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Tell the merchant, on the order page and in its private notes, that a credit slip did not reach Two (TWO-26093).
+     * Core drops a hook's back-office warnings on some versions, so the note is what lasts.
+     *
+     * @param int $idOrder
+     * @param int $slipId
+     * @param string $reason
+     */
+    protected function flagTwoCreditSlipNotSent($idOrder, $slipId, $reason)
+    {
+        $text = sprintf(
+            $this->l('Credit slip #%1$s was saved in PrestaShop but was not sent to %2$s, because %3$s. Refund it in the %2$s Merchant Portal.'),
+            (int) $slipId,
+            $this->getTwoBrandConfig('product_name'),
+            $reason
+        );
+        $this->addTwoBackOfficeWarning($text);
+        try {
+            $this->addTwoOrderPrivateNote((int) $idOrder, $text);
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog('TwoPayment: could not note on order ' . (int) $idOrder . ' that credit slip ' . (int) $slipId . ' was not sent - ' . $e->getMessage(), 3);
+        }
+    }
+
+    /**
      * Tracking number from the order's carrier record (order_carrier is
      * the canonical store; Order::$shipping_number is its legacy mirror).
      * Empty string when none is set.
@@ -4890,11 +4917,10 @@ class Twopayment extends PaymentModule
      * cover credit slips, so partial refunds previously reached Two only when
      * the merchant used the Two merchant portal.
      *
-     * This hook builds an {amount, currency} partial-refund payload from the
-     * credit slip and calls POST /v1/order/{id}/refund. Two's refund endpoint
-     * accepts a simple {amount, currency} body for partial refunds (line_items
-     * optional) - confirmed against the refund endpoint's documented request
-     * contract - so we avoid mapping PrestaShop's credit-slip product list to
+     * This hook builds an {amount, currency, tax_subtotals} partial-refund
+     * payload from the credit slip and calls POST /v1/order/{id}/refund. Two's
+     * PartialRefundRequestSchema requires those three fields (line_items is
+     * optional), so we avoid mapping PrestaShop's credit-slip product list to
      * Two line items.
      *
      * Idempotency + duplicate-refund protection:
@@ -4952,7 +4978,7 @@ class Twopayment extends PaymentModule
             }
             $two_order_id = $orderpaymentdata['two_order_id'];
 
-            $slip_amount = $this->getTwoCreditSlipGrossAmount($slip);
+            $slip_amount = $this->getTwoCreditSlipGrossAmount($slip, $order);
             if ($slip_amount <= 0) {
                 PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - non-positive slip amount for Two order ID: ' . $two_order_id . ', Slip ID: ' . $slip_id, 2);
                 return;
@@ -5014,7 +5040,16 @@ class Twopayment extends PaymentModule
                 return;
             }
 
-            $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency);
+            // Two requires tax_subtotals on a partial refund. Without stored
+            // slip lines to derive them from, the API would reject the call.
+            $tax_subtotals = $this->buildTwoCreditSlipTaxSubtotals($slip, $order, $slip_amount);
+            if (empty($tax_subtotals)) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not build tax subtotals from the credit slip. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
+                $this->flagTwoCreditSlipNotSent($id_order, $slip_id, $this->l('its refunded amount could not be split across the order\'s tax rates'));
+                return;
+            }
+
+            $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency, $tax_subtotals);
 
             // Idempotency key derived from the credit slip ID (NOT amount) so
             // two same-amount partial refunds on one order don't collide.
@@ -5069,31 +5104,89 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Compute the gross (tax-inclusive) refund amount from a PrestaShop credit
-     * slip: refunded products (tax incl) plus refunded shipping (tax incl).
-     * Falls back to the legacy amount / shipping_cost_amount fields when the
-     * tax-incl totals are absent.
+     * The gross (tax-inclusive) amount a credit slip refunded: its products
+     * plus its refunded shipping (tax incl).
+     *
+     * Core stores the products total three ways (OrderSlip::create() on 1.7,
+     * OrderSlipCreator on 8 and 9), and only one field is right in each:
+     *  - A specific-amount refund stores the chosen amount in `amount` and
+     *    leaves both products totals unreduced. `order_slip_type` 2 marks it
+     *    when no shipping is refunded; with shipping, type 2 is set anyway, so
+     *    an `amount` matching neither products total is the chosen one.
+     *  - A voucher-excluded refund entered tax excluded deducts the voucher
+     *    from total_products_tax_incl, which is then right.
+     *  - A voucher-excluded refund entered tax included deducts it from
+     *    total_products_tax_excl instead, leaving total_products_tax_incl and
+     *    `amount` unreduced. The voucher is then the gap between the slip's
+     *    order_slip_detail lines (tax excl) and total_products_tax_excl.
+     * `amount` alone is not the gross: without a chosen amount it is the
+     * products total in whichever basis the refund was entered.
+     *
+     * @param object $slip OrderSlip
+     * @param object|null $order the slip's order, whose round_type decides what gap is rounding
+     * @return float
+     */
+    public function getTwoCreditSlipGrossAmount($slip, $order = null)
+    {
+        $shipping = $this->getTwoCreditSlipShippingTaxIncl($slip);
+        $incl = $this->getTwoSlipField($slip, 'total_products_tax_incl');
+        $excl = $this->getTwoSlipField($slip, 'total_products_tax_excl');
+        $amount = $this->getTwoSlipField($slip, 'amount');
+        if ($incl === null) {
+            return round((float)$amount + $shipping, 2);
+        }
+
+        $type = (int)$this->getTwoSlipField($slip, 'order_slip_type');
+        $chosen = $type === 2 && $amount !== null && ($shipping <= 0
+            || (abs($amount - $incl) > 0.005 && ($excl === null || abs($amount - $excl) > 0.005)));
+        if ($chosen) {
+            return round($amount + $shipping, 2);
+        }
+
+        $deduction = 0.0;
+        if ($excl !== null) {
+            $lines = $this->getTwoCreditSlipTaxLines($slip);
+            $lines_excl = 0.0;
+            foreach ($lines as $line) {
+                $lines_excl += (float)$line['amount_tax_excl'];
+            }
+            // Invariant: a gap between the lines and total_products_tax_excl is a voucher unless the order's own rounding
+            // mode can produce it. Only ROUND_TOTAL (Order::$round_type 3) can: core rounds the slip's tax-excluded total
+            // once per tax group while each line is rounded on its own, so up to a cent per line is rounding there.
+            // Under ROUND_ITEM and ROUND_LINE core sums the same rounded lines, so any whole cent is a voucher.
+            $round_total = is_object($order) && isset($order->round_type) && (int)$order->round_type === 3;
+            $tolerance = $round_total ? 0.01 * max(1, count($lines)) : 0.0;
+            $gap = round($lines_excl - $excl, 2);
+            $deduction = $gap > $tolerance + 0.005 ? $gap : 0.0;
+        }
+
+        return round($incl - $deduction + $shipping, 2);
+    }
+
+    /**
+     * @param object $slip OrderSlip
+     * @param string $field
+     * @return float|null null when the slip does not carry the field
+     */
+    private function getTwoSlipField($slip, $field)
+    {
+        return isset($slip->{$field}) && $slip->{$field} !== '' ? (float)$slip->{$field} : null;
+    }
+
+    /**
+     * Refunded shipping (tax incl) on a credit slip, falling back to the
+     * legacy shipping_cost_amount field.
      *
      * @param object $slip OrderSlip
      * @return float
      */
-    public function getTwoCreditSlipGrossAmount($slip)
+    private function getTwoCreditSlipShippingTaxIncl($slip)
     {
-        $products = 0.0;
-        if (isset($slip->total_products_tax_incl) && $slip->total_products_tax_incl !== null && $slip->total_products_tax_incl !== '') {
-            $products = (float)$slip->total_products_tax_incl;
-        } elseif (isset($slip->amount)) {
-            $products = (float)$slip->amount;
-        }
-
-        $shipping = 0.0;
         if (isset($slip->total_shipping_tax_incl) && $slip->total_shipping_tax_incl !== null && $slip->total_shipping_tax_incl !== '') {
-            $shipping = (float)$slip->total_shipping_tax_incl;
-        } elseif (isset($slip->shipping_cost_amount)) {
-            $shipping = (float)$slip->shipping_cost_amount;
+            return (float)$slip->total_shipping_tax_incl;
         }
 
-        return round($products + $shipping, 2);
+        return isset($slip->shipping_cost_amount) ? (float)$slip->shipping_cost_amount : 0.0;
     }
 
     /**
@@ -5117,19 +5210,205 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Build the {amount, currency} partial-refund payload for Two. Amount is a
-     * 2dp decimal string, matching Two's Money format.
+     * Build the {amount, currency, tax_subtotals} partial-refund payload for
+     * Two. Amount is a 2dp decimal string, matching Two's Money format.
      *
      * @param float $amount Gross refund amount
      * @param string $currency ISO currency code
+     * @param array $tax_subtotals From buildTwoCreditSlipTaxSubtotals()
      * @return array
      */
-    public function buildTwoPartialRefundPayload($amount, $currency)
+    public function buildTwoPartialRefundPayload($amount, $currency, $tax_subtotals = array())
     {
         return array(
             'amount' => number_format((float)$amount, 2, '.', ''),
             'currency' => $currency,
+            'tax_subtotals' => $tax_subtotals,
         );
+    }
+
+    /**
+     * Stored product lines of a credit slip: order_slip_detail amounts with
+     * the line's tax rate in percent. The rates come from order_detail_tax
+     * JOIN tax, which every supported PrestaShop version writes
+     * (order_detail.tax_rate stays 0.000 before 8.x), combined as core
+     * applied them: compounded for tax_computation_method 2, added otherwise.
+     *
+     * @param object $slip OrderSlip
+     * @return array rows of amount_tax_excl, amount_tax_incl, rate
+     */
+    public function getTwoCreditSlipTaxLines($slip)
+    {
+        $id = (int)$slip->id;
+        if (isset($this->twoCreditSlipTaxLines[$id])) {
+            return $this->twoCreditSlipTaxLines[$id];
+        }
+        $rows = Db::getInstance()->executeS(
+            'SELECT osd.`amount_tax_excl`, osd.`amount_tax_incl`, od.`tax_computation_method`,'
+            . ' (SELECT GROUP_CONCAT(t.`rate`) FROM `' . _DB_PREFIX_ . 'order_detail_tax` odt'
+            . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = odt.`id_tax`'
+            . ' WHERE odt.`id_order_detail` = osd.`id_order_detail`) AS `placed_rates`'
+            . ' FROM `' . _DB_PREFIX_ . 'order_slip_detail` osd'
+            . ' INNER JOIN `' . _DB_PREFIX_ . 'order_detail` od ON od.`id_order_detail` = osd.`id_order_detail`'
+            . ' WHERE osd.`id_order_slip` = ' . $id
+        );
+        $lines = array();
+        foreach (is_array($rows) ? $rows : array() as $row) {
+            $row['rate'] = $this->getTwoPlacedRowTaxRate($row) * 100;
+            $lines[] = $row;
+        }
+
+        return $this->twoCreditSlipTaxLines[$id] = $lines;
+    }
+
+    /**
+     * Per-rate tax_subtotals for a partial refund, from stored slip and order
+     * data only: the slip's product lines plus its refunded shipping at the
+     * order's stored carrier_tax_rate. The product lines are apportioned onto
+     * the refunded products amount (a voucher deduction or a chosen amount
+     * differs from their sum) in proportion to each line, the shipping is
+     * taken as stored, and any rounding cent lands on the largest entry, so
+     * the entries sum to exactly the refunded amount. Empty, so nothing is
+     * sent, when a products amount has no product lines to apportion over.
+     *
+     * @param object $slip OrderSlip
+     * @param object $order Order
+     * @param float $refund_amount Gross amount being refunded
+     * @return array TaxSubtotalSchema entries; empty when none can be derived
+     */
+    public function buildTwoCreditSlipTaxSubtotals($slip, $order, $refund_amount)
+    {
+        $shipping_incl = $this->getTwoCreditSlipShippingTaxIncl($slip);
+        $products_amount = round($refund_amount - $shipping_incl, 2);
+        $buckets = array();
+        $lines_incl = 0.0;
+        foreach ($this->getTwoCreditSlipTaxLines($slip) as $line) {
+            $lines_incl += (float)$line['amount_tax_incl'];
+        }
+        if ($refund_amount <= 0 || $products_amount < 0 || ($products_amount > 0 && $lines_incl <= 0)) {
+            return array();
+        }
+        $factor = $products_amount > 0 ? $products_amount / $lines_incl : 0.0;
+        foreach ($factor > 0 ? $this->getTwoCreditSlipTaxLines($slip) : array() as $line) {
+            $this->addTwoTaxBucket($buckets, (float)$line['rate'], (float)$line['amount_tax_excl'] * $factor, (float)$line['amount_tax_incl'] * $factor);
+        }
+        if ($shipping_incl > 0) {
+            $shipping_excl = $this->getTwoSlipField($slip, 'total_shipping_tax_excl');
+            if ($shipping_excl === null) {
+                $rate = isset($order->carrier_tax_rate) ? (float)$order->carrier_tax_rate : 0.0;
+                $shipping_excl = round($shipping_incl / (1 + $rate / 100), 2);
+            }
+            $shipping_tax = round($shipping_incl - $shipping_excl, 2);
+            $classes = $this->resolveTwoSlipShippingClasses($order, $shipping_excl, $shipping_tax);
+            if ($classes === null) {
+                return array();
+            }
+            $weights = array();
+            foreach ($classes as $key => $class) {
+                $weights[$key] = (float)$class['net_weight'];
+            }
+            $net_shares = count($classes) === 1 ? array(key($classes) => $shipping_excl) : $this->allocateTwoAmountByWeights($shipping_excl, $weights);
+            $tax_left = $shipping_tax;
+            $last = null;
+            foreach ($net_shares as $key => $net) {
+                $tax = round((float)$net * (float)$classes[$key]['rate'], 2);
+                $tax_left = round($tax_left - $tax, 2);
+                $this->addTwoTaxBucket($buckets, (float)$classes[$key]['rate'] * 100, (float)$net, (float)$net + $tax);
+                $last = (float)$classes[$key]['rate'];
+            }
+            if ($last !== null && $tax_left != 0.0) {
+                // The cent per-class rounding left, on the last class, so shipping sums to what the slip refunded.
+                $this->addTwoTaxBucket($buckets, $last * 100, 0.0, $tax_left);
+            }
+        }
+        if (empty($buckets)) {
+            return array();
+        }
+
+        $rows = array();
+        $gross_sum = 0.0;
+        $largest = null;
+        foreach ($buckets as $rate => $bucket) {
+            $gross = round($bucket['incl'], 2);
+            $taxable = round($bucket['excl'], 2);
+            $rows[$rate] = array('taxable' => $taxable, 'tax' => round($gross - $taxable, 2));
+            $gross_sum += $gross;
+            if ($largest === null || $gross > $rows[$largest]['taxable'] + $rows[$largest]['tax']) {
+                $largest = $rate;
+            }
+        }
+        // Only rounding may land here; anything larger means the split does not describe this refund.
+        $residue = round($refund_amount - $gross_sum, 2);
+        if (abs($residue) > 0.01 * count($rows)) {
+            return array();
+        }
+        $rows[$largest]['taxable'] += $residue;
+
+        ksort($rows, SORT_NUMERIC);
+        $tax_subtotals = array();
+        foreach ($rows as $rate => $row) {
+            $tax_subtotals[] = array(
+                'taxable_amount' => $this->getTwoRoundAmount($row['taxable']),
+                'tax_amount' => $this->getTwoRoundAmount($row['tax']),
+                'tax_rate' => (string)$rate,
+            );
+        }
+
+        return $tax_subtotals;
+    }
+
+    /**
+     * The rate classes refunded shipping was taxed at, in the order updates' resolution order (TWO-26085): the order's
+     * carrier_tax_rate, then the classes declared at placement, then the Default shipping tax code, each only if it
+     * reconciles with the slip's stored shipping amounts. A carrier-less order leaves carrier_tax_rate at 0.
+     *
+     * @param Order $order
+     * @param float $net refunded shipping, tax excluded
+     * @param float $tax refunded shipping tax
+     * @return array|null classes of rate (decimal) and net_weight; null when none reconciles
+     */
+    protected function resolveTwoSlipShippingClasses($order, $net, $tax)
+    {
+        $carrier = array(array('rate' => (float)(isset($order->carrier_tax_rate) ? $order->carrier_tax_rate : 0) / 100, 'net_weight' => 1.0));
+        if ($this->doTwoRateClassesReconcile($carrier, $net, $tax)) {
+            return $carrier;
+        }
+        $row = $this->getTwoOrderPaymentData((int)$order->id);
+        $declared = is_array($row) ? $this->decodeTwoDeclaredChargeRates($row) : array('shipping' => array());
+        if (!empty($declared['shipping']) && $this->doTwoRateClassesReconcile($declared['shipping'], $net, $tax)) {
+            return $declared['shipping'];
+        }
+        try {
+            $cart = new Cart((int)(isset($order->id_cart) ? $order->id_cart : 0));
+            $groupId = Validate::isLoadedObject($cart) ? $this->getTwoDefaultShippingTaxRulesGroupId($cart) : null;
+            if ($groupId !== null) {
+                $default = array(array('rate' => $this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart), 'net_weight' => 1.0));
+                if ($this->doTwoRateClassesReconcile($default, $net, $tax)) {
+                    return $default;
+                }
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Default shipping tax code unavailable for a credit slip - ' . $e->getMessage(), 2);
+        }
+        PrestaShopLogger::addLog('TwoPayment: Credit slip shipping ' . $net . ' net, ' . $tax . ' tax on order ' . (int)$order->id . ' reconciles with no stored or configured rate', 3);
+
+        return null;
+    }
+
+    /**
+     * @param array $buckets per-rate sums, keyed by the rate as a 6dp decimal string
+     * @param float $rate_percent
+     * @param float $excl
+     * @param float $incl
+     */
+    private function addTwoTaxBucket(array &$buckets, $rate_percent, $excl, $incl)
+    {
+        $rate = number_format($rate_percent / 100, 6, '.', '');
+        if (!isset($buckets[$rate])) {
+            $buckets[$rate] = array('excl' => 0.0, 'incl' => 0.0);
+        }
+        $buckets[$rate]['excl'] += $excl;
+        $buckets[$rate]['incl'] += $incl;
     }
 
     /**

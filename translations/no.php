@@ -579,3 +579,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d9e8fd0ca4e27bc560c15e7ac3e5c1ff'] = 'Sporingsnummeret ble lagret i PrestaShop, men ble ikke sendt til fakturaleverandøren. Kontakt kundestøtte.';
 $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] = 'Denne endringen ble lagret i PrestaShop, men ble ikke sendt til fakturaleverandøren: %s';
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Endringer i denne bestillingen siden %s ble lagret i PrestaShop, men har ikke nådd %s, så fakturaen stemmer kanskje ikke med denne bestillingen. Ikke gjenta en endring for å prøve på nytt; kontakt kundestøtte.';
+$_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'Kreditnota #%1$s ble lagret i PrestaShop, men ble ikke sendt til %2$s fordi %3$s. Refunder den i %2$s Selgerportal.';
+$_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'det refunderte beløpet ikke kunne fordeles på ordrens avgiftssatser';
