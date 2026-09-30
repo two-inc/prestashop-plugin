@@ -368,6 +368,9 @@ final class RefundSpec
             [[$a], [125.00, 100.00, 100.00, 2], 23.00, 20.00, 15.0, '148.00', [['0.150000', '20.00', '3.00'], ['0.250000', '100.00', '25.00']], 'products plus shipping, entered tax excl: amount is the excl total, not a chosen one'],
             [[self::line(100.00, 115.50, '10.000,5.000', '2')], [115.50], 0.0, 0.0, 0.0, '115.50', [['0.155000', '100.00', '15.50']], 'compound taxes multiply, not add'],
             [[self::line(100.00, 115.00, '10.000,5.000', '1')], [115.00], 0.0, 0.0, 0.0, '115.00', [['0.150000', '100.00', '15.00']], 'combined taxes add'],
+            [array_fill(0, 4, self::line(8.38, 10.05, '20.000')), [40.20, 33.50, 40.20, 0], 0.0, 0.0, 0.0, '40.20', [['0.200000', '33.52', '6.68']], 'ROUND_TOTAL, entered tax incl: a cent per line of rounding is not a voucher'],
+            [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2, '{"shipping":[{"rate":0.25,"net_weight":10}]}'], 12.50, 10.00, 0.0, '42.50', [['0.200000', '25.00', '5.00'], ['0.250000', '10.00', '2.50']], 'carrier-less order: shipping at the rate declared at placement'],
+            [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2], 12.50, 10.00, 0.0, null, null, 'shipping no stored or configured rate reconciles with fails closed'],
             [[], [30.00], 0.0, 0.0, 0.0, null, null, 'no stored lines fails closed'],
             [[], [125.00, 100.00, 50.00, 2], 0.0, 0.0, 0.0, null, null, 'specific amount with no lines to apportion over fails closed'],
         ];
@@ -375,7 +378,7 @@ final class RefundSpec
         foreach ($cases as $i => [$lines, $fields, $shipIncl, $shipExcl, $carrierRate, $amount, $expected, $desc]) {
             StubStore::reset();
             StubStore::$dbExecuteSResponses = [$lines];
-            $module = self::makeModule(self::fulfilledOrder(500.00));
+            $module = self::makeModule(self::fulfilledOrder(500.00), ['two_order_id' => 'two-order-uuid', 'two_declared_rates' => $fields[4] ?? null]);
             $module->readSlipLinesFromDb = true;
             $order = self::makeOrder();
             $order->carrier_tax_rate = $carrierRate;
