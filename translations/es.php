@@ -48,6 +48,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_bc5e69470fb58f31cb12c7e95bede662'] 
 $_MODULE['<{twopayment}prestashop>twopayment_5ea058e4746950c51516f030cae91320'] = 'Cumplimiento automático de pedidos cuando cambia el estado del pedido (configurable)';
 $_MODULE['<{twopayment}prestashop>twopayment_bb1697a94fe9e88e0c4b2b0dd605eced'] = 'Plazos de pago configurables (7, 15, 20, 30, 45, 60, 90 días)';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Gestionar reembolsos completos desde el administrador de PrestaShop';
+$_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Enviar reembolsos parciales (facturas rectificativas) a %s automáticamente: no los reembolses también en el Portal de Comerciantes';
 $_MODULE['<{twopayment}prestashop>twopayment_a97da5fb422662e859b341dd6f6c9704'] = 'Mostrar información del pedido de %s en la vista de pedidos del administrador';
 $_MODULE['<{twopayment}prestashop>twopayment_f71fecea4e95aedc66e77754d9cecda4'] = 'Compatibilidad con múltiples tipos impositivos y clientes exentos de impuestos';
 $_MODULE['<{twopayment}prestashop>twopayment_26aa493188d501eef826610ffb69c486'] = 'Gestionar correctamente las reglas de envío gratuito y los descuentos';
@@ -61,7 +62,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_9bc4151431237fc71bc676000348f622'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8c663cce717ad261932283cd6ca35073'] = 'Procesar pagos B2C (consumidor): %s es solo B2B';
 $_MODULE['<{twopayment}prestashop>twopayment_d2430a6dcc29a7c2af9f06c42b418da8'] = 'Garantizar la aprobación: %s realiza verificaciones de crédito en tiempo real';
 $_MODULE['<{twopayment}prestashop>twopayment_f7ef5c179f658172e8b6788a6ff4e5fc'] = 'Anular la decisión de crédito de %s o los límites del comprador.';
-$_MODULE['<{twopayment}prestashop>twopayment_35fba6fd0a77563c7b9e41075a751844'] = 'Procesar reembolsos parciales: usa el Portal de Comerciantes de %s para reembolsos parciales';
 $_MODULE['<{twopayment}prestashop>twopayment_3d94e3cb25fc73d812643a4cf4d8354a'] = 'Cumplimiento parcial: los pedidos deben cumplirse por completo';
 $_MODULE['<{twopayment}prestashop>twopayment_c23d1b05a68bc7bf02d67b60fe043586'] = 'Corregir una configuración de impuestos incorrecta en tu tienda: los impuestos deben estar configurados correctamente en PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_a58a88e252eae380cbcff6421cd5d08c'] = 'Procesar pedidos sin un número de registro empresarial válido';

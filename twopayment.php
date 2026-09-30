@@ -3432,6 +3432,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for standard and end-of-month (EOM) payment terms') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Configurable payment terms (7, 15, 20, 30, 45, 60, 90 days)') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Handle full refunds through PrestaShop admin') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . sprintf($this->l('Send partial refunds (credit slips) to %s automatically - do not also refund them in the Merchant Portal'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . sprintf($this->l('Display %s order information in admin order view'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for multiple tax rates and tax-exempt customers') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Handle free shipping cart rules and discounts correctly') . '</li>
@@ -3452,7 +3453,6 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . sprintf($this->l('Process B2C (consumer) payments - %s is B2B only'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . sprintf($this->l('Guarantee approval - %s performs real-time credit checks'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . sprintf($this->l('Override %s\'s credit decision or buyer limits'), $this->getTwoBrandConfig('product_name')) . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . sprintf($this->l('Process partial refunds - use the %s Merchant Portal for partial refunds'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Partial fulfillment - orders must be fulfilled in full') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Fix incorrect tax configuration in your store - taxes must be set up correctly in PrestaShop') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-times text-danger"></i> ' . $this->l('Process orders without a valid company registration number') . '</li>

@@ -261,11 +261,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_78ed75859c56af62c3804c75ca86d7d8'] = 'Statusmappning för %s-order';
 $_MODULE['<{twopayment}prestashop>twopayment_779cdd79fa95885841e60852c8d17b1f'] = 'Aktiva statusar som utlöser leveransrapportering:';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Hantera fullständiga återbetalningar via PrestaShops adminpanel';
+$_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Skicka delåterbetalningar (kreditnotor) automatiskt till %s - återbetala dem inte också i handlarportalen';
 $_MODULE['<{twopayment}prestashop>twopayment_7aa0ef00af5612e50834b5bf969457e6'] = 'Företagssökningen är tillfälligt otillgänglig. Försök igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_7b7813f00f42b7e5366e7065aaa798c6'] = 'inklusive';
 $_MODULE['<{twopayment}prestashop>twopayment_7d211a5d9cccb0df11ba75b9db2e28a5'] = 'För många förfrågningar. Vänta en stund och försök igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_8c663cce717ad261932283cd6ca35073'] = 'Behandla B2C-betalningar (privatpersoner) - %s är endast B2B';
-$_MODULE['<{twopayment}prestashop>twopayment_35fba6fd0a77563c7b9e41075a751844'] = 'Behandla delåterbetalningar - använd %ss handlarportal för delåterbetalningar';
 $_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] = 'Du har inte behörighet att öppna denna faktura.';
 $_MODULE['<{twopayment}prestashop>twopayment_7e13e4b7dc934c4f24deede7949d856b'] = 'Fullständig återbetalning utfärdad från PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_7ea9d1186c856a865c57c49847891350'] = 'E-postadress för faktura';
