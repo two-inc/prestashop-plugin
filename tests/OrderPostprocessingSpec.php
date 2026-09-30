@@ -318,6 +318,13 @@ final class OrderPostprocessingSpec
         $before = $params['payload'];
         // The "No tax" carrier gives no rate, so the merchant's module supplies its own, as the fixture does.
         $rate = (float) $params['context']['shipping_tax_rate'] > 0 ? (float) $params['context']['shipping_tax_rate'] : 0.21;
+        if (empty($params['payload']['line_items'])) {
+            if (!empty($params['payload']['tax_subtotals'])) {
+                $params['payload'] = Twoorderpostprocessingtest::resplitUntaxedRefund($params['payload'], $rate);
+            }
+
+            return;
+        }
         $params['payload'] = Twoorderpostprocessingtest::resplitShipping($params['payload'], $rate);
         Twoorderpostprocessingtest::breakOnPurpose($mode, $params['payload'], $before);
     }
@@ -1019,12 +1026,27 @@ final class OrderPostprocessingSpec
      */
     private static function testReadmeExampleIsTheFixturesOwnCode(): void
     {
-        $method = new ReflectionMethod(Twoorderpostprocessingtest::class, 'resplitShipping');
-        $lines = array_slice(file((string) $method->getFileName()), $method->getStartLine() - 1, $method->getEndLine() - $method->getStartLine() + 1);
-        $source = implode('', array_map(static function (string $line): string {
-            return preg_replace('/^ {4}/', '', $line);
-        }, $lines));
-        TinyAssert::true(strpos((string) file_get_contents(dirname(__DIR__) . '/README.md'), $source) !== false, 'README carries the fixture\'s resplitShipping() verbatim');
+        foreach (['resplitShipping', 'resplitUntaxedRefund'] as $name) {
+            $method = new ReflectionMethod(Twoorderpostprocessingtest::class, $name);
+            $lines = array_slice(file((string) $method->getFileName()), $method->getStartLine() - 1, $method->getEndLine() - $method->getStartLine() + 1);
+            $source = implode('', array_map(static function (string $line): string {
+                return preg_replace('/^ {4}/', '', $line);
+            }, $lines));
+            TinyAssert::true(strpos((string) file_get_contents(dirname(__DIR__) . '/README.md'), $source) !== false, 'README carries the fixture\'s ' . $name . '() verbatim');
+        }
+        // The README's worked refund: a credit slip of the 29.00 shipping, and one beside the product's 21% share.
+        $sub = static function (string $rate, string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => $rate];
+        };
+        $cases = [
+            [[$sub('0.000000', '29.00', '0.00')], [$sub('0.210000', '23.97', '5.03')], 'shipping only'],
+            [[$sub('0.000000', '29.00', '0.00'), $sub('0.210000', '100.00', '21.00')], [$sub('0.210000', '123.97', '26.03')], 'merged into the 21% share'],
+            [[$sub('0.210000', '100.00', '21.00')], [$sub('0.210000', '100.00', '21.00')], 'nothing untaxed: unchanged'],
+        ];
+        foreach ($cases as [$in, $out, $description]) {
+            $payload = Twoorderpostprocessingtest::resplitUntaxedRefund(['amount' => '1.00', 'currency' => 'EUR', 'tax_subtotals' => $in], 0.21);
+            TinyAssert::same(['amount' => '1.00', 'currency' => 'EUR', 'tax_subtotals' => $out], $payload, 'refund re-split, ' . $description);
+        }
     }
 
     /**
