@@ -100,7 +100,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Account Type | Show account type selector | Enabled |
 | SSL Verification | Verify SSL certificates | Enabled |
 | Debug Mode | Enable detailed diagnostic logging | Disabled |
-| Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved — see below | Not set |
+| Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved. Hidden until Two enables it — see below | Not set |
 
 ### Optional buyer reference fields
 
@@ -153,7 +153,7 @@ relay decodes it back to plain text.
 
 PrestaShop declares shipping VAT per carrier, in `carrier_tax_rules_group_shop`, and nowhere else — there is no shop-level shipping tax rules group. The module relays that declaration; it never derives a VAT rate from the amounts. A shop whose shipping is priced outside the carrier table leaves `id_carrier = 0`, PrestaShop then hands the module an empty delivery-option list, and with no carrier there is no declared rate to relay — so the order is refused rather than shipped with a guessed rate.
 
-The **Default shipping tax code** setting, in **Module Configuration → Order management**, lets such a merchant make that declaration on the module instead. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
+The **Default shipping tax code** setting, in **Module Configuration → Order management**, lets such a merchant make that declaration on the module instead. It is **off, and the field hidden, until Two enables it for the shop**: talk to Two first, since assuming a shipping rate is a tax decision we want to review with you. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
 
 Resolution order:
 
@@ -162,6 +162,24 @@ Resolution order:
 3. Refuse the order (the pre-existing behaviour), if neither
 
 The setting has **no default value**. An install that never sets it behaves exactly as it did before the setting existed.
+
+#### Enabling it
+
+Two enables the fallback with the module's console command, run from the PrestaShop root by someone with shell access to the server (PrestaShop 1.7.6 and later). Without `--shop`, `enable` and `disable` write the global setting, which applies to every shop. With `--shop=<n>` they write that shop's own setting, which wins over the global one, so a multistore merchant can have the fallback on one shop only:
+
+```bash
+php bin/console twopayment:shipping-tax-fallback enable              # every shop: show the field and use the fallback
+php bin/console twopayment:shipping-tax-fallback enable --shop=2     # shop 2 only
+php bin/console twopayment:shipping-tax-fallback disable --shop=2    # shop 2 off, whatever the global setting says
+php bin/console twopayment:shipping-tax-fallback disable             # the global setting off; a shop's own setting still wins
+php bin/console twopayment:shipping-tax-fallback status              # each shop's effective state, where it comes from, and its stored group
+```
+
+Every action ends by printing each shop's effective state. On PrestaShop 1.7.6 to 8, core's own `--id_shop=<n>` is accepted as a synonym for `--shop=<n>`; `--id_shop_group` and a bare `--id_shop` are refused. PrestaShop 9 does not offer `--id_shop`, so use `--shop` there.
+
+The switch is stored in configuration as `PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED`: the global row, or one row per shop. An order reads the setting of the shop its cart belongs to. If the command is not listed (`There are no commands defined in the "twopayment" namespace`), clear the cache with `php bin/console cache:clear` so PrestaShop picks up the module's services. That is needed after the module's files are updated on a shop whose cache is already built.
+
+While it is disabled, orders that no carrier can price are refused as described above, and a group already stored is kept but not used. Saving the Order management tab never changes that stored group while the field is hidden, so enabling again restores the earlier selection.
 
 Notes:
 
