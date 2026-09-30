@@ -706,12 +706,16 @@ function oppRun($name)
     // The carrier-less fixture, once armed by another probe, replaces every cart's delivery options.
     $carrierless = Configuration::get('TWO_CARRIERLESS_TEST_GROSS');
     Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', '0');
+    // Blank, as another probe may leave it: populated, it would check the "No tax" carrier's line before the hook (TWO-26117).
+    $defaultGroup = Configuration::get('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP');
+    Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', '');
     try {
         $checks = oppRunScenario($name, $detail);
     } catch (Throwable $e) {
         $checks = array(array(get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine(), 'no exception', 'scenario ran'));
     }
     Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', $carrierless === false ? '0' : (string) $carrierless);
+    Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', $defaultGroup === false ? '' : (string) $defaultGroup);
     Configuration::updateValue('TWO_OPP_TEST_MODE', '');
     $failures = array();
     foreach ($checks as $check) {
@@ -743,7 +747,13 @@ if (!Module::isInstalled('twoorderpostprocessingtest')) {
 oppBootKernel();
 oppSeed();
 $exit = 0;
-foreach (array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'carrierless', 'carrierless_resplit') as $scenario_name) {
+$scenario_names = array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay');
+// The carrier-less fixture injects through actionFilterDeliveryOptionList, which core only fires from 8.0.
+if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
+    $scenario_names[] = 'carrierless';
+    $scenario_names[] = 'carrierless_resplit';
+}
+foreach ($scenario_names as $scenario_name) {
     $status = 0;
     passthru(escapeshellarg(PHP_BINARY) . ' -d memory_limit=512M ' . escapeshellarg(__FILE__) . ' ' . escapeshellarg($scenario_name), $status);
     $exit = $status !== 0 ? 1 : $exit;
