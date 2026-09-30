@@ -81,6 +81,13 @@ jobs:
             }
           ' || true
 
+      # The Apache error log is the container's stderr in these images.
+      - name: Dump Apache and PrestaShop logs on failure
+        if: failure()
+        run: |
+          docker logs --tail 300 "ps-$SFX" 2>&1 || true
+          docker exec "ps-$SFX" bash -c 'for f in /var/www/html/var/logs/*.log; do echo "== $f"; tail -n 200 "$f"; done' || true
+
       - name: Tear down
         if: always()
         run: |
