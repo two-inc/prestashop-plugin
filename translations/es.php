@@ -48,7 +48,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_bc5e69470fb58f31cb12c7e95bede662'] 
 $_MODULE['<{twopayment}prestashop>twopayment_5ea058e4746950c51516f030cae91320'] = 'Cumplimiento automático de pedidos cuando cambia el estado del pedido (configurable)';
 $_MODULE['<{twopayment}prestashop>twopayment_bb1697a94fe9e88e0c4b2b0dd605eced'] = 'Plazos de pago configurables (7, 15, 20, 30, 45, 60, 90 días)';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Gestionar reembolsos completos desde el administrador de PrestaShop';
-$_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Enviar reembolsos parciales (facturas rectificativas) a %s automáticamente: no los reembolses también en el Portal de Comerciantes';
+$_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Enviar reembolsos parciales (facturas por abono) a %s automáticamente: no los reembolses también en el Portal de Comerciantes';
 $_MODULE['<{twopayment}prestashop>twopayment_a97da5fb422662e859b341dd6f6c9704'] = 'Mostrar información del pedido de %s en la vista de pedidos del administrador';
 $_MODULE['<{twopayment}prestashop>twopayment_f71fecea4e95aedc66e77754d9cecda4'] = 'Compatibilidad con múltiples tipos impositivos y clientes exentos de impuestos';
 $_MODULE['<{twopayment}prestashop>twopayment_26aa493188d501eef826610ffb69c486'] = 'Gestionar correctamente las reglas de envío gratuito y los descuentos';
@@ -581,3 +581,10 @@ $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] 
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Los cambios de este pedido desde %s se han guardado en PrestaShop, pero no han llegado a %s, así que su factura puede no coincidir con este pedido. No repitas una modificación para reintentarla; ponte en contacto con el soporte.';
 $_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'La factura por abono n.º %1$s se ha guardado en PrestaShop, pero no se ha enviado a %2$s porque %3$s. Reembólsala en el Portal de Comerciantes de %2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'su importe reembolsado no se ha podido repartir entre los tipos de impuesto del pedido';
+$_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] = 'no se ha podido leer el pedido del proveedor';
+$_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'el pedido aún no se ha completado';
+$_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] = 'no se ha podido leer el total del pedido del proveedor';
+$_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'supera lo que queda por reembolsar del pedido';
+$_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'no se ha podido determinar la moneda del pedido';
+$_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'el proveedor no lo ha aceptado (HTTP %s)';
+$_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'El pedido se ha marcado como reembolsado en PrestaShop, pero lo que quedaba por reembolsar tras sus facturas por abono no se ha enviado a %1$s porque %2$s. Reembolsa el resto en el Portal de Comerciantes de %1$s.';

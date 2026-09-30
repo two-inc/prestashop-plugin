@@ -581,3 +581,10 @@ $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] 
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Wijzigingen in deze bestelling sinds %s zijn opgeslagen in PrestaShop, maar hebben %s niet bereikt, dus de factuur komt mogelijk niet overeen met deze bestelling. Voer een wijziging niet opnieuw uit om het nog eens te proberen; neem contact op met support.';
 $_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'Creditnota #%1$s is opgeslagen in PrestaShop maar niet naar %2$s verzonden, omdat %3$s. Betaal deze terug in de %2$s Merchant Portal.';
 $_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'het terugbetaalde bedrag niet over de btw-tarieven van de bestelling kon worden verdeeld';
+$_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] = 'de bestelling niet bij de aanbieder kon worden opgehaald';
+$_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'de bestelling nog niet is afgehandeld';
+$_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] = 'het totaal van de bestelling niet bij de aanbieder kon worden opgehaald';
+$_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'het meer is dan er van de bestelling nog terug te betalen is';
+$_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'de valuta van de bestelling niet kon worden bepaald';
+$_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'de aanbieder het niet heeft geaccepteerd (HTTP %s)';
+$_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'De bestelling is in PrestaShop als terugbetaald gemarkeerd, maar wat na de creditnota\'s nog terug te betalen was, is niet naar %1$s verzonden, omdat %2$s. Betaal de rest terug in de %1$s Merchant Portal.';
