@@ -589,3 +589,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] 
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'leverandøren ikke godtok den (HTTP %s)';
 $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'Ordren ble markert som refundert i PrestaShop, men det som gjensto å refundere etter kreditnotaene ble ikke sendt til %1$s fordi %2$s. Refunder resten i %1$s Selgerportal.';
 $_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'en uventet feil stoppet den';
+$_MODULE['<{twopayment}prestashop>twopayment_b324ba130c48d915b7f4065f928d9019'] = 'Øyeblikksbilder av avvik';
+$_MODULE['<{twopayment}prestashop>twopayment_0fafc015674a68481a377c36125bc110'] = 'Ingen øyeblikksbilder av avvik er registrert.';
+$_MODULE['<{twopayment}prestashop>twopayment_a85eba4c6c699122b2bb1387ea4813ad'] = 'Handlekurv';
+$_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] = 'Last ned JSON';

@@ -1,0 +1,617 @@
+<?php
+
+/**
+ * @author Plugin Developer from Two <jgang@two.inc> <support@two.inc>
+ * @copyright Since 2021 Two Team
+ * @license Two Commercial License
+ */
+
+/**
+ * One compact JSON record of a cart's totals, lines, shipping, overrides and
+ * price hooks, written to PrestaShop's log when a tax or totals gate fails
+ * (TWO-26064), so one failed order is enough to tell which cart shape caused it.
+ *
+ * Every read that can reach third-party code (overrides, hooked modules) is
+ * guarded: a snapshot must never turn a refused order into a fatal.
+ */
+class TwoDiscrepancySnapshot
+{
+    const LOG_OBJECT_TYPE = 'TwoDiscrepancySnapshot';
+    const SCHEMA_VERSION = 1;
+    // ps_log.message is TEXT (64KB) on 1.7.x, which also stores it addslashes()-escaped.
+    const MAX_BYTES = 32000;
+    const MAX_ROWS = 40;
+    const MAX_STRING = 120;
+    const AMOUNT_TOLERANCE = 0.01;
+
+    /** @var bool set once a Cart read has thrown during the build in progress */
+    private static $cartReadFailed = false;
+
+    const HOOKS = array(
+        'actionCartGetPackageShippingCost',
+        'actionProductPriceCalculation',
+        'displayCarrierExtraContent',
+        'actionCartSave',
+    );
+
+    const TOTAL_TYPES = array(
+        'ONLY_PRODUCTS',
+        'ONLY_DISCOUNTS',
+        'BOTH',
+        'BOTH_WITHOUT_SHIPPING',
+        'ONLY_SHIPPING',
+        'ONLY_WRAPPING',
+        'ONLY_PHYSICAL_PRODUCTS_WITHOUT_SHIPPING',
+    );
+
+    const LINE_ITEM_KEYS = array(
+        'type', 'name', 'quantity', 'unit_price', 'net_amount', 'discount_amount',
+        'tax_amount', 'gross_amount', 'tax_rate', 'tax_class_name',
+    );
+
+    // Dropped first when the record would not fit.
+    const SHEDDABLE = array('sent_line_items', 'hooks', 'overrides', 'cart_rules', 'delivery_options', 'products');
+
+    /**
+     * @param Cart $cart
+     * @param array|null $gate {name, label, numbers}; null for a debug-mode baseline
+     * @param array|null $lineItems the payload lines built so far, if any
+     * @param callable $declaredRate fn(int $id_tax_rules_group): float decimal rate
+     * @param int|null $defaultShippingGroup the module's Default shipping tax code
+     * @return array
+     */
+    public static function build($cart, $gate, $lineItems, $declaredRate, $defaultShippingGroup)
+    {
+        // A failed rate lookup logs a row of its own, so each group is asked once per snapshot.
+        $rates = array();
+        $truncated = array();
+        self::$cartReadFailed = false;
+        $declaredRate = function ($group) use (&$rates, $declaredRate) {
+            if (!array_key_exists($group, $rates)) {
+                $rates[$group] = round((float) call_user_func($declaredRate, $group), 6);
+            }
+
+            return $rates[$group];
+        };
+        // First, so a carrier throw never skips it; core's getOrderTotal() calls getProducts() itself.
+        $products = self::guard(function () use ($cart, $declaredRate, &$truncated) {
+            $products = self::cartRead(function () use ($cart) {
+                return (array) $cart->getProducts();
+            });
+
+            return isset($products['error']) ? $products : self::products(self::cap($products, 'products', $truncated), $declaredRate);
+        });
+        $snapshot = array(
+            'v' => self::SCHEMA_VERSION,
+            'id_cart' => (int) $cart->id,
+            'gate' => $gate,
+            'totals' => self::guard(function () use ($cart) {
+                return self::totals($cart);
+            }),
+            'products' => $products,
+            'shipping' => self::guard(function () use ($cart) {
+                return self::shipping($cart);
+            }),
+            'delivery_options' => self::guard(function () use ($cart, &$truncated) {
+                return self::deliveryOptions($cart, $truncated);
+            }),
+            'overrides' => self::guard(function () use (&$truncated) {
+                return self::overrides($truncated);
+            }),
+            'hooks' => self::guard(function () use (&$truncated) {
+                return self::hooks($truncated);
+            }),
+            'cart_rules' => self::guard(function () use ($cart, &$truncated) {
+                $rules = self::cartRead(function () use ($cart) {
+                    return (array) $cart->getCartRules();
+                });
+
+                return isset($rules['error']) ? $rules : self::cartRules(self::cap($rules, 'cart_rules', $truncated));
+            }),
+            'config' => self::guard(function () use ($cart, $defaultShippingGroup) {
+                return self::config($cart, $defaultShippingGroup);
+            }),
+            'address' => self::guard(function () use ($cart) {
+                return self::addresses($cart);
+            }),
+            'sent_line_items' => is_array($lineItems) ? self::lineItems(self::cap($lineItems, 'sent_line_items', $truncated)) : null,
+        );
+        if ($truncated !== array()) {
+            $snapshot['truncated'] = $truncated;
+        }
+        $snapshot['shape'] = self::classify($snapshot);
+
+        return $snapshot;
+    }
+
+    /**
+     * Map a snapshot to the cart shape that explains it (README "Discrepancy snapshot").
+     *
+     * @param array $snapshot
+     * @return string A|B|C|other
+     */
+    public static function classify(array $snapshot)
+    {
+        $both = self::num($snapshot, array('totals', 'BOTH', 'incl'));
+        $shipIncl = self::num($snapshot, array('totals', 'ONLY_SHIPPING', 'incl'));
+        $shipExcl = self::num($snapshot, array('totals', 'ONLY_SHIPPING', 'excl'));
+        $residual = self::num($snapshot, array('totals', 'residual', 'incl'));
+        $carrierIds = self::pricedCarrierIds($snapshot);
+        // A shape is a positive identification: any input that errored or is missing proves nothing.
+        if ($both === null || $shipIncl === null || $shipExcl === null || $residual === null || $carrierIds === null) {
+            return 'other';
+        }
+
+        // Stacked vouchers clamp BOTH to 0, which leaves a residual no hidden cost explains.
+        if (abs($residual) > self::AMOUNT_TOLERANCE && abs($shipIncl) <= self::AMOUNT_TOLERANCE && $both > self::AMOUNT_TOLERANCE) {
+            return 'C';
+        }
+        // A real carrier can have tax rules group 0 ("No tax"), so only carrier id 0 means no carrier.
+        if ($shipIncl > self::AMOUNT_TOLERANCE && $carrierIds === array(0)) {
+            return abs($shipIncl - $shipExcl) <= self::AMOUNT_TOLERANCE ? 'A' : 'B';
+        }
+
+        return 'other';
+    }
+
+    /**
+     * total_wt - total x (1 + declared rate), less what ecotax taxed at its own rate adds.
+     *
+     * @param array $row a products row
+     * @return float|null null when an input is missing or errored
+     */
+    public static function productDelta(array $row)
+    {
+        $total = self::num($row, array('total'));
+        $totalWt = self::num($row, array('total_wt'));
+        $qty = self::num($row, array('qty'));
+        $declared = self::num($row, array('declared_rate'));
+        $ecotax = self::num($row, array('ecotax'));
+        if ($total === null || $totalWt === null || $qty === null || $declared === null || $ecotax === null) {
+            return null;
+        }
+        $ecotaxRate = $ecotax != 0.0 ? self::num($row, array('ecotax_rate')) : $declared;
+        if ($ecotaxRate === null) {
+            return null;
+        }
+
+        return round($totalWt - $total * (1 + $declared) - $ecotax * $qty * ($ecotaxRate - $declared), 2) + 0.0;
+    }
+
+    /**
+     * JSON for the log, shedding the bulkiest sections until it fits MAX_BYTES.
+     *
+     * @param array $snapshot
+     * @return string
+     */
+    public static function encode(array $snapshot)
+    {
+        // Shop images ship serialize_precision=17, which prints 47.8 as 47.799999999999997.
+        $precision = ini_get('serialize_precision');
+        ini_set('serialize_precision', '-1');
+        try {
+            return self::encodeWithinLimit($snapshot);
+        } finally {
+            ini_set('serialize_precision', (string) $precision);
+        }
+    }
+
+    /**
+     * The JSON document from a stored log message; 1.7.x stores it pSQL()-escaped.
+     *
+     * @param string $message
+     * @return string|null
+     */
+    public static function decodeStored($message)
+    {
+        foreach (array((string) $message, stripslashes((string) $message)) as $candidate) {
+            if (is_array(json_decode($candidate, true))) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static function encodeWithinLimit(array $snapshot)
+    {
+        // Core strip_tags() every log message (pSQL without html_ok), so no raw < or > may reach it.
+        $flags = JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | (defined('JSON_PARTIAL_OUTPUT_ON_ERROR') ? JSON_PARTIAL_OUTPUT_ON_ERROR : 0);
+        $json = (string) json_encode($snapshot, $flags);
+        foreach (self::SHEDDABLE as $key) {
+            if (strlen(addslashes($json)) <= self::MAX_BYTES) {
+                break;
+            }
+            // A shed list counts all its rows as cut, on top of any the row cap already cut.
+            if (isset($snapshot[$key][0])) {
+                $snapshot['truncated'][$key] = count($snapshot[$key]) + (isset($snapshot['truncated'][$key]) ? $snapshot['truncated'][$key] : 0);
+            }
+            $snapshot[$key] = array('dropped' => 'size');
+            $json = (string) json_encode($snapshot, $flags);
+        }
+        if (strlen(addslashes($json)) > self::MAX_BYTES) {
+            $json = (string) json_encode(array(
+                'v' => self::SCHEMA_VERSION,
+                'id_cart' => isset($snapshot['id_cart']) ? $snapshot['id_cart'] : 0,
+                'gate' => array('name' => isset($snapshot['gate']['name']) ? $snapshot['gate']['name'] : null),
+                'shape' => isset($snapshot['shape']) ? $snapshot['shape'] : 'other',
+                'dropped' => 'size',
+            ), $flags);
+        }
+
+        return $json;
+    }
+
+    /**
+     * @param callable $read
+     * @return mixed the section, or {error, code} when it raised
+     */
+    private static function guard($read)
+    {
+        try {
+            return $read();
+        } catch (Throwable $e) {
+            // Never the message: third-party code puts buyer addresses in it.
+            return array('error' => get_class($e), 'code' => $e->getCode());
+        }
+    }
+
+    /**
+     * A guarded Cart read that stops once one has thrown: core does not cache a failed
+     * price, so each repeat would re-run a slow throwing carrier module.
+     *
+     * @param callable $read
+     * @return mixed
+     */
+    private static function cartRead($read)
+    {
+        if (self::$cartReadFailed) {
+            return array('error' => 'skipped');
+        }
+        $result = self::guard($read);
+        self::$cartReadFailed = is_array($result) && isset($result['error']);
+
+        return $result;
+    }
+
+    private static function totals($cart)
+    {
+        $totals = array();
+        foreach (self::TOTAL_TYPES as $name) {
+            if (!defined('Cart::' . $name)) {
+                continue;
+            }
+            $type = constant('Cart::' . $name);
+            $totals[$name] = array(
+                'incl' => self::cartRead(function () use ($cart, $type) {
+                    return round((float) $cart->getOrderTotal(true, $type), 2);
+                }),
+                'excl' => self::cartRead(function () use ($cart, $type) {
+                    return round((float) $cart->getOrderTotal(false, $type), 2);
+                }),
+            );
+        }
+        // Discounts come back positive and BOTH subtracts them.
+        $residual = array();
+        foreach (array('incl', 'excl') as $side) {
+            $sum = 0.0;
+            foreach (array('BOTH' => 1, 'ONLY_PRODUCTS' => -1, 'ONLY_SHIPPING' => -1, 'ONLY_WRAPPING' => -1, 'ONLY_DISCOUNTS' => 1) as $name => $sign) {
+                $value = self::num($totals, array($name, $side));
+                $sum = $sum === null || $value === null ? null : $sum + $sign * $value;
+            }
+            $residual[$side] = $sum === null ? null : round($sum, 2) + 0.0;
+        }
+        $totals['residual'] = $residual;
+
+        return $totals;
+    }
+
+    private static function products(array $cartProducts, $declaredRate)
+    {
+        $ecotaxRate = self::guard(function () use ($declaredRate) {
+            return call_user_func($declaredRate, (int) Configuration::get('PS_ECOTAX_TAX_RULES_GROUP_ID'));
+        });
+        $rows = array();
+        foreach ($cartProducts as $row) {
+            $total = round((float) (isset($row['total']) ? $row['total'] : 0), 2);
+            $totalWt = round((float) (isset($row['total_wt']) ? $row['total_wt'] : 0), 2);
+            $group = self::guard(function () use ($row) {
+                return (int) Product::getIdTaxRulesGroupByIdProduct((int) $row['id_product']);
+            });
+            $out = array(
+                'id_product' => (int) $row['id_product'],
+                'id_product_attribute' => (int) (isset($row['id_product_attribute']) ? $row['id_product_attribute'] : 0),
+                'qty' => (int) (isset($row['cart_quantity']) ? $row['cart_quantity'] : 0),
+                'price' => round((float) (isset($row['price']) ? $row['price'] : 0), 6),
+                'price_wt' => round((float) (isset($row['price_wt']) ? $row['price_wt'] : 0), 6),
+                'total' => $total,
+                'total_wt' => $totalWt,
+                'ecotax' => round((float) (isset($row['ecotax']) ? $row['ecotax'] : 0), 6),
+                'ecotax_rate' => $ecotaxRate,
+                'id_tax_rules_group' => $group,
+                'declared_rate' => is_int($group) ? self::guard(function () use ($declaredRate, $group) {
+                    return call_user_func($declaredRate, $group);
+                }) : null,
+                'implied_rate' => $total != 0.0 ? round(($totalWt - $total) / $total, 6) : null,
+            );
+            $out['delta'] = self::productDelta($out);
+            $rows[] = $out;
+        }
+
+        return $rows;
+    }
+
+    private static function shipping($cart)
+    {
+        $idCarrier = (int) $cart->id_carrier;
+        $raw = isset($cart->delivery_option) ? (string) $cart->delivery_option : '';
+        $option = json_decode($raw, true);
+
+        return array(
+            'id_carrier' => $idCarrier,
+            'carrier_tax_rules_group' => $idCarrier > 0 ? self::guard(function () use ($idCarrier) {
+                return (int) Carrier::getIdTaxRulesGroupByIdCarrier($idCarrier);
+            }) : 0,
+            'delivery_option' => is_array($option) ? $option : self::str($raw),
+            // What ONLY_SHIPPING is priced from: core auto-selects the best option when the stored one is empty or stale.
+            'priced_option' => self::cartRead(function () use ($cart) {
+                return $cart->getDeliveryOption(null, false, false);
+            }),
+            'package_cost_incl' => self::cartRead(function () use ($cart, $idCarrier) {
+                return round((float) $cart->getPackageShippingCost($idCarrier > 0 ? $idCarrier : null, true), 2);
+            }),
+            'package_cost_excl' => self::cartRead(function () use ($cart, $idCarrier) {
+                return round((float) $cart->getPackageShippingCost($idCarrier > 0 ? $idCarrier : null, false), 2);
+            }),
+        );
+    }
+
+    private static function deliveryOptions($cart, array &$truncated)
+    {
+        $list = self::cartRead(function () use ($cart) {
+            return (array) $cart->getDeliveryOptionList();
+        });
+        if (isset($list['error'])) {
+            return $list;
+        }
+        $summary = array();
+        $seen = 0;
+        foreach ($list as $idAddress => $options) {
+            foreach ((array) $options as $key => $option) {
+                if (++$seen > self::MAX_ROWS) {
+                    continue;
+                }
+                $carriers = array();
+                $carrierList = isset($option['carrier_list']) && is_array($option['carrier_list']) ? $option['carrier_list'] : array();
+                foreach ($carrierList as $idCarrier => $entry) {
+                    $instance = isset($entry['instance']) ? $entry['instance'] : null;
+                    $carriers[] = array(
+                        'id_carrier' => (int) $idCarrier,
+                        'tax_rules_group' => self::guard(function () use ($instance, $idCarrier) {
+                            return is_object($instance) && method_exists($instance, 'getIdTaxRulesGroup')
+                                ? (int) $instance->getIdTaxRulesGroup()
+                                : (int) Carrier::getIdTaxRulesGroupByIdCarrier((int) $idCarrier);
+                        }),
+                    );
+                }
+                $summary[] = array(
+                    'id_address' => (int) $idAddress,
+                    'key' => self::str((string) $key),
+                    'carriers' => $carriers,
+                    'price_incl' => round((float) (isset($option['total_price_with_tax']) ? $option['total_price_with_tax'] : 0), 2),
+                    'price_excl' => round((float) (isset($option['total_price_without_tax']) ? $option['total_price_without_tax'] : 0), 2),
+                );
+            }
+        }
+        if ($seen > self::MAX_ROWS) {
+            $truncated['delivery_options'] = $seen - self::MAX_ROWS;
+        }
+
+        return $summary;
+    }
+
+    private static function overrides(array &$truncated)
+    {
+        $files = array();
+        foreach (array('Cart', 'Product', 'Carrier', 'Order') as $class) {
+            $files[$class] = self::guard(function () use ($class) {
+                $file = (string) (new ReflectionClass($class))->getFileName();
+
+                // Without an override the autoloader eval()s an empty `X extends XCore`.
+                return strpos($file, "eval()'d") !== false ? 'core' : self::sitePath($file);
+            });
+        }
+        $overridden = array();
+        foreach (array('Cart', 'Product', 'Carrier') as $class) {
+            $overridden[$class] = self::guard(function () use ($class, &$truncated) {
+                $names = array();
+                if (class_exists($class . 'Core', false) && get_parent_class($class) === $class . 'Core') {
+                    foreach ((new ReflectionClass($class))->getMethods() as $method) {
+                        if ($method->getDeclaringClass()->getName() === $class && method_exists($class . 'Core', $method->getName())) {
+                            $names[] = $method->getName();
+                        }
+                    }
+                }
+
+                return self::cap($names, 'overrides.' . $class, $truncated);
+            });
+        }
+
+        return array('files' => $files, 'methods_overridden' => $overridden);
+    }
+
+    private static function hooks(array &$truncated)
+    {
+        $hooks = array();
+        foreach (self::HOOKS as $hook) {
+            $hooks[$hook] = self::guard(function () use ($hook, &$truncated) {
+                $names = array();
+                $list = Hook::getHookModuleExecList($hook);
+                foreach (is_array($list) ? $list : array() as $row) {
+                    $names[] = self::str((string) (isset($row['module']) ? $row['module'] : ''));
+                }
+
+                return self::cap($names, 'hooks.' . $hook, $truncated);
+            });
+        }
+
+        return $hooks;
+    }
+
+    private static function cartRules(array $cartRules)
+    {
+        $rules = array();
+        foreach ($cartRules as $rule) {
+            $rules[] = array(
+                'id_cart_rule' => (int) (isset($rule['id_cart_rule']) ? $rule['id_cart_rule'] : 0),
+                'free_shipping' => !empty($rule['free_shipping']),
+                'reduction_percent' => (float) (isset($rule['reduction_percent']) ? $rule['reduction_percent'] : 0),
+                'reduction_amount' => (float) (isset($rule['reduction_amount']) ? $rule['reduction_amount'] : 0),
+                'reduction_tax' => !empty($rule['reduction_tax']),
+                'value_real' => round((float) (isset($rule['value_real']) ? $rule['value_real'] : 0), 2),
+                'value_tax_exc' => round((float) (isset($rule['value_tax_exc']) ? $rule['value_tax_exc'] : 0), 2),
+            );
+        }
+
+        return $rules;
+    }
+
+    private static function config($cart, $defaultShippingGroup)
+    {
+        $currency = new Currency((int) $cart->id_currency);
+
+        return array(
+            'ps_version' => defined('_PS_VERSION_') ? _PS_VERSION_ : null,
+            'PS_TAX' => Configuration::get('PS_TAX'),
+            'PS_TAX_ADDRESS_TYPE' => Configuration::get('PS_TAX_ADDRESS_TYPE'),
+            'PS_ROUND_TYPE' => Configuration::get('PS_ROUND_TYPE'),
+            'PS_PRICE_ROUND_MODE' => Configuration::get('PS_PRICE_ROUND_MODE'),
+            'PS_ATCP_SHIPWRAP' => Configuration::get('PS_ATCP_SHIPWRAP'),
+            'PS_GIFT_WRAPPING' => Configuration::get('PS_GIFT_WRAPPING'),
+            'PS_GIFT_WRAPPING_PRICE' => Configuration::get('PS_GIFT_WRAPPING_PRICE'),
+            'cart_gift' => !empty($cart->gift),
+            'currency_iso' => isset($currency->iso_code) ? $currency->iso_code : null,
+            'currency_precision' => isset($currency->precision) ? (int) $currency->precision : null,
+            'compute_precision' => defined('_PS_PRICE_COMPUTE_PRECISION_') ? (int) _PS_PRICE_COMPUTE_PRECISION_ : null,
+            'default_shipping_tax_rules_group' => $defaultShippingGroup,
+        );
+    }
+
+    // Country, state and whether a VAT number exists: never any other buyer data.
+    private static function addresses($cart)
+    {
+        $out = array();
+        foreach (array('delivery' => 'id_address_delivery', 'invoice' => 'id_address_invoice') as $role => $field) {
+            $address = new Address((int) $cart->{$field});
+            $out[$role] = array(
+                'country_iso' => (string) Country::getIsoById((int) $address->id_country),
+                'id_state' => (int) $address->id_state,
+                'vat_number_present' => trim((string) $address->vat_number) !== '',
+            );
+        }
+
+        return $out;
+    }
+
+    private static function lineItems(array $lineItems)
+    {
+        $out = array();
+        foreach ($lineItems as $item) {
+            $row = array();
+            foreach (self::LINE_ITEM_KEYS as $key) {
+                if (isset($item[$key])) {
+                    $row[$key] = is_string($item[$key]) ? self::str($item[$key]) : $item[$key];
+                }
+            }
+            $out[] = $row;
+        }
+
+        return $out;
+    }
+
+    private static function cap(array $rows, $section, array &$truncated)
+    {
+        if (count($rows) > self::MAX_ROWS) {
+            $truncated[$section] = count($rows) - self::MAX_ROWS;
+        }
+
+        return array_slice($rows, 0, self::MAX_ROWS);
+    }
+
+    /**
+     * The carrier ids of the delivery option core prices shipping from; 0 is no carrier.
+     *
+     * @param array $snapshot
+     * @return int[]|null null when the option cannot be read
+     */
+    private static function pricedCarrierIds(array $snapshot)
+    {
+        // Each key lists the option's carriers ('3,5,'), so a multi-carrier option is covered too.
+        $selected = isset($snapshot['shipping']['priced_option']) ? $snapshot['shipping']['priced_option'] : null;
+        if (!is_array($selected) || isset($selected['error'])) {
+            return null;
+        }
+        $ids = array();
+        foreach ($selected as $key) {
+            if (!is_scalar($key)) {
+                return null;
+            }
+            foreach (array_filter(explode(',', (string) $key), 'strlen') as $id) {
+                $ids[] = (int) $id;
+            }
+        }
+
+        return $ids === array() ? null : array_values(array_unique($ids));
+    }
+
+    /**
+     * @return float|null null when the path is missing or not a number (an {error} section)
+     */
+    private static function num($array, array $path)
+    {
+        foreach ($path as $key) {
+            if (!is_array($array) || !isset($array[$key])) {
+                return null;
+            }
+            $array = $array[$key];
+        }
+
+        return is_numeric($array) ? (float) $array : null;
+    }
+
+    /**
+     * Where an exception was thrown, as a site path: never an absolute path.
+     *
+     * @param Throwable $e
+     * @return string file:line
+     */
+    public static function throwSite($e)
+    {
+        return self::sitePath((string) $e->getFile()) . ':' . (int) $e->getLine();
+    }
+
+    /** Relative to the module, else the shop root; any other path (Windows, phar://, a symlink target) is cut to its basename. */
+    private static function sitePath($file)
+    {
+        $file = str_replace('\\', '/', $file);
+        foreach (array(dirname(__DIR__), defined('_PS_ROOT_DIR_') ? (string) _PS_ROOT_DIR_ : '') as $root) {
+            $root = rtrim(str_replace('\\', '/', $root), '/') . '/';
+            if ($root !== '/' && strpos($file, $root) === 0) {
+                return substr($file, strlen($root));
+            }
+        }
+
+        return basename($file);
+    }
+
+    private static function str($value, $max = self::MAX_STRING)
+    {
+        $value = (string) $value;
+        if (strlen($value) <= $max) {
+            return $value;
+        }
+
+        // A byte cut can split a UTF-8 character, which json_encode then rejects.
+        return (function_exists('mb_strcut') ? mb_strcut($value, 0, $max, 'UTF-8') : substr($value, 0, $max)) . '...';
+    }
+}

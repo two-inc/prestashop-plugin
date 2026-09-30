@@ -20,6 +20,7 @@ require_once dirname(__FILE__) . '/classes/TwoRateLimiter.php';
 require_once dirname(__FILE__) . '/classes/TwoStoredTerm.php';
 require_once dirname(__FILE__) . '/classes/TwoAnchorOnlyHtml.php';
 require_once dirname(__FILE__) . '/classes/TwoShippingTaxFallbackGate.php';
+require_once dirname(__FILE__) . '/classes/TwoDiscrepancySnapshot.php';
 
 class Twopayment extends PaymentModule
 {
@@ -7139,6 +7140,111 @@ class Twopayment extends PaymentModule
      */
     private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null, $syncSurchargeCartLine = false, $placedOrder = null)
     {
+        $this->twoDiscrepancyGate = null;
+        if ($placedOrder !== null) {
+            // The snapshot reads the cart, which an update does not price; a placed order's figures would be misattributed to it.
+            return $this->computeTwoOrderPricingData($cart, $contextLabel, $strictReconciliation, $paymentTermDays, $syncSurchargeCartLine, $placedOrder);
+        }
+        try {
+            $pricing = $this->computeTwoOrderPricingData($cart, $contextLabel, $strictReconciliation, $paymentTermDays, $syncSurchargeCartLine, $placedOrder);
+        } catch (Throwable $e) {
+            $gate = $this->twoDiscrepancyGate;
+            $cause = $gate !== null && $gate['exception'] === null ? $e : null;
+            // A gate exception a fallback caught (Default shipping tax code) is not the one that refused the order; a wrapped one is.
+            for ($link = $e; $cause === null && $gate !== null && $link !== null; $link = $link->getPrevious()) {
+                $cause = $link === $gate['exception'] ? $link : null;
+            }
+            if ($cause === null) {
+                $gate = array('name' => get_class($e), 'label' => 'unrecorded refusal', 'numbers' => array(
+                    'site' => TwoDiscrepancySnapshot::throwSite($e),
+                    'code' => $e->getCode(),
+                ), 'line_items' => null);
+            }
+            if ($gate['name'] !== null) {
+                $this->logTwoDiscrepancySnapshot($cart, $gate);
+            }
+            throw $e;
+        }
+        if (Configuration::get('PS_TWO_DEBUG_MODE')) {
+            $this->logTwoDiscrepancySnapshot($cart, null, $pricing['line_items']);
+        }
+
+        return $pricing;
+    }
+
+    /**
+     * Remember the gate that is refusing the current pricing build, for numbers the exception alone would not carry.
+     *
+     * @param string|null $name null when the refusal is no discrepancy and writes no snapshot
+     * @param string $label
+     * @param array $numbers
+     * @param Throwable|null $exception the exception the gate throws, null when its caller throws
+     * @param array|null $lineItems the payload lines built so far
+     * @return void
+     */
+    private function recordTwoDiscrepancyGate($name, $label, array $numbers, $exception = null, $lineItems = null)
+    {
+        $this->twoDiscrepancyGate = array(
+            'name' => $name,
+            'label' => (string) $label,
+            'numbers' => $numbers,
+            'exception' => $exception,
+            'line_items' => $lineItems,
+        );
+    }
+
+    /**
+     * Write the discrepancy snapshot for this cart; never lets its own failure escape.
+     *
+     * @param Cart $cart
+     * @param array|null $gate null for the debug-mode baseline
+     * @param array|null $lineItems
+     * @return void
+     */
+    private function logTwoDiscrepancySnapshot($cart, $gate, $lineItems = null)
+    {
+        try {
+            if ($gate !== null) {
+                $lineItems = $gate['line_items'];
+                unset($gate['exception'], $gate['line_items']);
+            }
+            $snapshot = TwoDiscrepancySnapshot::build(
+                $cart,
+                $gate,
+                $lineItems,
+                function ($id_tax_rules_group) use ($cart) {
+                    return $this->getTwoConfiguredTaxRateDecimalForGroup($id_tax_rules_group, $cart);
+                },
+                $this->getTwoDefaultShippingTaxRulesGroupId()
+            );
+            PrestaShopLogger::addLog(
+                TwoDiscrepancySnapshot::encode($snapshot),
+                $gate === null ? 1 : 3,
+                null,
+                TwoDiscrepancySnapshot::LOG_OBJECT_TYPE,
+                (int) $cart->id,
+                true
+            );
+        } catch (Throwable $e) {
+            try {
+                // The class only: a third-party message can carry buyer address data.
+                PrestaShopLogger::addLog('TwoPayment: Discrepancy snapshot for cart ' . (int) $cart->id . ' failed: ' . get_class($e), 2);
+            } catch (Throwable $ignored) {
+            }
+        }
+    }
+
+    /**
+     * The pricing build itself; buildTwoOrderPricingData() wraps it with the discrepancy snapshot.
+     *
+     * @param Cart $cart
+     * @param string $contextLabel
+     * @param Order|null $placedOrder set on the update path: every line is replayed from that order, never the cart (TWO-26085)
+     * @return array
+     * @throws Exception
+     */
+    private function computeTwoOrderPricingData($cart, $contextLabel, $strictReconciliation, $paymentTermDays, $syncSurchargeCartLine, $placedOrder)
+    {
         // Money-critical self-heal (create + strict-submit paths only; never
         // the update path, whose cart belongs to an already-placed order):
         // reconcile the cart's surcharge line with the fee this payload will
@@ -7155,11 +7261,13 @@ class Twopayment extends PaymentModule
         $line_items = $placed !== null ? $this->buildTwoLineItems($cart, $placed) : $this->getTwoProductItems($cart);
         if (empty($line_items)) {
             PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - no valid line items', 3);
+            $this->recordTwoDiscrepancyGate(null, $contextLabel, array());
             throw new Exception('No valid line items in cart');
         }
 
         if (!$this->validateTwoLineItems($line_items)) {
             PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - invalid line item formulas', 3);
+            $this->recordTwoDiscrepancyGate('line_formulas', $contextLabel, array(), null, $line_items);
             throw new Exception('Invalid line item formulas');
         }
 
@@ -7168,6 +7276,9 @@ class Twopayment extends PaymentModule
         $reconciliation_drift = '';
         if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, $max_reconciliation_diff_cents, $reconciliation_drift, $placed !== null ? $placed['totals'] : null)) {
             if ($this->shouldBlockOnReconciliationDrift($contextLabel, $max_reconciliation_diff_cents, (bool)$strictReconciliation)) {
+                if ($this->twoDiscrepancyGate !== null) {
+                    $this->twoDiscrepancyGate['line_items'] = $line_items;
+                }
                 PrestaShopLogger::addLog(
                     'TwoPayment: ' . $contextLabel . ' blocked by reconciliation policy. ' .
                     'Max drift=' . $this->getTwoRoundAmount($max_reconciliation_diff_cents / 100) .
@@ -7190,6 +7301,8 @@ class Twopayment extends PaymentModule
                 'TwoPayment: ' . $contextLabel . ' reconciliation drift logged as warning-only (intent precheck path).',
                 2
             );
+            // Tolerated here, so a later refusal must not be reported as this gate.
+            $this->twoDiscrepancyGate = null;
         }
 
         $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
@@ -7209,6 +7322,10 @@ class Twopayment extends PaymentModule
                 $this->getTwoRoundAmount($subtotalsTotals['gross']) . ')',
                 3
             );
+            $this->recordTwoDiscrepancyGate('tax_subtotals', $contextLabel, array(
+                'line' => $lineTotals,
+                'subtotals' => $subtotalsTotals,
+            ), null, $line_items);
             throw new TwoCheckoutAmountException('Tax subtotals do not reconcile with line items');
         }
 
@@ -7338,6 +7455,10 @@ class Twopayment extends PaymentModule
             $maxDiffCents = PHP_INT_MAX;
             $driftDetail = 'order lines gross ' . $this->getTwoRoundAmount($lineGross) .
                 ' vs order lines net+tax ' . $this->getTwoRoundAmount($lineNet + $lineTax);
+            $this->recordTwoDiscrepancyGate('reconciliation', $contextLabel, array(
+                'check' => 'line gross equation',
+                'line' => array('net' => $lineNet, 'tax' => $lineTax, 'gross' => $lineGross),
+            ));
             PrestaShopLogger::addLog(
                 'TwoPayment: ' . $contextLabel . ' reconciliation mismatch - line totals fail gross equation: ' . $driftDetail,
                 3
@@ -7390,6 +7511,12 @@ class Twopayment extends PaymentModule
 
         if (!empty($drifted)) {
             $driftDetail = implode('; ', $drifted);
+            $this->recordTwoDiscrepancyGate('reconciliation', $contextLabel, array(
+                'check' => 'order lines vs cart totals',
+                'line' => array('net' => $lineNet, 'tax' => $lineTax, 'gross' => $lineGross),
+                'cart' => array('net' => $cartNet, 'tax' => $cartTax, 'gross' => $cartGross),
+                'diff_cents' => array('net' => $netDiffCents, 'tax' => $taxDiffCents, 'gross' => $grossDiffCents),
+            ));
             PrestaShopLogger::addLog(
                 'TwoPayment: ' . $contextLabel . ' reconciliation mismatch - order totals mismatch cart totals: ' . $driftDetail,
                 3
@@ -9170,9 +9297,16 @@ class Twopayment extends PaymentModule
             '. Check the tax rules configured for this line (tax rules group, address-specific rules).',
             3
         );
-        throw new TwoCheckoutAmountException(
+        $exception = new TwoCheckoutAmountException(
             'Declared tax rate diverges from applied tax amounts for ' . $label
         );
+        $this->recordTwoDiscrepancyGate('declared_rate', $label, array(
+            'declared_rate' => round(max(0, (float) $rate_decimal), 6),
+            'net' => $net_amount,
+            'applied_tax' => $tax_amount,
+            'expected_tax' => $expected_tax,
+        ), $exception);
+        throw $exception;
     }
 
     /**
@@ -10775,10 +10909,17 @@ class Twopayment extends PaymentModule
         // Buyer-facing by type: the detail is nothing but the cart's own
         // amounts and identifiers, and naming the condition on the checkout
         // page is the whole point of the loud refusal (TWO-25161).
-        return new TwoCheckoutAmountException(
+        $exception = new TwoCheckoutAmountException(
             'No deliverable carrier for the cart shipping cost: ' . $reason . ', so there is no declared ' .
             'shipping tax-rules group to relay (' . $detail . ')'
         );
+        $this->recordTwoDiscrepancyGate('shipping_rate_unresolvable', $reason, array(
+            'shipping_gross' => round((float) $shipping_gross, 2),
+            'id_carrier' => (int) $id_carrier,
+            'option_key' => (string) $option_key,
+        ), $exception);
+
+        return $exception;
     }
 
     /**
@@ -14392,6 +14533,14 @@ class Twopayment extends PaymentModule
      * @var bool
      */
     protected $twoCountryLookupFailureLogged = false;
+
+    /**
+     * The tax/totals gate that refused the pricing build in progress, for the
+     * discrepancy snapshot (TWO-26064): {name, label, numbers, exception, line_items}.
+     *
+     * @var array|null
+     */
+    protected $twoDiscrepancyGate = null;
 
     /**
      * Read a brand-config value (brands/two.php), cached per request. Returns
