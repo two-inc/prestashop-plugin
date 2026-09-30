@@ -604,3 +604,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_759ff422efd0250045ed55a9a958546b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_280d19d2479762ed9a0d8aaed614e8bb'] = 'Het land van de verkoper is nog niet bekend, dus er kunnen geen belastingcodes worden getoond. Sla een geldige API-sleutel op, of vernieuw het verkopersprofiel op het tabblad Diagnostiek.';
 $_MODULE['<{twopayment}prestashop>twopayment_31804353a7d42acedb8d202c17571abf'] = 'De lijst met belastingcodes kon niet worden gelezen bij %1$s (HTTP %2$s). Opgeslagen koppelingen blijven werken bij het afrekenen; laad deze pagina opnieuw om het nog eens te proberen.';
 $_MODULE['<{twopayment}prestashop>twopayment_d592cdbb1c59d9ba9f0308c01863437c'] = 'de opgeslagen koppeling van belastingcodes is onleesbaar. Sla Belastingcodes voor regels tegen 0% nog een keer op.';
+$_MODULE['<{twopayment}prestashop>twopayment_1493bd5d032828e60663be984220ad7e'] = 'De opgeslagen bedrijfsgegevens van de checkout konden niet worden verwijderd.';
+$_MODULE['<{twopayment}prestashop>twopayment_b6dd1a9c89709b3b2e3750f24560c7e5'] = 'De opgeslagen bedrijfsgegevens van de checkout konden niet worden geëxporteerd.';
