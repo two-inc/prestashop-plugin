@@ -328,6 +328,8 @@ final class DiscrepancySnapshotSpec
             PrestaShopLogger::reset();
             StubStore::$taxRulesGroups[4210] = ['name' => 'IVA 21%', 'active' => 1];
             StubStore::$taxRuleRates[4210] = 21.0;
+            // The fallback is off until Two enables it (TWO-26082); these cases exercise it switched on.
+            Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
             Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', $group);
             Configuration::updateValue('PS_TWO_DEBUG_MODE', $debug);
             $id = 9400 + $i;
