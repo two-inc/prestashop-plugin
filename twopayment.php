@@ -4988,16 +4988,22 @@ class Twopayment extends PaymentModule
                 return;
             }
 
+            // Invariants, from here on the slip is claimed and no later call will send it:
+            //  (a) once Two has accepted the refund ($sent set on a 201), the slip is recorded SENT and the merchant is
+            //      never told to refund it in the portal, which would refund the buyer twice;
+            //  (b) otherwise the merchant is told it was not sent, even if recording that fails.
             $sent = null;
             try {
                 $reason = $this->sendTwoCreditSlipRefund($slip, $order, $orderpaymentdata, $sent);
             } catch (Throwable $e) {
-                // Claimed, so no later call will send it: the merchant must hear it was not sent.
-                PrestaShopLogger::addLog('TwoPayment: Exception during partial refund of slip ' . (int)$slip->id . ' on order ' . $id_order . '. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
-                $sent = null;
-                $reason = $this->l('an unexpected error stopped it');
+                PrestaShopLogger::addLog('TwoPayment: Exception during partial refund of slip ' . (int)$slip->id . ' on order ' . $id_order . ($sent !== null ? ', after Two accepted it' : '') . '. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+                $reason = $sent !== null ? null : $this->l('an unexpected error stopped it');
             }
-            $this->recordTwoRefundOutcome($id_order, (int)$slip->id, $reason === null ? 'SENT' : 'NOT_SENT', $sent, $reason);
+            try {
+                $this->recordTwoRefundOutcome($id_order, (int)$slip->id, $reason === null ? 'SENT' : 'NOT_SENT', $sent, $reason);
+            } catch (Throwable $e) {
+                PrestaShopLogger::addLog('TwoPayment: Could not record credit slip ' . (int)$slip->id . ' on order ' . $id_order . ' as ' . ($reason === null ? 'SENT' : 'NOT_SENT') . ' - ' . $e->getMessage(), 3);
+            }
             if ($reason !== null && $reason !== '') {
                 $this->flagTwoCreditSlipNotSent($id_order, (int)$slip->id, $reason);
             }
@@ -5098,6 +5104,7 @@ class Twopayment extends PaymentModule
         }
 
         PrestaShopLogger::addLog('TwoPayment: Partial refund successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id . ', Idempotency Key: ' . $idempotency_key, 1);
+        // Two has accepted it: from here nothing may turn this into a not-sent slip (see the hook's invariants).
         $sent = $payload;
         $this->refreshTwoOrderPaymentDataAfterRefund($id_order, $two_order_id, $orderpaymentdata);
 
@@ -5139,6 +5146,21 @@ class Twopayment extends PaymentModule
      * @param array $orderpaymentdata
      */
     private function refreshTwoOrderPaymentDataAfterRefund($id_order, $two_order_id, $orderpaymentdata)
+    {
+        // Runs after Two accepted a refund, so a failure here only logs: the refund stands either way.
+        try {
+            $this->storeTwoOrderSnapshotAfterRefund($id_order, $two_order_id, $orderpaymentdata);
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog('TwoPayment: Refund accepted by Two, but the order snapshot could not be refreshed. Order ID: ' . (int)$id_order . ' - ' . $e->getMessage(), 2);
+        }
+    }
+
+    /**
+     * @param int $id_order
+     * @param string $two_order_id
+     * @param array $orderpaymentdata
+     */
+    private function storeTwoOrderSnapshotAfterRefund($id_order, $two_order_id, $orderpaymentdata)
     {
         $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
         if (!isset($order_after['id']) || !$order_after['id']) {
