@@ -123,7 +123,8 @@ class TwoOrderPostprocessing
     public static function runnableSubscribers()
     {
         if (defined('PS_INSTALLATION_IN_PROGRESS')
-            || (method_exists('Hook', 'getHookStatusByName') && !Hook::getHookStatusByName(self::HOOK))) {
+            // 8.0+ only; 1.7 has no per-hook active flag.
+            || (method_exists('Hook', 'getHookStatusByName') && !call_user_func(array('Hook', 'getHookStatusByName'), self::HOOK))) {
             return array();
         }
         $list = Hook::getHookModuleExecList(self::HOOK);
