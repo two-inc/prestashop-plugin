@@ -385,6 +385,9 @@ class Twopayment extends PaymentModule
     /** @var array[] getTwoCreditSlipTaxLines() rows by slip id: the gross amount and the tax subtotals read the same lines (TWO-26093) */
     private $twoCreditSlipTaxLines = array();
 
+    /** @var string the hook trigger of the order_update rebuilt, not sent, to split a Refunded remainder by rate */
+    const TRIGGER_REFUND_REMAINDER = 'refund_remainder';
+
     /** @var array|null the charge rates the last create payload declared, persisted on the Two row for updates (TWO-26085) */
     private $twoDeclaredChargeRates = null;
 
@@ -5120,20 +5123,38 @@ class Twopayment extends PaymentModule
         // same-amount partial refunds on one order don't collide, and scoped by
         // the Two order ID so two shops minting the same slip ID cannot either.
         $idempotency_key = 'partial_refund_' . $two_order_id . '_slip_' . $slip_id;
-        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key]);
+        $sent_payload = null;
+        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload);
 
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         if (!($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'])) {
             $this->logTwoRefundFailure('Partial refund', $two_order_id, $id_order, $response, $idempotency_key, ', Slip ID: ' . $slip_id);
-            return sprintf($this->l('the provider did not accept it (HTTP %s)'), $http_status > 0 ? $http_status : '-');
+            return $this->getTwoRefundNotSentReason($response);
         }
 
         PrestaShopLogger::addLog('TwoPayment: Partial refund successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id . ', Idempotency Key: ' . $idempotency_key, 1);
         // Two has accepted it: from here nothing may turn this into a not-sent slip (see the hook's invariants).
-        $sent = $payload;
+        // What Two received is the post-hook payload, which the Refunded remainder is later computed from.
+        $sent = $sent_payload;
         $this->refreshTwoOrderPaymentDataAfterRefund($id_order, $two_order_id, $orderpaymentdata);
 
         return null;
+    }
+
+    /**
+     * Why a refund was not sent, for the merchant's notice and order note.
+     *
+     * @param array $response sendTwoOrderRequest()
+     * @return string
+     */
+    private function getTwoRefundNotSentReason($response)
+    {
+        if (isset($response['error_code']) && $response['error_code'] === TwoOrderPostprocessing::CODE_HOOK_FAILED) {
+            return $this->l('the order postprocessing hook stopped it');
+        }
+        $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
+
+        return sprintf($this->l('the provider did not accept it (HTTP %s)'), $http_status > 0 ? $http_status : '-');
     }
 
     /**
@@ -5330,8 +5351,9 @@ class Twopayment extends PaymentModule
         $this->ensureTwoRefundTable();
         $row = array(
             'status' => pSQL($status),
-            'amount' => $payload !== null ? (float)$payload['amount'] : null,
-            'tax_subtotals' => $payload !== null ? pSQL(json_encode($payload['tax_subtotals'])) : null,
+            // The payload as sent, so a subscriber may have changed or dropped either key.
+            'amount' => isset($payload['amount']) ? (float)$payload['amount'] : null,
+            'tax_subtotals' => isset($payload['tax_subtotals']) ? pSQL(json_encode($payload['tax_subtotals'])) : null,
             'reason' => $reason !== null ? pSQL($reason) : null,
         );
         if ($id_order_slip === null) {
@@ -5438,7 +5460,12 @@ class Twopayment extends PaymentModule
         }
 
         $currency = !empty($two_order['currency']) ? $two_order['currency'] : $this->getTwoOrderCurrencyIso($order);
-        $tax_subtotals = $this->buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, $sent, $remainder);
+        try {
+            $tax_subtotals = $this->buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, $sent, $remainder);
+        } catch (TwoOrderPostprocessingException $e) {
+            $this->flagTwoRefundRemainderNotSent($id_order, $this->getTwoRefundNotSentReason(array('error_code' => $e->getTwoCode())));
+            return;
+        }
         if (empty($tax_subtotals) || $currency === '' || $currency === null) {
             PrestaShopLogger::addLog('TwoPayment: Full refund after partial refunds skipped - could not build tax subtotals or currency for the remainder. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order, 3);
             $this->flagTwoRefundRemainderNotSent($id_order, $this->l('its refunded amount could not be split across the order\'s tax rates'));
@@ -5451,15 +5478,16 @@ class Twopayment extends PaymentModule
         }, $sent);
         // Same remainder after the same refunds: same key, so a repeated status change cannot refund it twice.
         $idempotency_key = 'refund_remainder_' . $two_order_id . '_' . md5(implode(',', $slip_ids) . '|' . $payload['amount']);
-        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key]);
+        $sent_payload = null;
+        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload);
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         if (!($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'])) {
             $this->logTwoRefundFailure('Full refund remainder', $two_order_id, $id_order, $response, $idempotency_key);
-            $this->flagTwoRefundRemainderNotSent($id_order, sprintf($this->l('the provider did not accept it (HTTP %s)'), $http_status > 0 ? $http_status : '-'));
+            $this->flagTwoRefundRemainderNotSent($id_order, $this->getTwoRefundNotSentReason($response));
             return;
         }
         PrestaShopLogger::addLog('TwoPayment: Full refund remainder successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Amount: ' . $payload['amount'] . ', Idempotency Key: ' . $idempotency_key, 1);
-        $this->recordTwoRefundOutcome($id_order, null, 'SENT', $payload, null);
+        $this->recordTwoRefundOutcome($id_order, null, 'SENT', $sent_payload, null);
         $this->refreshTwoOrderPaymentDataAfterRefund($id_order, $two_order_id, $orderpaymentdata);
     }
 
@@ -5475,7 +5503,10 @@ class Twopayment extends PaymentModule
     protected function buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, array $sent, $remainder)
     {
         try {
-            $placed = $this->getTwoUpdateOrderData($order, $orderpaymentdata, 'status_change');
+            // Rebuilt, never sent: what Two holds is the order as the hook last returned it.
+            $placed = $this->getTwoUpdateOrderData($order, $orderpaymentdata, self::TRIGGER_REFUND_REMAINDER);
+        } catch (TwoOrderPostprocessingException $e) {
+            throw $e;
         } catch (Exception $e) {
             PrestaShopLogger::addLog('TwoPayment: Full refund remainder - could not rebuild the order as placed - ' . $e->getMessage(), 3);
             return array();
@@ -7491,7 +7522,9 @@ class Twopayment extends PaymentModule
             3
         );
         // Only the back office: a front controller renders its warnings to the buyer.
-        if (defined('_PS_ADMIN_DIR_') && !in_array($requestType, array(TwoOrderPostprocessing::REQUEST_ORDER_INTENT, TwoOrderPostprocessing::REQUEST_ORDER_CREATE), true)) {
+        // Not for the remainder's rebuild, which sends nothing: the refund it was for tells the merchant why it was not sent.
+        if (defined('_PS_ADMIN_DIR_') && $context['trigger'] !== self::TRIGGER_REFUND_REMAINDER
+            && !in_array($requestType, array(TwoOrderPostprocessing::REQUEST_ORDER_INTENT, TwoOrderPostprocessing::REQUEST_ORDER_CREATE), true)) {
             $this->addTwoBackOfficeWarning(sprintf(
                 $this->l('The order postprocessing hook stopped this %1$s request, so it was not sent to %2$s (%3$s). See the module log for details.'),
                 $requestType,
@@ -7592,10 +7625,12 @@ class Twopayment extends PaymentModule
      * @param Cart|null $cart
      * @param Order|null $order
      * @param array $headers
+     * @param array|null $sentPayload set to the payload as the subscribers returned it, which is what is sent; null when refused
      * @return array the API response; a refusal returns http_status 0 and the code, unsent
      */
-    public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array())
+    public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null)
     {
+        $sentPayload = null;
         try {
             $payload = $this->postprocessOrderRequest(
                 $requestType,
@@ -7611,6 +7646,8 @@ class Twopayment extends PaymentModule
                 'error_message' => $e->getTwoCode(),
             );
         }
+
+        $sentPayload = $payload;
 
         return $this->setTwoPaymentRequest($endpoint, $payload, $method, $headers);
     }

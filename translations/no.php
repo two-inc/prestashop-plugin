@@ -587,6 +587,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'den er mer enn det som gjenstår å refundere på ordren';
 $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'ordrens valuta ikke kunne fastslås';
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'leverandøren ikke godtok den (HTTP %s)';
+$_MODULE['<{twopayment}prestashop>twopayment_d9fc87827359830e1eb23b712a935d76'] = 'kroken for etterbehandling av ordren stoppet den';
 $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'Ordren ble markert som refundert i PrestaShop, men det som gjensto å refundere etter kreditnotaene ble ikke sendt til %1$s fordi %2$s. Refunder resten i %1$s Selgerportal.';
 $_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'en uventet feil stoppet den';
 $_MODULE['<{twopayment}prestashop>twopayment_b324ba130c48d915b7f4065f928d9019'] = 'Øyeblikksbilder av avvik';

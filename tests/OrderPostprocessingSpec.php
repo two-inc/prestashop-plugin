@@ -40,6 +40,7 @@ final class OrderPostprocessingSpec
         self::testApiRejectionReachesTheLogAndTheOrder();
         self::testOrderIntentRelayBuildsThePayloadItself();
         self::testEachRequestTypeFiresExactlyOnce();
+        self::testRefundedRemainderRebuildsTheOrderThenSendsTheRefund();
         self::testNoChangeKeepsTodaysOutcomeOnEveryRequestType();
         self::testRecomputeTotalsHelper();
         self::testDebugLogCarriesARedactedDiff();
@@ -233,6 +234,22 @@ final class OrderPostprocessingSpec
 
             protected function recordTwoRefundOutcome($id_order, $id_order_slip, $status, $payload, $reason)
             {
+            }
+
+            /** @var array[] the refunds recorded SENT, for a Refunded remainder */
+            public array $sentRefunds = [];
+
+            protected function getTwoSentRefunds($id_order)
+            {
+                return $this->sentRefunds;
+            }
+
+            /** @var object|null the placed order to rebuild, since the status hook loads core's Order, which the stubs cannot place */
+            public $placedOrder = null;
+
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
+            {
+                return parent::getTwoUpdateOrderData($this->placedOrder !== null ? $this->placedOrder : $order, $orderpaymentdata, $trigger);
             }
 
             public function getTwoCreditSlipTaxLines($slip)
@@ -724,6 +741,52 @@ final class OrderPostprocessingSpec
                 $m->cancelTwoOrderBestEffort(self::TWO_ORDER, 'attempt_persist_failed');
             }, 'best-effort cancel'],
         ];
+    }
+
+    /**
+     * Refunded after a credit slip: the order is rebuilt through the hook to split the remainder by rate
+     * (order_update, refund_remainder, never sent), then the remainder is sent as the subscribers return it.
+     * A subscriber that throws on the rebuild stops the remainder, and the merchant is told the hook did.
+     */
+    private static function testRefundedRemainderRebuildsTheOrderThenSendsTheRefund(): void
+    {
+        // [mode, expected firings, refunds sent, description]
+        $cases = [
+            ['tag', [['order_update', 'refund_remainder', '/v1/order/two-order-9731'], ['refund', 'status_change', '/v1/order/two-order-9731/refund']], 1, 'the rebuild, then the refund sent as returned'],
+            ['throws', [['order_update', 'refund_remainder', '/v1/order/two-order-9731']], 0, 'a throw on the rebuild stops the remainder'],
+        ];
+        foreach ($cases as [$mode, $firings, $sends, $description]) {
+            self::seed(true);
+            $order = self::order();
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $module->twoState = 'FULFILLED';
+            $module->placedOrder = $order;
+            $module->sentRefunds = [['id_order_slip' => 77, 'status' => 'SENT', 'amount' => '30.00', 'tax_subtotals' => [['tax_rate' => '0.21', 'taxable_amount' => '24.79', 'tax_amount' => '5.21']]]];
+            Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', 42);
+            $calls = [];
+            self::subscribe($mode, $calls);
+            $status = new OrderState(42);
+            $status->name = 'Refunded';
+
+            $module->hookActionOrderStatusUpdate(['id_order' => (int) $order->id, 'newOrderStatus' => $status]);
+
+            TinyAssert::same($firings, array_map(static function ($c) {
+                return [$c['context']['request_type'], $c['context']['trigger'], $c['context']['endpoint']];
+            }, $calls), $description . ': firings');
+            $sent = array_values(array_filter($module->sent, static function ($r) {
+                return strpos($r['endpoint'], '/refund') !== false;
+            }));
+            TinyAssert::count($sends, $sent, $description . ': refunds sent');
+            if ($sends === 1) {
+                TinyAssert::same($calls[1]['payload_out'], $sent[0]['payload'], $description . ': the remainder is sent as returned');
+                continue;
+            }
+            $told = implode(' | ', array_merge($module->notes, $module->warnings));
+            TinyAssert::true(strpos($told, 'the order postprocessing hook stopped it') !== false, $description . ': the note and notice name the hook, got ' . $told);
+            TinyAssert::count(1, $module->notes, $description . ': one order note');
+            TinyAssert::false(strpos($told, 'order_update') !== false || strpos($told, 'tax rates') !== false, $description . ': neither the rebuild nor a split failure is blamed');
+        }
     }
 
     private static function testEachRequestTypeFiresExactlyOnce(): void
