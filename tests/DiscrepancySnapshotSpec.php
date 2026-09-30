@@ -309,7 +309,7 @@ final class DiscrepancySnapshotSpec
     {
         $cases = [
             // [default shipping group, debug, product total_wt, cart BOTH incl, harness fault, expected gate (null none, '' baseline), severity, has sent lines, description]
-            ['', '0', 121.00, 150.00, null, 'shipping_rate_unresolvable', 3, false, 'carrier-less shipping refused'],
+            ['', '0', 121.00, 150.00, null, null, 0, false, 'carrier-less shipping with no Default shipping tax code goes out at 0%, not a failure'],
             ['4210', '0', 121.00, 150.00, null, null, 0, false, 'shipping gate caught by the Default shipping tax code is not a failure'],
             ['4210', '1', 121.00, 150.00, null, '', 1, true, 'debug mode leaves a baseline for a passing cart'],
             ['4210', '0', 131.00, 160.00, null, 'declared_rate', 3, false, 'product tax contradicts its declared rate'],

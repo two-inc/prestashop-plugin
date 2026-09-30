@@ -176,8 +176,29 @@ final class PlacedOrderUpdateSpec
                 self::declare([[0.15, 8.00]]);
                 StubStore::$taxRuleRates[511] = 15.0;
                 self::enableDefaultShippingTaxCode(511);
-            }, $track, 'edit', 'no PUT, paid 35.00, logged TwoPayment: Order 9601 records shipping 8.00 net, 2.00 tax, which no stored or configured rate reconciles with'
-                . ' (carrier_tax_rate 0%, declared at placement 15%, Default shipping tax code 15%), marked not sent', 'no shipping rate reconciles: fails loud'],
+            }, $track, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.15 = 35.00 NOK, paid 35.00',
+                'placed before the record, no shipping rate reconciles: the declared rate goes out as is'],
+            // TWO-26117: what placement recorded decides, never today's carrier or config.
+            [function ($o) {
+                $o->carrier_tax_rate = 0.0;
+                self::declare([], null, false);
+                self::enableDefaultShippingTaxCode(520);
+            }, $track, 'tracking', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0 = 35.00 NOK', 'no rate and no Default shipping tax code at placement: 0% with the tax charged, whatever the config says now'],
+            [function ($o) {
+                $o->carrier_tax_rate = 0.0;
+                self::declare([[0.25, 8.00]], null, false);
+            }, $track, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 NOK', 'no rate, placed at the Default shipping tax code: that rate, checked'],
+            [function ($o) {
+                $o->carrier_tax_rate = 0.0;
+                self::declare([[0.15, 8.00]], null, false);
+                StubStore::$taxRuleRates[520] = 15.0;
+            }, $track, 'edit', 'no PUT, paid 35.00, logged TwoPayment: Declared tax rate does not reconcile with applied amounts for shipping (Placed Carrier).'
+                . ' Declared rate=15%, net=8.00, applied tax=2.00, expected tax at declared rate=1.20. Check the tax rules configured for this line (tax rules group, address-specific rules)., marked not sent', 'no rate, the Default shipping tax code it was placed at does not reconcile: refused'],
+            [function ($o) {
+                $o->carrier_tax_rate = 0.0;
+                self::declare([[0.15, 8.00]], null, true);
+                self::enableDefaultShippingTaxCode(520);
+            }, $track, 'tracking', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.15 = 35.00 NOK', 'a rate the carrier provided that does not reconcile goes out as is, never swapped for the config'],
             [function ($o) {
                 $o->carrier_tax_rate = 0.0;
                 $o->total_paid_tax_incl -= 0.40;
@@ -454,12 +475,17 @@ final class PlacedOrderUpdateSpec
     }
 
     /** The shipping classes [[rate, net weight], ...] and wrapping rate the create payload declared, as the Two row keeps them. */
-    private static function declare(array $shipping, ?float $wrapping = null): void
+    /** @param bool|null $provided whether a carrier provided the shipping rate at placement; null for a row written before TWO-26117 */
+    private static function declare(array $shipping, ?float $wrapping = null, ?bool $provided = null): void
     {
-        StubStore::$twoPaymentRows[self::ORDER]['two_declared_rates'] = json_encode([
+        $rates = [
             'shipping' => array_map(fn ($c) => ['rate' => $c[0], 'net_weight' => $c[1]], $shipping),
             'wrapping' => $wrapping,
-        ]);
+        ];
+        if ($provided !== null) {
+            $rates['shipping_rate_provided'] = $provided;
+        }
+        StubStore::$twoPaymentRows[self::ORDER]['two_declared_rates'] = json_encode($rates);
     }
 
     private static function enableDefaultShippingTaxCode(int $group): void
