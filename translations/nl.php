@@ -261,11 +261,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_78ed75859c56af62c3804c75ca86d7d8'] = '%s-bestelstatustoewijzing';
 $_MODULE['<{twopayment}prestashop>twopayment_779cdd79fa95885841e60852c8d17b1f'] = 'Momenteel actieve statussen die uitlevering activeren:';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Volledige terugbetalingen verwerken via de PrestaShop-beheeromgeving';
+$_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Gedeeltelijke terugbetalingen (creditnota\'s) automatisch naar %s sturen - betaal ze niet ook terug in de Merchant Portal';
 $_MODULE['<{twopayment}prestashop>twopayment_7aa0ef00af5612e50834b5bf969457e6'] = 'Zoeken naar bedrijven is tijdelijk niet beschikbaar. Probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_7b7813f00f42b7e5366e7065aaa798c6'] = 'inclusief';
 $_MODULE['<{twopayment}prestashop>twopayment_7d211a5d9cccb0df11ba75b9db2e28a5'] = 'Te veel verzoeken. Wacht even en probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_8c663cce717ad261932283cd6ca35073'] = 'B2C-betalingen (consumenten) verwerken - %s is uitsluitend B2B';
-$_MODULE['<{twopayment}prestashop>twopayment_35fba6fd0a77563c7b9e41075a751844'] = 'Gedeeltelijke terugbetalingen verwerken - gebruik hiervoor de %s Merchant Portal';
 $_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] = 'Je hebt geen toegang tot deze factuur.';
 $_MODULE['<{twopayment}prestashop>twopayment_7e13e4b7dc934c4f24deede7949d856b'] = 'Volledige terugbetaling uitgevoerd vanuit PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_7ea9d1186c856a865c57c49847891350'] = 'E-mailadres factuur';

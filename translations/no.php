@@ -261,11 +261,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_78ed75859c56af62c3804c75ca86d7d8'] = 'Kobling av %s-ordrestatuser';
 $_MODULE['<{twopayment}prestashop>twopayment_779cdd79fa95885841e60852c8d17b1f'] = 'Statuser som nå utløser oppfyllelse:';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Håndtere fulle refusjoner via PrestaShop-administrasjonen';
+$_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Sende delvise refusjoner (kreditnotaer) automatisk til %s – ikke refunder dem også i Selgerportalen';
 $_MODULE['<{twopayment}prestashop>twopayment_7aa0ef00af5612e50834b5bf969457e6'] = 'Firmasøket er midlertidig utilgjengelig. Prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_7b7813f00f42b7e5366e7065aaa798c6'] = 'inkludert';
 $_MODULE['<{twopayment}prestashop>twopayment_7d211a5d9cccb0df11ba75b9db2e28a5'] = 'For mange forespørsler. Vent litt og prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_8c663cce717ad261932283cd6ca35073'] = 'Behandle B2C-betalinger (forbruker) – %s er kun B2B';
-$_MODULE['<{twopayment}prestashop>twopayment_35fba6fd0a77563c7b9e41075a751844'] = 'Behandle delvise refusjoner – bruk %s Selgerportal for delvise refusjoner';
 $_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] = 'Du har ikke tilgang til denne fakturaen.';
 $_MODULE['<{twopayment}prestashop>twopayment_7e13e4b7dc934c4f24deede7949d856b'] = 'Full refusjon utstedt fra PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_7ea9d1186c856a865c57c49847891350'] = 'E-postadresse for faktura';

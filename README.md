@@ -404,37 +404,14 @@ Retired ids are recorded whenever the fee product is replaced. Ids from before t
 - Default: "Refunded" status triggers full refund
 - The module checks if order is already refunded to prevent duplicate refunds
 
-**⚠️ CRITICAL: Full Refunds Only from PrestaShop**
-- **The Two PrestaShop plugin only supports full refunds via PrestaShop order status changes**
-- **Partial refunds are NOT supported from PrestaShop**
-- When you change the order status to the refund trigger status, the entire order is refunded in Two
-
-**Partial Refunds - Manual Process Required:**
-If you need to issue a partial refund:
-
-1. **Process partial refund in PrestaShop** (as you normally would):
-   - Go to the order in PrestaShop admin
-   - Issue partial refund through PrestaShop's refund interface
-   - This updates PrestaShop's order records
-
-2. **Process partial refund in Two Merchant Portal**:
-   - Log into your Two Merchant Portal
-   - Find the corresponding Two order
-   - Issue the partial refund manually through Two's interface
-   - **This step is REQUIRED** - the partial refund will NOT be reflected in Two's system if you only process it in PrestaShop
-
-3. **Why manual process is required:**
-   - Two's API requires specific refund amounts and reasons for partial refunds
-   - PrestaShop's partial refund interface doesn't provide the necessary details to Two's API
-   - Manual processing ensures accurate refund amounts and proper credit note generation
-
-**⚠️ IMPORTANT WARNING:**
-- **Failing to process partial refunds in both systems will result in:**
-  - Partial refund existing only in PrestaShop
-  - Full order amount still owed in Two's system
-  - Buyer will be charged for the full amount despite partial refund
-  - Accounting discrepancies between systems
-  - Potential customer service issues
+**Partial Refunds (Credit Slips):**
+- Partial refunds created as credit slips in PrestaShop are sent to Two automatically
+- When you issue a partial refund from the order page in PrestaShop admin, PrestaShop creates a credit slip and the module:
+  - Calls Two's refund API endpoint (`/v1/order/{id}/refund`) with the slip's amount, currency and per-rate tax subtotals
+  - Uses an idempotency key derived from the credit slip, so two slips of the same amount on one order are separate refunds
+  - Refuses to send more than the order's remaining refundable balance
+- **Do NOT also refund the same amount in the Two Merchant Portal.** The refund already reaches Two from the credit slip, so refunding it in the portal as well refunds the buyer twice
+- A slip the module does not send (for example, one exceeding the remaining balance, or with no stored lines to derive tax subtotals from) is logged under "TwoPayment: Partial refund" with the reason. Handle a refund in the Two Merchant Portal only when that log shows it was not sent
 
 **Refund Requirements:**
 - Order must be in `FULFILLED` state in Two (cannot refund unfulfilled orders)
@@ -443,7 +420,7 @@ If you need to issue a partial refund:
 - Order must not already be fully refunded (module checks this automatically)
 
 **Troubleshooting Refunds:**
-- Check PrestaShop logs for refund errors (search for "TwoPayment: Refund")
+- Check PrestaShop logs for refund errors (search for "TwoPayment: Refund" and "TwoPayment: Partial refund")
 - Verify order is in `FULFILLED` state before attempting refund
 - Common errors:
   - **HTTP 400**: Order not in refundable state (must be `FULFILLED`)
