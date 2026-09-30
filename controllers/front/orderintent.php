@@ -608,7 +608,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
         // The address id comes from the browser, so it must be one of this buyer's own.
         if ($cart->id_customer == 0 || !Validate::isLoadedObject($customer) || !Validate::isLoadedObject($address)
-            || (int) $address->id_customer !== (int) $cart->id_customer || !empty($address->deleted)) {
+            || (int) $address->id_customer !== (int) $cart->id_customer) {
             PrestaShopLogger::addLog('TwoPayment: Invalid cart, customer, or address data in order intent (address ID: ' . $addressId . ')', 3);
             return array('error' => array('error' => $invalid['error']));
         }

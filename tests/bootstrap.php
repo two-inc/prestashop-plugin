@@ -1679,7 +1679,6 @@ namespace {
         public bool $loaded = false;
         public int $id = 0;
         public int $id_customer = 0;
-        public bool $deleted = false;
         public int $id_country = 0;
         public int $id_state = 0;
         public string $company = '';
