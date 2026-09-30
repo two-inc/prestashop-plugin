@@ -29,6 +29,7 @@ final class OrderPostprocessingSpec
         self::testNoSubscriberPayloadsAreByteIdentical();
         self::testGatesOnTheWorkedExampleCart();
         self::testSubscriberThrowingGetsTheGenericCheckoutMessage();
+        self::testDispatchKeepsCoreSemanticsButNotItsSwallow();
         self::testEachRequestTypeFiresExactlyOnce();
         self::testRecomputeTotalsHelper();
         self::testSnapshotRecordsTheHook();
@@ -218,9 +219,9 @@ final class OrderPostprocessingSpec
      *
      * @param array<int,array> $calls
      */
-    private static function subscribe(string $mode, array &$calls): void
+    private static function subscribe(string $mode, array &$calls, string $module = 'twoorderpostprocessingtest'): void
     {
-        Hook::$subscribers[TwoOrderPostprocessing::HOOK]['twoorderpostprocessingtest'] = static function (array $params) use ($mode, &$calls): void {
+        Hook::$subscribers[TwoOrderPostprocessing::HOOK][$module] = static function (array $params) use ($mode, &$calls): void {
             $calls[] = ['context' => $params['context'], 'payload_in' => $params['payload']];
             self::apply($mode, $params);
             $calls[count($calls) - 1]['payload_out'] = $params['payload'];
@@ -254,6 +255,9 @@ final class OrderPostprocessingSpec
                 }
 
                 return;
+            case 'half_then_throw':
+                $params['payload']['line_items'][0]['net_amount'] = '0.00';
+                throw new RuntimeException('half way');
             case 'buyer_email':
                 $params['payload']['buyer']['representative']['email'] = 'someone@example.com';
 
@@ -451,6 +455,57 @@ final class OrderPostprocessingSpec
         TinyAssert::same([], $module->sent, 'nothing is sent to Two');
         TinyAssert::true(self::logged(TwoOrderPostprocessing::CODE_HOOK_FAILED), 'the merchant log names the code');
         TinyAssert::false(self::logged('Calle Uno'), 'the subscriber\'s exception message is never logged');
+    }
+
+    /**
+     * Core's Hook::exec() discards a subscriber's Exception outside debug mode
+     * on 8 and 9, so the module calls each subscriber itself. Everything else
+     * about which subscribers run, and in what order, stays core's.
+     */
+    private static function testDispatchKeepsCoreSemanticsButNotItsSwallow(): void
+    {
+        // [second subscriber mode|null, setup, expected: null passes | code | message fragment, fires, description]
+        $cases = [
+            ['half_then_throw', null, TwoOrderPostprocessing::CODE_HOOK_FAILED, 2, 'a throw after a half edit refuses rather than send the half-edited payload'],
+            ['record', null, null, 2, 'a second subscriber sees the first one\'s edits, in position order'],
+            [null, 'non_native_off', 'Declared tax rate diverges', 0, '"Disable non PrestaShop modules" keeps a subscriber from running, as core does'],
+            [null, 'inactive', 'Declared tax rate diverges', 0, 'a disabled subscriber module does not run'],
+        ];
+        foreach ($cases as [$second, $setup, $expected, $fires, $description]) {
+            $cart = self::seed(false);
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $calls = [];
+            self::subscribe('resplit', $calls);
+            if ($second !== null) {
+                self::subscribe($second, $calls, 'twoorderpostprocessingsecond');
+            }
+            if ($setup === 'non_native_off') {
+                Configuration::updateValue('PS_DISABLE_NON_NATIVE_MODULE', 1);
+            }
+            if ($setup === 'inactive') {
+                StubStore::$moduleInstances['twoorderpostprocessingtest'] = new StubHookSubscriberModule('twoorderpostprocessingtest');
+                StubStore::$moduleInstances['twoorderpostprocessingtest']->active = false;
+            }
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            } catch (Exception $e) {
+                $error = $e;
+            }
+            TinyAssert::count($fires, $calls, $description . ': subscriber calls');
+            if ($expected === null) {
+                TinyAssert::same(null, $error === null ? null : $error->getMessage(), $description . ': accepted');
+                TinyAssert::same($calls[0]['payload_out'], $calls[1]['payload_in'], $description . ': the chain');
+                continue;
+            }
+            TinyAssert::true($error !== null, $description . ': refused');
+            if ($expected === TwoOrderPostprocessing::CODE_HOOK_FAILED) {
+                TinyAssert::same($expected, $error instanceof TwoOrderPostprocessingException ? $error->getTwoCode() : get_class($error) . ': ' . $error->getMessage(), $description . ': code');
+            } else {
+                TinyAssert::true(strpos($error->getMessage(), $expected) !== false, $description . ': today\'s refusal, got "' . $error->getMessage() . '"');
+            }
+        }
     }
 
     /**
