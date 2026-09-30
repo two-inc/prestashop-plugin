@@ -11,6 +11,7 @@ These run in CI on every pull request — `.github/workflows/integration.yml`, P
 | --- | --- |
 | `default-shipping-tax-code.php` | The optional **Default shipping tax code** on a cart whose shipping is priced but whose delivery option belongs to no carrier. Asserts the real order-intent `SHIPPING_FEE` line (`gross_amount` / `net_amount` / `tax_amount` / `tax_rate` / `tax_class_name`) and the log severity, across four states: unset → refuse at severity 3; group declared → that group's rate relayed at severity 2; core's "No tax" sentinel → 0%; a since-deleted group → refuse at severity 3. |
 | `line-item-image.php` | The line-item `image_url` against the cart rows core builds (TWO-26071). A combination with its own image sends that image rather than the product cover, a combination without one sends the cover, and a product with no image sends an empty `image_url`. Builds its own products and cart. |
+| `multi-carrier-update.php` | An order update across a multi-carrier split (TWO-26085). Places a cart whose two products can only ship with different carriers through `validateOrder()`, so core splits it into two orders sharing one reference and one payment, records the Two row on the order core returns, then edits the other order. Asserts the update carries both orders' lines and shipping and names the order holding the Two row, and that the shared payment is left at both orders' total. Builds its own taxes, carriers, products, buyer and cart. |
 
 ### Carrier-less shipping matrix
 

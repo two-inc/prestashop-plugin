@@ -148,8 +148,10 @@ final class OrderCompanyPersistenceSpec
         TinyAssert::same(
             [
                 'two_company_name',
+                'two_declared_rates',
                 'two_not_sent_at',
                 'two_organization_number',
+                'two_update_hash',
             ],
             self::alterStatements(),
             'the runtime guard must add every column on a file-swapped shop'
@@ -589,20 +591,7 @@ final class OrderCompanyPersistenceSpec
      */
     private static function makeOrder(): object
     {
-        $order = new class {
-            public bool $loaded = true;
-            public int $id = 0;
-            public int $id_cart = 0;
-            public int $id_carrier = 0;
-            public string $shipping_number = '';
-
-            public function getIdOrderCarrier(): int
-            {
-                return 0;
-            }
-        };
-        $order->id = self::ORDER_ID;
-        $order->id_cart = self::CART_ID;
+        $order = PlacedOrderStub::fromCart(self::ORDER_ID, self::CART_ID);
         $order->id_carrier = self::CARRIER_ID;
 
         return $order;

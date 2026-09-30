@@ -15,8 +15,9 @@ the amounts imply) cannot be represented faithfully, so it fails loud.
 
 ## Single rate source
 
-`getTwoConfiguredTaxRateDecimalForGroup($taxRulesGroupId, $cart)` is the only rate
-source for product, ecotax, shipping and wrapping lines. It resolves the rate through
+On the create path, `getTwoConfiguredTaxRateDecimalForGroup($taxRulesGroupId, $cart)`
+is the only rate source for product, ecotax, shipping and wrapping lines (an order
+update reads its rates from the stored order instead: see "Order updates" below). It resolves the rate through
 the same core machinery PrestaShop's pricing uses — `TaxManagerFactory` over the cart's
 `PS_TAX_ADDRESS_TYPE` address (delivery fallback), plus the shop-wide `PS_TAX` gate and
 the vatnumber-module B2B exemption — so the rate is read at the **same address
@@ -37,6 +38,25 @@ granularity** PrestaShop used for the amounts.
 | Wrapping line | resolver, `PS_GIFT_WRAPPING_TAX_RULES_GROUP` |
 | Discount line(s) | `buildTwoCanonicalDiscountRateSegments` / `solveTwoRateDiscountSplitInCents`; raises when unsolvable |
 | Free-ship discount | mirrors the emitted rate of the shipping line it offsets, so the pair nets to zero |
+
+## Order updates
+
+An update (tracking save, back-office edit, the confirmation sync) carries the order
+exactly as PrestaShop recorded it, and never the live catalogue, cart or config
+(TWO-26085). The Two order it targets is the whole Two order: a multi-carrier cart is
+split into one order per carrier sharing a reference, and every rate and amount below
+is read across all of them.
+
+| Component | Stored rate source |
+|---|---|
+| Product line | the `order_detail_tax` rates of its `order_detail` row (`order_detail.tax_rate` is 0 on 1.7), zero where the row carries no tax |
+| Ecotax line | `order_detail.ecotax_tax_rate` |
+| Shipping line | each order's `carrier_tax_rate`, against the shipping that order's paid total charged (`total_paid` less products and wrapping, plus discounts; PrestaShop 9 stores the whole cart's shipping in `total_shipping` on every order of a multi-carrier split). An order whose rate does not agree with its amounts (including a taxed shipping charge with no carrier rate recorded) fails loud; no rate is resolved from today's carriers or the module default. |
+| Wrapping line | the `order_invoice_tax` rows of type `wrapping`, once the order is invoiced. No order column holds it before then, so until an invoice exists the configured `PS_GIFT_WRAPPING_TAX_RULES_GROUP` rate is used and must reconcile with the stored amounts. |
+| Discount line(s) | the orders' `order_cart_rule` rows, split over the product lines only, as core computes a cart rule on the products |
+
+`PS_ATCP_SHIPWRAP` is still read from config and splits shipping and wrapping over the
+stored product rates.
 
 When `PS_ATCP_SHIPWRAP` is on, PrestaShop taxes shipping and wrapping at the blended
 average product rate. That rate is non-canonical and unacceptable downstream, so

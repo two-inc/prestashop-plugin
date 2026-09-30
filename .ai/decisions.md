@@ -19,6 +19,33 @@
 
 ---
 
+## [2026-09-30] An Order Update Carries The Stored Order, And The Whole Two Order
+
+**Context**: An order update (tracking save, back-office edit, the confirmation sync) rebuilt its
+payload from the live cart, catalogue and config, so a price, tax rule, carrier or voucher changed
+after placement reached Two on the next save (TWO-26085). Review then found the stored-order rebuild
+PUT only one order of a multi-carrier split, although the Two order covers the whole cart.
+
+**Decision**: An update carries the order exactly as PrestaShop currently records it (its stored
+rows), never the live catalogue, cart or config. The Two order it targets is the whole Two order:
+every order sharing the cart and reference is summed into one payload, and the one shared payment
+is set to their total. Rates come from the stored rows (see `.ai/vat-rate-sourcing.md`), and stored
+data that cannot be replayed as recorded fails loud. A hash of what Two accepted, over the money,
+lines, parties, addresses and shipment only, skips an update that changes nothing.
+
+**Alternatives Considered**: Resolving a missing rate from live config, as checkout does. Rejected:
+it is the drift this exists to remove. One exception stands: gift wrapping before an invoice exists,
+where nothing stored holds the rate, uses the configured rate and must reconcile with the stored
+amounts, because failing there would stop the confirmation sync for every wrapped order.
+
+**Rationale**: After placement the order, not the cart, is what the merchant edits and what the
+buyer was charged, and Two holds one order per cart.
+
+**Consequences**: A taxed shipping charge with no carrier rate recorded on the order now fails the
+update loudly instead of resolving a rate as checkout did. `PS_ATCP_SHIPWRAP` is still read live.
+
+---
+
 ## [2026-09-11] State Propagation Runs Plugin To Provider Only
 
 **Context**: A state change made in the merchant portal - a refund is the case that surfaces it -
