@@ -91,6 +91,49 @@ class TwoOrderPostprocessing
     }
 
     /**
+     * Run each subscriber as core's Hook::exec() would, except that a throw
+     * reaches the caller: core 8 and 9 discard a subscriber's Exception outside
+     * debug mode, which would send a half-edited or unedited payload.
+     *
+     * Controller exceptions and employee permissions are not applied, so the
+     * payload never depends on which page or employee triggered the request.
+     *
+     * @param array $payload edited in place by the subscribers
+     * @param array $context
+     * @return void
+     * @throws Throwable whatever a subscriber threw
+     */
+    public static function dispatch(array &$payload, array $context)
+    {
+        if (defined('PS_INSTALLATION_IN_PROGRESS')
+            || (method_exists('Hook', 'getHookStatusByName') && !Hook::getHookStatusByName(self::HOOK))) {
+            return;
+        }
+        $list = Hook::getHookModuleExecList(self::HOOK);
+        if (!is_array($list)) {
+            return;
+        }
+        $nativeOnly = (bool) Configuration::get('PS_DISABLE_NON_NATIVE_MODULE');
+        $native = $nativeOnly ? Module::getNativeModuleList() : array();
+        $core = Context::getContext();
+        $args = array('payload' => &$payload, 'context' => $context, 'cookie' => $core->cookie, 'cart' => $core->cart);
+        $method = 'hook' . ucfirst(self::HOOK);
+        $altern = 0;
+        foreach ($list as $row) {
+            $name = isset($row['module']) ? (string) $row['module'] : '';
+            if ($nativeOnly && is_array($native) && count($native) && !in_array($name, $native)) {
+                continue;
+            }
+            $module = Module::getInstanceByName($name);
+            if (!$module || !$module->active || !is_callable(array($module, $method))) {
+                continue;
+            }
+            $args['altern'] = ++$altern;
+            $module->{$method}($args);
+        }
+    }
+
+    /**
      * Module names registered on the hook, in execution order.
      *
      * @return string[]

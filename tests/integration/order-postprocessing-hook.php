@@ -18,6 +18,10 @@
  * Usage: php tests/integration/order-postprocessing-hook.php [scenario]
  */
 
+// Core 8 and 9 discard a subscriber's Exception only with debug off, so throws_prod forces it off.
+if (isset($argv[1]) && $argv[1] === 'throws_prod' && !defined('_PS_MODE_DEV_')) {
+    define('_PS_MODE_DEV_', false);
+}
 if (!defined('_PS_VERSION_')) {
     require '/var/www/html/config/config.inc.php';
 }
@@ -322,7 +326,7 @@ function oppRunScenario($name, &$detail)
     Configuration::updateValue('TWO_OPP_TEST_RATE', '0.21');
     Configuration::updateValue('PS_TWO_DEBUG_MODE', '0');
     Configuration::updateValue('PS_MAIL_METHOD', 3);
-    $mode = in_array($name, array('unarmed', 'paths', 'context_rate'), true) ? ($name === 'paths' ? 'record' : '') : $name;
+    $mode = in_array($name, array('unarmed', 'paths', 'context_rate'), true) ? ($name === 'paths' ? 'record' : '') : ($name === 'throws_prod' ? 'throws' : $name);
     Configuration::updateValue('TWO_OPP_TEST_MODE', $mode);
     $module = new OppProbeTwopayment();
     $checks = array();
@@ -444,8 +448,12 @@ function oppRunScenario($name, &$detail)
         'stale_totals' => 'TWO_ORDER_POSTPROCESSING_TOTALS_INCONSISTENT',
         'stale_subtotals' => 'TWO_ORDER_POSTPROCESSING_SUBTOTALS_INCONSISTENT',
         'throws' => 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED',
+        'throws_prod' => 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED',
         'non_array' => 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED',
     );
+    if ($name === 'throws_prod') {
+        $checks[] = array(_PS_MODE_DEV_, false, 'debug mode is off');
+    }
     Configuration::updateValue('PS_TWO_DEBUG_MODE', $expected[$name] === null ? '1' : '0');
     Db::getInstance()->delete('log', "object_type = 'TwoDiscrepancySnapshot' AND object_id = " . (int) $cart->id);
     $payload = null;
@@ -522,7 +530,7 @@ if (!Module::isInstalled('twoorderpostprocessingtest')) {
 oppBootKernel();
 oppSeed();
 $exit = 0;
-foreach (array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'non_array', 'body_on_cancel') as $scenario_name) {
+foreach (array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'throws_prod', 'non_array', 'body_on_cancel') as $scenario_name) {
     $status = 0;
     passthru(escapeshellarg(PHP_BINARY) . ' -d memory_limit=512M ' . escapeshellarg(__FILE__) . ' ' . escapeshellarg($scenario_name), $status);
     $exit = $status !== 0 ? 1 : $exit;

@@ -7647,7 +7647,7 @@ class Twopayment extends PaymentModule
             $block['subscribers'] = TwoOrderPostprocessing::subscribers();
             $block['fired'] = true;
             try {
-                Hook::exec(TwoOrderPostprocessing::HOOK, array('payload' => &$payload, 'context' => $context));
+                TwoOrderPostprocessing::dispatch($payload, $context);
             } catch (Throwable $e) {
                 $this->refuseTwoOrderPostprocessing(TwoOrderPostprocessing::CODE_HOOK_FAILED, $context, $block, 'a subscriber threw ' . get_class($e), array(
                     'exception' => get_class($e),

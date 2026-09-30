@@ -584,7 +584,22 @@ namespace {
          */
         public static function getInstanceByName($name)
         {
-            return StubStore::$moduleInstances[(string) $name] ?? null;
+            if (isset(StubStore::$moduleInstances[(string) $name])) {
+                return StubStore::$moduleInstances[(string) $name];
+            }
+            foreach (Hook::$subscribers as $hook => $callbacks) {
+                if (isset($callbacks[(string) $name])) {
+                    return new StubHookSubscriberModule((string) $name);
+                }
+            }
+
+            return null;
+        }
+
+        /** Core's "native module" list, which PS_DISABLE_NON_NATIVE_MODULE keeps. */
+        public static function getNativeModuleList(): array
+        {
+            return ['ps_shoppingcart', 'ps_emailsubscription'];
         }
 
         /**
@@ -1004,12 +1019,22 @@ namespace {
 
         /**
          * Core's call shape: each subscriber gets the args array by value, so only
-         * elements the caller bound by reference travel back.
+         * elements the caller bound by reference travel back. Like core 8 and 9
+         * outside debug mode (Hook::callHookOn()), a subscriber's Exception is
+         * discarded and the hook returns ''.
          */
         public static function exec($hookName, $hookArgs = [], $idModule = null, $arrayReturn = false)
         {
-            foreach (self::$subscribers[$hookName] ?? [] as $callback) {
-                $callback($hookArgs);
+            foreach (self::getHookModuleExecList($hookName) ?: [] as $row) {
+                $module = Module::getInstanceByName($row['module']);
+                $method = 'hook' . ucfirst($hookName);
+                if (!$module || !is_callable([$module, $method])) {
+                    continue;
+                }
+                try {
+                    $module->{$method}($hookArgs);
+                } catch (Exception $e) {
+                }
             }
 
             return '';
@@ -1033,6 +1058,32 @@ namespace {
             self::$execLists = [];
             self::$subscribers = [];
             self::$ids = [];
+        }
+    }
+
+    /**
+     * A module registered on a hook through Hook::$subscribers: its hook method
+     * runs the spec's callback.
+     */
+    class StubHookSubscriberModule
+    {
+        public $name;
+        public $active = true;
+
+        public function __construct(string $name)
+        {
+            $this->name = $name;
+        }
+
+        public function __call($method, $args)
+        {
+            foreach (Hook::$subscribers as $hook => $callbacks) {
+                if (strcasecmp('hook' . $hook, $method) === 0 && isset($callbacks[$this->name])) {
+                    return $callbacks[$this->name]($args[0]);
+                }
+            }
+
+            return null;
         }
     }
 
