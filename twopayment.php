@@ -7322,9 +7322,12 @@ class Twopayment extends PaymentModule
                 );
             }
 
-            // The order's own shipping, never order_carrier: PS 8 adds a row per new invoice while the first row already holds the whole shipping.
-            $shippingNet = round((float) $member->total_shipping_tax_excl, 2);
-            $shippingGross = round((float) $member->total_shipping_tax_incl, 2);
+            // What the order's total charged for shipping. Neither order_carrier (PS 8 adds a row per new invoice) nor
+            // total_shipping (PS 9 stores the whole cart's shipping on every order of a multi-carrier split) holds it reliably.
+            $shippingNet = round((float) $member->total_paid_tax_excl - (float) $member->total_products
+                - (float) $member->total_wrapping_tax_excl + (float) $member->total_discounts_tax_excl, 2);
+            $shippingGross = round((float) $member->total_paid_tax_incl - (float) $member->total_products_wt
+                - (float) $member->total_wrapping_tax_incl + (float) $member->total_discounts_tax_incl, 2);
             if ($shippingGross > 0) {
                 $shippingRate = $shippingGross != $shippingNet ? $this->normalizeTwoTaxRateToPercentPrecision((float) $member->carrier_tax_rate / 100) : 0.0;
                 // PS_ATCP_SHIPWRAP taxes shipping at the products' average, which the line builder splits over the product rates instead.
