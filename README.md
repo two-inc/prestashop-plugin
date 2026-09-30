@@ -714,7 +714,7 @@ totals and fields the module does not itself send.
 | Key | Type | Meaning |
 | --- | --- | --- |
 | `request_type` | string | `order_intent`, `order_create`, `order_update`, `order_confirm`, `capture`, `refund` or `cancel` |
-| `trigger` | string | What caused the request, for diagnosis: `precheck`, `strict_intent`, `checkout`, `snapshot_hash`, `admin_edit`, `tracking_number`, `merchant_order_id`, `confirmation`, `payment_return`, `status_change`, `credit_slip`, `buyer_cancel`, and others |
+| `trigger` | string | What caused the request, for diagnosis: `precheck`, `strict_intent`, `checkout`, `snapshot_hash`, `admin_edit`, `tracking_number`, `merchant_order_id`, `confirmation`, `payment_return`, `status_change`, `credit_slip`, `refund_remainder`, `buyer_cancel`, and others |
 | `endpoint` | string | The API path the request goes to, e.g. `/v1/order/{id}/refund` with the real id |
 | `cart` | `Cart` or null | The cart the order was or will be placed from |
 | `order` | `Order` or null | The PrestaShop order; null before it exists |
@@ -734,7 +734,7 @@ Once per outbound order request, immediately before it is sent:
 | --- | --- |
 | `order_intent` | The checkout's order-intent pre-check (`precheck`), both when it is built for the checkout and when the module sends it to Two, which it rebuilds from the cart rather than take from the browser; and the authoritative check at payment submit (`strict_intent`) |
 | `order_create` | Order creation at checkout (`checkout`), and the rebuild the confirmation step hashes to detect a cart changed during payment (`snapshot_hash`, not sent) |
-| `order_update` | An admin order edit, a tracking number, and the merchant order id sync after confirmation |
+| `order_update` | An admin order edit, a tracking number, the merchant order id sync after confirmation, and the rebuild that splits a Refunded remainder by tax rate after credit slips (`refund_remainder`, not sent) |
 | `order_confirm` | The buyer's return from verification |
 | `capture` | The fulfilment status |
 | `refund` | The refunded status (full refund, no body) and a credit slip (partial refund, `{amount, currency}`) |
@@ -755,6 +755,12 @@ Two's API validates what arrives, and its error message is written to the module
 and, for an order update, to the order's private messages. With a subscriber that
 changes amounts, the invoice Two issues can differ from what the shop charged: that is
 the merchant's decision, and the merchant owns what their code declares.
+
+A refund Two accepts is recorded as the subscribers returned it, so the remainder sent
+when the order is later marked Refunded is what Two still holds. That remainder is split
+by tax rate against the order rebuilt through the hook (`order_update`,
+`refund_remainder`, not sent); a subscriber that throws on that rebuild stops the
+remainder, and the order's note says the hook stopped it.
 
 A subscriber that throws, or leaves something that is not an array or cannot be
 JSON-encoded, has a bug rather than a declaration. That request is not sent: the
