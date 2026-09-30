@@ -919,6 +919,8 @@ final class SurchargeCartLineSpec
     {
         $orderDetail = new \stdClass();
         $orderDetail->product_id = $productId;
+        // Core copies the product's reference onto the row, as OrderDetail::create does.
+        $orderDetail->product_reference = (string) (new Product($productId))->reference;
         $orderDetail->id_order = $idOrder;
         return $orderDetail;
     }
