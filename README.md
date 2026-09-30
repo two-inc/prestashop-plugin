@@ -791,6 +791,7 @@ contradicting the applied amounts, shipping with no declared tax rate, or any ot
 pricing the cart), the module writes one JSON record for that cart to the PrestaShop
 log (object type `TwoDiscrepancySnapshot`, object id = the cart id). With Debug Mode on
 it also writes one for every cart that passes, as a baseline to compare against.
+An update to a placed order is priced from that order, not its cart, so it writes no snapshot.
 
 - **Where**: Module Configuration → Diagnostics → "View last 100 error log records" lists
   the snapshots with a **Download JSON** link each (employee login and token required).

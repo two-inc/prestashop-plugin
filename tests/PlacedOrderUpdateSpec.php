@@ -309,6 +309,10 @@ final class PlacedOrderUpdateSpec
                 if (!empty(StubStore::$twoPaymentRows[self::ORDER]['two_not_sent_at'])) {
                     $actual .= ', marked not sent';
                 }
+                // The snapshot describes a cart being priced; an update prices the placed order, so it writes none.
+                if (array_filter(PrestaShopLogger::$logs, fn ($l) => ($l['object_type'] ?? null) === TwoDiscrepancySnapshot::LOG_OBJECT_TYPE) !== []) {
+                    $actual .= ', snapshot written';
+                }
             } catch (Throwable $e) {
                 $actual = 'throws ' . $e->getMessage();
             }
