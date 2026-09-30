@@ -687,9 +687,9 @@ A shop is not always the merchant's accounting source of record. When the order 
 shop recorded is not the order the merchant wants invoiced (a charge the shop left
 untaxed that the business books as VAT-inclusive, say), the merchant fixes it up in
 their own module on this hook, before the order reaches Two's API. The module is an
-aid here, not an authority: it fires the hook consistently, checks what the hook
-returns, and names the failure when a subscriber broke something. Two's API validates
-whatever arrives, and a payload that passes is accepted as the merchant declared it.
+aid here, not an authority: it fires the hook consistently and sends the payload as the
+subscribers return it. Two's API validates whatever arrives, and a payload that passes
+is accepted as the merchant declared it.
 
 ### The hook
 
@@ -743,34 +743,28 @@ Once per outbound order request, immediately before it is sent:
 The hook also runs on every order-intent pre-check during checkout, so keep
 subscribers cheap.
 
-### What the module checks afterwards
+### What the module does with the result
 
-The module's own consistency gates run on the payload the subscribers leave. With no
-subscriber, or one that changes nothing, every gate sees what it always has and refuses
-exactly as before. When a subscriber changed the payload, a failing gate refuses with a
-named code instead:
+The payload goes out as the subscribers return it. The module checks only what it
+builds itself: the tax rates it derives for products, shipping and fees against the
+amounts PrestaShop stored, and the lines against the cart's totals. Those checks run on
+the module's own payload before the hook fires, so with no subscriber every request
+is sent, and refused, exactly as before. A cart they refuse never reaches the hook.
 
-| Code | Gate |
-| --- | --- |
-| `TWO_ORDER_POSTPROCESSING_HOOK_FAILED` | A subscriber threw, or left something other than an array |
-| `TWO_ORDER_POSTPROCESSING_BODY_NOT_ACCEPTED` | A request sent with no body (confirm, capture, full refund, cancel) was given one |
-| `TWO_ORDER_POSTPROCESSING_LINE_INCONSISTENT` | A line's net, tax and gross disagree (`gross = net + tax` exactly, `tax = net x tax_rate` and `net = quantity x unit_price - discount` within tolerance), or a line is malformed |
-| `TWO_ORDER_POSTPROCESSING_TOTALS_INCONSISTENT` | The order `net_amount` / `tax_amount` / `gross_amount` do not equal the sum of the lines, or gross is not net + tax |
-| `TWO_ORDER_POSTPROCESSING_SUBTOTALS_INCONSISTENT` | `tax_subtotals` do not match the lines grouped by `tax_rate` |
+Two's API validates what arrives, and its error message is written to the module log
+and, for an order update, to the order's private messages. With a subscriber that
+changes amounts, the invoice Two issues can differ from what the shop charged: that is
+the merchant's decision, and the merchant owns what their code declares.
 
-A refusal never falls back to the unedited payload. The request is not sent, the
-merchant log gets the code, the request type, the failing figures and a diff of what
-the subscribers changed, and the back office shows a notice on admin actions. The buyer
-sees the module's existing generic refusal.
+A subscriber that throws, or leaves something that is not an array or cannot be
+JSON-encoded, has a bug rather than a declaration. That request is not sent: the
+module log gets `TWO_ORDER_POSTPROCESSING_HOOK_FAILED` with the request type, the
+back office shows a notice on admin actions, and the buyer sees the module's existing
+generic refusal. It never falls back to the unedited payload.
 
-**Comparisons against the cart are skipped when the payload changed.** The checks of
-the order lines against the cart's own totals, and of the buyer fee line against the
-cart's hidden fee product, run only on an unchanged payload. A deliberate edit
-legitimately diverges from the shop, so the skip is logged at warning level with the
-diff, and recorded in the discrepancy snapshot as `skipped_payload_changed`. With a
-subscriber that changes amounts, the invoice Two issues can therefore differ from what
-the shop charged: that is the merchant's decision, and the merchant owns what their
-code declares.
+With Debug Mode on, the module logs what the subscribers changed, as a list of paths
+with their values before and after. Values outside the amounts and lines are shown only
+as `redacted`, since they can carry buyer data.
 
 The module never recomputes totals or subtotals after the hook, since that would
 overwrite a subscriber's edits. A subscriber that changes a line also updates the
@@ -794,23 +788,23 @@ changes nothing else. It is opt-in and part of this contract.
   payload, so never let the edit depend on it.
 - **Cheap.** It runs on every order-intent check.
 - **Present.** A disabled subscriber module, or PrestaShop's "Disable non PrestaShop
-  modules" switch, means no subscriber: orders then go out as the shop recorded them
-  and every gate passes. The module cannot tell "no subscriber" from "subscriber
-  switched off".
+  modules" switch, means no subscriber: orders then go out as the shop recorded them.
+  The module cannot tell "no subscriber" from "subscriber switched off".
 
 ### Example
 
-Re-split shipping the shop recorded untaxed, at the rate the carrier's tax rules group
-declares, and keep the totals consistent:
+Re-split shipping the shop recorded untaxed on a "No tax" carrier, at the rate the
+merchant's books apply to it, and keep the totals consistent:
 
 ```php
 public function hookActionTwoOrderPostprocessing($params)
 {
-    $rate = $params['context']['shipping_tax_rate'];
-    if (!$rate || empty($params['payload']['line_items'])) {
+    // The rate the merchant books shipping at: the shop's carrier says "No tax".
+    $rate = 0.21;
+    if (empty($params['payload']['line_items'])) {
         return;
     }
-    $params['payload'] = self::resplitShipping($params['payload'], (float) $rate);
+    $params['payload'] = self::resplitShipping($params['payload'], $rate);
 }
 
 public static function resplitShipping(array $payload, $rate)
@@ -835,10 +829,10 @@ public static function resplitShipping(array $payload, $rate)
 
 On a 100.00 product at 21% with 29.00 of untaxed shipping, the shipping line becomes
 23.97 net + 5.03 tax = 29.00, and the order 123.97 + 26.03 = 150.00: the same gross,
-split the way the merchant books it. Returning the payload without the
-`recomputeTwoOrderTotals()` call refuses the order with
-`TWO_ORDER_POSTPROCESSING_TOTALS_INCONSISTENT`, and the logged diff names only the
-shipping line's fields, which points straight at the missing update.
+split the way the merchant books it. Without the `recomputeTwoOrderTotals()` call the
+order totals no longer match the lines, and Two's API refuses the order; the Debug
+Mode diff then names only the shipping line's fields, which points straight at the
+missing update.
 
 A PrestaShop refund carries no lines: the full refund has no body and a credit slip
 sends `{amount, currency}`, so Two reverses VAT against the order it holds, which is
@@ -853,11 +847,10 @@ the method above, verbatim, and the offline suite fails if the two drift apart.
 - The hook is permanent. It is never removed or renamed, it fires consistently on the
   same events, and its version 1 context keys and `request_type` values keep their
   meaning.
-- Allowed without a version change: new context keys, new `request_type` or `trigger`
-  values, and relaxing a gate.
+- Allowed without a version change: new context keys, and new `request_type` or
+  `trigger` values.
 - Never: removing or renaming a context key, changing units (rates stay decimal
-  fractions), tightening a gate that a version 1 subscriber could already satisfy, or
-  firing on fewer request types.
+  fractions), or firing on fewer request types.
 - A genuinely incompatible version 2 would be a new hook name, with version 1 still
   firing beside it. `CHANGELOG.md` records any change to this contract, and the CI
   fixture pins version 1.
