@@ -1,7 +1,7 @@
 <?php
 /**
- * A refusal by one of the plugin's own consistency gates on a payload the
- * order postprocessing hook changed, or by the hook itself (TWO-26092).
+ * An order request the order postprocessing hook failed (TWO-26092): a
+ * subscriber threw, or left something that is not a JSON-encodable array.
  *
  * Deliberately NOT a TwoCheckoutAmountException: the buyer gets the plugin's
  * existing generic refusal, and the code goes to the merchant log.

@@ -494,17 +494,17 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 return true;
             }
 
-            $sync_error = $this->module->getTwoErrorMessage($update_response);
+            $sync_error = $this->module->getTwoApiErrorDetail($update_response);
             PrestaShopLogger::addLog(
                 'TwoPayment: Failed to sync merchant_order_id for order ' . $order->id .
                 ', Two order ' . $payment_data['two_order_id'] .
-                ', HTTP ' . $http_status .
-                ($sync_error ? ', Error: ' . $sync_error : ''),
+                ', ' . $sync_error,
                 2,
                 null,
                 'Order',
                 $order->id
             );
+            $this->module->recordTwoOrderSync((int) $order->id, $sync_error);
         } catch (Exception $e) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Exception syncing merchant_order_id for order ' . $order->id .
@@ -514,6 +514,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 'Order',
                 $order->id
             );
+            $this->module->recordTwoOrderSync((int) $order->id, $e->getMessage());
         }
 
         return false;
