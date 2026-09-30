@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../controllers/front/orderintent.php';
+require_once __DIR__ . '/integration/fixtures/twoorderpostprocessingtest/twoorderpostprocessingtest.php';
 
 /**
  * TWO-26092: the order postprocessing hook (actionTwoOrderPostprocessing).
@@ -39,6 +40,7 @@ final class OrderPostprocessingSpec
         self::testRecomputeTotalsHelper();
         self::testSnapshotRecordsTheHook();
         self::testHookRowIsCreatedOnceAndNeverSubscribed();
+        self::testReadmeExampleIsTheFixturesOwnCode();
         self::testEveryOrderSendGoesThroughTheChoke();
     }
 
@@ -249,7 +251,6 @@ final class OrderPostprocessingSpec
      */
     private static function apply(string $mode, array &$params): void
     {
-        $module = Module::getInstanceByName('twopayment');
         switch ($mode) {
             case 'noop':
                 return;
@@ -280,41 +281,10 @@ final class OrderPostprocessingSpec
                 return;
         }
 
-        // Every remaining mode starts from the README's shipping re-split.
-        $rate = $params['context']['shipping_tax_rate'];
-        foreach ($params['payload']['line_items'] as &$line) {
-            if ($line['type'] !== 'SHIPPING_FEE' || (float) $line['tax_amount'] != 0.0) {
-                continue;
-            }
-            $gross = (float) $line['gross_amount'];
-            $net = round($gross / (1 + $rate), 2);
-            $line['net_amount'] = number_format($net, 2, '.', '');
-            $line['tax_amount'] = number_format($gross - $net, 2, '.', '');
-            $line['unit_price'] = $line['net_amount'];
-            $line['tax_rate'] = (string) $rate;
-            $line['tax_class_name'] = 'VAT ' . number_format($rate * 100, 2) . '%';
-            if ($mode === 'off_by_cent') {
-                $line['net_amount'] = number_format($net - 0.01, 2, '.', '');
-                $line['unit_price'] = $line['net_amount'];
-            }
-        }
-        unset($line);
-        if ($mode === 'stale_totals') {
-            return;
-        }
-        if ($mode === 'gross_change') {
-            $params['payload']['line_items'][] = [
-                'name' => 'Handling', 'description' => '', 'gross_amount' => '12.10', 'net_amount' => '10.00',
-                'discount_amount' => '0.00', 'tax_amount' => '2.10', 'tax_class_name' => 'VAT 21.00%',
-                'tax_rate' => '0.21', 'unit_price' => '10.00', 'quantity' => 1, 'quantity_unit' => 'item',
-                'image_url' => '', 'product_page_url' => '', 'type' => 'SERVICE',
-            ];
-        }
-        $stale = $params['payload']['tax_subtotals'];
-        $params['payload'] = $module->recomputeTwoOrderTotals($params['payload']);
-        if ($mode === 'stale_subtotals') {
-            $params['payload']['tax_subtotals'] = $stale;
-        }
+        // Every remaining mode is the fixture's own: the README re-split, then any deliberate break.
+        $before = $params['payload'];
+        $params['payload'] = Twoorderpostprocessingtest::resplitShipping($params['payload'], (float) $params['context']['shipping_tax_rate']);
+        Twoorderpostprocessingtest::breakOnPurpose($mode, $params['payload'], $before);
     }
 
     private static function harnessAsInstance(TwopaymentTestHarness $module): void
@@ -911,6 +881,19 @@ final class OrderPostprocessingSpec
         Hook::$ids = [];
         TinyAssert::true(upgrade_module_2_7_18($module), 'the upgrade script creates it on existing shops');
         TinyAssert::same([TwoOrderPostprocessing::HOOK => 1], Hook::$ids, 'the upgrade row');
+    }
+
+    /**
+     * The README re-split, the CI fixture and this spec run one implementation.
+     */
+    private static function testReadmeExampleIsTheFixturesOwnCode(): void
+    {
+        $method = new ReflectionMethod(Twoorderpostprocessingtest::class, 'resplitShipping');
+        $lines = array_slice(file((string) $method->getFileName()), $method->getStartLine() - 1, $method->getEndLine() - $method->getStartLine() + 1);
+        $source = implode('', array_map(static function (string $line): string {
+            return preg_replace('/^ {4}/', '', $line);
+        }, $lines));
+        TinyAssert::true(strpos((string) file_get_contents(dirname(__DIR__) . '/README.md'), $source) !== false, 'README carries the fixture\'s resplitShipping() verbatim');
     }
 
     /**

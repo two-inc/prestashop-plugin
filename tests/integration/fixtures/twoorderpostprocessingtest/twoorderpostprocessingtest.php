@@ -94,40 +94,84 @@ class Twoorderpostprocessingtest extends Module
         if (empty($params['payload']['line_items'])) {
             return;
         }
-
-        // The README example: re-split untaxed shipping at the shop's shipping rate.
         $rate = (float) $params['context']['shipping_tax_rate'];
         if ($rate <= 0) {
             $rate = (float) Configuration::get(self::CONFIG_RATE);
         }
-        foreach ($params['payload']['line_items'] as &$line) {
+        $before = $params['payload'];
+        $params['payload'] = self::resplitShipping($params['payload'], $rate);
+        self::breakOnPurpose($mode, $params['payload'], $before);
+    }
+
+    /**
+     * The README example, verbatim: re-split shipping the shop recorded untaxed, and keep the totals consistent.
+     *
+     * @param array $payload
+     * @param float $rate
+     * @return array
+     */
+    public static function resplitShipping(array $payload, $rate)
+    {
+        foreach ($payload['line_items'] as &$line) {
             if ($line['type'] !== 'SHIPPING_FEE' || (float) $line['tax_amount'] != 0.0) {
                 continue;
             }
             $gross = (float) $line['gross_amount'];
             $net = round($gross / (1 + $rate), 2);
-            $line['net_amount'] = number_format($net - ($mode === 'off_by_cent' ? 0.01 : 0), 2, '.', '');
+            $line['net_amount'] = number_format($net, 2, '.', '');
             $line['tax_amount'] = number_format($gross - $net, 2, '.', '');
             $line['unit_price'] = $line['net_amount'];
             $line['tax_rate'] = (string) $rate;
             $line['tax_class_name'] = 'VAT ' . number_format($rate * 100, 2) . '%';
         }
         unset($line);
-        if ($mode === 'stale_totals') {
-            return;
-        }
-        if ($mode === 'gross_change') {
-            $params['payload']['line_items'][] = array(
-                'name' => 'Handling', 'description' => '', 'gross_amount' => '12.10', 'net_amount' => '10.00',
-                'discount_amount' => '0.00', 'tax_amount' => '2.10', 'tax_class_name' => 'VAT 21.00%',
-                'tax_rate' => '0.21', 'unit_price' => '10.00', 'quantity' => 1, 'quantity_unit' => 'item',
-                'image_url' => '', 'product_page_url' => '', 'type' => 'SERVICE',
-            );
-        }
-        $stale = isset($params['payload']['tax_subtotals']) ? $params['payload']['tax_subtotals'] : null;
-        $params['payload'] = Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($params['payload']);
-        if ($mode === 'stale_subtotals') {
-            $params['payload']['tax_subtotals'] = $stale;
+
+        return Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
+    }
+
+    /**
+     * The broken subscribers the gates must catch, applied on top of the re-split.
+     *
+     * @param string $mode
+     * @param array $payload
+     * @param array $before the payload the subscriber was given
+     * @return void
+     */
+    public static function breakOnPurpose($mode, array &$payload, array $before)
+    {
+        switch ($mode) {
+            case 'off_by_cent':
+                foreach ($payload['line_items'] as &$line) {
+                    if ($line['type'] === 'SHIPPING_FEE') {
+                        $line['net_amount'] = number_format((float) $line['net_amount'] - 0.01, 2, '.', '');
+                        $line['unit_price'] = $line['net_amount'];
+                    }
+                }
+                unset($line);
+
+                return;
+            case 'stale_totals':
+                foreach (array('net_amount', 'tax_amount', 'gross_amount', 'tax_subtotals') as $key) {
+                    if (array_key_exists($key, $before)) {
+                        $payload[$key] = $before[$key];
+                    }
+                }
+
+                return;
+            case 'stale_subtotals':
+                $payload['tax_subtotals'] = isset($before['tax_subtotals']) ? $before['tax_subtotals'] : null;
+
+                return;
+            case 'gross_change':
+                $payload['line_items'][] = array(
+                    'name' => 'Handling', 'description' => '', 'gross_amount' => '12.10', 'net_amount' => '10.00',
+                    'discount_amount' => '0.00', 'tax_amount' => '2.10', 'tax_class_name' => 'VAT 21.00%',
+                    'tax_rate' => '0.21', 'unit_price' => '10.00', 'quantity' => 1, 'quantity_unit' => 'item',
+                    'image_url' => '', 'product_page_url' => '', 'type' => 'SERVICE',
+                );
+                $payload = Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
+
+                return;
         }
     }
 }

@@ -696,7 +696,7 @@ whatever arrives, and a payload that passes is accepted as the merchant declared
 | | |
 | --- | --- |
 | Name | `actionTwoOrderPostprocessing` |
-| Call | `Hook::exec('actionTwoOrderPostprocessing', ['payload' => &$payload, 'context' => $context])` |
+| Call | The module calls each subscriber's `hookActionTwoOrderPostprocessing($params)` itself, with `$params['payload']` bound by reference and `$params['context']`, rather than through `Hook::exec()`, which on PrestaShop 8 and 9 discards a subscriber's exception outside debug mode. Which modules run is core's rule: those registered on the hook for the shop, active, in position order, and only native ones under "Disable non PrestaShop modules". Controller exceptions and employee permissions are not applied, so the payload never depends on the page or the employee that triggered the request |
 | Subscribe | `$this->registerHook('actionTwoOrderPostprocessing')` in your module's `install()`, and a `hookActionTwoOrderPostprocessing($params)` method |
 | Return | none: edit `$params['payload']` in place. It is a reference, the same idiom as core's `actionPresentCart` |
 | Order | subscribers run in hook-position order (Design > Positions), each seeing the previous one's edits |
@@ -721,6 +721,10 @@ totals and fields the module does not itself send.
 | `shipping_tax_rate` | float or null | The rate the carrier's tax rules group applies at the cart's tax address, whether or not the shipping line was actually taxed. `0.21` means 21%. `0.0` for a "No tax" group, null with no carrier or no such group |
 | `fallback_shipping_tax_rate` | float or null | The rate of the module's Default shipping tax code, null when it is not set |
 | `contract_version` | int | `1` |
+
+As on every hook, `$params` also carries core's `cookie`, `cart` and `altern`.
+`$params['cart']` is the visitor's cart from `Context`, which on an admin edit, a
+status change or a refund is not the order's cart: use `$params['context']['cart']`.
 
 ### When it fires
 
@@ -782,10 +786,12 @@ changes nothing else. It is opt-in and part of this contract.
 
 ### Requirements on a subscriber
 
-- **Deterministic.** It must be a pure function of its inputs. The confirmation step
-  rebuilds the order and compares a hash of it with the one taken at payment, over the
-  post-hook payload; a subscriber whose output varies refuses confirmation as a
-  tampered cart.
+- **Deterministic.** It must be a pure function of the payload and the cart. The
+  confirmation step rebuilds the order and compares a hash of it with the one taken at
+  payment, over the post-hook payload; a subscriber whose output varies refuses
+  confirmation as a tampered cart. That includes `trigger`: the payment build
+  (`checkout`) and the confirmation rebuild (`snapshot_hash`) must give the same
+  payload, so never let the edit depend on it.
 - **Cheap.** It runs on every order-intent check.
 - **Present.** A disabled subscriber module, or PrestaShop's "Disable non PrestaShop
   modules" switch, means no subscriber: orders then go out as the shop recorded them
@@ -804,7 +810,12 @@ public function hookActionTwoOrderPostprocessing($params)
     if (!$rate || empty($params['payload']['line_items'])) {
         return;
     }
-    foreach ($params['payload']['line_items'] as &$line) {
+    $params['payload'] = self::resplitShipping($params['payload'], (float) $rate);
+}
+
+public static function resplitShipping(array $payload, $rate)
+{
+    foreach ($payload['line_items'] as &$line) {
         if ($line['type'] !== 'SHIPPING_FEE' || (float) $line['tax_amount'] != 0.0) {
             continue;
         }
@@ -817,13 +828,15 @@ public function hookActionTwoOrderPostprocessing($params)
         $line['tax_class_name'] = 'VAT ' . number_format($rate * 100, 2) . '%';
     }
     unset($line);
-    $params['payload'] = Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($params['payload']);
+
+    return Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
 }
 ```
 
 On a 100.00 product at 21% with 29.00 of untaxed shipping, the shipping line becomes
 23.97 net + 5.03 tax = 29.00, and the order 123.97 + 26.03 = 150.00: the same gross,
-split the way the merchant books it. Leaving out the last line refuses the order with
+split the way the merchant books it. Returning the payload without the
+`recomputeTwoOrderTotals()` call refuses the order with
 `TWO_ORDER_POSTPROCESSING_TOTALS_INCONSISTENT`, and the logged diff names only the
 shipping line's fields, which points straight at the missing update.
 
@@ -832,7 +845,8 @@ sends `{amount, currency}`, so Two reverses VAT against the order it holds, whic
 the post-hook one.
 
 A working subscriber, exercised on every request type in CI, is
-`tests/integration/fixtures/twoorderpostprocessingtest`.
+`tests/integration/fixtures/twoorderpostprocessingtest`. Its `resplitShipping()` is
+the method above, verbatim, and the offline suite fails if the two drift apart.
 
 ### Versioning
 
