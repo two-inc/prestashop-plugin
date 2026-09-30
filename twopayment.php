@@ -317,7 +317,7 @@ class Twopayment extends PaymentModule
     // declares "No tax" (TWO-25200, TWO-26117). PrestaShop keeps the shipping
     // tax declaration on the carrier row (`carrier_tax_rules_group_shop`) and
     // nowhere else, so a merchant who prices shipping outside the carrier
-    // table (custom logistics, `id_carrier = 0`) has no carrier row to declare
+    // table (`id_carrier = 0`) has no carrier row to declare
     // it on. This
     // is that declaration, moved onto the module - still the merchant's own,
     // never inferred from amounts. Unset (the shipped state), such a line goes
@@ -9523,7 +9523,7 @@ class Twopayment extends PaymentModule
      * @param array<string,array{rate:float,net_weight:float}> $classes Keyed by formatted rate
      * @param string $label For error messages ('shipping', 'gift wrapping')
      * @param bool $checked false for shipping rates the plugin relays unchecked (TWO-26117): what the nudge
-     *                      cannot place lands on the largest class instead of refusing
+     *                      cannot place is re-shared by rate instead of refusing, never below zero
      * @return array<int,array{net:float,tax:float,gross:float,rate:float}>
      * @throws Exception
      */
@@ -9581,7 +9581,17 @@ class Twopayment extends PaymentModule
                 $applied = true;
             }
             if (!$applied && !$checked) {
-                $tax_cents[current(array_keys($net_weights))] += $residual_cents;
+                // Relayed as recorded (TWO-26117): the tax charged, shared by what each class's rate implies for its
+                // net (by net where every rate is 0), so no line ever carries a tax the shop did not charge or a sign
+                // it never had. Two's API judges the lines.
+                $tax_weights = [];
+                foreach ($classes as $key => $class) {
+                    $tax_weights[$key] = (isset($allocated_nets[$key]) ? (float) $allocated_nets[$key] : 0.0) * max(0.0, (float) $class['rate']);
+                }
+                $shares = $this->allocateTwoAmountByWeights($charge_tax, array_sum($tax_weights) > 0 ? $tax_weights : $net_weights);
+                foreach (array_keys($tax_cents) as $key) {
+                    $tax_cents[$key] = isset($shares[$key]) ? $this->convertAmountToCents($shares[$key]) : 0;
+                }
                 $residual_cents = 0;
             } elseif (!$applied) {
                 PrestaShopLogger::addLog(
@@ -10852,7 +10862,7 @@ class Twopayment extends PaymentModule
         $source = self::SHIPPING_RATE_NONE;
         PrestaShopLogger::addLog(
             'TwoPayment: Cart ' . (int) $cart->id . ' (id_carrier=' . (int) $cart->id_carrier . ') provides no shipping tax rate ('
-            . $failure . ') and no Default shipping tax code is set; sending shipping at 0% with the tax it was charged.',
+            . $failure . ') and no usable Default shipping tax code; sending shipping at 0% with the tax it was charged.',
             1
         );
 
@@ -10866,7 +10876,8 @@ class Twopayment extends PaymentModule
      * single rate class the whole shipping charge belongs to (TWO-25200).
      *
      * Returns NULL - never a rate - when no default is configured, which is
-     * the shipped state and leaves the caller's loud refusal untouched. The
+     * the shipped state: the caller then sends the line at 0% with the tax it
+     * was charged (TWO-26117). The
      * whole shipping gross goes into one class: the default is a declaration
      * about shipping as such, and the carrier-level split it replaces was
      * unavailable by definition on this path.
@@ -10886,13 +10897,13 @@ class Twopayment extends PaymentModule
         try {
             $rate = $this->getTwoConfiguredTaxRateDecimalForGroup($group_id, $cart);
         } catch (Throwable $e) {
-            // A configured-but-unresolvable default is not a rate either.
-            // Returning null hands the caller back its loud refusal rather
-            // than relaying a silent 0%.
+            // A configured-but-unresolvable default is not a rate either, so
+            // the control is not populated and the caller sends the line at 0%
+            // with the tax it was charged (TWO-26117), never a guessed rate.
             PrestaShopLogger::addLog(
                 'TwoPayment: Cart ' . (int) $cart->id . ' could not resolve the configured default shipping ' .
                 'tax code (tax_rules_group=' . $group_id . ') either (' . get_class($e) . ': ' .
-                $e->getMessage() . '); refusing rather than relaying a guessed rate.',
+                $e->getMessage() . '); treating it as not set rather than guessing a rate.',
                 3
             );
 
@@ -10945,7 +10956,7 @@ class Twopayment extends PaymentModule
      * @param Cart|null $cart Read for the cart's shop; null reads the context's (the admin form)
      * @return int|null Group id (0 = "No tax"), or null when unset/invalid or
      *                  the fallback is not enabled (TWO-26082) - null being
-     *                  the shipped state and the loud-refusal path
+     *                  the shipped state, where no rate is assumed (TWO-26117)
      */
     private function getTwoDefaultShippingTaxRulesGroupId($cart = null)
     {
@@ -10969,10 +10980,10 @@ class Twopayment extends PaymentModule
         $group_id = (int) $stored;
         if ($group_id > 0 && !Validate::isLoadedObject(new TaxRulesGroup($group_id))) {
             // The merchant deleted the group after selecting it. That is not
-            // a declaration any more - refuse loudly instead of relaying 0%.
+            // a declaration any more, so the control is not populated (TWO-26117).
             PrestaShopLogger::addLog(
                 'TwoPayment: The configured Default shipping tax code refers to tax rules group ' .
-                $group_id . ', which no longer exists; treating shipping tax as unresolvable.',
+                $group_id . ', which no longer exists; treating the Default shipping tax code as not set.',
                 3
             );
 

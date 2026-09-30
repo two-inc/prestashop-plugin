@@ -625,7 +625,7 @@ final class DefaultShippingTaxCodeSpec
 
         TinyAssert::false(self::loggedContains(self::FALLBACK_LOG));
         TinyAssert::true(
-            self::loggedContains('which no longer exists; treating shipping tax as unresolvable'),
+            self::loggedContains('which no longer exists; treating the Default shipping tax code as not set'),
             'A dangling selection must say so in the log'
         );
         TinyAssert::same(
