@@ -5475,7 +5475,7 @@ class Twopayment extends PaymentModule
     protected function buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, array $sent, $remainder)
     {
         try {
-            $placed = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
+            $placed = $this->getTwoUpdateOrderData($order, $orderpaymentdata, 'status_change');
         } catch (Exception $e) {
             PrestaShopLogger::addLog('TwoPayment: Full refund remainder - could not rebuild the order as placed - ' . $e->getMessage(), 3);
             return array();
