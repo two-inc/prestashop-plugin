@@ -7,11 +7,18 @@
  * shop. They used to live in the PrestaShop cookie, where a `|` or `¤` in a
  * company name, or a long address, made core's cookie write throw.
  *
- * Registers actionDeleteGDPRCustomer and actionExportGDPRData, so psgdpr
- * erases and exports the table's rows for a customer.
+ * Each row carries the cart's `id_customer`, so psgdpr erasure and export find
+ * a customer's rows even after psgdpr 2.x has reassigned their carts to its
+ * anonymous customer. A table created by an earlier build of this version gets
+ * the column added, and every row is backfilled from `ps_cart`.
  *
- * Idempotent: the table is created with IF NOT EXISTS, and the module also
- * creates it lazily for a shop whose files were swapped without an upgrade.
+ * Registers actionDeleteGDPRCustomer and actionExportGDPRData, so psgdpr
+ * erases and exports the table's rows for a customer, and
+ * actionObjectCartUpdateAfter, which claims a guest cart's rows once it gets a
+ * customer.
+ *
+ * Idempotent: the table is created with IF NOT EXISTS, the column is added
+ * only when missing, and the backfill only touches rows still at 0.
  *
  * Created: 2026-09-30
  */
@@ -22,15 +29,32 @@ if (!defined('_PS_VERSION_')) {
 
 function upgrade_module_2_7_19($module)
 {
-    if (!$module->ensureTwoCartRecordTable()
+    $db = Db::getInstance();
+    $table = '`' . _DB_PREFIX_ . Twopayment::CART_RECORD_TABLE . '`';
+    if (!$module->ensureTwoCartRecordTable()) {
+        return false;
+    }
+    if (!$db->executeS('SHOW COLUMNS FROM ' . $table . ' LIKE "id_customer"')
+        && !$db->execute(
+            'ALTER TABLE ' . $table . ' ADD `id_customer` INT(11) UNSIGNED NOT NULL DEFAULT 0 AFTER `id_shop`,'
+            . ' ADD KEY `idx_cart_record_customer` (`id_customer`)'
+        )
+    ) {
+        return false;
+    }
+    if (!$db->execute(
+        'UPDATE ' . $table . ' `cr` INNER JOIN `' . _DB_PREFIX_ . 'cart` `c` ON `c`.`id_cart` = `cr`.`id_cart`'
+        . ' SET `cr`.`id_customer` = `c`.`id_customer` WHERE `cr`.`id_customer` = 0'
+    )
         || !$module->registerHook('actionDeleteGDPRCustomer')
         || !$module->registerHook('actionExportGDPRData')
+        || !$module->registerHook('actionObjectCartUpdateAfter')
     ) {
         return false;
     }
 
     PrestaShopLogger::addLog(
-        'Two Payment: Successfully upgraded to version 2.7.19 - created the cart record table and registered the GDPR hooks',
+        'Two Payment: Successfully upgraded to version 2.7.19 - created the cart record table and registered its GDPR and cart hooks',
         1,
         null,
         'Module',

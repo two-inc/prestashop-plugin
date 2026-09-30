@@ -695,6 +695,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionFrontControllerInitAfter') &&
             $this->registerHook('actionDeleteGDPRCustomer') &&
             $this->registerHook('actionExportGDPRData') &&
+            $this->registerHook('actionObjectCartUpdateAfter') &&
             $this->registerHook('actionObjectOrderDetailAddBefore') &&
             $this->registerHook('actionPresentCart') &&
             $this->registerHook('displayProductAdditionalInfo') &&
@@ -1018,6 +1019,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionFrontControllerInitAfter') &&
             $this->unregisterHook('actionDeleteGDPRCustomer') &&
             $this->unregisterHook('actionExportGDPRData') &&
+            $this->unregisterHook('actionObjectCartUpdateAfter') &&
             $this->unregisterHook('actionObjectOrderDetailAddBefore') &&
             $this->unregisterHook('actionPresentCart') &&
             $this->uninstallTwoInvoiceAdminTab() &&
@@ -6274,6 +6276,9 @@ class Twopayment extends PaymentModule
 
     public function hookActionFrontControllerSetMedia()
     {
+        // actionFrontControllerInitAfter only arrived in 1.7.7.0; this hook is what fires on the 1.7.6 floor.
+        $this->runTwoDailyPurge();
+
         // CRITICAL FIX: Only load Two assets on checkout pages to prevent conflicts and improve performance
         $controller_name = Tools::getValue('controller');
         $is_checkout_page = in_array($controller_name, ['order', 'orderopc']) || 
@@ -12290,11 +12295,13 @@ class Twopayment extends PaymentModule
             'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` (
                 `id_cart` INT(11) UNSIGNED NOT NULL,
                 `id_shop` INT(11) UNSIGNED NOT NULL,
+                `id_customer` INT(11) UNSIGNED NOT NULL DEFAULT 0,
                 `record` VARCHAR(16) NOT NULL,
                 `data` TEXT NOT NULL,
                 `updated_at` DATETIME NOT NULL,
                 PRIMARY KEY (`id_cart`, `id_shop`, `record`),
-                KEY `idx_cart_record_updated_at` (`updated_at`)
+                KEY `idx_cart_record_updated_at` (`updated_at`),
+                KEY `idx_cart_record_customer` (`id_customer`)
             ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8'
         );
 
@@ -12406,8 +12413,8 @@ class Twopayment extends PaymentModule
         }
 
         Db::getInstance()->execute(
-            'REPLACE INTO ' . $table . ' (`id_cart`, `id_shop`, `record`, `data`, `updated_at`) VALUES ('
-            . $cartId . ', ' . $this->getTwoCartRecordShopId() . ', "' . pSQL($record) . '", "'
+            'REPLACE INTO ' . $table . ' (`id_cart`, `id_shop`, `id_customer`, `record`, `data`, `updated_at`) VALUES ('
+            . $cartId . ', ' . $this->getTwoCartRecordShopId() . ', ' . (int) $this->context->cart->id_customer . ', "' . pSQL($record) . '", "'
             . pSQL($json, true) . '", "' . date('Y-m-d H:i:s') . '")'
         );
     }
@@ -18217,11 +18224,7 @@ class Twopayment extends PaymentModule
         // has to be in place before the address form is built.
         $this->requirePhoneOnAddressForms();
 
-        try {
-            $this->maybeCleanupStaleTwoCheckoutAttempts();
-        } catch (Exception $e) {
-            PrestaShopLogger::addLog('TwoPayment: Daily purge failed: ' . $e->getMessage(), 2);
-        }
+        $this->runTwoDailyPurge();
 
         try {
             $cart = isset($this->context->cart) ? $this->context->cart : null;
@@ -20751,6 +20754,15 @@ class Twopayment extends PaymentModule
      * @param bool $force
      * @return void
      */
+    private function runTwoDailyPurge()
+    {
+        try {
+            $this->maybeCleanupStaleTwoCheckoutAttempts();
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Daily purge failed: ' . $e->getMessage(), 2);
+        }
+    }
+
     public function maybeCleanupStaleTwoCheckoutAttempts($force = false)
     {
         $now = time();
@@ -20790,7 +20802,7 @@ class Twopayment extends PaymentModule
     {
         $customerIds = $this->getGdprCustomerIds($params);
         if ($customerIds === array() || ($this->ensureTwoCartRecordTable() && Db::getInstance()->execute(
-            'DELETE `cr` FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` `cr`' . $this->getGdprCustomerCartJoin($customerIds)
+            'DELETE FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '`' . $this->getGdprCustomerWhere($customerIds)
         ))) {
             return json_encode(true);
         }
@@ -20812,8 +20824,8 @@ class Twopayment extends PaymentModule
         }
         $this->ensureTwoCartRecordTable();
         $rows = Db::getInstance()->executeS(
-            'SELECT `cr`.`id_cart`, `cr`.`record`, `cr`.`data`, `cr`.`updated_at` FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` `cr`'
-            . $this->getGdprCustomerCartJoin($customerIds)
+            'SELECT `id_cart`, `record`, `data`, `updated_at` FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '`'
+            . $this->getGdprCustomerWhere($customerIds)
         );
         if (!is_array($rows)) {
             return json_encode($this->l('Unable to export the saved checkout company details.'));
@@ -20846,13 +20858,35 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * By the row's own id_customer, not a ps_cart join: psgdpr 2.x reassigns
+     * the customer's carts to its anonymous customer before firing the hook.
+     *
      * @param int[] $customerIds
      * @return string
      */
-    private function getGdprCustomerCartJoin(array $customerIds)
+    private function getGdprCustomerWhere(array $customerIds)
     {
-        return ' INNER JOIN `' . _DB_PREFIX_ . 'cart` `c` ON `c`.`id_cart` = `cr`.`id_cart` AND `c`.`id_shop` = `cr`.`id_shop`'
-            . ' WHERE `c`.`id_customer` IN (' . implode(',', array_map('intval', $customerIds)) . ')';
+        return ' WHERE `id_customer` IN (' . implode(',', array_map('intval', $customerIds)) . ')';
+    }
+
+    /**
+     * A guest cart's records were written with id_customer 0; claim them once
+     * the cart gets a customer (login, account or guest creation).
+     *
+     * @param array $params
+     * @return void
+     */
+    public function hookActionObjectCartUpdateAfter($params)
+    {
+        $cart = isset($params['object']) ? $params['object'] : null;
+        if (!is_object($cart) || (int) $cart->id <= 0 || (int) $cart->id_customer <= 0) {
+            return;
+        }
+        $this->ensureTwoCartRecordTable();
+        Db::getInstance()->execute(
+            'UPDATE `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` SET `id_customer` = ' . (int) $cart->id_customer
+            . ' WHERE `id_cart` = ' . (int) $cart->id . ' AND `id_customer` = 0'
+        );
     }
 
     /**
