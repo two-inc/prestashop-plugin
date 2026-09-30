@@ -35,6 +35,7 @@ final class OrderPostprocessingSpec
         self::testAdminEditSurvivesAThrowingSubscriber();
         self::testOrderIntentRelayBuildsThePayloadItself();
         self::testEachRequestTypeFiresExactlyOnce();
+        self::testNoChangeKeepsTodaysOutcomeOnEveryRequestType();
         self::testRecomputeTotalsHelper();
         self::testSnapshotRecordsTheHook();
         self::testHookRowIsCreatedOnceAndNeverSubscribed();
@@ -648,22 +649,27 @@ final class OrderPostprocessingSpec
      * Every request type fires the hook exactly once, with the contract's
      * context, and sends exactly what the subscribers left.
      */
-    private static function testEachRequestTypeFiresExactlyOnce(): void
+    /**
+     * One driver per request type and trigger.
+     *
+     * @return array<int,array{0:string,1:string,2:int,3:callable,4:string}> [request_type, trigger, sends, driver, description]
+     */
+    private static function requestDrivers(): array
     {
         $order = self::order();
-        // [request_type, trigger, sends, driver, description]
-        $cases = [
+
+        return [
             ['order_intent', 'precheck', 0, static function ($m, $c) {
-                $m->getTwoIntentOrderData($c, new Customer(self::CART), new Currency(978), new Address(self::ADDRESS));
-            }, 'order intent pre-check (payload handed to the browser)'],
+                return $m->getTwoIntentOrderData($c, new Customer(self::CART), new Currency(978), new Address(self::ADDRESS));
+            }, 'order intent pre-check (built for the checkout and its relay)'],
             ['order_intent', 'strict_intent', 1, static function ($m, $c) {
-                $m->checkTwoOrderIntentApprovalAtPayment($c, new Customer(self::CART), new Currency(978), new Address(self::ADDRESS));
+                return $m->checkTwoOrderIntentApprovalAtPayment($c, new Customer(self::CART), new Currency(978), new Address(self::ADDRESS));
             }, 'order intent at payment submit'],
             ['order_create', 'checkout', 0, static function ($m, $c) {
-                $m->getTwoNewOrderData('merchant-attempt-9701', $c, self::merchantUrls());
+                return $m->getTwoNewOrderData('merchant-attempt-9701', $c, self::merchantUrls());
             }, 'order create build'],
             ['order_create', 'snapshot_hash', 0, static function ($m, $c) {
-                $m->getTwoNewOrderData('merchant-attempt-9701', $c, self::merchantUrls(), false, 'snapshot_hash');
+                return $m->getTwoNewOrderData('merchant-attempt-9701', $c, self::merchantUrls(), false, 'snapshot_hash');
             }, 'order create rebuilt for the confirmation hash'],
             ['order_update', 'admin_edit', 1, static function ($m) use ($order) {
                 $m->hookActionOrderEdited(['order' => $order]);
@@ -700,6 +706,11 @@ final class OrderPostprocessingSpec
                 $m->cancelTwoOrderBestEffort(self::TWO_ORDER, 'attempt_persist_failed');
             }, 'best-effort cancel'],
         ];
+    }
+
+    private static function testEachRequestTypeFiresExactlyOnce(): void
+    {
+        $cases = self::requestDrivers();
         $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version'];
         foreach ($cases as [$type, $trigger, $sends, $driver, $description]) {
             $cart = self::seed(true);
@@ -745,6 +756,64 @@ final class OrderPostprocessingSpec
         TinyAssert::same(0.0, $module->buildTwoOrderPostprocessingContext('order_create', 'spec', '/v1/order', new Cart(self::CART))['shipping_tax_rate'], 'a "No tax" carrier group is 0');
         StubStore::$carts[self::CART]['id_carrier'] = 0;
         TinyAssert::same(null, $module->buildTwoOrderPostprocessingContext('order_create', 'spec', '/v1/order', new Cart(self::CART))['shipping_tax_rate'], 'no carrier is null');
+    }
+
+    /**
+     * With no subscriber changing the payload, every request type sends the
+     * same bytes and gets the same accept or refuse outcome as with no
+     * subscriber at all, on a cart the gates pass and on one they refuse. A
+     * subscriber that changes only a field no gate reads passes the
+     * changed-payload gates on every builder payload: the builder derives
+     * totals and subtotals from lines whose gross is net + tax exactly, so no
+     * builder payload carries a residual for those gates to trip on.
+     */
+    private static function testNoChangeKeepsTodaysOutcomeOnEveryRequestType(): void
+    {
+        foreach (self::requestDrivers() as [$type, $trigger, , $driver, $description]) {
+            foreach ([[true, 'a cart the gates pass'], [false, 'a cart the gates refuse']] as [$taxed, $cartLabel]) {
+                $label = $description . ', ' . $cartLabel;
+                $none = self::outcome(null, $taxed, $driver);
+                TinyAssert::same($none, self::outcome('noop', $taxed, $driver), $label . ': a subscriber that changes nothing');
+                if ($taxed) {
+                    TinyAssert::same(null, $none[0], $label . ': accepted');
+                    TinyAssert::same(self::outcome(null, $taxed, $driver, 'order_note'), self::outcome('tag', $taxed, $driver, 'order_note'), $label . ': a subscriber that only sets the order note passes the changed-payload gates');
+                }
+            }
+        }
+    }
+
+    /**
+     * @return array{0:?string,1:mixed,2:array} [refusal, what the driver returned, sends], clock fields pinned
+     */
+    private static function outcome(?string $mode, bool $shippingTaxed, callable $driver, ?string $drop = null): array
+    {
+        $cart = self::seed($shippingTaxed);
+        $module = self::module();
+        self::harnessAsInstance($module);
+        $calls = [];
+        if ($mode !== null) {
+            self::subscribe($mode, $calls);
+        }
+        $error = null;
+        $returned = null;
+        try {
+            $returned = $driver($module, $cart);
+        } catch (Throwable $e) {
+            $error = get_class($e) . ': ' . $e->getMessage();
+        }
+        $pin = static function ($value) use (&$pin, $drop) {
+            if (!is_array($value)) {
+                return $value;
+            }
+            unset($value[$drop ?? '']);
+            foreach ($value as $key => $item) {
+                $value[$key] = in_array($key, ['merchant_reference', 'expected_delivery_date', 'timestamp'], true) ? 'PINNED' : $pin($item);
+            }
+
+            return $value;
+        };
+
+        return [$error, $pin($returned), $pin($module->sent)];
     }
 
     /**
