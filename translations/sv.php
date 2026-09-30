@@ -594,3 +594,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_0fafc015674a68481a377c36125bc110'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a85eba4c6c699122b2bb1387ea4813ad'] = 'Varukorg';
 $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] = 'Ladda ned JSON';
 $_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'Efterbearbetningskroken för ordrar stoppade den här %1$s-begäran, så den skickades inte till %2$s (%3$s). Se modulloggen för mer information.';
+$_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Ändringen av ordern sparades i PrestaShop men skickades inte till fakturaleverantören. Upprepa inte ändringen. Kontakta support.';
