@@ -39,6 +39,7 @@ final class ShippingCostSourcingSpec
         self::testDeliveryOptionLookupRaiseFallsBackToCartCarrierDeclaredRate();
         self::testEmptyCarrierListWithNoLoadableCarrierSendsZero();
         self::testNoTaxCarrierGroupSendsZeroWithTheTaxCharged();
+        self::testUnreconciledMixedRatesAreRelayedWithoutASignFlip();
     }
 
     /**
@@ -891,5 +892,48 @@ final class ShippingCostSourcingSpec
             }
         }
         TinyAssert::same([['0', '23.97', '5.03', '29.00']], $shipping, $description . ': shipping at 0% with the tax charged');
+    }
+
+    /**
+     * TWO-26117: a delivery option over carriers that declare groups provides its rates, and with the Default
+     * shipping tax code blank the lines go out unchecked. Where the tax charged does not reconcile with those
+     * rates, it is shared by what each rate implies for its net: never a negative line, never a tax the shop did
+     * not charge. Columns: carriers by id (net, gross, group), shipping gross and net, expected [rate, net, tax]
+     * lines, description.
+     */
+    private static function testUnreconciledMixedRatesAreRelayedWithoutASignFlip(): void
+    {
+        $cases = [
+            [[7011 => ['net' => 10.00, 'gross' => 12.10, 'group' => 7201], 7012 => ['net' => 20.00, 'gross' => 20.00, 'group' => 0]], 30.00, 30.00,
+                [['0.21', '10.00', '0.00'], ['0', '20.00', '0.00']], '21% and "No tax" carriers, shipping charged no tax'],
+            [[7011 => ['net' => 10.00, 'gross' => 12.10, 'group' => 7201], 7012 => ['net' => 16.00, 'gross' => 17.60, 'group' => 7202]], 31.00, 26.00,
+                [['0.21', '10.00', '2.84'], ['0.1', '16.00', '2.16']], '21% and 10% carriers, 5.00 charged where 3.70 reconciles'],
+        ];
+        foreach ($cases as $i => [$carriers, $gross, $net, $expected, $description]) {
+            self::reset();
+            StubStore::$taxRuleRates[7201] = 21.0;
+            StubStore::$taxRuleRates[7202] = 10.0;
+            $id = 9160 + $i;
+            self::seedCommonFixtures($id, $id + 10);
+            $cart = new Cart($id);
+            $cart->id_customer = $id;
+            $cart->id_currency = 978;
+            $cart->id_address_invoice = $id + 10;
+            $cart->id_address_delivery = $id + 10;
+            $cart->id_lang = 1;
+            $cart->id_carrier = 0;
+            self::seedProductLine($cart, $id + 20);
+            self::seedDeliveryOption($id, $id + 10, $carriers);
+            self::seedShippingTotals($id, $gross, $net);
+
+            $payload = (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-' . $id, $cart, self::merchantUrls());
+            $lines = [];
+            foreach ($payload['line_items'] as $line) {
+                if ($line['type'] === 'SHIPPING_FEE') {
+                    $lines[] = [(string) $line['tax_rate'], $line['net_amount'], $line['tax_amount']];
+                }
+            }
+            TinyAssert::same($expected, $lines, $description . ': got ' . json_encode($lines));
+        }
     }
 }
