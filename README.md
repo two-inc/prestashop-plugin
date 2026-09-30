@@ -100,7 +100,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 | Account Type | Show account type selector | Enabled |
 | SSL Verification | Verify SSL certificates | Enabled |
 | Debug Mode | Enable detailed diagnostic logging | Disabled |
-| Default shipping tax code | Tax rules group assumed for shipping when the carrier's rate cannot be resolved. Hidden until Two enables it — see below | Not set |
+| Default shipping tax code | Tax rules group assumed, and checked, for shipping no carrier provides a rate for. Hidden until Two enables it — see below | Not set |
 
 ### Optional buyer reference fields
 
@@ -151,17 +151,18 @@ relay decodes it back to plain text.
 
 **Who needs this:** shops that price shipping outside PrestaShop's carrier table — third-party carrier modules, click-and-collect, marketplace shipping, or any custom logistics setup that never registers a tax rules group.
 
-PrestaShop declares shipping VAT per carrier, in `carrier_tax_rules_group_shop`, and nowhere else — there is no shop-level shipping tax rules group. The module relays that declaration; it never derives a VAT rate from the amounts. A shop whose shipping is priced outside the carrier table leaves `id_carrier = 0`, PrestaShop then hands the module an empty delivery-option list, and with no carrier there is no declared rate to relay — so the order is refused rather than shipped with a guessed rate.
+PrestaShop declares shipping VAT per carrier, in `carrier_tax_rules_group_shop`, and nowhere else — there is no shop-level shipping tax rules group. The module relays that declaration; it never derives a VAT rate from the amounts. A shop whose shipping is priced outside the carrier table leaves `id_carrier = 0`, PrestaShop then hands the module an empty delivery-option list, and with no carrier there is no declared rate to relay.
 
-The **Default shipping tax code** setting, in **Module Configuration → Order management**, lets such a merchant make that declaration on the module instead. It is **off, and the field hidden, until Two enables it for the shop**: talk to Two first, since assuming a shipping rate is a tax decision we want to review with you. It is assumed **for shipping only, and only when the carrier's tax rate cannot be resolved for the order**. When a carrier does declare a tax rules group, the carrier always wins.
+The **Default shipping tax code** setting, in **Module Configuration → Order management**, lets such a merchant make that declaration on the module instead. It is **off, and the field hidden, until Two enables it for the shop**: talk to Two first, since assuming a shipping rate is a tax decision we want to review with you. It is assumed **for shipping only, and only when no carrier provides a rate**. When a carrier declares a tax rules group, the carrier always wins.
 
-Resolution order:
+The setting is the module's only control over shipping tax, and it has an effect only when it is populated: enabled, and set to a group that resolves. Blank, the default, the module never refuses an order on shipping tax and leaves the check to Two's API. A carrier that declares a tax rules group provides the rate, an explicit 0% group included. "No tax" (group 0), no carrier, or a carrier that cannot be read provides none, whatever tax the line carries.
 
-1. The tax rules group declared by the carrier(s) in the cart's selected delivery option
-2. **Default shipping tax code**, if set
-3. Refuse the order (the pre-existing behaviour), if neither
+| Shipping line | Setting blank (the default) | Setting populated |
+|---|---|---|
+| Rate provided by a carrier, 0% included | Sent at that rate as is, with no module check. | Same as blank. |
+| No rate provided | Sent as is: rate 0, with the tax it was charged, and no module check. | Sent at the setting's rate, once its tax reconciles with that rate (to 0.02); otherwise the order is refused. |
 
-The setting has **no default value**. An install that never sets it behaves exactly as it did before the setting existed.
+The module decides this while it builds the payload, before the order postprocessing hook runs, and records at placement whether a carrier provided the rate. Order updates and refunds read that record, never the carrier or the setting as they are later. The setting has **no default value**.
 
 #### Enabling it
 
@@ -179,11 +180,11 @@ Every action ends by printing each shop's effective state. On PrestaShop 1.7.6 t
 
 The switch is stored in configuration as `PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED`: the global row, or one row per shop. An order reads the setting of the shop its cart belongs to. If the command is not listed (`There are no commands defined in the "twopayment" namespace`), clear the cache with `php bin/console cache:clear` so PrestaShop picks up the module's services. That is needed after the module's files are updated on a shop whose cache is already built.
 
-While it is disabled, orders that no carrier can price are refused as described above, and a group already stored is kept but not used. Saving the Order management tab never changes that stored group while the field is hidden, so enabling again restores the earlier selection.
+While it is disabled, the setting is blank for every order, and a group already stored is kept but not used. Saving the Order management tab never changes that stored group while the field is hidden, so enabling again restores the earlier selection.
 
 Notes:
 
-- Selecting a group that is later deleted is treated as "not set" — the order is refused, not relayed at 0%.
+- Selecting a group that is later deleted is treated as "not set", and the shop log says so.
 - Every order that actually uses the fallback writes a warning to the shop log naming the group, its id and the resolved rate, e.g. `assuming the configured Default shipping tax code "IVA 21%" (tax_rules_group=12, rate=21%)`. If you never see that line, the fallback is not being used.
 
 ### Merchant profile refresh
@@ -314,7 +315,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 
 #### Order updates
 
-An order update (a back-office edit, a tracking number, the sync after checkout) carries the order exactly as PrestaShop currently records it, from its stored rows, and never from the live catalogue, cart or configuration. The Two order it updates is the whole Two order: a cart whose products ship with different carriers is split by PrestaShop into several orders sharing one reference, and the update carries all of them, whichever of them was edited. Each line's amounts and tax rate come from the order's own lines and the taxes recorded for them, shipping as each order's paid total charged it, discounts from the order's recorded vouchers, and gift wrapping from the order's totals. A catalogue price, tax rule, carrier price or voucher changed after placement therefore changes nothing at Two, while a back-office edit to the order itself does. Any rate used must agree with the stored amounts, or the update fails with a log entry. Shipping takes the carrier rate recorded on the order, then the rates the module declared for it at placement, then the Default shipping tax code where that fallback is enabled for the shop; a carrier-less order records no carrier rate, so it relies on the later two. Gift wrapping takes the rate its invoice recorded (invoices disagreeing on it fail the update), then the rate declared at placement, then the configured rate. An order that records no shipping sends no shipping line, even when rounding the total leaves a cent over. A back-office edit sets the order's payment to the total of the orders it pays, and only when that payment is a single one recorded by this module; a split payment or another method's payment is left alone. An update whose amounts, lines, buyer, addresses, carrier and tracking number match the last one Two accepted is not sent at all, so saving an unchanged tracking number, or editing catalogue text, makes no request.
+An order update (a back-office edit, a tracking number, the sync after checkout) carries the order exactly as PrestaShop currently records it, from its stored rows, and never from the live catalogue, cart or configuration. The Two order it updates is the whole Two order: a cart whose products ship with different carriers is split by PrestaShop into several orders sharing one reference, and the update carries all of them, whichever of them was edited. Each line's amounts and tax rate come from the order's own lines and the taxes recorded for them, shipping as each order's paid total charged it, discounts from the order's recorded vouchers, and gift wrapping from the order's totals. A catalogue price, tax rule, carrier price or voucher changed after placement therefore changes nothing at Two, while a back-office edit to the order itself does. Any rate used must agree with the stored amounts, or the update fails with a log entry, except for shipping, which follows the Default shipping tax code table from what placement recorded. Shipping a carrier provided a rate for takes the carrier rate recorded on the order, then the rates declared at placement, and if neither agrees it goes out at the declared rate as it is. Shipping no carrier provided a rate for takes the Default shipping tax code's rate recorded at placement, which must agree, or with none recorded goes out at 0% with the tax charged. A carrier-less order records no carrier rate. An order placed before the module kept that record also tries the Default shipping tax code as it is now configured. Gift wrapping takes the rate its invoice recorded (invoices disagreeing on it fail the update), then the rate declared at placement, then the configured rate. An order that records no shipping sends no shipping line, even when rounding the total leaves a cent over. A back-office edit sets the order's payment to the total of the orders it pays, and only when that payment is a single one recorded by this module; a split payment or another method's payment is left alone. An update whose amounts, lines, buyer, addresses, carrier and tracking number match the last one Two accepted is not sent at all, so saving an unchanged tracking number, or editing catalogue text, makes no request.
 
 #### Buyer surcharge on order updates
 
@@ -737,7 +738,7 @@ Once per outbound order request, immediately before it is sent:
 | `order_update` | An admin order edit, a tracking number, the merchant order id sync after confirmation, and the rebuild that splits a Refunded remainder by tax rate after credit slips (`refund_remainder`, not sent) |
 | `order_confirm` | The buyer's return from verification |
 | `capture` | The fulfilment status |
-| `refund` | The refunded status (full refund, no body) and a credit slip (partial refund, `{amount, currency}`) |
+| `refund` | The refunded status (a full refund with no body; after credit slips, what is left, as `{amount, currency, tax_subtotals}`) and a credit slip (a partial refund, `{amount, currency, tax_subtotals}`) |
 | `cancel` | The cancelled status, a buyer cancel, and the module's own clean-up cancels |
 
 The hook also runs on every order-intent pre-check during checkout, so keep
@@ -746,10 +747,17 @@ subscribers cheap.
 ### What the module does with the result
 
 The payload goes out as the subscribers return it. The module checks only what it
-builds itself: the tax rates it derives for products, shipping and fees against the
-amounts PrestaShop stored, and the lines against the cart's totals. Those checks run on
-the module's own payload before the hook fires, so with no subscriber every request
-is sent, and refused, exactly as before. A cart they refuse never reaches the hook.
+builds itself: the tax rates it derives for products and fees against the amounts
+PrestaShop stored, shipping only as the Default shipping tax code table describes, and
+the lines against the cart's totals. Those checks run on the module's own payload
+before the hook fires, so with no subscriber every request is sent, and refused,
+exactly as before. A cart they refuse never reaches the hook.
+
+The shipping tax check and the hook are independent. With the Default shipping tax
+code blank, shipping no carrier provides a rate for reaches the hook at 0% with the tax
+it was charged, and the hook may re-split it. A merchant whose subscriber re-splits such
+a line should keep the Default shipping tax code blank: populated, it is checked
+against the line before the hook runs, and can refuse the order first.
 
 Two's API validates what arrives, and its error message is written to the module log
 and, for an order update, to the order's private messages. With a subscriber that
@@ -782,7 +790,10 @@ $payload = Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($pay
 
 It rebuilds the order `net_amount` / `tax_amount` / `gross_amount`, and `tax_subtotals`
 when the payload carries them, from `line_items` with the module's own arithmetic, and
-changes nothing else. It is opt-in and part of this contract.
+changes nothing else. Each total, and each per-rate subtotal, is the sum of its lines
+plus any residual it carried before the hook; the module's own payloads carry none, so
+it is the sum of the lines. Its result replaces whatever the payload held, hand edits
+included, and it never writes `-0.00`. It is opt-in and part of this contract.
 
 ### Requirements on a subscriber
 
@@ -840,9 +851,11 @@ order totals no longer match the lines, and Two's API refuses the order; the Deb
 Mode diff then names only the shipping line's fields, which points straight at the
 missing update.
 
-A PrestaShop refund carries no lines: the full refund has no body and a credit slip
-sends `{amount, currency}`, so Two reverses VAT against the order it holds, which is
-the post-hook one.
+A PrestaShop refund carries no lines: a full refund has no body, and a credit slip, or
+what is left after slips, sends `{amount, currency, tax_subtotals}`. Its `tax_subtotals`
+split the refund by the rates the order was placed at, shipping following the Default
+shipping tax code table, so a subscriber that re-splits shipping on the order re-splits
+the refund's `tax_subtotals` the same way.
 
 A working subscriber, exercised on every request type in CI, is
 `tests/integration/fixtures/twoorderpostprocessingtest`. Its `resplitShipping()` is
