@@ -290,6 +290,9 @@ class Twopayment extends PaymentModule
     // TwoCheckoutManager.js.
     const TWO_SURCHARGE_PRODUCT_LINK_REWRITE = 'two-payment-terms-fee';
     const CONFIG_SURCHARGE_PRODUCT_ID = 'PS_TWO_SURCHARGE_PRODUCT_ID';
+    // Earlier fee product ids, so orders placed under them still replay their fee (TWO-26076).
+    const CONFIG_SURCHARGE_RETIRED_PRODUCT_IDS = 'PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS';
+    const CONFIG_SURCHARGE_RETIRED_IDS_SEEDED = 'PS_TWO_SURCHARGE_RETIRED_IDS_SEEDED';
     // Merchant-selected TaxRulesGroup applied to the hidden surcharge
     // product - the SAME id_tax_rules_group field every real Product uses,
     // so the fee line gets PrestaShop's full native tax capability
@@ -365,7 +368,7 @@ class Twopayment extends PaymentModule
      *           It records the answer rather than merely "we looked", because a
      *           failed `ALTER` must remove the column from the write instead of
      *           being logged and written anyway - see
-     *           ensureTwoOrderCompanyColumns().
+     *           ensureTwoPaymentColumns().
      *
      *           An INSTANCE property rather than a function static: a static is
      *           process-wide, which makes the guard unreachable from a test and lets
@@ -400,7 +403,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.15';
+        $this->version = '2.7.16';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -829,7 +832,7 @@ class Twopayment extends PaymentModule
         // company the order was CREATED with, kept on the module's own
         // order-scoped table because nothing later in the order's life can
         // re-derive it. See getTwoOrderCompanySnapshot() for why, and
-        // upgrade-2.7.7.php / ensureTwoOrderCompanyColumns() for the shops that
+        // upgrade-2.7.7.php / ensureTwoPaymentColumns() for the shops that
         // predate the columns.
         $sql[] = 'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'twopayment` (
             `id_two` int(11) NOT NULL AUTO_INCREMENT,
@@ -848,6 +851,7 @@ class Twopayment extends PaymentModule
             `two_invoice_uploaded_at` DATETIME NULL,
             `two_organization_number` VARCHAR(64) NULL,
             `two_company_name` VARCHAR(255) NULL,
+            `two_not_sent_at` DATETIME NULL,
             PRIMARY KEY  (`id_two`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
 
@@ -1068,6 +1072,8 @@ class Twopayment extends PaymentModule
                 if (Validate::isLoadedObject($product) && method_exists($product, 'delete')) {
                     $product->delete();
                 }
+                // Kept through uninstall, like the orders: a reinstall must still replay their fee.
+                $this->retireTwoSurchargeProductId($productId);
             }
         } catch (Exception $e) {
             PrestaShopLogger::addLog('TwoPayment: Failed deleting surcharge product at uninstall - ' . $e->getMessage(), 2);
@@ -4310,13 +4316,32 @@ class Twopayment extends PaymentModule
             $payment[0]->save();
         }
 
-        if ($order->module == $this->name) {
+        if ($order->module != $this->name) {
+            return;
+        }
+        // Core has saved the edit before this hook runs, and on 1.7 an uncaught throw 500s its AJAX, so a retry duplicates the line.
+        try {
             $orderpaymentdata = $this->getTwoOrderPaymentData($order->id);
             if ($orderpaymentdata && isset($orderpaymentdata['two_order_id'])) {
                 $two_order_id = $orderpaymentdata['two_order_id'];
                 $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata);
-                $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, $paymentdata, 'PUT');
+                $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, $paymentdata, 'PUT');
+                $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+                if ($http_status < 200 || $http_status >= 300) {
+                    throw new Exception('HTTP ' . $http_status . ' ' . (string) $this->getTwoErrorMessage($response));
+                }
+                $this->recordTwoOrderSync($order->id, null);
             }
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: TWO-26076 order edit saved but not sent to Two - ' . $e->getMessage()
+                . ' (Order ID: ' . (int) $order->id . ')',
+                3
+            );
+            $this->addTwoBackOfficeWarning(
+                $this->l('This order edit was saved in PrestaShop but was not sent to the invoice provider. Do not repeat the edit. Please contact support.')
+            );
+            $this->recordTwoOrderSync($order->id, $e->getMessage());
         }
     }
 
@@ -4368,6 +4393,9 @@ class Twopayment extends PaymentModule
                 $this->addTwoBackOfficeWarning(
                     $this->l('The tracking number could not be forwarded to the invoice provider; the invoice will be sent without it.')
                 );
+                $this->recordTwoOrderSync($order->id, 'HTTP ' . $http_status . ' ' . (string) $this->getTwoErrorMessage($response));
+            } else {
+                $this->recordTwoOrderSync($order->id, null);
             }
         } catch (Throwable $e) {
             // e.g. the order's cart no longer loads (purged carts, deleted
@@ -4380,7 +4408,69 @@ class Twopayment extends PaymentModule
                 . ' (Order ID: ' . (int)$order->id . ')',
                 3
             );
+            $this->addTwoBackOfficeWarning(
+                $this->l('The tracking number was saved in PrestaShop but was not sent to the invoice provider. Please contact support.')
+            );
+            $this->recordTwoOrderSync($order->id, $e->getMessage());
         }
+    }
+
+    /**
+     * Mark or clear the order as holding changes Two has not received: core drops a hook's warnings on every version (TWO-26076).
+     *
+     * @param int $idOrder
+     * @param string|null $failure why the change did not reach Two; null when the PUT succeeded
+     */
+    public function recordTwoOrderSync($idOrder, $failure)
+    {
+        try {
+            $row = $this->getTwoOrderPaymentData((int) $idOrder);
+            $since = is_array($row) && !empty($row['two_not_sent_at']) ? (string) $row['two_not_sent_at'] : '';
+            if ($failure === null) {
+                if ($since !== '') {
+                    Db::getInstance()->update('twopayment', array('two_not_sent_at' => null), 'id_order = ' . (int) $idOrder, 0, true);
+                }
+                return;
+            }
+            if (is_array($row) && $since === '' && in_array('two_not_sent_at', $this->ensureTwoPaymentColumns(), true)) {
+                Db::getInstance()->update('twopayment', array('two_not_sent_at' => gmdate('Y-m-d H:i:s')), 'id_order = ' . (int) $idOrder);
+            }
+            $this->addTwoOrderPrivateNote((int) $idOrder, sprintf($this->l('This change was saved in PrestaShop but was not sent to the invoice provider: %s'), $failure));
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog('TwoPayment: TWO-26076 could not record that order ' . (int) $idOrder . ' is not sent to Two - ' . $e->getMessage(), 3);
+        }
+    }
+
+    /**
+     * A private message on the order, as core's own order-page note form writes it.
+     *
+     * @param int $idOrder
+     * @param string $text
+     */
+    protected function addTwoOrderPrivateNote($idOrder, $text)
+    {
+        $order = new Order((int) $idOrder);
+        $customer = new Customer((int) $order->id_customer);
+        $threadId = (int) CustomerThread::getIdCustomerThreadByEmailAndIdOrder($customer->email, (int) $order->id);
+        if (!$threadId) {
+            $thread = new CustomerThread();
+            $thread->id_contact = 0;
+            $thread->id_customer = (int) $order->id_customer;
+            $thread->id_shop = (int) $order->id_shop;
+            $thread->id_order = (int) $order->id;
+            $thread->id_lang = (int) $order->id_lang;
+            $thread->email = $customer->email;
+            $thread->status = 'open';
+            $thread->token = Tools::passwdGen(12);
+            $thread->add();
+            $threadId = (int) $thread->id;
+        }
+        $message = new CustomerMessage();
+        $message->id_customer_thread = $threadId;
+        $message->id_employee = isset($this->context->employee->id) ? (int) $this->context->employee->id : 0;
+        $message->message = $text;
+        $message->private = 1;
+        $message->add();
     }
 
     /**
@@ -6265,10 +6355,11 @@ class Twopayment extends PaymentModule
      *
      * @param Cart $cart
      * @param string $contextLabel
+     * @param int|null $placedOrderId set on the update path: the fee line is replayed from that order
      * @return array
      * @throws Exception
      */
-    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null, $syncSurchargeCartLine = false)
+    private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null, $syncSurchargeCartLine = false, $placedOrderId = null)
     {
         // Money-critical self-heal (create + strict-submit paths only; never
         // the update path, whose cart belongs to an already-placed order):
@@ -6354,12 +6445,15 @@ class Twopayment extends PaymentModule
         // consistent, so the order-intent approval reconciles against the same
         // gross the create call sends. TWO-24752 / TWO-24893.
         $surchargeQuoteUnavailable = false;
-        $surchargeLine = $this->buildTwoSurchargeLineItemForCart(
-            $cart,
-            $subtotalsTotals['gross'],
-            $paymentTermDays,
-            $surchargeQuoteUnavailable
-        );
+        // A placed order's fee is what PrestaShop recorded, not what today's config would quote (TWO-26076).
+        $surchargeLine = $placedOrderId !== null
+            ? $this->getTwoPlacedSurchargeLineItem($placedOrderId, $paymentTermDays)
+            : $this->buildTwoSurchargeLineItemForCart(
+                $cart,
+                $subtotalsTotals['gross'],
+                $paymentTermDays,
+                $surchargeQuoteUnavailable
+            );
         if ($surchargeLine !== null && $this->validateTwoLineItems(array($surchargeLine))) {
             $line_items[] = $surchargeLine;
             $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
@@ -6374,9 +6468,9 @@ class Twopayment extends PaymentModule
         // carries must be the same money. On the create/strict paths a
         // mismatch beyond ORDER_RECONCILIATION_TOLERANCE throws - checkout
         // fails with a retryable error instead of ever creating an order
-        // whose PrestaShop total diverges from the Two invoice. The update
-        // path and the non-strict intent precheck log a warning only
-        // (pre-feature orders legitimately have no cart line).
+        // whose PrestaShop total diverges from the Two invoice. The
+        // non-strict intent precheck logs a warning only; the update path
+        // replays the order's own fee row, so it has no cart side to compare.
         $cartSurchargeLine = $this->getTwoSurchargeCartLine($cart);
         $payloadFeeGrossCents = $surchargeLine !== null ? $this->convertAmountToCents($surchargeLine['gross_amount']) : 0;
         $payloadFeeNetCents = $surchargeLine !== null ? $this->convertAmountToCents($surchargeLine['net_amount']) : 0;
@@ -6391,8 +6485,8 @@ class Twopayment extends PaymentModule
         // the buyer can switch term after the payment-options gate ran, and a
         // pre-switch term that quoted zero leaves zero on both sides, which the
         // cents comparison reads as agreement.
-        $surchargeParityFailed = ($surchargeQuoteUnavailable && $enforceSurchargeParity)
-            || $surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
+        $surchargeParityFailed = $placedOrderId === null && (($surchargeQuoteUnavailable && $enforceSurchargeParity)
+            || $surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE));
         if ($surchargeParityFailed) {
             PrestaShopLogger::addLog(
                 'TwoPayment: ' . $contextLabel . ' surcharge parity mismatch - '
@@ -7133,7 +7227,7 @@ class Twopayment extends PaymentModule
         $storedTerm = (isset($orderpaymentdata['two_day_on_invoice']) && $orderpaymentdata['two_day_on_invoice'] !== '')
             ? (int) $orderpaymentdata['two_day_on_invoice']
             : null;
-        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')', false, $storedTerm);
+        $pricingData = $this->buildTwoOrderPricingData($cart, 'update order data (order_id=' . $order->id . ')', false, $storedTerm, false, (int) $order->id);
         $line_items = $pricingData['line_items'];
         $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
@@ -7295,7 +7389,7 @@ class Twopayment extends PaymentModule
             PrestaShopLogger::addLog('TwoPayment: Cart is empty, cannot build line items', 3);
             return $items; // Return empty array (caller should handle empty cart)
         }
-        $surchargeProductId = $this->getTwoSurchargeCartProductId(false);
+        $surchargeProductIds = $this->getTwoSurchargeProductIds();
 
         foreach ($line_items as $line_item) {
             // The hidden surcharge product is NOT merchandise: the Two payload
@@ -7303,7 +7397,7 @@ class Twopayment extends PaymentModule
             // (buildTwoSurchargeLineItemForCart), and the fee basis must never
             // include the fee itself. Skip it here; reconciliation subtracts
             // its cart totals symmetrically.
-            if ($surchargeProductId > 0 && (int) $line_item['id_product'] === $surchargeProductId) {
+            if ($this->isTwoSurchargeRow($line_item['id_product'], isset($line_item['reference']) ? $line_item['reference'] : null, $surchargeProductIds)) {
                 continue;
             }
             $categories = Product::getProductCategoriesFull($line_item['id_product'], $cart->id_lang);
@@ -14243,12 +14337,119 @@ class Twopayment extends PaymentModule
         // decimals, silently dropping the whole surcharge line. Snapping
         // first mirrors the product-line convention (snapped_product_rate).
         // TWO-24752.
-        $taxRate = $this->getTwoSurchargeTaxRateForCart($cart);
-        $taxRateString = $this->formatTwoTaxRate($taxRate);
-        $sentRate = (float) $taxRateString;
-        $tax = round($net * $sentRate, 2);
-        $gross = round($net + $tax, 2);
+        $taxRateString = $this->formatTwoTaxRate($this->getTwoSurchargeTaxRateForCart($cart));
+        $tax = round($net * (float) $taxRateString, 2);
+
+        return $this->formatTwoSurchargeLineItem($this->getTwoSurchargeLineLabel($days), $net, $tax, $taxRateString);
+    }
+
+    /**
+     * The fee rows PrestaShop recorded on the order, summed, at the rate core recorded for them (TWO-26076).
+     *
+     * @param int $orderId
+     * @param int|null $paymentTermDays the placed term (label only)
+     * @return array|null null when the order carries no fee row
+     * @throws Exception when the recorded rows cannot be replayed exactly
+     */
+    public function getTwoPlacedSurchargeLineItem($orderId, $paymentTermDays)
+    {
+        $orderId = (int) $orderId;
+        $productIds = $this->getTwoSurchargeProductIds();
+        // order_detail.tax_rate is only written from PS 8; order_detail_tax holds the placement rates on every version.
+        $rows = Db::getInstance()->executeS(
+            'SELECT od.`product_id`, od.`product_reference`, od.`product_name`, od.`total_price_tax_excl`, od.`total_price_tax_incl`, od.`tax_computation_method`,'
+            . ' (SELECT GROUP_CONCAT(t.`rate` SEPARATOR \',\') FROM `' . _DB_PREFIX_ . 'order_detail_tax` odt'
+            . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = odt.`id_tax`'
+            . ' WHERE odt.`id_order_detail` = od.`id_order_detail`) AS `placed_rates`'
+            . ' FROM `' . _DB_PREFIX_ . 'order_detail` od WHERE od.`id_order` = ' . $orderId
+        );
+        $net = 0.0;
+        $gross = 0.0;
+        $rates = array();
+        $storedName = '';
+        foreach (is_array($rows) ? $rows : array() as $row) {
+            if (!$this->isTwoSurchargeRow($row['product_id'], $row['product_reference'], $productIds)) {
+                if ((string) $row['product_reference'] === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
+                    $this->failTwoPlacedSurchargeReplay($orderId, 'a row carries the fee reference under product id '
+                        . (int) $row['product_id'] . ', which the fee never had');
+                }
+                continue;
+            }
+            $rowNet = round((float) $row['total_price_tax_excl'], 2);
+            $rowGross = round((float) $row['total_price_tax_incl'], 2);
+            // A VAT-number exemption applies no tax, whatever rate the row records.
+            $rates[$this->formatTwoTaxRate($rowGross != $rowNet ? $this->getTwoPlacedRowTaxRate($row) : 0.0)] = true;
+            $net += $rowNet;
+            $gross += $rowGross;
+            $storedName = $storedName !== '' ? $storedName : (string) $row['product_name'];
+        }
+        $net = round($net, 2);
+        if ($net <= 0) {
+            return null;
+        }
+        if (count($rates) !== 1) {
+            $this->failTwoPlacedSurchargeReplay($orderId, 'the fee rows carry different rates (' . implode(', ', array_keys($rates)) . ')');
+        }
+        $days = $paymentTermDays !== null ? (int) $paymentTermDays : $this->getSelectedPaymentTerm();
         $label = $this->getTwoSurchargeLineLabel($days);
+        $line = $this->formatTwoSurchargeLineItem($label !== '' ? $label : $storedName, $net, round($gross - $net, 2), (string) key($rates));
+        if (!$this->validateTwoLineItems(array($line))) {
+            $this->failTwoPlacedSurchargeReplay($orderId, 'net ' . $line['net_amount'] . ', tax ' . $line['tax_amount']
+                . ' do not agree with the recorded rate ' . $line['tax_rate']);
+        }
+
+        return $line;
+    }
+
+    /**
+     * The row's effective rate from the rates core stored for it, combined as core applied them.
+     *
+     * @param array $row an order_detail row with `tax_computation_method` and comma-separated `placed_rates` (percent)
+     * @return float
+     */
+    private function getTwoPlacedRowTaxRate(array $row)
+    {
+        $rates = array();
+        foreach (explode(',', (string) $row['placed_rates']) as $rate) {
+            if (trim($rate) !== '') {
+                $rates[] = (float) $rate / 100;
+            }
+        }
+        // TaxCalculator::ONE_AFTER_ANOTHER_METHOD compounds each tax on the last; the other methods add them.
+        if ((int) $row['tax_computation_method'] === 2) {
+            $factor = 1.0;
+            foreach ($rates as $rate) {
+                $factor *= 1 + $rate;
+            }
+
+            return $factor - 1;
+        }
+
+        return array_sum($rates);
+    }
+
+    /**
+     * @param int $orderId
+     * @param string $reason
+     * @throws Exception always: an update without the fee would cut it from the Two order
+     */
+    private function failTwoPlacedSurchargeReplay($orderId, $reason)
+    {
+        PrestaShopLogger::addLog('TwoPayment: TWO-26076 placed surcharge replay failed (order_id=' . (int) $orderId . '): ' . $reason, 3);
+        throw new Exception('The placed surcharge line cannot be replayed: ' . $reason);
+    }
+
+    /**
+     * @param string $label
+     * @param float $net
+     * @param float $tax
+     * @param string $taxRateString as sent, from formatTwoTaxRate
+     * @return array
+     */
+    private function formatTwoSurchargeLineItem($label, $net, $tax, $taxRateString)
+    {
+        $sentRate = (float) $taxRateString;
+        $gross = round($net + $tax, 2);
 
         return array(
             'name' => $label,
@@ -14396,26 +14597,7 @@ class Twopayment extends PaymentModule
             ) {
                 return $productId;
             }
-            // Stored id no longer points at OUR product. If the object still
-            // exists AND carries our hidden-fee shape (virtual + invisible -
-            // e.g. its reference was edited in the BO), delete it best-effort
-            // so it is not orphaned forever behind its replacement. A
-            // recycled id pointing at a real catalog product will not match
-            // the shape and is never touched.
-            if (
-                Validate::isLoadedObject($product)
-                && (int) $product->is_virtual === 1
-                && (string) $product->visibility === 'none'
-            ) {
-                try {
-                    if (method_exists($product, 'delete')) {
-                        $product->delete();
-                        PrestaShopLogger::addLog('TwoPayment: Deleted stale surcharge product ' . $productId . ' (reference mismatch)', 2);
-                    }
-                } catch (Exception $e) {
-                    PrestaShopLogger::addLog('TwoPayment: Failed deleting stale surcharge product ' . $productId . ' - ' . $e->getMessage(), 2);
-                }
-            }
+            $this->retireStaleTwoSurchargeProduct($product, $productId);
             $productId = 0;
         }
 
@@ -14447,6 +14629,7 @@ class Twopayment extends PaymentModule
                 ) {
                     return $storedId;
                 }
+                $this->retireStaleTwoSurchargeProduct($product, $storedId);
             }
 
             try {
@@ -14463,6 +14646,115 @@ class Twopayment extends PaymentModule
         } finally {
             $this->releaseTwoDbLock('two_surcharge_product_create');
         }
+    }
+
+    /**
+     * The stored fee product id no longer points at our product. If the object still
+     * exists AND carries our hidden-fee shape (virtual + invisible - e.g. its reference
+     * was edited in the BO), delete it best-effort so it is not orphaned forever behind
+     * its replacement. A recycled id pointing at a real catalog product will not match
+     * the shape and is never touched, nor retired.
+     *
+     * @param Product $product loaded from $productId, or not loaded when deleted
+     * @param int $productId
+     */
+    private function retireStaleTwoSurchargeProduct($product, $productId)
+    {
+        if (Validate::isLoadedObject($product)) {
+            if ((int) $product->is_virtual !== 1 || (string) $product->visibility !== 'none') {
+                return;
+            }
+            try {
+                if (method_exists($product, 'delete')) {
+                    $product->delete();
+                    PrestaShopLogger::addLog('TwoPayment: Deleted stale surcharge product ' . (int) $productId . ' (reference mismatch)', 2);
+                }
+            } catch (Exception $e) {
+                PrestaShopLogger::addLog('TwoPayment: Failed deleting stale surcharge product ' . (int) $productId . ' - ' . $e->getMessage(), 2);
+            }
+        }
+        $this->retireTwoSurchargeProductId($productId);
+    }
+
+    /**
+     * @param int $productId
+     */
+    private function retireTwoSurchargeProductId($productId)
+    {
+        $productId = (int) $productId;
+        $retired = $this->getTwoRetiredSurchargeProductIds();
+        if ($productId <= 0 || in_array($productId, $retired, true)) {
+            return;
+        }
+        $retired[] = $productId;
+        Configuration::updateValue(self::CONFIG_SURCHARGE_RETIRED_PRODUCT_IDS, implode(',', $retired));
+    }
+
+    /**
+     * @return int[]
+     */
+    private function getTwoRetiredSurchargeProductIds()
+    {
+        $ids = array();
+        foreach (explode(',', (string) Configuration::get(self::CONFIG_SURCHARGE_RETIRED_PRODUCT_IDS)) as $id) {
+            if ((int) $id > 0) {
+                $ids[] = (int) $id;
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * Retire every id the fee reference was sold under before retirements were recorded, once (TWO-26076).
+     */
+    public function seedTwoRetiredSurchargeProductIds()
+    {
+        if ((int) Configuration::get(self::CONFIG_SURCHARGE_RETIRED_IDS_SEEDED) === 1) {
+            return;
+        }
+        $rows = Db::getInstance()->executeS(
+            'SELECT DISTINCT `product_id` FROM `' . _DB_PREFIX_ . "order_detail` WHERE `product_reference` = '"
+            . pSQL(self::TWO_SURCHARGE_PRODUCT_REFERENCE) . "'"
+        );
+        if (!is_array($rows)) {
+            return;
+        }
+        $liveId = $this->getTwoSurchargeCartProductId(false);
+        foreach ($rows as $row) {
+            if ((int) $row['product_id'] !== $liveId) {
+                $this->retireTwoSurchargeProductId($row['product_id']);
+            }
+        }
+        Configuration::updateValue(self::CONFIG_SURCHARGE_RETIRED_IDS_SEEDED, 1);
+    }
+
+    /**
+     * Every id the fee product has had: the live one first, then the retired ones.
+     * Placed orders and their carts keep the id the fee had at placement (TWO-26076).
+     *
+     * @return int[]
+     */
+    public function getTwoSurchargeProductIds()
+    {
+        // Fallback for a shop whose files were swapped without core running upgrade-2.7.16.
+        $this->seedTwoRetiredSurchargeProductIds();
+        $liveId = $this->getTwoSurchargeCartProductId(false);
+
+        return array_values(array_unique(array_merge($liveId > 0 ? array($liveId) : array(), $this->getTwoRetiredSurchargeProductIds())));
+    }
+
+    /**
+     * The only test for the surcharge fee row: a current or retired fee id AND the fee reference (README "Recognising the fee row").
+     *
+     * @param int $productId cart `id_product` / order_detail `product_id`
+     * @param string|null $reference cart `reference` / order_detail `product_reference`
+     * @param int[] $feeProductIds from getTwoSurchargeProductIds()
+     * @return bool
+     */
+    public function isTwoSurchargeRow($productId, $reference, array $feeProductIds)
+    {
+        return (string) $reference === self::TWO_SURCHARGE_PRODUCT_REFERENCE && in_array((int) $productId, $feeProductIds, true);
     }
 
     /**
@@ -14679,12 +14971,12 @@ class Twopayment extends PaymentModule
      * this repo already memoises on the instance elsewhere
      * ($twoApiKeyStatusMemo).
      *
-     * @return string[] the company columns this request has CONFIRMED are writable.
+     * @return string[] the columns this request has CONFIRMED are writable.
      *                  A column whose `ALTER` failed is absent, and the caller must
      *                  drop it from the write rather than name it - see the failure
      *                  branch below for what naming it costs.
      */
-    protected function ensureTwoOrderCompanyColumns()
+    protected function ensureTwoPaymentColumns()
     {
         if (is_array($this->twoOrderCompanyColumnsEnsured)) {
             return $this->twoOrderCompanyColumnsEnsured;
@@ -14695,6 +14987,7 @@ class Twopayment extends PaymentModule
         $columns = array(
             'two_organization_number' => 'ALTER TABLE `' . $table . '` ADD `two_organization_number` VARCHAR(64) NULL',
             'two_company_name' => 'ALTER TABLE `' . $table . '` ADD `two_company_name` VARCHAR(255) NULL',
+            'two_not_sent_at' => 'ALTER TABLE `' . $table . '` ADD `two_not_sent_at` DATETIME NULL',
         );
 
         foreach ($columns as $column => $ddl) {
@@ -14728,7 +15021,7 @@ class Twopayment extends PaymentModule
             // exactly the pre-TWO-40 behaviour.
             PrestaShopLogger::addLog(
                 'TwoPayment: Failed to add column ' . $column . ' to ' . $table
-                . ' - the order company snapshot cannot be persisted on this shop,'
+                . ' - its value cannot be persisted on this shop,'
                 . ' and this column will be omitted from writes rather than'
                 . ' failing them',
                 3
@@ -14917,28 +15210,26 @@ class Twopayment extends PaymentModule
      * cart-vs-payload parity gate.
      *
      * @param Cart $cart
-     * @return array{quantity:int,net:float,gross:float}|null
+     * @return array{quantity:int,net:float,gross:float}|null the fee rows summed, as getTwoProductItems excludes them
      */
     public function getTwoSurchargeCartLine($cart)
     {
         if (!Validate::isLoadedObject($cart)) {
             return null;
         }
-        $productId = $this->getTwoSurchargeCartProductId(false);
-        if ($productId <= 0) {
-            return null;
-        }
+        $productIds = $this->getTwoSurchargeProductIds();
+        $line = null;
         foreach ((array) $cart->getProducts(true) as $row) {
-            if ((int) $row['id_product'] === $productId) {
-                return array(
-                    'quantity' => (int) $row['cart_quantity'],
-                    'net' => round((float) $row['total'], 2),
-                    'gross' => round((float) $row['total_wt'], 2),
+            if ($this->isTwoSurchargeRow($row['id_product'], isset($row['reference']) ? $row['reference'] : null, $productIds)) {
+                $line = array(
+                    'quantity' => ($line !== null ? $line['quantity'] : 0) + (int) $row['cart_quantity'],
+                    'net' => round(($line !== null ? $line['net'] : 0) + (float) $row['total'], 2),
+                    'gross' => round(($line !== null ? $line['gross'] : 0) + (float) $row['total_wt'], 2),
                 );
             }
         }
 
-        return null;
+        return $line;
     }
 
     /**
@@ -14997,11 +15288,11 @@ class Twopayment extends PaymentModule
 
         $products = (array) $presentedCart['products'];
         $filteredProducts = array();
+        $feeProductIds = $this->getTwoSurchargeProductIds();
         foreach ($products as $row) {
             // Presented rows are ProductListingLazyArray objects (ArrayAccess),
             // not plain arrays - isset()/[] work on both via the same syntax.
-            $reference = (is_array($row) || $row instanceof ArrayAccess) && isset($row['reference']) ? $row['reference'] : null;
-            if ($reference !== null && (string) $reference === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
+            if ((is_array($row) || $row instanceof ArrayAccess) && isset($row['id_product']) && $this->isTwoSurchargeRow($row['id_product'], isset($row['reference']) ? $row['reference'] : null, $feeProductIds)) {
                 continue;
             }
             $filteredProducts[] = $row;
@@ -15727,10 +16018,11 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        $surchargeProductId = $this->getTwoSurchargeCartProductId(false);
-        if ($surchargeProductId <= 0 || (int) $orderDetail->product_id !== $surchargeProductId) {
+        $reference = isset($orderDetail->product_reference) ? $orderDetail->product_reference : null;
+        if (!$this->isTwoSurchargeRow($orderDetail->product_id, $reference, $this->getTwoSurchargeProductIds())) {
             return;
         }
+        $surchargeProductId = (int) $orderDetail->product_id;
 
         // Manual back-office adds are NEVER legitimate for this product:
         // only the module's own automated cart-sync + order creation may
@@ -18718,7 +19010,7 @@ class Twopayment extends PaymentModule
             // Ask FIRST, then write only what came back guaranteed. The reverse
             // order - stage the columns, then try to create them - is how a failed
             // ALTER turns a missing company snapshot into a lost payment row.
-            $writable = $this->ensureTwoOrderCompanyColumns();
+            $writable = $this->ensureTwoPaymentColumns();
             foreach ($offered as $company_column => $company_value) {
                 if (in_array($company_column, $writable, true)) {
                     $data[$company_column] = $company_value;
@@ -19647,6 +19939,7 @@ class Twopayment extends PaymentModule
                 'two_pdf_url' => $pdf_url,
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
+                'two_not_sent_since' => !empty($twopaymentdata['two_not_sent_at']) ? substr((string) $twopaymentdata['two_not_sent_at'], 0, 16) . ' UTC' : '',
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderLeft.tpl');

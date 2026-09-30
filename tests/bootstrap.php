@@ -21,7 +21,7 @@ namespace {
     if (!defined('_DB_PREFIX_')) {
         define('_DB_PREFIX_', 'ps_');
     }
-    // Upgrade scripts and ensureTwoOrderCompanyColumns() interpolate this into
+    // Upgrade scripts and ensureTwoPaymentColumns() interpolate this into
     // their information_schema existence checks, so it has to exist offline for
     // those paths to be testable at all.
     if (!defined('_DB_NAME_')) {
@@ -344,7 +344,7 @@ namespace {
         public static array $checkoutSessionData = [];
         /** @var array<string,array{window_start:int,hit_count:int}> TwoRateLimiter's twopayment_rate_limit rows, by rate_key */
         public static array $rateLimitRows = [];
-        /** @var array<int,array{id_order:int,product_id:int}> order_detail rows */
+        /** @var array<int,array<string,mixed>> order_detail rows (id_order, product_id, product_reference, totals, tax_rate) */
         public static array $orderDetails = [];
         /** @var string[] Every SQL string passed to Db::execute() */
         public static array $dbExecuted = [];
@@ -2021,6 +2021,7 @@ namespace {
                     'total_wt' => round($net * $quantity * (1 + $rate / 100), 2),
                     'rate' => $rate,
                     'reduction' => 0,
+                    'reference' => $product->loaded ? (string) $product->reference : '',
                     'is_virtual' => $product->loaded ? (int) $product->is_virtual : 0,
                 ];
                 $rows[] = $row;
@@ -2450,7 +2451,7 @@ namespace {
                 return isset(StubStore::$dbTriggers[$m[1]]) ? '1' : '0';
             }
             // Column existence, as the upgrade scripts and
-            // ensureTwoOrderCompanyColumns() ask it. Answered from the schema
+            // ensureTwoPaymentColumns() ask it. Answered from the schema
             // Db::execute() has recorded, so an already-added column reads as
             // present and the guarded ALTER is genuinely skipped.
             if (preg_match(
@@ -2510,6 +2511,26 @@ namespace {
             if (!empty(StubStore::$dbExecuteSResponses)) {
                 $next = array_shift(StubStore::$dbExecuteSResponses);
                 return is_array($next) ? $next : [];
+            }
+            // Every id the fee reference was ever sold under, for the retired-id seed.
+            if (preg_match("/SELECT DISTINCT `product_id` FROM `" . _DB_PREFIX_ . "order_detail` WHERE `product_reference` = '([^']*)'$/", (string) $sql, $m)) {
+                $ids = [];
+                foreach (StubStore::$orderDetails as $row) {
+                    if (($row['product_reference'] ?? '') === $m[1]) {
+                        $ids[(int) $row['product_id']] = ['product_id' => (string) $row['product_id']];
+                    }
+                }
+                return array_values($ids);
+            }
+            // The order's rows, each with its order_detail_tax rates listed as `placed_rates`.
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "order_detail` od WHERE od\\.`id_order` = (\\d+)$/", (string) $sql, $m)) {
+                $rows = [];
+                foreach (StubStore::$orderDetails as $row) {
+                    if ((int) $row['id_order'] === (int) $m[1]) {
+                        $rows[] = $row + ['product_reference' => '', 'tax_computation_method' => '0', 'placed_rates' => implode(',', $row['odt'] ?? [])];
+                    }
+                }
+                return $rows;
             }
             return [];
         }

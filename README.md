@@ -312,6 +312,29 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 
 ### Order Management
 
+#### Buyer surcharge on order updates
+
+An order update (a back-office edit, a tracking number) replays the buyer surcharge exactly as PrestaShop currently records it on the order. Its amounts and rate come from the stored order data, never from the live surcharge configuration, so changing the surcharge settings, tax rules or tax treatment later does not change an existing order's fee at Two. Rates stacked one after another are compounded, as PrestaShop applied them. The fee is recognised under any product id the hidden fee product has had, so recreating or deleting that product does not orphan older orders (see [Recognising the fee row](#recognising-the-fee-row)).
+
+PrestaShop's own admin actions can rewrite that record: on 8 and 9 an address change re-taxes every order line from the live rates, and on 1.7 editing a line re-taxes it from the product's live tax group. The update then sends what PrestaShop now holds.
+
+Where the stored data cannot be replayed as recorded (fee lines at different rates, amounts that disagree with the recorded rate, or a row carrying the fee reference under an id the fee never had), the update fails loudly with a `TWO-26076` entry in the shop log rather than send the order without its fee.
+
+When an order edit or a tracking number does not reach Two (its payload cannot be built, or Two rejects it), the change stays saved in PrestaShop and the order is marked as not sent. PrestaShop itself reports the save as a success: on 1.7 an edit returns core's own AJAX result and a tracking number redirects to "Successful update."; on 8 and 9 an edit returns core's own JSON and a tracking number redirects with core's own flash. So on every version the admin sees the failure on the order page, from its next load (at once after a tracking number, on reload after an edit):
+
+- a red panel at the top of the Two payment block: "Changes to this order since `<time>` UTC were saved in PrestaShop but have not reached Two, so its invoice may not match this order. Do not repeat an edit to retry it; please contact support."
+- a private message in the order's Messages for each failure, giving the reason.
+
+The panel stays until an edit or tracking number update is accepted by Two.
+
+#### Recognising the fee row
+
+A cart or order row is the surcharge fee if and only if its product id is the current or a retired fee product id AND its reference (cart row `reference` / order_detail `product_reference`) equals `TWO_SURCHARGE_PRODUCT_REFERENCE`.
+
+Every place the module tells the fee apart from merchandise (the order payload, the cart and order parity checks, the update replay, the cart display and the order-row guard) applies this one test, `Twopayment::isTwoSurchargeRow`. An id alone is not enough: MySQL can hand a retired fee id to a new catalog product, and that product must still be sold.
+
+Retired ids are recorded whenever the fee product is replaced. Ids from before that recording began are seeded once, by the 2.7.16 upgrade (or on first use where core never ran it), from every `product_id` that `order_detail` holds under the fee reference other than the current one. An order update that meets the fee reference under any other id fails loudly rather than send the order without that fee.
+
 #### Order Fulfillment
 
 **How It Works:**
