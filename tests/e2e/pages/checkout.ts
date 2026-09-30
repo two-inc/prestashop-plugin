@@ -3,15 +3,16 @@ import { type Page, type Locator, expect } from "@playwright/test";
 import { PHONE_NUMBER, LONG_TIMEOUT } from "../config.js";
 
 /**
- * Completes the "Personal information" guest-checkout step. Field IDs
- * (#field-firstname etc.) collide with the sign-in tab's IDs on the same
- * page, so every locator here is scoped under #checkout-guest-form.
+ * Completes the "Personal information" guest-checkout step. Field names
+ * collide with the sign-in tab's fields on the same page, so every locator
+ * here is scoped under #checkout-guest-form. Inputs are found by name, not by
+ * the #field-* ids: PS 1.7.6's classic theme renders no ids on them.
  */
 export async function completeGuestStep(page: Page, email: string) {
   const guest = page.locator("#checkout-guest-form");
-  await guest.locator("#field-firstname").fill("Test");
-  await guest.locator("#field-lastname").fill("Buyer");
-  await guest.locator("#field-email").fill(email);
+  await guest.locator('input[name="firstname"]').fill("Test");
+  await guest.locator('input[name="lastname"]').fill("Buyer");
+  await guest.locator('input[name="email"]').fill(email);
   // PS 9 only renders/reveals #field-password when the "Create an account
   // (optional)" checkbox above it is ticked — for a plain guest checkout
   // (this suite never ticks it) the field exists in the DOM but is hidden,
@@ -24,8 +25,12 @@ export async function completeGuestStep(page: Page, email: string) {
     await password.fill("TwoE2eTestPassw0rd!");
   }
   // Both are required checkboxes on the PS demo fixture (data privacy +
-  // GDPR consent) — the form silently no-ops on submit without them.
-  await guest.locator('input[name="customer_privacy"]').check();
+  // GDPR consent) — the form silently no-ops on submit without them. PS 1.7.6
+  // installs no data-privacy module, so the box is optional here.
+  const privacy = guest.locator('input[name="customer_privacy"]');
+  if ((await privacy.count()) > 0) {
+    await privacy.check();
+  }
   await guest.locator('input[name="psgdpr"]').check();
   await guest.locator('button[type="submit"]').first().click();
   await page.waitForLoadState("networkidle");

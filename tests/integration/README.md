@@ -5,7 +5,7 @@ PrestaShop versions, plus the still-unbuilt scenario matrix below them.
 
 ## Implemented probes
 
-These run in CI on every pull request — `.github/workflows/integration.yml`, PrestaShop 8 and 9 — and locally against the dev shop with `make test-integration`. Each is a plain PHP script executed inside the PrestaShop container by `dev/ci/run-integration-probes.sh`, and each is hermetic: no browser, no network, no Two credentials.
+These run in CI on every pull request — `.github/workflows/integration.yml`, PrestaShop 1.7.6, 8 and 9 — and locally against the dev shop with `make test-integration`. Each is a plain PHP script executed inside the PrestaShop container by `dev/ci/run-integration-probes.sh`, and each is hermetic: no browser, no network, no Two credentials.
 
 | Probe | What it pins down |
 | --- | --- |

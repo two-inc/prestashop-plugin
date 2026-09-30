@@ -270,6 +270,12 @@ function probeRunScenario($name)
     return 1;
 }
 
+if (version_compare(_PS_VERSION_, '8.0.0', '<')) {
+    echo 'SKIP default-shipping-tax-code on PrestaShop ' . _PS_VERSION_
+        . ': the fixture injects through actionFilterDeliveryOptionList, which core only fires from 8.0' . PHP_EOL;
+    exit(0);
+}
+
 $argument = isset($argv[1]) ? (string) $argv[1] : '';
 if ($argument !== '') {
     exit(probeRunScenario($argument));
