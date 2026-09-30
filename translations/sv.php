@@ -579,3 +579,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d9e8fd0ca4e27bc560c15e7ac3e5c1ff'] = 'Spårningsnumret sparades i PrestaShop men skickades inte till fakturaleverantören. Kontakta support.';
 $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] = 'Ändringen sparades i PrestaShop men skickades inte till fakturaleverantören: %s';
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Ändringar i ordern sedan %s sparades i PrestaShop men har inte nått %s, så fakturan kanske inte stämmer med ordern. Upprepa inte en ändring för att försöka igen; kontakta support.';
+$_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'Kreditnota #%1$s sparades i PrestaShop men skickades inte till %2$s, eftersom %3$s. Återbetala den i %2$ss handlarportal.';
+$_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'det återbetalda beloppet inte kunde fördelas på orderns momssatser';
