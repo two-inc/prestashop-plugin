@@ -24,6 +24,7 @@ final class RefundSpec
         self::testHookResolvesSlipAsCorePassesIt();
         self::testRefundedStatusAfterPartialsRefundsTheRemainder();
         self::testFailureAfterClaimTellsTheMerchant();
+        self::testWhatTheHookSentIsWhatIsRecorded();
     }
 
     /**
@@ -607,5 +608,53 @@ final class RefundSpec
             $messages = implode(' | ', array_column(PrestaShopLogger::$logs, 'message'));
             TinyAssert::true(strpos($messages, $logged) !== false, $desc . ': logged');
         }
+    }
+
+    /**
+     * TWO-26092: a subscriber's edits to a credit slip refund are what Two received, so they are what is recorded
+     * SENT and what the Refunded remainder is computed from. Columns: the slip edit, expected recorded amount and
+     * tax_subtotals, expected remainder body, description.
+     */
+    private static function testWhatTheHookSentIsWhatIsRecorded(): void
+    {
+        $sub = static function (string $rate, string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => $rate];
+        };
+        $placed = [$sub('0.250000', '100.00', '25.00'), $sub('0.150000', '20.00', '3.00')];
+        $cases = [
+            [static function (array &$p): void {
+                $p['amount'] = '20.00';
+                $p['tax_subtotals'] = [['taxable_amount' => '20.00', 'tax_amount' => '0.00', 'tax_rate' => '0.000000']];
+            }, ['20.00', [$sub('0.000000', '20.00', '0.00')]], '128.00', 'a subscriber that lowers the slip: the remainder is what Two still holds'],
+            [static function (array &$p): void {
+                $p['tax_subtotals'] = [['taxable_amount' => '24.00', 'tax_amount' => '6.00', 'tax_rate' => '0.250000']];
+            }, ['30.00', [$sub('0.250000', '24.00', '6.00')]], [$sub('0.150000', '20.00', '3.00'), $sub('0.250000', '76.00', '19.00')], 'a re-split slip: the remainder splits against what Two received'],
+        ];
+        foreach ($cases as [$edit, $recorded, $remainder, $desc]) {
+            StubStore::reset();
+            StubStore::$orders[5100] = ['module' => 'twopayment'];
+            StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+            Hook::$subscribers[TwoOrderPostprocessing::HOOK]['refundspecsubscriber'] = static function (array $params) use ($edit): void {
+                if ($params['context']['trigger'] === 'credit_slip') {
+                    $edit($params['payload']);
+                }
+            };
+            $module = self::makeModule(self::fulfilledOrder(148.00));
+            $module->placedSubtotals = $placed;
+
+            $module->hookActionOrderSlipAdd(['order' => self::makeOrder(), 'orderSlipCreated' => self::makeSlip(905, 30.00)]);
+            $row = $module->refundRows[905];
+            TinyAssert::same($recorded, [(string) $row['amount'], $row['tax_subtotals']], $desc . ': recorded SENT');
+
+            $status = new OrderState();
+            $status->id = 7;
+            $status->name = 'Refunded';
+            $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+            $calls = $module->refundCalls();
+            TinyAssert::count(2, $calls, $desc . ': the slip, then the remainder');
+            $body = $calls[1]['payload'];
+            TinyAssert::same($remainder, is_string($remainder) ? $body['amount'] : $body['tax_subtotals'], $desc . ': got ' . json_encode($body));
+        }
+        Hook::$subscribers = [];
     }
 }

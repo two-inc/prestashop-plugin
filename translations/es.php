@@ -587,6 +587,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'supera lo que queda por reembolsar del pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'no se ha podido determinar la moneda del pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'el proveedor no lo ha aceptado (HTTP %s)';
+$_MODULE['<{twopayment}prestashop>twopayment_d9fc87827359830e1eb23b712a935d76'] = 'el hook de posprocesamiento del pedido lo detuvo';
 $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'El pedido se ha marcado como reembolsado en PrestaShop, pero lo que quedaba por reembolsar tras sus facturas por abono no se ha enviado a %1$s porque %2$s. Reembolsa el resto en el Portal de Comerciantes de %1$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'un error inesperado lo ha impedido';
 $_MODULE['<{twopayment}prestashop>twopayment_b324ba130c48d915b7f4065f928d9019'] = 'Instantáneas de discrepancias';
