@@ -581,3 +581,10 @@ $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] 
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Ändringar i ordern sedan %s sparades i PrestaShop men har inte nått %s, så fakturan kanske inte stämmer med ordern. Upprepa inte en ändring för att försöka igen; kontakta support.';
 $_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'Kreditnota #%1$s sparades i PrestaShop men skickades inte till %2$s, eftersom %3$s. Återbetala den i %2$ss handlarportal.';
 $_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'det återbetalda beloppet inte kunde fördelas på orderns momssatser';
+$_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] = 'ordern inte kunde läsas från leverantören';
+$_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'ordern inte är levererad ännu';
+$_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] = 'orderns totalbelopp inte kunde läsas från leverantören';
+$_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'den är mer än vad som återstår att återbetala på ordern';
+$_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'orderns valuta inte kunde fastställas';
+$_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'leverantören inte godtog den (HTTP %s)';
+$_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'Ordern markerades som återbetald i PrestaShop, men det som återstod att återbetala efter kreditnotorna skickades inte till %1$s, eftersom %2$s. Återbetala resten i %1$ss handlarportal.';
