@@ -130,7 +130,8 @@ class Twoorderpostprocessingtest extends Module
     }
 
     /**
-     * The broken subscribers the gates must catch, applied on top of the re-split.
+     * Edits that leave the payload's arithmetic inconsistent, applied on top of the re-split.
+     * The module sends them as returned; Two's API is what judges them.
      *
      * @param string $mode
      * @param array $payload

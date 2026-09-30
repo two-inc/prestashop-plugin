@@ -1809,7 +1809,7 @@ final class SurchargeSpec
                     return ['two_order_id' => 'two-order-uuid'];
                 }
 
-                public function getTwoUpdateOrderData($order, $orderpaymentdata)
+                public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
                 {
                     throw new Exception('The placed surcharge line cannot be replayed: stubbed');
                 }
@@ -1888,7 +1888,7 @@ final class SurchargeSpec
                 public $outcome = 200;
                 public array $notes = [];
 
-                public function getTwoUpdateOrderData($order, $orderpaymentdata)
+                public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
                 {
                     if ($this->outcome === 'throw') {
                         throw new Exception('stubbed payload failure');
