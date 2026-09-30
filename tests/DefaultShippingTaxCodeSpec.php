@@ -477,6 +477,11 @@ final class DefaultShippingTaxCodeSpec
 
         TinyAssert::same('150.00', (string) $payload['gross_amount']);
         TinyAssert::same('123.97', (string) $payload['net_amount']);
+        TinyAssert::same(
+            '{"shipping":[{"rate":0.21,"net_weight":29}],"wrapping":null}',
+            $module->getTwoDeclaredChargeRates(),
+            'The declared rate is kept for the Two row, so an update of this carrier-less order can use it (TWO-26085)'
+        );
 
         // (c) The log must let us tell a shop on the fallback from one resolving
         // normally, naming the group and the rate.
@@ -586,6 +591,11 @@ final class DefaultShippingTaxCodeSpec
 
         TinyAssert::count(1, $shipping);
         TinyAssert::same('0.1', (string) $shipping[0]['tax_rate'], 'The carrier\'s declared 10% must win');
+        TinyAssert::same(
+            '{"shipping":[{"rate":0.1,"net_weight":26.36}],"wrapping":null}',
+            $module->getTwoDeclaredChargeRates(),
+            'The carrier\'s declared class is kept for the Two row'
+        );
         TinyAssert::false(
             self::loggedContains(self::FALLBACK_LOG),
             'The default must not even be consulted when a carrier declares a group'

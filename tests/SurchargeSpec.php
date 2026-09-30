@@ -1650,9 +1650,6 @@ final class SurchargeSpec
             StubStore::$addresses[7101] = ['id_country' => 33, 'company' => 'Acme FR SAS', 'companyid' => 'FR123456789', 'address1' => '10 Rue de Paris', 'city' => 'Paris', 'postcode' => '75001', 'phone' => '+33100000000', 'loaded' => true];
             StubStore::$countries[33] = 'FR';
             StubStore::$carts[7001] = ['id_customer' => 7001, 'id_currency' => 978, 'id_address_invoice' => 7101, 'id_address_delivery' => 7101, 'id_carrier' => 0, 'id_lang' => 1];
-            foreach ($rows as $i => $row) {
-                StubStore::$orderDetails[] = $row + ['id_order_detail' => 9000 + $i];
-            }
 
             $module = new class extends TwopaymentTestHarness {
                 public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
@@ -1667,6 +1664,13 @@ final class SurchargeSpec
                 'cart_quantity' => 1, 'rate' => 5.5, 'price' => 100.00, 'reduction' => 0,
             ];
             StubStore::$cartProducts[7001] = [$item];
+            StubStore::$cartTotals[7001] = [true => [Cart::BOTH => 105.50], false => [Cart::BOTH => 100.00]];
+            $order = PlacedOrderStub::fromCart(8001, 7001);
+            foreach ($rows as $i => $row) {
+                StubStore::$orderDetails[] = $row + ['id_order_detail' => 9000 + $i];
+                $order->total_paid_tax_incl += (float) $row['total_price_tax_incl'];
+                $order->total_paid_tax_excl += (float) $row['total_price_tax_excl'];
+            }
             // One cart row per product; core's Cart::getProducts joins product_shop, so a deleted product's row drops out.
             foreach (array_filter($rows, fn ($row) => isset(StubStore::$products[$row['product_id']])) as $row) {
                 $cartRow = StubStore::$cartProducts[7001][$row['product_id']] ?? ['id_product' => $row['product_id'], 'reference' => StubStore::$products[$row['product_id']]['reference'] ?? '', 'name' => $row['product_name'], 'cart_quantity' => 0, 'total' => 0.0, 'total_wt' => 0.0, 'rate' => 0.0] + $item;
@@ -1681,18 +1685,6 @@ final class SurchargeSpec
                 false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => array_sum(array_column(StubStore::$cartProducts[7001], 'total'))],
                 'average_products_tax_rate' => 5.5,
             ];
-            $order = new class {
-                public bool $loaded = true;
-                public int $id = 8001;
-                public int $id_cart = 7001;
-                public int $id_carrier = 0;
-                public string $shipping_number = '';
-
-                public function getIdOrderCarrier(): int
-                {
-                    return 0;
-                }
-            };
             try {
                 $payload = $module->getTwoUpdateOrderData($order, ['two_order_reference' => 'ref-8001', 'two_day_on_invoice' => '30']);
                 $feeLines = array_values(array_filter($payload['line_items'], fn ($item) => ($item['type'] ?? '') === 'SERVICE'));
@@ -1849,6 +1841,11 @@ final class SurchargeSpec
                 {
                     return 0;
                 }
+
+                public function getBrother(): array
+                {
+                    return [];
+                }
             };
             try {
                 $module->$hook(['order' => $order]);
@@ -1932,6 +1929,11 @@ final class SurchargeSpec
                 public string $module = 'twopayment';
 
                 public function getOrderPaymentCollection(): array
+                {
+                    return [];
+                }
+
+                public function getBrother(): array
                 {
                     return [];
                 }

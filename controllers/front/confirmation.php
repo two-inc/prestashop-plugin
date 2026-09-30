@@ -426,6 +426,11 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             'two_company_name' => $company_snapshot['two_company_name'],
             'two_organization_number' => $company_snapshot['two_organization_number'],
         );
+        // The rates the pre-order re-check just declared for this cart; an update falls back to them (TWO-26085).
+        $declared_rates = $this->module->getTwoDeclaredChargeRates();
+        if ($declared_rates !== null) {
+            $payment_data['two_declared_rates'] = $declared_rates;
+        }
         $this->module->setTwoOrderPaymentData($order->id, $payment_data);
 
         // Best effort: replace provisional merchant_order_id with real PrestaShop id_order in Two.
@@ -470,14 +475,12 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         }
 
         try {
-            $update_payload = $this->module->getTwoUpdateOrderData($order, $payment_data);
-            $update_payload['merchant_order_id'] = (string)$order->id;
-
-            $update_response = $this->module->setTwoPaymentRequest(
-                '/v1/order/' . $payment_data['two_order_id'],
-                $update_payload,
-                'PUT'
-            );
+            // Also records the hash that lets later unchanged saves skip their PUT (TWO-26085).
+            $update_response = $this->module->putTwoOrderUpdate($order, $payment_data);
+            if ($update_response === null) {
+                // A repeated callback: Two already holds exactly this order, merchant_order_id included.
+                return true;
+            }
 
             $http_status = isset($update_response['http_status']) ? (int)$update_response['http_status'] : 0;
             if ($http_status === Twopayment::HTTP_STATUS_OK) {
