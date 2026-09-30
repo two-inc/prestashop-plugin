@@ -7141,6 +7141,10 @@ class Twopayment extends PaymentModule
     private function buildTwoOrderPricingData($cart, $contextLabel = 'order payload', $strictReconciliation = false, $paymentTermDays = null, $syncSurchargeCartLine = false, $placedOrder = null)
     {
         $this->twoDiscrepancyGate = null;
+        if ($placedOrder !== null) {
+            // The snapshot reads the cart, which an update does not price; a placed order's figures would be misattributed to it.
+            return $this->computeTwoOrderPricingData($cart, $contextLabel, $strictReconciliation, $paymentTermDays, $syncSurchargeCartLine, $placedOrder);
+        }
         try {
             $pricing = $this->computeTwoOrderPricingData($cart, $contextLabel, $strictReconciliation, $paymentTermDays, $syncSurchargeCartLine, $placedOrder);
         } catch (Throwable $e) {
