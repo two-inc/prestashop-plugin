@@ -318,13 +318,17 @@ function oppSeed()
             'id_tax_rules_group' => (int) $group->id,
             'tax_computation_method' => 0,
         ));
-        $id_tax = (int) Db::getInstance()->getValue('SELECT id_tax FROM `' . _DB_PREFIX_ . 'tax_rule` WHERE id_tax_rules_group = ' . (int) $group->id);
-        Db::getInstance()->insert('order_detail_tax', array(
-            'id_order_detail' => (int) Db::getInstance()->Insert_ID(),
+        // Any 21% tax will do: the update reads the rate its row records.
+        $id_tax = (int) Db::getInstance()->getValue('SELECT id_tax FROM `' . _DB_PREFIX_ . 'tax` WHERE rate = 21 ORDER BY id_tax DESC');
+        $ok = Db::getInstance()->insert('order_detail_tax', array(
+            'id_order_detail' => (int) Db::getInstance()->getValue('SELECT MAX(id_order_detail) FROM `' . _DB_PREFIX_ . 'order_detail` WHERE id_order = ' . $id_order),
             'id_tax' => $id_tax,
             'unit_amount' => 21.0,
             'total_amount' => 21.0,
         ));
+        if (!$ok || $id_tax <= 0) {
+            throw new RuntimeException('could not record the probe order line\'s tax: ' . Db::getInstance()->getMsgError());
+        }
     }
 }
 
