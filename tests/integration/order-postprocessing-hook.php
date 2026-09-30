@@ -470,10 +470,6 @@ function oppRunScenario($name, &$detail)
             $calls = Twoorderpostprocessingtest::$calls;
             $checks[] = array(count($calls), 1, $label . ': fired exactly once');
             if (count($calls) !== 1) {
-                // [DIAG TEMP TWO-26092] why an update never reached the hook
-                $detail .= ' ' . $label . ': ' . json_encode(Db::getInstance()->executeS(
-                    'SELECT message FROM `' . _DB_PREFIX_ . "log` WHERE message LIKE 'TwoPayment%' ORDER BY id_log DESC LIMIT 3"
-                ));
                 continue;
             }
             $context = $calls[0]['context'];
