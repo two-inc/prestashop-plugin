@@ -333,11 +333,9 @@ final class OrderBuilderSpec
         StubStore::$images[501] = ['id_image' => 9001];
         self::declareProductRate($cart, 501, 21.0);
 
-        // Deferred to the post-hook gates (TWO-26092): the build no longer refuses, the gate does.
-        $module->getTwoProductItems($cart);
         TinyAssert::throws(
             static function () use ($module, $cart): void {
-                $module->priceAndGateTwoCart($cart, 'order create payload');
+                $module->getTwoProductItems($cart);
             },
             'Declared tax rate diverges'
         );

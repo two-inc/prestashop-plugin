@@ -9,9 +9,10 @@ require_once __DIR__ . '/integration/fixtures/twoorderpostprocessingtest/twoorde
  * TWO-26092: the order postprocessing hook (actionTwoOrderPostprocessing).
  *
  * The fixture cart is the one the contract exists for: a 21% product at
- * 100.00 net and 29.00 of shipping the shop charged no tax on, on a carrier
- * whose tax rules group declares 21%. The worked example re-splits that
- * shipping to 23.97 net + 5.03 tax.
+ * 100.00 net and 29.00 of shipping the shop charged no tax on, on a "No tax"
+ * carrier, so the plugin's own checks pass on what it builds. The worked
+ * example re-splits that shipping to 23.97 net + 5.03 tax. The plugin sends
+ * whatever a subscriber returns; Two's API validates it.
  *
  * The golden payloads were taken from the builder before the hook existed, with
  * payloadsForGolden(); a deliberate builder change regenerates them the same way.
@@ -30,15 +31,18 @@ final class OrderPostprocessingSpec
     public static function runAll(): void
     {
         self::testNoSubscriberPayloadsAreByteIdentical();
-        self::testGatesOnTheWorkedExampleCart();
+        self::testHookEditsAreSentAsReturned();
+        self::testSubscriberCodeBugsFailTheRequest();
+        self::testBuilderGatesRefuseBeforeTheHook();
         self::testSubscriberThrowingGetsTheGenericCheckoutMessage();
         self::testDispatchKeepsCoreSemanticsButNotItsSwallow();
         self::testAdminEditSurvivesAThrowingSubscriber();
+        self::testApiRejectionReachesTheLogAndTheOrder();
         self::testOrderIntentRelayBuildsThePayloadItself();
         self::testEachRequestTypeFiresExactlyOnce();
         self::testNoChangeKeepsTodaysOutcomeOnEveryRequestType();
         self::testRecomputeTotalsHelper();
-        self::testSnapshotRecordsTheHook();
+        self::testDebugLogCarriesARedactedDiff();
         self::testHookRowIsCreatedOnceAndNeverSubscribed();
         self::testReadmeExampleIsTheFixturesOwnCode();
         self::testEveryOrderSendGoesThroughTheChoke();
@@ -48,8 +52,9 @@ final class OrderPostprocessingSpec
 
     /**
      * @param bool $shippingTaxed true: the shop taxed shipping at 21% (29.00 incl / 23.97 excl)
+     * @param bool $noTaxCarrier true: the carrier's tax rules group is "No tax", so untaxed shipping reconciles
      */
-    public static function seed(bool $shippingTaxed): Cart
+    public static function seed(bool $shippingTaxed, bool $noTaxCarrier = false): Cart
     {
         StubStore::reset();
         PrestaShopLogger::reset();
@@ -95,7 +100,7 @@ final class OrderPostprocessingSpec
         StubStore::$taxRuleRates[9000 + self::PRODUCT] = 21.0;
         StubStore::$taxRuleRates[self::CARRIER_GROUP] = 21.0;
         StubStore::$taxRulesGroups[self::CARRIER_GROUP] = ['name' => 'VAT 21%', 'active' => 1];
-        StubStore::$carriers[self::CARRIER] = ['name' => 'Courier', 'delay' => '', 'tax_rules_group_id' => self::CARRIER_GROUP];
+        StubStore::$carriers[self::CARRIER] = ['name' => 'Courier', 'delay' => '', 'tax_rules_group_id' => $noTaxCarrier ? 0 : self::CARRIER_GROUP];
         $shippingNet = $shippingTaxed ? 23.9669 : 29.00;
         StubStore::$cartDeliveryOptionLists[self::CART] = [
             self::ADDRESS => [self::CARRIER . ',' => ['carrier_list' => [self::CARRIER => [
@@ -133,34 +138,13 @@ final class OrderPostprocessingSpec
         ];
     }
 
-    private static function order(): object
+    private static function order(): PlacedOrderStub
     {
-        return new class (self::ORDER, self::CART, self::CARRIER) {
-            public bool $loaded = true;
-            public $module = 'twopayment';
-            public int $id;
-            public int $id_cart;
-            public int $id_carrier;
-            public int $id_lang = 1;
-            public string $shipping_number = '';
+        $order = PlacedOrderStub::fromCart(self::ORDER, self::CART);
+        $order->reference = 'HOOKREF';
+        StubStore::$placedOrders = [$order];
 
-            public function __construct(int $id, int $idCart, int $idCarrier)
-            {
-                $this->id = $id;
-                $this->id_cart = $idCart;
-                $this->id_carrier = $idCarrier;
-            }
-
-            public function getIdOrderCarrier(): int
-            {
-                return 0;
-            }
-
-            public function getOrderPaymentCollection(): array
-            {
-                return [];
-            }
-        };
+        return $order;
     }
 
     /**
@@ -172,11 +156,18 @@ final class OrderPostprocessingSpec
             /** @var array<int,array{endpoint:string,payload:mixed,method:string}> */
             public array $sent = [];
             public string $twoState = 'CONFIRMED';
+            /** @var array|null the answer to every PUT, when set */
+            public ?array $putAnswer = null;
+            /** @var string[] */
+            public array $notes = [];
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 if ($method !== 'GET') {
                     $this->sent[] = ['endpoint' => $endpoint, 'payload' => $payload, 'method' => $method];
+                }
+                if ($method === 'PUT' && $this->putAnswer !== null) {
+                    return $this->putAnswer;
                 }
                 if (strpos($endpoint, '/refund') !== false) {
                     return ['http_status' => 201, 'id' => 'refund-1'];
@@ -229,6 +220,11 @@ final class OrderPostprocessingSpec
 
                 return true;
             }
+
+            protected function addTwoOrderPrivateNote($idOrder, $text)
+            {
+                $this->notes[] = (string) $text;
+            }
         };
     }
 
@@ -266,6 +262,10 @@ final class OrderPostprocessingSpec
                 $params['payload'] = null;
 
                 return;
+            case 'not_json':
+                $params['payload']['order_note'] = "\xB1\x31";
+
+                return;
             case 'body_on_cancel':
                 if ($params['context']['request_type'] === TwoOrderPostprocessing::REQUEST_CANCEL) {
                     $params['payload']['reason'] = 'added';
@@ -283,7 +283,9 @@ final class OrderPostprocessingSpec
 
         // Every remaining mode is the fixture's own: the README re-split, then any deliberate break.
         $before = $params['payload'];
-        $params['payload'] = Twoorderpostprocessingtest::resplitShipping($params['payload'], (float) $params['context']['shipping_tax_rate']);
+        // The "No tax" carrier gives no rate, so the merchant's module supplies its own, as the fixture does.
+        $rate = (float) $params['context']['shipping_tax_rate'] > 0 ? (float) $params['context']['shipping_tax_rate'] : 0.21;
+        $params['payload'] = Twoorderpostprocessingtest::resplitShipping($params['payload'], $rate);
         Twoorderpostprocessingtest::breakOnPurpose($mode, $params['payload'], $before);
     }
 
@@ -348,76 +350,106 @@ final class OrderPostprocessingSpec
     }
 
     /**
-     * The worked example cart, one subscriber behaviour per row, on order create.
+     * Whatever a subscriber returns is what goes out, however it leaves the
+     * arithmetic: Two's API validates the payload, not the plugin. Each row is
+     * an order create (returned to the checkout, which sends it) and an admin
+     * edit (sent here).
      */
-    private static function testGatesOnTheWorkedExampleCart(): void
+    private static function testHookEditsAreSentAsReturned(): void
     {
-        // [mode, expected: null passes | TWO_ORDER_POSTPROCESSING_* code | exception message fragment, description]
+        // [mode, expected order totals [net, tax, gross], description]
         $cases = [
-            ['none', 'Declared tax rate diverges from applied tax amounts for shipping', 'no subscriber: the declared 21% against untaxed shipping refuses as it always has'],
-            ['noop', 'Declared tax rate diverges from applied tax amounts for shipping', 'a subscriber that edits nothing: still today\'s refusal'],
-            ['resplit', null, 'the README re-split with recomputed totals is accepted'],
-            ['gross_change', null, 'a subscriber may change gross; the plugin accepts what it declares'],
-            ['off_by_cent', TwoOrderPostprocessing::CODE_LINE_INCONSISTENT, 'a line whose net + tax no longer equals gross'],
-            ['stale_totals', TwoOrderPostprocessing::CODE_TOTALS_INCONSISTENT, 'lines re-split but the order totals left as they were'],
-            ['stale_subtotals', TwoOrderPostprocessing::CODE_SUBTOTALS_INCONSISTENT, 'totals recomputed but tax_subtotals left stale'],
-            ['throws', TwoOrderPostprocessing::CODE_HOOK_FAILED, 'a subscriber that throws'],
-            ['non_array', TwoOrderPostprocessing::CODE_HOOK_FAILED, 'a subscriber that replaces the payload with a non-array'],
+            ['resplit', ['123.97', '26.03', '150.00'], 'the README re-split with recomputed totals'],
+            ['gross_change', ['133.97', '28.13', '162.10'], 'a changed gross'],
+            ['off_by_cent', ['123.97', '26.03', '150.00'], 'a line whose net + tax no longer equals gross'],
+            ['stale_totals', ['129.00', '21.00', '150.00'], 'lines re-split but the order totals left as they were'],
+            ['stale_subtotals', ['123.97', '26.03', '150.00'], 'totals recomputed but tax_subtotals left stale'],
         ];
-        foreach ($cases as [$mode, $expected, $description]) {
-            $cart = self::seed(false);
-            $module = new TwopaymentTestHarness();
+        foreach ($cases as [$mode, $totals, $description]) {
+            $cart = self::seed(false, true);
+            $module = self::module();
             self::harnessAsInstance($module);
             $calls = [];
-            if ($mode !== 'none') {
-                self::subscribe($mode, $calls);
-            }
-            $payload = null;
+            self::subscribe($mode, $calls);
+
+            $payload = $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            TinyAssert::same($calls[0]['payload_out'], $payload, $description . ': order create returns what the subscriber left');
+            TinyAssert::same($totals, [$payload['net_amount'], $payload['tax_amount'], $payload['gross_amount']], $description . ': order totals as declared');
+
+            $module->hookActionOrderEdited(['order' => self::order()]);
+            TinyAssert::count(1, $module->sent, $description . ': the admin edit is sent');
+            TinyAssert::same($calls[1]['payload_out'], $module->sent[0]['payload'], $description . ': the admin edit sends what the subscriber left');
+            TinyAssert::same([], $module->warnings, $description . ': no warning');
+        }
+    }
+
+    /**
+     * A subscriber that throws, or leaves something that is not a
+     * JSON-encodable array, has a code bug rather than a declaration: that
+     * request fails with the one code, and nothing is sent.
+     */
+    private static function testSubscriberCodeBugsFailTheRequest(): void
+    {
+        // [mode, expected log detail, description]
+        $cases = [
+            ['throws', 'a subscriber threw RuntimeException at ', 'a subscriber that throws'],
+            ['non_array', 'a subscriber left NULL where the payload array belongs', 'a subscriber that replaces the payload with a non-array'],
+            ['not_json', 'a subscriber left a payload that cannot be JSON-encoded (Malformed UTF-8', 'a subscriber that leaves bytes JSON cannot encode'],
+        ];
+        foreach ($cases as [$mode, $detail, $description]) {
+            $cart = self::seed(false, true);
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $calls = [];
+            self::subscribe($mode, $calls);
             $error = null;
             try {
-                $payload = $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
             } catch (Exception $e) {
                 $error = $e;
             }
+            TinyAssert::same(TwoOrderPostprocessing::CODE_HOOK_FAILED, $error instanceof TwoOrderPostprocessingException ? $error->getTwoCode() : ($error === null ? null : get_class($error)), $description . ': refused with the code');
+            TinyAssert::false($error instanceof TwoCheckoutAmountException, $description . ': never relayed to the buyer');
+            TinyAssert::true(self::logged(TwoOrderPostprocessing::CODE_HOOK_FAILED . ' - the order_create request (checkout) was not sent: ' . $detail), $description . ': the log line');
+            TinyAssert::false(self::logged('Calle Uno'), $description . ': a subscriber\'s exception message is never logged');
+        }
+    }
 
-            if ($expected === null) {
-                TinyAssert::same(null, $error === null ? null : $error->getMessage(), $description . ': accepted');
-                $shipping = array_values(array_filter($payload['line_items'], static function ($l) {
-                    return $l['type'] === 'SHIPPING_FEE';
-                }))[0];
-                TinyAssert::same(['23.97', '5.03', '29.00'], [$shipping['net_amount'], $shipping['tax_amount'], $shipping['gross_amount']], $description . ': shipping re-split');
-                $expectTotals = $mode === 'gross_change' ? ['133.97', '28.13', '162.10'] : ['123.97', '26.03', '150.00'];
-                TinyAssert::same($expectTotals, [$payload['net_amount'], $payload['tax_amount'], $payload['gross_amount']], $description . ': order totals');
-                TinyAssert::same([['tax_rate' => '0.21', 'taxable_amount' => $expectTotals[0], 'tax_amount' => $expectTotals[1]]], $payload['tax_subtotals'], $description . ': one 21% bucket');
-                TinyAssert::true(self::logged('so the comparison against the cart totals was skipped'), $description . ': the cart comparison skip is logged');
-                continue;
+    /**
+     * The plugin's own checks run on what it builds, before the hook: a cart
+     * they refuse is refused as it always was, the subscriber never runs, and
+     * the discrepancy snapshot names the gate.
+     */
+    private static function testBuilderGatesRefuseBeforeTheHook(): void
+    {
+        // [setup, expected message fragment, snapshot gate, description]
+        $cases = [
+            ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', 'untaxed shipping on a 21% carrier group'],
+            ['product', 'Declared tax rate diverges from applied tax amounts for product', 'declared_rate', 'a product whose declared rate its amounts contradict'],
+        ];
+        foreach ($cases as [$setup, $expected, $gate, $description]) {
+            $cart = self::seed($setup !== 'shipping');
+            if ($setup === 'product') {
+                StubStore::$taxRuleRates[9000 + self::PRODUCT] = 10.0;
             }
-            TinyAssert::true($error !== null, $description . ': refused');
-            if (strpos($expected, 'TWO_ORDER_POSTPROCESSING_') === 0) {
-                TinyAssert::true($error instanceof TwoOrderPostprocessingException, $description . ': a named refusal, got ' . get_class($error));
-                TinyAssert::same($expected, $error->getTwoCode(), $description . ': code');
-                TinyAssert::false($error instanceof TwoCheckoutAmountException, $description . ': never relayed to the buyer');
-                TinyAssert::true(self::logged($expected . ' - refused the order_create request (checkout)'), $description . ': the merchant log names the code');
-            } else {
-                TinyAssert::false($error instanceof TwoOrderPostprocessingException, $description . ': today\'s exception, not a named one');
-                TinyAssert::true(strpos($error->getMessage(), $expected) !== false, $description . ': got "' . $error->getMessage() . '"');
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $calls = [];
+            self::subscribe('resplit', $calls);
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            } catch (Exception $e) {
+                $error = $e;
             }
+            TinyAssert::true($error !== null && strpos($error->getMessage(), $expected) !== false, $description . ': today\'s refusal, got ' . ($error === null ? 'none' : '"' . $error->getMessage() . '"'));
+            TinyAssert::count(0, $calls, $description . ': the subscriber never runs');
+            $snapshots = array_values(array_filter(PrestaShopLogger::$logs, static function ($l) {
+                return $l['object_type'] === TwoDiscrepancySnapshot::LOG_OBJECT_TYPE;
+            }));
+            TinyAssert::count(1, $snapshots, $description . ': one discrepancy snapshot');
+            TinyAssert::same($gate, json_decode($snapshots[0]['message'], true)['gate']['name'] ?? null, $description . ': the snapshot names the gate');
         }
-
-        // The diff of a totals refusal points at exactly what the subscriber changed.
-        self::seed(false);
-        $module = new TwopaymentTestHarness();
-        self::harnessAsInstance($module);
-        $calls = [];
-        self::subscribe('stale_totals', $calls);
-        try {
-            $module->getTwoNewOrderData('merchant-attempt-9701', new Cart(self::CART), self::merchantUrls());
-        } catch (TwoOrderPostprocessingException $e) {
-        }
-        foreach (['/line_items/1/net_amount', '/line_items/1/tax_amount'] as $path) {
-            TinyAssert::true(self::logged('"path":"' . $path . '"'), 'the refusal log diff names ' . $path);
-        }
-        TinyAssert::false(self::logged('"path":"/net_amount"'), 'the order totals the subscriber forgot are not in the diff');
     }
 
     /**
@@ -454,11 +486,11 @@ final class OrderPostprocessingSpec
         $cases = [
             ['half_then_throw', null, TwoOrderPostprocessing::CODE_HOOK_FAILED, 2, 'a throw after a half edit refuses rather than send the half-edited payload'],
             ['record', null, null, 2, 'a second subscriber sees the first one\'s edits, in position order'],
-            [null, 'non_native_off', 'Declared tax rate diverges', 0, '"Disable non PrestaShop modules" keeps a subscriber from running, as core does'],
-            [null, 'inactive', 'Declared tax rate diverges', 0, 'a disabled subscriber module does not run'],
+            [null, 'non_native_off', null, 0, '"Disable non PrestaShop modules" keeps a subscriber from running, as core does'],
+            [null, 'inactive', null, 0, 'a disabled subscriber module does not run'],
         ];
         foreach ($cases as [$second, $setup, $expected, $fires, $description]) {
-            $cart = self::seed(false);
+            $cart = self::seed(false, true);
             $module = self::module();
             self::harnessAsInstance($module);
             $calls = [];
@@ -482,15 +514,12 @@ final class OrderPostprocessingSpec
             TinyAssert::count($fires, $calls, $description . ': subscriber calls');
             if ($expected === null) {
                 TinyAssert::same(null, $error === null ? null : $error->getMessage(), $description . ': accepted');
-                TinyAssert::same($calls[0]['payload_out'], $calls[1]['payload_in'], $description . ': the chain');
+                if ($fires === 2) {
+                    TinyAssert::same($calls[0]['payload_out'], $calls[1]['payload_in'], $description . ': the chain');
+                }
                 continue;
             }
-            TinyAssert::true($error !== null, $description . ': refused');
-            if ($expected === TwoOrderPostprocessing::CODE_HOOK_FAILED) {
-                TinyAssert::same($expected, $error instanceof TwoOrderPostprocessingException ? $error->getTwoCode() : get_class($error) . ': ' . $error->getMessage(), $description . ': code');
-            } else {
-                TinyAssert::true(strpos($error->getMessage(), $expected) !== false, $description . ': today\'s refusal, got "' . $error->getMessage() . '"');
-            }
+            TinyAssert::same($expected, $error instanceof TwoOrderPostprocessingException ? $error->getTwoCode() : ($error === null ? null : get_class($error) . ': ' . $error->getMessage()), $description . ': code');
         }
     }
 
@@ -515,11 +544,12 @@ final class OrderPostprocessingSpec
         TinyAssert::same([], $module->sent, 'the update is not sent');
         TinyAssert::true(in_array('This order edit was saved in PrestaShop but was not sent to the invoice provider. Do not repeat the edit. Please contact support.', $module->warnings, true), 'the merchant is told not to repeat the edit');
         TinyAssert::true(self::logged('order edit saved but not sent to Two - ' . TwoOrderPostprocessing::CODE_HOOK_FAILED), 'the log names the code');
+        TinyAssert::true(count($module->notes) === 1 && strpos($module->notes[0], 'not sent to the invoice provider: ' . TwoOrderPostprocessing::CODE_HOOK_FAILED . ': a subscriber threw RuntimeException') !== false, 'the order says why');
     }
 
     /**
      * The browser's order-intent relay sends what the server builds from the
-     * session cart, through the hook and its gates, never a posted payload.
+     * session cart, through the hook, never a posted payload.
      * Only the buyer's company fields and address choice come from the
      * browser, and only once validated.
      */
@@ -557,9 +587,9 @@ final class OrderPostprocessingSpec
             TinyAssert::same(['150.00', $orgNumber], [$module->sent[0]['payload']['gross_amount'], $module->sent[0]['payload']['buyer']['company']['organization_number']], $description . ': amount and company');
         }
 
-        // The preview asks Two exactly what payment submit asks, hook and gates included.
+        // The preview asks Two exactly what payment submit asks, hook included.
         foreach (['none' => null, 'the README re-split' => 'resplit'] as $label => $mode) {
-            $cart = self::seed($mode === null);
+            $cart = self::seed($mode === null, $mode !== null);
             $module = self::module();
             self::harnessAsInstance($module);
             $calls = [];
@@ -626,8 +656,6 @@ final class OrderPostprocessingSpec
      */
     private static function requestDrivers(): array
     {
-        $order = self::order();
-
         return [
             ['order_intent', 'precheck', 0, static function ($m, $c) {
                 return $m->getTwoIntentOrderData($c, new Customer(self::CART), new Currency(978), new Address(self::ADDRESS));
@@ -641,13 +669,16 @@ final class OrderPostprocessingSpec
             ['order_create', 'snapshot_hash', 0, static function ($m, $c) {
                 return $m->getTwoNewOrderData('merchant-attempt-9701', $c, self::merchantUrls(), false, 'snapshot_hash');
             }, 'order create rebuilt for the confirmation hash'],
-            ['order_update', 'admin_edit', 1, static function ($m) use ($order) {
+            ['order_update', 'admin_edit', 1, static function ($m) {
+                $order = self::order();
                 $m->hookActionOrderEdited(['order' => $order]);
             }, 'order update on an admin edit'],
-            ['order_update', 'tracking_number', 1, static function ($m) use ($order) {
+            ['order_update', 'tracking_number', 1, static function ($m) {
+                $order = self::order();
                 $m->hookActionAdminOrdersTrackingNumberUpdate(['order' => $order]);
             }, 'order update on a tracking number'],
-            ['order_confirm', 'payment_return', 1, static function ($m) use ($order) {
+            ['order_confirm', 'payment_return', 1, static function ($m) {
+                $order = self::order();
                 $m->confirmTwoOrder(self::TWO_ORDER, 'payment_return', null, $order);
             }, 'order confirm'],
             ['capture', 'status_change', 1, static function ($m) {
@@ -663,7 +694,8 @@ final class OrderPostprocessingSpec
                 $status->name = 'Refunded';
                 $m->hookActionOrderStatusUpdate(['id_order' => self::ORDER, 'newOrderStatus' => $status]);
             }, 'full refund on the refunded status'],
-            ['refund', 'credit_slip', 1, static function ($m) use ($order) {
+            ['refund', 'credit_slip', 1, static function ($m) {
+                $order = self::order();
                 $m->twoState = 'FULFILLED';
                 $m->hookActionOrderSlipAdd(['order' => $order, 'order_slip' => (object) ['id' => 77, 'id_order' => self::ORDER, 'total_products_tax_incl' => 30.0, 'total_shipping_tax_incl' => 0.0]]);
             }, 'partial refund on a credit slip'],
@@ -708,15 +740,14 @@ final class OrderPostprocessingSpec
             }
         }
 
-        // A subscriber that gives a body-less request a body stops it before the wire.
+        // A body a subscriber gives a body-less request goes out too: Two's API judges it.
         self::seed(true);
         $module = self::module();
         self::harnessAsInstance($module);
         $calls = [];
         self::subscribe('body_on_cancel', $calls);
-        $response = $module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/x/cancel', [], 'POST');
-        TinyAssert::same([], $module->sent, 'a cancel given a body is not sent');
-        TinyAssert::same([0, TwoOrderPostprocessing::CODE_BODY_NOT_ACCEPTED], [$response['http_status'], $response['error_code']], 'the caller sees an unsent request carrying the code');
+        $module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/x/cancel', [], 'POST');
+        TinyAssert::same([['endpoint' => '/v1/order/x/cancel', 'payload' => ['reason' => 'added'], 'method' => 'POST']], $module->sent, 'a cancel given a body sends it as returned');
 
         // The default shipping tax code is the fallback rate; unset, it is null.
         $cart = self::seed(true);
@@ -731,22 +762,20 @@ final class OrderPostprocessingSpec
     /**
      * With no subscriber changing the payload, every request type sends the
      * same bytes and gets the same accept or refuse outcome as with no
-     * subscriber at all, on a cart the gates pass and on one they refuse. A
-     * subscriber that changes only a field no gate reads passes the
-     * changed-payload gates on every builder payload: the builder derives
-     * totals and subtotals from lines whose gross is net + tax exactly, so no
-     * builder payload carries a residual for those gates to trip on.
+     * subscriber at all, on a cart the module's own checks pass and on one
+     * they refuse. A subscriber that changes one field sends exactly that
+     * change and nothing else.
      */
     private static function testNoChangeKeepsTodaysOutcomeOnEveryRequestType(): void
     {
         foreach (self::requestDrivers() as [$type, $trigger, , $driver, $description]) {
-            foreach ([[true, 'a cart the gates pass'], [false, 'a cart the gates refuse']] as [$taxed, $cartLabel]) {
+            foreach ([[true, 'a cart the checks pass'], [false, 'a cart the checks refuse']] as [$taxed, $cartLabel]) {
                 $label = $description . ', ' . $cartLabel;
                 $none = self::outcome(null, $taxed, $driver);
                 TinyAssert::same($none, self::outcome('noop', $taxed, $driver), $label . ': a subscriber that changes nothing');
                 if ($taxed) {
                     TinyAssert::same(null, $none[0], $label . ': accepted');
-                    TinyAssert::same(self::outcome(null, $taxed, $driver, 'order_note'), self::outcome('tag', $taxed, $driver, 'order_note'), $label . ': a subscriber that only sets the order note passes the changed-payload gates');
+                    TinyAssert::same(self::outcome(null, $taxed, $driver, 'order_note'), self::outcome('tag', $taxed, $driver, 'order_note'), $label . ': a subscriber that only sets the order note changes nothing else');
                 }
             }
         }
@@ -818,55 +847,61 @@ final class OrderPostprocessingSpec
     }
 
     /**
-     * The discrepancy snapshot carries the order_postprocessing block: in the
-     * Debug Mode baseline of a changed order that passed, and in a refusal.
+     * Debug Mode logs what the hook changed, for support: amounts and lines
+     * by value, anything else (buyer data) by path only. Outside Debug Mode,
+     * and when nothing changed, it logs nothing.
      */
-    private static function testSnapshotRecordsTheHook(): void
+    private static function testDebugLogCarriesARedactedDiff(): void
     {
-        // [mode, debug, expected snapshot rows, outcome, cart_reconciliation, gate, description]
+        // [mode, debug, expected in the log (null: no diff line), description]
         $cases = [
-            ['resplit', 1, 1, 'changed', 'skipped_payload_changed', null, 'a changed order that passed leaves a baseline with the block'],
-            ['stale_totals', 0, 1, 'refused:' . TwoOrderPostprocessing::CODE_TOTALS_INCONSISTENT, null, 'order_postprocessing', 'a named refusal leaves one snapshot named after the hook'],
-            ['resplit', 0, 0, null, null, null, 'a changed order that passed writes nothing outside debug mode'],
+            ['resplit', 1, '{"path":"/line_items/1/tax_amount","before":"0.00","after":"5.03"}', 'a re-split is logged by value'],
+            ['buyer_email', 1, '{"path":"/buyer/representative/email","before":"redacted","after":"redacted"}', 'a buyer field is logged by path only'],
+            ['resplit', 0, null, 'nothing outside Debug Mode'],
+            ['noop', 1, null, 'nothing when nothing changed'],
         ];
-        foreach ($cases as [$mode, $debug, $rows, $outcome, $reconciliation, $gate, $description]) {
-            $cart = self::seed(false);
+        foreach ($cases as [$mode, $debug, $expected, $description]) {
+            $cart = self::seed(false, true);
             Configuration::updateValue('PS_TWO_DEBUG_MODE', $debug);
             $module = new TwopaymentTestHarness();
             self::harnessAsInstance($module);
             $calls = [];
             self::subscribe($mode, $calls);
-            try {
-                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
-            } catch (Exception $e) {
+            $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            $line = 'The order postprocessing hook changed the order_create request (checkout). Diff: {"subscribers":["twoorderpostprocessingtest"],"changes":';
+            TinyAssert::same($expected !== null, self::logged($line), $description . ': the diff line');
+            if ($expected !== null) {
+                TinyAssert::true(self::logged($expected), $description . ': ' . $expected);
             }
-            $snapshots = array_values(array_filter(PrestaShopLogger::$logs, static function ($l) {
-                return $l['object_type'] === TwoDiscrepancySnapshot::LOG_OBJECT_TYPE;
-            }));
-            TinyAssert::count($rows, $snapshots, $description . ': snapshot rows');
-            if ($rows === 0) {
-                continue;
-            }
-            $snapshot = json_decode($snapshots[0]['message'], true);
-            $block = $snapshot['order_postprocessing'];
-            TinyAssert::same(2, $snapshot['v'], $description . ': schema version');
-            TinyAssert::same([true, 'order_create', 'checkout', ['twoorderpostprocessingtest'], true, $outcome], [$block['fired'], $block['request_type'], $block['trigger'], $block['subscribers'], $block['changed'], $outcome !== null ? $block['outcome'] : null], $description . ': block');
-            TinyAssert::same($reconciliation, $block['cart_reconciliation'], $description . ': cart_reconciliation');
-            TinyAssert::same($gate, $snapshot['gate']['name'] ?? null, $description . ': gate');
-            TinyAssert::true(in_array(['path' => '/line_items/1/tax_amount', 'before' => '0.00', 'after' => '5.03'], $block['diff'], true), $description . ': the diff names the re-split shipping tax');
-            $shipping = $snapshot['sent_line_items'][1];
-            TinyAssert::same('5.03', $shipping['tax_amount'], $description . ': sent_line_items are post-hook');
+            TinyAssert::false(self::logged('someone@example.com'), $description . ': never a buyer value');
         }
+    }
 
-        // Buyer data a subscriber edits is withheld from the diff; its path is kept.
-        self::seed(true);
-        $module = new TwopaymentTestHarness();
-        self::harnessAsInstance($module);
-        $calls = [];
-        self::subscribe('buyer_email', $calls);
-        $module->getTwoNewOrderData('merchant-attempt-9701', new Cart(self::CART), self::merchantUrls());
-        TinyAssert::true(self::logged('{"path":"/buyer/representative/email","before":"redacted","after":"redacted"}'), 'a buyer field is logged by path only');
-        TinyAssert::false(self::logged('someone@example.com'), 'never by value');
+    /**
+     * When Two refuses a payload, the API's own words reach the module log and
+     * the order's private message, not the buyer-facing rewrite of them.
+     */
+    private static function testApiRejectionReachesTheLogAndTheOrder(): void
+    {
+        $answer = ['http_status' => 400, 'error_code' => 'SCHEMA_ERROR', 'error_message' => 'Validation error', 'error_details' => 'gross_amount: value_error, must equal net_amount + tax_amount'];
+        $expected = 'HTTP 400 SCHEMA_ERROR | Validation error | gross_amount: value_error, must equal net_amount + tax_amount';
+        // [driver, expected log fragment, description]
+        $cases = [
+            ['hookActionOrderEdited', 'order edit saved but not sent to Two - ' . $expected, 'an admin edit'],
+            ['hookActionAdminOrdersTrackingNumberUpdate', 'tracking number update was not accepted by Two', 'a tracking number'],
+        ];
+        foreach ($cases as [$hook, $log, $description]) {
+            self::seed(false, true);
+            $module = self::module();
+            $module->putAnswer = $answer;
+            self::harnessAsInstance($module);
+            $calls = [];
+            self::subscribe('stale_totals', $calls);
+            $module->$hook(['order' => self::order()]);
+            TinyAssert::count(1, $module->sent, $description . ': sent');
+            TinyAssert::true(self::logged($log) && self::logged($expected), $description . ': the API\'s words in the log');
+            TinyAssert::same(['This change was saved in PrestaShop but was not sent to the invoice provider: ' . $expected], $module->notes, $description . ': the API\'s words on the order');
+        }
     }
 
     private static function testHookRowIsCreatedOnceAndNeverSubscribed(): void
@@ -907,10 +942,8 @@ final class OrderPostprocessingSpec
         // [file, function]: each sends a payload its builder already postprocessed.
         $allowedSenders = [
             'twopayment.php::checkTwoOrderIntentApprovalAtPayment' => 'buildTwoIntentOrderData(strict) postprocesses',
-            'twopayment.php::hookActionOrderEdited' => 'getTwoUpdateOrderData postprocesses',
-            'twopayment.php::hookActionAdminOrdersTrackingNumberUpdate' => 'getTwoUpdateOrderData postprocesses',
+            'twopayment.php::putTwoOrderUpdate' => 'getTwoUpdateOrderData postprocesses',
             'payment.php::postProcess' => 'getTwoNewOrderData postprocesses',
-            'confirmation.php::syncTwoMerchantOrderId' => 'getTwoUpdateOrderData postprocesses',
             'orderintent.php::ajaxProcessOrderIntent' => 'buildBuyerOrderIntent() builds it through getTwoIntentOrderData, which postprocesses',
         ];
         $builders = ['buildTwoIntentOrderData', 'getTwoNewOrderData', 'getTwoUpdateOrderData', 'sendTwoOrderRequest'];

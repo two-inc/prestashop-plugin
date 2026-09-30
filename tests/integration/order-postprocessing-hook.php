@@ -9,7 +9,7 @@
  * The cart is a 21% product at 100.00 net and 29.00 of shipping on a "No tax"
  * carrier, the worked example of the README. The probe drives every request
  * type and asserts the hook fired once with the contract's context, that the
- * sent payload is the post-hook one, and that the gates hold on it.
+ * sent payload is the post-hook one, as the subscriber returned it.
  *
  * One process per scenario, for the same per-request caches reason as
  * default-shipping-tax-code.php. Requires dev/ci/install-order-postprocessing-fixture.sh.
@@ -456,20 +456,19 @@ function oppRunScenario($name, &$detail)
     }
 
     if ($name === 'body_on_cancel') {
-        $response = $module->sendTwoOrderRequest('cancel', 'status_change', '/v1/order/' . OPP_TWO_ORDER . '/cancel', array(), 'POST', null, $order);
-        $checks[] = array($module->sent, array(), 'a cancel given a body is not sent');
-        $checks[] = array($response['error_code'], 'TWO_ORDER_POSTPROCESSING_BODY_NOT_ACCEPTED', 'refusal code');
+        $module->sendTwoOrderRequest('cancel', 'status_change', '/v1/order/' . OPP_TWO_ORDER . '/cancel', array(), 'POST', null, $order);
+        $checks[] = array(count($module->sent) === 1 ? $module->sent[0]['payload'] : $module->sent, array('reason' => 'added'), 'a cancel given a body sends it as returned');
 
         return $checks;
     }
 
-    // Order create under one fixture behaviour.
+    // Order create under one fixture behaviour: sent as returned, unless the subscriber has a code bug.
     $expected = array(
         'resplit' => null,
         'gross_change' => null,
-        'off_by_cent' => 'TWO_ORDER_POSTPROCESSING_LINE_INCONSISTENT',
-        'stale_totals' => 'TWO_ORDER_POSTPROCESSING_TOTALS_INCONSISTENT',
-        'stale_subtotals' => 'TWO_ORDER_POSTPROCESSING_SUBTOTALS_INCONSISTENT',
+        'off_by_cent' => null,
+        'stale_totals' => null,
+        'stale_subtotals' => null,
         'throws' => 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED',
         'throws_prod' => 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED',
         'non_array' => 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED',
@@ -477,8 +476,10 @@ function oppRunScenario($name, &$detail)
     if ($name === 'throws_prod') {
         $checks[] = array(_PS_MODE_DEV_, false, 'debug mode is off');
     }
-    Configuration::updateValue('PS_TWO_DEBUG_MODE', $expected[$name] === null ? '1' : '0');
-    Db::getInstance()->delete('log', "object_type = 'TwoDiscrepancySnapshot' AND object_id = " . (int) $cart->id);
+    Configuration::updateValue('PS_TWO_DEBUG_MODE', '1');
+    Module::getInstanceByName('twoorderpostprocessingtest');
+    Twoorderpostprocessingtest::$calls = array();
+    $since = Db::getInstance()->getValue('SELECT MAX(id_log) FROM `' . _DB_PREFIX_ . 'log`');
     $payload = null;
     $code = null;
     try {
@@ -489,23 +490,25 @@ function oppRunScenario($name, &$detail)
         $code = get_class($e) . ': ' . $e->getMessage();
     }
     Configuration::updateValue('PS_TWO_DEBUG_MODE', '0');
-    $checks[] = array($code, $expected[$name], 'refusal');
-    $rows = Db::getInstance()->executeS(
-        'SELECT message FROM `' . _DB_PREFIX_ . "log` WHERE object_type = 'TwoDiscrepancySnapshot' AND object_id = " . (int) $cart->id
-    );
-    $checks[] = array(count((array) $rows), 1, 'one snapshot row');
-    $snapshot = $rows ? json_decode((string) TwoDiscrepancySnapshot::decodeStored($rows[0]['message']), true) : null;
-    $block = is_array($snapshot) && isset($snapshot['order_postprocessing']) ? $snapshot['order_postprocessing'] : array();
-    $checks[] = array(isset($block['subscribers']) && in_array('twoorderpostprocessingtest', $block['subscribers'], true), true, 'snapshot names the subscriber');
-    $checks[] = array(isset($block['outcome']) ? $block['outcome'] : null, $expected[$name] === null ? 'changed' : 'refused:' . $expected[$name], 'snapshot outcome');
+    $checks[] = array($code, $expected[$name], 'outcome');
+    $logged = function ($needle) use ($since) {
+        return (int) Db::getInstance()->getValue(
+            'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'log` WHERE id_log > ' . (int) $since . " AND message LIKE '%" . pSQL($needle) . "%'"
+        ) > 0;
+    };
     if ($expected[$name] !== null) {
+        $checks[] = array($logged($expected[$name] . ' - the order_create request (checkout) was not sent'), true, 'the failure is logged');
+
         return $checks;
     }
-    $totals = $name === 'gross_change' ? array('133.97', '28.13', '162.10') : array('123.97', '26.03', '150.00');
-    $checks[] = array(oppLine($payload, 'SHIPPING_FEE'), array('23.97', '5.03', '29.00'), 'shipping re-split');
-    $checks[] = array(array($payload['net_amount'], $payload['tax_amount'], $payload['gross_amount']), $totals, 'order totals');
-    $checks[] = array($block['cart_reconciliation'], 'skipped_payload_changed', 'the cart comparison skip is recorded');
-    $detail = json_encode($block);
+    $calls = Twoorderpostprocessingtest::$calls;
+    $checks[] = array(count($calls) === 1 ? $calls[0]['payload_out'] : count($calls), $payload, 'returned exactly what the subscriber left');
+    $checks[] = array(oppLine($payload, 'SHIPPING_FEE')[1], '5.03', 'shipping tax re-split');
+    if (in_array($name, array('resplit', 'gross_change'), true)) {
+        $totals = $name === 'gross_change' ? array('133.97', '28.13', '162.10') : array('123.97', '26.03', '150.00');
+        $checks[] = array(array($payload['net_amount'], $payload['tax_amount'], $payload['gross_amount']), $totals, 'order totals');
+    }
+    $checks[] = array($logged('The order postprocessing hook changed the order_create request (checkout)'), true, 'the Debug Mode diff is logged');
 
     return $checks;
 }

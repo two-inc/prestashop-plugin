@@ -3093,26 +3093,6 @@ namespace {
                 : array('status' => (string) $status, 'code' => $code);
         }
 
-        /**
-         * The pricing build plus the gates it hands to the order postprocessing
-         * choke (TWO-26092), for specs that price a bare cart without a builder.
-         */
-        public function priceAndGateTwoCart($cart, $contextLabel, $strict = false, $termDays = null, $sync = false): array
-        {
-            $build = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
-            $pricing = $build->invoke($this, $cart, $contextLabel, $strict, $termDays, $sync);
-            $payload = [
-                'net_amount' => $this->getTwoRoundAmount($pricing['net_amount']),
-                'tax_amount' => $this->getTwoRoundAmount($pricing['tax_amount']),
-                'gross_amount' => $this->getTwoRoundAmount($pricing['gross_amount']),
-                'line_items' => $pricing['line_items'],
-                'tax_subtotals' => $pricing['tax_subtotals'],
-            ];
-            $context = $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_CREATE, 'spec', '/v1/order', $cart);
-
-            return $this->postprocessOrderRequest(TwoOrderPostprocessing::REQUEST_ORDER_CREATE, $payload, $context, $pricing['gates']);
-        }
-
         /** The admin "Current configuration health" panel HTML (ABN-518). */
         public function exposeTwoPluginHealthChecklist(): string
         {
