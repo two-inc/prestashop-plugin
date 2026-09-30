@@ -26,13 +26,25 @@ final class PlacedOrderUpdateSpec
 
     private static function testHashColumnIsAddedAndAFailureIsLogged(): void
     {
-        $alters = fn () => count(preg_grep('/ALTER TABLE `ps_twopayment` ADD `two_update_hash` VARCHAR\(32\) NULL/', StubStore::$dbExecuted));
+        $alters = fn () => count(preg_grep('/ALTER TABLE `ps_twopayment` ADD `(two_update_hash` VARCHAR\(32\)|two_declared_rates` TEXT) NULL/', StubStore::$dbExecuted));
         StubStore::reset();
         require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.17.php';
         $module = new TwopaymentTestHarness();
         TinyAssert::true(upgrade_module_2_7_17($module), 'the upgrade script must report success');
         TinyAssert::true(upgrade_module_2_7_17($module), 'a re-run must still succeed');
-        TinyAssert::same(1, $alters(), 'the upgrade adds the column once');
+        TinyAssert::same(2, $alters(), 'the upgrade adds each column once');
+
+        StubStore::reset();
+        $module = new TwopaymentTestHarness();
+        $module->setTwoOrderPaymentData(self::ORDER, [
+            'two_order_id' => 'two-9601', 'two_order_reference' => 'ref', 'two_order_state' => 'VERIFIED', 'two_order_status' => 'APPROVED',
+            'two_day_on_invoice' => '30', 'two_invoice_url' => '', 'two_declared_rates' => '{"shipping":[],"wrapping":0.25}',
+        ]);
+        $module->setTwoOrderPaymentData(self::ORDER, [
+            'two_order_id' => 'two-9601', 'two_order_reference' => 'ref', 'two_order_state' => 'FULFILLED', 'two_order_status' => 'APPROVED',
+            'two_day_on_invoice' => '30', 'two_invoice_url' => '',
+        ]);
+        TinyAssert::same(pSQL('{"shipping":[],"wrapping":0.25}'), StubStore::$twoPaymentRows[self::ORDER]['two_declared_rates'], 'the declared rates persist, and a status write leaves them');
 
         StubStore::reset();
         PrestaShopLogger::reset();
@@ -129,10 +141,59 @@ final class PlacedOrderUpdateSpec
                 StubStore::$taxRuleRates[511] = 15.0;
                 $track($o);
             }, 'tracking', 'PUT ' . self::PLACED . '; DIGITAL 2.00/0.50/2.50@0.25 = 37.50 NOK', 'gift wrapping at the invoiced rate after the wrapping tax group changed'],
+            [function ($o) use ($wrapping) {
+                $wrapping($o);
+                self::declare([], 0.25);
+            }, function ($o) use ($track) {
+                Configuration::updateValue('PS_GIFT_WRAPPING_TAX_RULES_GROUP', 511);
+                StubStore::$taxRuleRates[511] = 15.0;
+                $track($o);
+            }, 'tracking', 'PUT ' . self::PLACED . '; DIGITAL 2.00/0.50/2.50@0.25 = 37.50 NOK', 'gift wrapping at the declared rate before any invoice'],
+            [function ($o) use ($wrapping) {
+                $wrapping($o);
+                StubStore::$orderInvoiceTaxes[self::ORDER] = [
+                    ['type' => 'wrapping', 'id_order_invoice' => 1, 'id_tax' => 31, 'rate' => '25.000'],
+                    ['type' => 'wrapping', 'id_order_invoice' => 2, 'id_tax' => 32, 'rate' => '12.000'],
+                ];
+            }, $track, 'edit', 'no PUT, paid 37.50, logged TwoPayment: Order 9601 invoices record gift wrapping at different rates (25%, 12%): the order holds no single wrapping rate, marked not sent',
+                'invoices disagreeing on the wrapping rate fail loud'],
+            [function ($o) {
+                // PaymentModule writes carrier_tax_rate only when a Carrier loads, so a carrier-less order records 0.000.
+                $o->id_carrier = 0;
+                StubStore::$carts[self::CART]['id_carrier'] = 0;
+                $o->carrier_tax_rate = 0.0;
+                self::enableDefaultShippingTaxCode(520);
+            }, $track, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 NOK', 'carrier-less order at the Default shipping tax code'],
             [function ($o) {
                 $o->carrier_tax_rate = 0.0;
-            }, $track, 'edit', 'no PUT, paid 35.00, logged TwoPayment: Order 9601 records shipping 8.00 net, 2.00 tax at carrier_tax_rate 0.000%, which do not agree: the order holds no usable shipping rate',
-                'no stored shipping rate fails loud rather than resolving a live one'],
+                self::declare([[0.25, 8.00]]);
+            }, $track, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 NOK', 'no carrier_tax_rate: the rates declared at placement'],
+            [function ($o) {
+                self::declare([[0.15, 8.00]]);
+            }, $track, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 NOK', 'carrier_tax_rate wins over the declared rates'],
+            [function ($o) {
+                $o->carrier_tax_rate = 0.0;
+                self::declare([[0.15, 8.00]]);
+                StubStore::$taxRuleRates[511] = 15.0;
+                self::enableDefaultShippingTaxCode(511);
+            }, $track, 'edit', 'no PUT, paid 35.00, logged TwoPayment: Order 9601 records shipping 8.00 net, 2.00 tax, which no stored or configured rate reconciles with'
+                . ' (carrier_tax_rate 0%, declared at placement 15%, Default shipping tax code 15%), marked not sent', 'no shipping rate reconciles: fails loud'],
+            [function ($o) {
+                $o->carrier_tax_rate = 0.0;
+                $o->total_paid_tax_incl -= 0.40;
+                self::declare([[0.25, 4.00], [0.15, 4.00]]);
+            }, $track, 'tracking', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 4.00/1.00/5.00@0.25; SHIPPING_FEE 4.00/0.60/4.60@0.15 = 34.60 NOK',
+                'shipping declared over two rates at placement'],
+            [function ($o) {
+                // Carrier-priced free shipping records none, while total-level rounding leaves a cent between the rows and the total.
+                $o->total_paid_tax_excl -= 8.00;
+                $o->total_paid_tax_incl -= 9.99;
+                $o->total_shipping_tax_excl = 0.0;
+                $o->total_shipping_tax_incl = 0.0;
+            }, $track, 'tracking', 'PUT PHYSICAL 20.00/5.00/25.00@0.25 = 25.00 NOK', 'free shipping with a rounding cent sends no shipping line'],
+            [$none, function ($o) {
+                StubStore::$twoPaymentRows[self::ORDER]['two_not_sent_at'] = '2026-09-30 10:00:00';
+            }, 'tracking', 'no PUT', 'an unchanged tracking save clears a stale not-sent marker'],
             [$none, function ($o) {
                 // PS 8 AddProductToOrderHandler adds an order_carrier row for the new invoice, then OrderAmountUpdater sets the first row to the whole order's shipping.
                 self::addLine($o, 9503, 1, 10.00, 25.0, 510);
@@ -244,6 +305,9 @@ final class PlacedOrderUpdateSpec
                 $errors = array_column(array_filter(PrestaShopLogger::$logs, fn ($l) => $l['severity'] === 3), 'message');
                 if ($errors !== []) {
                     $actual .= ', logged ' . $errors[0];
+                }
+                if (!empty(StubStore::$twoPaymentRows[self::ORDER]['two_not_sent_at'])) {
+                    $actual .= ', marked not sent';
                 }
             } catch (Throwable $e) {
                 $actual = 'throws ' . $e->getMessage();
@@ -383,6 +447,22 @@ final class PlacedOrderUpdateSpec
         StubStore::$cartTotals[self::CART][false][Cart::ONLY_DISCOUNTS] += $net;
         StubStore::$cartTotals[self::CART][true][Cart::ONLY_DISCOUNTS] += $gross;
         self::addTotals($order, -$net, -$gross);
+    }
+
+    /** The shipping classes [[rate, net weight], ...] and wrapping rate the create payload declared, as the Two row keeps them. */
+    private static function declare(array $shipping, ?float $wrapping = null): void
+    {
+        StubStore::$twoPaymentRows[self::ORDER]['two_declared_rates'] = json_encode([
+            'shipping' => array_map(fn ($c) => ['rate' => $c[0], 'net_weight' => $c[1]], $shipping),
+            'wrapping' => $wrapping,
+        ]);
+    }
+
+    private static function enableDefaultShippingTaxCode(int $group): void
+    {
+        StubStore::$taxRulesGroups[$group] = ['name' => 'Group ' . $group, 'active' => 1];
+        Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
+        Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', (string) $group);
     }
 
     private static function addTotals(PlacedOrderStub $order, float $net, float $gross): void
