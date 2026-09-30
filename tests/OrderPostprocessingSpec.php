@@ -457,11 +457,16 @@ final class OrderPostprocessingSpec
     {
         // [setup, expected message fragment, snapshot gate, description]
         $cases = [
-            ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', 'untaxed shipping on a 21% carrier group'],
+            ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', 'untaxed shipping on a "No tax" carrier, with the Default shipping tax code at 21%'],
             ['product', 'Declared tax rate diverges from applied tax amounts for product', 'declared_rate', 'a product whose declared rate its amounts contradict'],
         ];
         foreach ($cases as [$setup, $expected, $gate, $description]) {
-            $cart = self::seed($setup !== 'shipping');
+            $cart = self::seed($setup !== 'shipping', $setup === 'shipping');
+            if ($setup === 'shipping') {
+                // Only the Default shipping tax code's rate is checked, and only on a line no carrier provides one for (TWO-26117).
+                Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
+                Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', (string) self::CARRIER_GROUP);
+            }
             if ($setup === 'product') {
                 StubStore::$taxRuleRates[9000 + self::PRODUCT] = 10.0;
             }
@@ -908,6 +913,11 @@ final class OrderPostprocessingSpec
             [['line_items' => [$line('100.00', '21.00', '0.21'), $line('29.00', '0.00', '0')], 'tax_subtotals' => []], ['129.00', '21.00', '150.00'], [['tax_rate' => 0, 'taxable_amount' => '29.00', 'tax_amount' => '0.00'], ['tax_rate' => '0.21', 'taxable_amount' => '100.00', 'tax_amount' => '21.00']], 'before the re-split: a 0% and a 21% bucket, the 0% rate an int as the builder has always sent it'],
             [['line_items' => [$line('100.00', '21.00', '0.21')]], ['100.00', '21.00', '121.00'], null, 'tax_subtotals are not added to a payload that sends none'],
             [['amount' => '10.00', 'currency' => 'EUR'], [null, null, null], null, 'a payload with no lines is returned unchanged'],
+            // TWO-26117: each total and per-rate subtotal is the sum of its lines plus the residual it carried before the
+            // hook, which the builder never leaves (identity below); the helper's result wins over hand edits.
+            [['line_items' => [$line('100.00', '21.00', '0.21')], 'net_amount' => '90.00', 'tax_amount' => '9.00', 'gross_amount' => '99.00', 'tax_subtotals' => [['tax_rate' => '0.21', 'taxable_amount' => '1.00', 'tax_amount' => '0.21']]], ['100.00', '21.00', '121.00'], [['tax_rate' => '0.21', 'taxable_amount' => '100.00', 'tax_amount' => '21.00']], 'hand-edited totals and subtotals are overwritten'],
+            [['line_items' => [$line('100.00', '21.00', '0.21'), $line('10.00', '2.10', '0.21'), $line('-10.00', '-2.10', '0.21')], 'tax_subtotals' => []], ['100.00', '21.00', '121.00'], [['tax_rate' => '0.21', 'taxable_amount' => '100.00', 'tax_amount' => '21.00']], 'lines cancelling within a rate leave no -0.00 and no residual'],
+            [['line_items' => [$line('10.00', '2.10', '0.21'), $line('-10.00', '-2.10', '0.21')], 'tax_subtotals' => []], ['0.00', '0.00', '0.00'], [['tax_rate' => '0.21', 'taxable_amount' => '0.00', 'tax_amount' => '0.00']], 'a zero sum is 0.00, never -0.00'],
         ];
         self::seed(true);
         $module = new TwopaymentTestHarness();
@@ -923,6 +933,13 @@ final class OrderPostprocessingSpec
         $module = new TwopaymentTestHarness();
         $built = $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
         TinyAssert::same($built, $module->recomputeTwoOrderTotals($built), 'recomputing an unedited payload changes nothing');
+        // Also on a line sent at 0% with the tax it was charged (TWO-26117), and on the intent.
+        $cart = self::seed(true, true);
+        $module = new TwopaymentTestHarness();
+        $built = $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+        TinyAssert::same($built, $module->recomputeTwoOrderTotals($built), 'recomputing an unedited 0%-with-tax shipping payload changes nothing');
+        $intent = $module->getTwoIntentOrderData($cart, new Customer(self::CART), new Currency(978), new Address(self::ADDRESS));
+        TinyAssert::same($intent, $module->recomputeTwoOrderTotals($intent), 'recomputing an unedited intent changes nothing');
     }
 
     /**

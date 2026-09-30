@@ -5903,6 +5903,7 @@ require __DIR__ . '/CheckoutWithholdReasonSpec.php';
 require __DIR__ . '/PaymentTileAboutControlSpec.php';
 require __DIR__ . '/ReconciliationDriftMessageSpec.php';
 require __DIR__ . '/OrderPostprocessingSpec.php';
+require __DIR__ . '/ShippingRateControlSpec.php';
 require __DIR__ . '/DiscrepancySnapshotSpec.php';
 
 $tests = [
@@ -5977,6 +5978,7 @@ $tests = [
     'CheckoutWithholdReasonSpec::runAll' => [CheckoutWithholdReasonSpec::class, 'runAll'],
     'ReconciliationDriftMessageSpec::runAll' => [ReconciliationDriftMessageSpec::class, 'runAll'],
     'OrderPostprocessingSpec::runAll' => [OrderPostprocessingSpec::class, 'runAll'],
+    'ShippingRateControlSpec::runAll' => [ShippingRateControlSpec::class, 'runAll'],
 ];
 
 $failed = 0;

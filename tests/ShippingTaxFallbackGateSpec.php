@@ -67,16 +67,16 @@ final class ShippingTaxFallbackGateSpec
         return $checks;
     }
 
-    // enabled (null = never written), stored group, expect resolved, description
+    // enabled (null = never written), stored group, expect resolved at the group's 21% (else sent at 0%), description
     private static function resolutionRows(): array
     {
         return [
-            [null, null, false, 'never enabled + no carrier + no group: refused'],
-            ['0', null, false, 'disabled + no carrier: refused'],
-            [null, '4210', false, 'never enabled with a stored group: ignored, refused'],
-            ['0', '4210', false, 'disabled with a stored group: ignored, refused'],
+            [null, null, false, 'never enabled + no carrier + no group: sent at 0%'],
+            ['0', null, false, 'disabled + no carrier: sent at 0%'],
+            [null, '4210', false, 'never enabled with a stored group: ignored, sent at 0%'],
+            ['0', '4210', false, 'disabled with a stored group: ignored, sent at 0%'],
             ['1', '4210', true, 'enabled + no carrier + group set: resolved'],
-            ['1', null, false, 'enabled + no carrier + no group: refused'],
+            ['1', null, false, 'enabled + no carrier + no group: sent at 0%'],
         ];
     }
 
@@ -125,10 +125,10 @@ final class ShippingTaxFallbackGateSpec
             ['1', null, 2, true, 'multishop, global on: shop 2 cart resolved'],
             ['1', null, 1, true, 'multishop, global on: shop 1 cart resolved'],
             [null, '1', 2, true, 'multishop, shop 2 on only: shop 2 cart resolved'],
-            [null, '1', 1, false, 'multishop, shop 2 on only: shop 1 cart refused'],
+            [null, '1', 1, false, 'multishop, shop 2 on only: shop 1 cart sent at 0%'],
             ['0', '1', 2, true, 'multishop, shop 2 on with global off: shop 2 cart resolved'],
-            ['0', '1', 1, false, 'multishop, shop 2 on with global off: shop 1 cart refused'],
-            ['1', '0', 2, false, 'multishop, global on with shop 2 off: shop 2 cart refused'],
+            ['0', '1', 1, false, 'multishop, shop 2 on with global off: shop 1 cart sent at 0%'],
+            ['1', '0', 2, false, 'multishop, global on with shop 2 off: shop 2 cart sent at 0%'],
         ];
     }
 
@@ -179,10 +179,8 @@ final class ShippingTaxFallbackGateSpec
             $outcome = strpos($e->getMessage(), self::REFUSAL) !== false ? 'refused' : 'threw ' . $e->getMessage();
         }
 
-        TinyAssert::same($resolved ? 'resolved at rate 0.21' : 'refused', $outcome, $description . ' (got: ' . $outcome . ')');
-        if (!$resolved) {
-            TinyAssert::same(3, self::severityOf(self::REFUSAL), $description . ': the refusal must stay error-severity');
-        }
+        // With the fallback off or unset the line goes out at 0% with the tax it was charged, never refused (TWO-26117).
+        TinyAssert::same($resolved ? 'resolved at rate 0.21' : 'resolved at rate 0', $outcome, $description . ' (got: ' . $outcome . ')');
     }
 
     private static function assertFieldVisibility(?string $enabled, bool $rendered, string $description): void
@@ -259,7 +257,7 @@ final class ShippingTaxFallbackGateSpec
             $outcome = strpos($e->getMessage(), self::REFUSAL) !== false ? 'refused' : 'threw ' . $e->getMessage();
         }
 
-        TinyAssert::same($resolved ? 'resolved at rate 0.21' : 'refused', $outcome, $description . ' (got: ' . $outcome . ')');
+        TinyAssert::same($resolved ? 'resolved at rate 0.21' : 'resolved at rate 0', $outcome, $description . ' (got: ' . $outcome . ')');
     }
 
     private static function assertMultishopCommand(?string $globalBefore, ?string $shop2Before, array $input, int $exitCode, ?string $globalAfter, ?string $shop2After, array $fragments, string $description): void
@@ -356,16 +354,5 @@ final class ShippingTaxFallbackGateSpec
         }
 
         return '(no shipping line)';
-    }
-
-    private static function severityOf(string $needle): int
-    {
-        foreach (PrestaShopLogger::$logs as $entry) {
-            if (strpos((string) $entry['message'], $needle) !== false) {
-                return (int) $entry['severity'];
-            }
-        }
-
-        return -1;
     }
 }
