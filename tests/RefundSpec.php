@@ -89,6 +89,10 @@ final class RefundSpec
             public array $storedSlips = [];
             /** Throw from the Two order read, as an unexpected failure after a slip is claimed would. */
             public bool $throwOnRead = false;
+            /** Throw from the order read that follows an accepted refund. */
+            public bool $throwOnReadAfterRefund = false;
+            /** Throw from recording a refund outcome. */
+            public bool $throwOnRecord = false;
             /** What getTwoUpdateOrderData() reports as the order's tax_subtotals. */
             public array $placedSubtotals = [];
             private array $twoOrder;
@@ -147,6 +151,9 @@ final class RefundSpec
 
             protected function recordTwoRefundOutcome($id_order, $id_order_slip, $status, $payload, $reason)
             {
+                if ($this->throwOnRecord) {
+                    throw new RuntimeException('record failed');
+                }
                 $key = $id_order_slip ?? 'r' . count($this->refundRows);
                 $this->refundRows[$key] = [
                     'id_order_slip' => $id_order_slip,
@@ -188,6 +195,9 @@ final class RefundSpec
 
                 if ($this->throwOnRead && $method === 'GET') {
                     throw new RuntimeException('read failed');
+                }
+                if ($this->throwOnReadAfterRefund && $method === 'GET' && $this->refundCalls() !== []) {
+                    throw new Error('refresh failed');
                 }
                 if ($method === 'POST' && strpos($endpoint, '/refund') !== false) {
                     return ['http_status' => 201, 'id' => 'refund-uuid'];
@@ -568,17 +578,34 @@ final class RefundSpec
         }
     }
 
-    /** TWO-26093: a claimed slip is never sent by a later call, so a failure after the claim must reach the merchant. */
+    /**
+     * TWO-26093: once a slip is claimed no later call sends it. Invariants: a slip Two accepted is SENT and the
+     * merchant is never told to refund it in the portal; any other outcome reaches the merchant, even when
+     * recording it fails. Columns: harness failure switches, expected refund calls, recorded status, notes.
+     */
     private static function testFailureAfterClaimTellsTheMerchant(): void
     {
-        StubStore::reset();
-        $module = self::makeModule(self::fulfilledOrder(100.00));
-        $module->throwOnRead = true;
+        $cases = [
+            [['throwOnRead'], 0, 'NOT_SENT', 1, 'read failed', 'failure before Two accepts it: not sent, merchant told'],
+            [['throwOnReadAfterRefund'], 1, 'SENT', 0, 'refresh failed', 'refresh fails after Two accepted it: sent, no portal note'],
+            [['throwOnRead', 'throwOnRecord'], 0, 'CLAIMED', 1, 'record failed', 'recording fails too: the merchant is still told'],
+            [['throwOnReadAfterRefund', 'throwOnRecord'], 1, 'CLAIMED', 0, 'record failed', 'accepted, recording fails: still no portal note'],
+        ];
+        foreach ($cases as [$switches, $calls, $status, $notes, $logged, $desc]) {
+            StubStore::reset();
+            PrestaShopLogger::$logs = [];
+            $module = self::makeModule(self::fulfilledOrder(100.00));
+            foreach ($switches as $switch) {
+                $module->{$switch} = true;
+            }
 
-        $module->hookActionOrderSlipAdd(['order' => self::makeOrder(), 'orderSlipCreated' => self::makeSlip(905, 30.00)]);
+            $module->hookActionOrderSlipAdd(['order' => self::makeOrder(), 'orderSlipCreated' => self::makeSlip(905, 30.00)]);
 
-        TinyAssert::count(0, $module->refundCalls());
-        TinyAssert::count(1, $module->notSent, 'the merchant is told the slip was not sent');
-        TinyAssert::same('NOT_SENT', $module->refundRows[905]['status'], 'the claim records it was not sent');
+            TinyAssert::count($calls, $module->refundCalls(), $desc . ': refund calls');
+            TinyAssert::count($notes, $module->notSent, $desc . ': not-sent notes');
+            TinyAssert::same($status, $module->refundRows[905]['status'], $desc . ': recorded status');
+            $messages = implode(' | ', array_column(PrestaShopLogger::$logs, 'message'));
+            TinyAssert::true(strpos($messages, $logged) !== false, $desc . ': logged');
+        }
     }
 }
