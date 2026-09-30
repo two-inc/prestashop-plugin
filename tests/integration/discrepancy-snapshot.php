@@ -151,6 +151,12 @@ function snapshotRun($name)
     return $failures === array() ? 0 : 1;
 }
 
+if (version_compare(_PS_VERSION_, '8.0.0', '<')) {
+    echo 'SKIP discrepancy-snapshot on PrestaShop ' . _PS_VERSION_
+        . ': the fixture injects through actionFilterDeliveryOptionList, which core only fires from 8.0' . PHP_EOL;
+    exit(0);
+}
+
 $argument = isset($argv[1]) ? (string) $argv[1] : '';
 if ($argument !== '') {
     exit(snapshotRun($argument));
