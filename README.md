@@ -309,7 +309,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Customer selects a company from search results
 - Module stores organization number in hidden `companyid` field
 - Address fields, DNI and VAT number auto-fill from Two's data when available, and a re-search overwrites them with the newly selected company's values. Merchant-configurable (Company Lookup -> "Autofill company address", enabled by default); with it off, the company search still records the company name and organisation number but writes nothing into the address step
-- Selection persists in cookie to survive checkout step changes
+- Selection persists server-side against the cart to survive checkout step changes. Cart-scoped company and mirror-address data live in the module's `twopayment_cart_record` table, keyed by cart and shop, and are deleted once the order is confirmed. The cookie carries none of it, so nothing a buyer types can break or overflow the cookie
 
 #### 2. Payment Step
 - Two payment option appears for business accounts
@@ -973,7 +973,7 @@ they drift apart.
 - **Symptom**: Order creation fails with error message
 - **Solutions**:
   - Check PrestaShop logs for server-side Order Intent errors
-  - Verify company data persisted (cookie and hidden `companyid` field)
+  - Verify company data persisted (`twopayment_cart_record` row for the cart, and hidden `companyid` field)
   - Ensure Order Intent was approved (check cookie `two_order_intent_approved`)
   - Verify API key is correct for environment
   - Check Two API status

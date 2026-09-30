@@ -447,7 +447,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.18';
+        $this->version = '2.7.19';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -980,6 +980,10 @@ class Twopayment extends PaymentModule
             }
         }
 
+        if (!$this->ensureTwoCartRecordTable()) {
+            return false;
+        }
+
         // DB-level guard against manual/duplicate fee-product order rows.
         // Best-effort (logs loudly on failure) - must not break install.
         $this->installTwoOrderDetailFeeGuardTrigger();
@@ -1161,6 +1165,7 @@ class Twopayment extends PaymentModule
         $sql[] = 'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'twopayment_surcharge_sync`';
         $sql[] = 'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'twopayment_rate_limit`';
         $sql[] = 'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . 'twopayment_refund`';
+        $sql[] = 'DROP TABLE IF EXISTS `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '`';
         foreach ($sql as $query) {
             if (Db::getInstance()->execute($query) == false) {
                 return false;
@@ -12068,21 +12073,34 @@ class Twopayment extends PaymentModule
      * The fields that make up one stored company selection, as the short names
      * the helpers below take and return.
      *
-     * Centralised (TWO-40) so that a write site cannot add a field without the
-     * cart stamp, and a clear site cannot miss one.
+     * Centralised (TWO-40) so that a write site cannot invent a field the reader
+     * does not know, and a clear site cannot miss one.
      */
     const COMPANY_SESSION_FIELDS = array('name', 'id', 'country', 'address_id');
 
-    /** The whole record and its cart stamp as one encoded value, so a write replaces it whole (TWO-26094). */
-    const COMPANY_SESSION_COOKIE_KEY = 'two_company_record';
+    /**
+     * Module table holding the company and mirror-write records, one row per
+     * cart, shop and record (TWO-26094). Kept out of the cookie so nothing a
+     * buyer types can break or overflow it.
+     */
+    const CART_RECORD_TABLE = 'twopayment_cart_record';
 
-    /** Per-field keys written before TWO-26094; read as absent and purged, so the buyer re-picks. */
-    const LEGACY_COMPANY_SESSION_KEYS = array(
+    /** Cookie keys these records used before TWO-26094; read as absent and purged, so the buyer re-picks. */
+    const LEGACY_SESSION_COOKIE_KEYS = array(
         'two_company_name',
         'two_company_id',
         'two_company_country',
         'two_company_address_id',
         'two_company_cart_id',
+        'two_mirror_company',
+        'two_mirror_org',
+        'two_mirror_country',
+        'two_mirror_address1',
+        'two_mirror_address2',
+        'two_mirror_postcode',
+        'two_mirror_city',
+        'two_mirror_state',
+        'two_mirror_cart_id',
     );
 
     /**
@@ -12107,88 +12125,45 @@ class Twopayment extends PaymentModule
      * which is how a caller drops part of a record (an organisation number that no
      * longer belongs to the name beside it) without clearing the whole thing.
      *
-     * With no loaded cart this writes NOTHING and clears nothing - see
-     * storeTwoCartScopedRecord(). Deliberately still `void`: a caller has no useful
-     * second move if the write is declined (there is nowhere else to keep the
-     * selection until a cart exists), every call site ignores the result today,
-     * and reporting one would invite a caller to branch on it. "Stored, or there
-     * was no cart to store it against" is the whole contract.
-     *
-     * The cookie's EXPIRY is deliberately left alone here. Cookie::setExpire()
-     * assigns a SINGLE expiry for the whole cookie, so a call from this helper
-     * would silently re-time every other key sharing it; and the shop's default
-     * front-office lifetime (PS_COOKIE_LIFETIME_FO) can be longer or shorter than
-     * an hour, so dropping the callers' own setExpire() would not be neutral
-     * either. Cart scoping, not the expiry, bounds how long this record stays
-     * usable, so callers keep whatever setExpire they already had.
+     * With no loaded cart this writes NOTHING and clears nothing. Deliberately
+     * still `void`: a caller has no useful second move if the write is declined
+     * (there is nowhere else to keep the selection until a cart exists), and
+     * reporting one would invite a caller to branch on it. "Stored, or there was
+     * no cart to store it against" is the whole contract.
      *
      * @param array $fields
      * @return void
      */
     public function storeTwoCartScopedCompany(array $fields)
     {
-        $this->storeTwoCartScopedRecord(
-            self::COMPANY_SESSION_COOKIE_KEY,
-            self::COMPANY_SESSION_FIELDS,
-            self::LEGACY_COMPANY_SESSION_KEYS,
-            $fields,
-            'company'
-        );
+        $this->mergeTwoCartRecord('company', self::COMPANY_SESSION_FIELDS, $fields);
     }
 
     /**
      * Read the company selection stored against the current cart (TWO-40).
      *
-     * Returns null - absent - unless the stored record carries a cart stamp equal
-     * to the current cart id. A record belonging to another cart, one that does
-     * not decode, or one in the per-field format written before TWO-26094, is
-     * cleared on the way out.
-     *
-     * A selection made for one order cannot be read back on a later one, because
-     * an ordered cart is never carried again. Once an order references the cart,
-     * the NEXT request's FrontController::init() finds Cart::orderExists() true,
-     * unsets the cookie's id_cart and assigns a brand-new Cart - and a cart with
-     * an order against it is never reloaded. The id the buyer carries from that
-     * point on can therefore never equal the stored stamp, so the record can never
-     * match again.
-     *
-     * Note the rotation happens on that following request, NOT inside placement
-     * itself, so the record stays readable for the remainder of the request that
-     * places the order - which is what the placement path needs. Being unreadable
-     * afterwards is intended: the selection is only needed up to the point the
-     * order is placed.
+     * Returns null - absent - unless a record is stored for the current cart and
+     * shop. A selection made for one order cannot be read back on a later one: the
+     * module deletes the cart's records once its order is confirmed, and core
+     * never carries an ordered cart again - the next request's
+     * FrontController::init() finds Cart::orderExists() true and assigns a new
+     * cart, whose id has no record.
      *
      * @return array|null ['name' => string, 'id' => string, 'country' => string, 'address_id' => string]
      */
     public function readTwoCartScopedCompany()
     {
-        $discardedCartId = null;
-        $record = $this->readTwoCartScopedRecord(
-            self::COMPANY_SESSION_COOKIE_KEY,
-            self::COMPANY_SESSION_FIELDS,
-            self::LEGACY_COMPANY_SESSION_KEYS,
-            $discardedCartId
-        );
-
-        if ($discardedCartId !== null) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Discarded session company not scoped to the current cart. Stored cart=' .
-                $discardedCartId . ', current cart=' . $this->getTwoCurrentCartId(),
-                2
-            );
-        }
-
-        return $record;
+        return $this->readTwoCartRecord('company', self::COMPANY_SESSION_FIELDS);
     }
 
     /**
-     * Forget the stored company selection, stamp included (TWO-40).
+     * Forget the stored company selection (TWO-40).
      *
      * @return void
      */
     public function clearTwoCartScopedCompany()
     {
-        $this->clearTwoCartScopedRecord(self::COMPANY_SESSION_COOKIE_KEY, self::LEGACY_COMPANY_SESSION_KEYS);
+        $this->writeTwoCartRecord('company', null);
     }
 
     /**
@@ -12235,69 +12210,37 @@ class Twopayment extends PaymentModule
         'state',
     );
 
-    /** As COMPANY_SESSION_COOKIE_KEY, for the mirror-write record (TWO-26094). */
-    const MIRROR_WRITE_SESSION_COOKIE_KEY = 'two_mirror_record';
-
-    /** Per-field keys written before TWO-26094; read as absent and purged. */
-    const LEGACY_MIRROR_WRITE_SESSION_KEYS = array(
-        'two_mirror_company',
-        'two_mirror_org',
-        'two_mirror_country',
-        'two_mirror_address1',
-        'two_mirror_address2',
-        'two_mirror_postcode',
-        'two_mirror_city',
-        'two_mirror_state',
-        'two_mirror_cart_id',
-    );
-
     /**
      * Record what the mirror has written into the secondary address, against the
      * current cart (TWO-40).
      *
      * Takes any subset of MIRROR_WRITE_SESSION_FIELDS; a field given as null is
      * removed rather than written, which is how a caller disowns a value it has
-     * just cleared. Same stamp discipline as storeTwoCartScopedCompany(), and
-     * declined the same way when there is no cart to stamp against.
+     * just cleared. Declined, as storeTwoCartScopedCompany() is, when there is no
+     * cart to store against.
      *
      * @param array $fields
      * @return void
      */
     public function storeTwoCartScopedMirrorWrites(array $fields)
     {
-        $this->storeTwoCartScopedRecord(
-            self::MIRROR_WRITE_SESSION_COOKIE_KEY,
-            self::MIRROR_WRITE_SESSION_FIELDS,
-            self::LEGACY_MIRROR_WRITE_SESSION_KEYS,
-            $fields,
-            'mirror-write'
-        );
+        $this->mergeTwoCartRecord('mirror', self::MIRROR_WRITE_SESSION_FIELDS, $fields);
     }
 
     /**
      * Read what the mirror has written into the secondary address on this cart
-     * (TWO-40).
-     *
-     * Absent - null - exactly when readTwoCartScopedCompany() would report its own
-     * record absent, and cleared on the way out in the same cases; with no cart on
-     * the request nothing is read and nothing is destroyed.
+     * (TWO-40). Absent - null - exactly when readTwoCartScopedCompany() would
+     * report its own record absent.
      *
      * @return array|null keyed by MIRROR_WRITE_SESSION_FIELDS
      */
     public function readTwoCartScopedMirrorWrites()
     {
-        $discardedCartId = null;
-
-        return $this->readTwoCartScopedRecord(
-            self::MIRROR_WRITE_SESSION_COOKIE_KEY,
-            self::MIRROR_WRITE_SESSION_FIELDS,
-            self::LEGACY_MIRROR_WRITE_SESSION_KEYS,
-            $discardedCartId
-        );
+        return $this->readTwoCartRecord('mirror', self::MIRROR_WRITE_SESSION_FIELDS);
     }
 
     /**
-     * Forget what the mirror wrote, stamp included (TWO-40).
+     * Forget what the mirror wrote (TWO-40).
      *
      * NOT called from clearTwoCartScopedCompany(), and that omission is the design:
      * the company record is cleared whenever a country guard rejects it or the
@@ -12308,43 +12251,73 @@ class Twopayment extends PaymentModule
      */
     public function clearTwoCartScopedMirrorWrites()
     {
-        $this->clearTwoCartScopedRecord(self::MIRROR_WRITE_SESSION_COOKIE_KEY, self::LEGACY_MIRROR_WRITE_SESSION_KEYS);
+        $this->writeTwoCartRecord('mirror', null);
     }
 
     /**
-     * Merge $fields into this cart's record under $cookieKey and write it back as one value.
+     * Delete every record kept for a cart, once its order is confirmed (TWO-26094).
      *
-     * @param string $cookieKey
-     * @param array $knownFields
-     * @param array $legacyKeys
-     * @param array $fields
-     * @param string $label names the record in the unknown-field log line
+     * @param int $cartId
      * @return void
      */
-    private function storeTwoCartScopedRecord($cookieKey, array $knownFields, array $legacyKeys, array $fields, $label)
+    public function clearTwoCartRecords($cartId)
     {
-        if (!isset($this->context->cookie)) {
+        $this->ensureTwoCartRecordTable();
+        Db::getInstance()->execute(
+            'DELETE FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` WHERE `id_cart` = ' . (int) $cartId
+        );
+    }
+
+    /**
+     * Create the cart record table. Called from install, upgrade-2.7.19.php and,
+     * lazily, before each access, which covers a shop whose module files were
+     * swapped without core running the upgrade.
+     *
+     * @return bool
+     */
+    public function ensureTwoCartRecordTable()
+    {
+        static $ensured = false;
+        if ($ensured) {
+            return true;
+        }
+
+        $ensured = (bool) Db::getInstance()->execute(
+            'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` (
+                `id_cart` INT(11) UNSIGNED NOT NULL,
+                `id_shop` INT(11) UNSIGNED NOT NULL,
+                `record` VARCHAR(16) NOT NULL,
+                `data` TEXT NOT NULL,
+                `updated_at` DATETIME NOT NULL,
+                PRIMARY KEY (`id_cart`, `id_shop`, `record`),
+                KEY `idx_cart_record_updated_at` (`updated_at`)
+            ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8'
+        );
+
+        return $ensured;
+    }
+
+    /**
+     * Merge $fields into this cart's $record and write it back whole.
+     *
+     * @param string $record
+     * @param array $knownFields
+     * @param array $fields
+     * @return void
+     */
+    private function mergeTwoCartRecord($record, array $knownFields, array $fields)
+    {
+        if ($this->getTwoCurrentCartId() <= 0) {
+            // Reachable: hookActionCustomerAddressSave() fires on the My-Account address page, with no cart.
             return;
         }
 
-        $cartId = $this->getTwoCurrentCartId();
-        if ($cartId <= 0) {
-            // No cart, so there is nothing worth writing. A record stamped 0 is
-            // unreadable by construction, and the first read that DOES have a cart
-            // would see the mismatch and clear it, taking any earlier record with
-            // it. Reachable: hookActionCustomerAddressSave() fires on the
-            // My-Account address page, where the buyer need not have a cart.
-            return;
-        }
-
-        $stored = $this->decodeTwoCartScopedRecord($cookieKey);
-        $values = ($stored !== null && $stored['cart'] === $cartId) ? $stored['fields'] : array();
-
+        $values = (array) $this->readTwoCartRecord($record, $knownFields);
         foreach ($fields as $field => $value) {
             if (!in_array($field, $knownFields, true)) {
                 // Reported, not skipped silently: a mistyped 'addressId' would otherwise vanish without trace.
                 PrestaShopLogger::addLog(
-                    'TwoPayment: Ignored unknown ' . $label . ' session field "' . (string) $field
+                    'TwoPayment: Ignored unknown ' . $record . ' session field "' . (string) $field
                     . '" - known fields are ' . implode(', ', $knownFields),
                     2
                 );
@@ -12353,132 +12326,98 @@ class Twopayment extends PaymentModule
 
             if ($value === null) {
                 unset($values[$field]);
-                continue;
+            } else {
+                $values[$field] = (string) $value;
             }
-
-            $values[$field] = (string) $value;
         }
 
-        foreach ($legacyKeys as $key) {
-            unset($this->context->cookie->$key);
-        }
-
-        $encoded = $this->encodeTwoCartScopedRecord($cartId, $values);
-        if ($encoded === null) {
-            // Clearing beats keeping the previous record: the caller meant to replace it.
-            unset($this->context->cookie->$cookieKey);
-            PrestaShopLogger::addLog('TwoPayment: Could not encode the ' . $label . ' session record; cleared it', 3);
-
-            return;
-        }
-
-        $this->context->cookie->$cookieKey = $encoded;
+        $this->writeTwoCartRecord($record, $values);
     }
 
     /**
-     * This cart's record under $cookieKey with every known field present, or null.
+     * This cart's $record with every known field present, or null.
      *
-     * @param string $cookieKey
+     * @param string $record
      * @param array $knownFields
-     * @param array $legacyKeys
-     * @param int|null $discardedCartId set to the stamp (0 if unknown) of a record discarded here
      * @return array|null
      */
-    private function readTwoCartScopedRecord($cookieKey, array $knownFields, array $legacyKeys, &$discardedCartId)
+    private function readTwoCartRecord($record, array $knownFields)
     {
-        $discardedCartId = null;
-        if (!isset($this->context->cookie)) {
-            return null;
+        if (isset($this->context->cookie)) {
+            foreach (self::LEGACY_SESSION_COOKIE_KEYS as $key) {
+                unset($this->context->cookie->$key);
+            }
         }
 
         $cartId = $this->getTwoCurrentCartId();
         if ($cartId <= 0) {
-            // Nothing to match against on this request. Report absent, but do not
-            // clear: an address hook can fire outside checkout, and wiping a
-            // record the buyer is still mid-way through using would be worse than
-            // declining to read it here.
             return null;
         }
 
-        $stored = $this->decodeTwoCartScopedRecord($cookieKey);
-        if ($stored !== null && $stored['cart'] === $cartId) {
-            $record = array();
-            foreach ($knownFields as $field) {
-                $value = isset($stored['fields'][$field]) ? $stored['fields'][$field] : '';
-                $record[$field] = is_scalar($value) ? (string) $value : '';
-            }
-
-            return $record;
+        $this->ensureTwoCartRecordTable();
+        $data = json_decode((string) Db::getInstance()->getValue(
+            'SELECT `data` FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` WHERE `id_cart` = ' . $cartId
+            . ' AND `id_shop` = ' . $this->getTwoCartRecordShopId() . ' AND `record` = "' . pSQL($record) . '"',
+            false
+        ), true);
+        if (!is_array($data)) {
+            return null;
         }
 
-        $hasStoredRecord = isset($this->context->cookie->$cookieKey);
-        foreach ($legacyKeys as $key) {
-            $hasStoredRecord = $hasStoredRecord || isset($this->context->cookie->$key);
+        $values = array();
+        foreach ($knownFields as $field) {
+            $values[$field] = isset($data[$field]) && is_scalar($data[$field]) ? (string) $data[$field] : '';
         }
 
-        if ($hasStoredRecord) {
-            $this->clearTwoCartScopedRecord($cookieKey, $legacyKeys);
-            $discardedCartId = $stored !== null ? $stored['cart'] : 0;
-        }
-
-        return null;
+        return $values;
     }
 
     /**
-     * @param string $cookieKey
-     * @param array $legacyKeys
+     * Replace this cart's $record whole, or delete it when $values is null.
+     *
+     * @param string $record
+     * @param array|null $values
      * @return void
      */
-    private function clearTwoCartScopedRecord($cookieKey, array $legacyKeys)
+    private function writeTwoCartRecord($record, $values)
     {
-        if (!isset($this->context->cookie)) {
+        $cartId = $this->getTwoCurrentCartId();
+        if ($cartId <= 0) {
             return;
         }
 
-        unset($this->context->cookie->$cookieKey);
-        foreach ($legacyKeys as $key) {
-            unset($this->context->cookie->$key);
+        $this->ensureTwoCartRecordTable();
+        $table = '`' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '`';
+        $json = $values === null ? false : json_encode($values);
+        if ($json === false) {
+            if ($values !== null) {
+                PrestaShopLogger::addLog('TwoPayment: Could not encode the ' . $record . ' session record; cleared it', 3);
+            }
+            Db::getInstance()->execute(
+                'DELETE FROM ' . $table . ' WHERE `id_cart` = ' . $cartId
+                . ' AND `id_shop` = ' . $this->getTwoCartRecordShopId() . ' AND `record` = "' . pSQL($record) . '"'
+            );
+
+            return;
         }
 
-        if (method_exists($this->context->cookie, 'write')) {
-            $this->context->cookie->write();
-        }
+        Db::getInstance()->execute(
+            'REPLACE INTO ' . $table . ' (`id_cart`, `id_shop`, `record`, `data`, `updated_at`) VALUES ('
+            . $cartId . ', ' . $this->getTwoCartRecordShopId() . ', "' . pSQL($record) . '", "'
+            . pSQL($json, true) . '", "' . date('Y-m-d H:i:s') . '")'
+        );
     }
 
     /**
-     * Raw UTF-8 JSON with only the '|' and '¤' core's Cookie::__set throws on escaped: base64 or \uXXXX would push a long Nordic address past core's 4096-byte cookie limit.
-     *
-     * @param int $cartId
-     * @param array $values
-     * @return string|null null when the fields cannot be encoded
+     * @return int
      */
-    private function encodeTwoCartScopedRecord($cartId, array $values)
+    private function getTwoCartRecordShopId()
     {
-        $json = json_encode(array('cart' => (int) $cartId, 'fields' => $values), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-        return $json === false ? null : str_replace(array('|', '¤'), array('\u007c', '\u00a4'), $json);
+        return isset($this->context->shop->id) ? (int) $this->context->shop->id : 0;
     }
 
     /**
-     * @param string $cookieKey
-     * @return array|null ['cart' => int, 'fields' => array], or null when absent or undecodable
-     */
-    private function decodeTwoCartScopedRecord($cookieKey)
-    {
-        if (!isset($this->context->cookie->$cookieKey)) {
-            return null;
-        }
-
-        $data = json_decode((string) $this->context->cookie->$cookieKey, true);
-        if (!is_array($data) || !isset($data['cart'], $data['fields']) || !is_int($data['cart']) || !is_array($data['fields'])) {
-            return null;
-        }
-
-        return $data;
-    }
-
-    /**
-     * Retrieve validated company data from session cookie for a given country.
+     * Retrieve validated company data from the cart-scoped company record for a given country.
      *
      * @param string $country_iso
      * @param int $current_address_id the address being resolved, when the caller knows it
@@ -12760,7 +12699,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Priority: Cookie (verified) → Address fields (dni, companyid) → Cookie (unverified)
+     * Priority: company record (verified) → Address fields (dni, companyid) → company record (unverified)
      *
      * @param Address $address Invoice or delivery address
      * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
@@ -12788,7 +12727,7 @@ class Twopayment extends PaymentModule
             : 0;
         $allow_cookie_company_fallback = true;
 
-        // Priority 1: Session cookie (from company search - already verified and country-validated)
+        // Priority 1: cart-scoped company record (from company search - already verified and country-validated)
         $validated_session_company = $this->getTwoValidatedSessionCompanyData($country_iso, $current_address_id);
         if (!empty($validated_session_company['company_name']) && !empty($validated_session_company['organization_number'])) {
             $session_company_name = trim((string) $validated_session_company['company_name']);
@@ -20819,6 +20758,13 @@ class Twopayment extends PaymentModule
             return;
         }
 
+        // Records of carts since ordered by any payment method, or abandoned.
+        $this->ensureTwoCartRecordTable();
+        Db::getInstance()->execute(
+            'DELETE FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` WHERE `updated_at` < "' . pSQL($cutoff)
+            . '" OR `id_cart` IN (SELECT `id_cart` FROM `' . _DB_PREFIX_ . 'orders`)'
+        );
+
         Configuration::updateValue('PS_TWO_ATTEMPT_CLEANUP_LAST_RUN', (string)$now);
     }
 
@@ -22394,10 +22340,10 @@ class Twopayment extends PaymentModule
                 // organisation number beside it - which is what disowning a
                 // selected company looks like by the time it reaches the server.
                 //
-                // The line above has just overwritten the cookie's company NAME,
+                // The line above has just overwritten the record's company NAME,
                 // so leaving the old organisation number in place would pair one
                 // company's number with another company's name, and the resolver
-                // consults this cookie FIRST, ahead of the address. That pairing
+                // consults this record FIRST, ahead of the address. That pairing
                 // is the wrong-company credit check in its purest form.
                 //
                 // This is also the server-side backstop for the browser's clear
@@ -22428,7 +22374,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether two company names are the same company as far as this cookie is
+     * Whether two company names are the same company as far as this record is
      * concerned.
      *
      * Case- and whitespace-insensitive, but this is NOT claimed to mirror the
@@ -22453,7 +22399,7 @@ class Twopayment extends PaymentModule
      * read as "unchanged", and leave a stale organisation number in place under
      * a blank-looking name. A literally-empty previous name paired with an
      * already-set company id is not otherwise reachable - no writer of the
-     * cookie ever stores an empty name (each guards on a non-empty company
+     * record ever stores an empty name (each guards on a non-empty company
      * before writing, and no path unsets the name while leaving the id behind)
      * - so this is the one case the guard exists for.
      *
