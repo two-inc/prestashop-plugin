@@ -340,6 +340,8 @@ namespace {
         public static array $dbLocks = [];
         /** @var array<int,int> Last-applied surcharge sync seq by cart id */
         public static array $surchargeSyncSeqs = [];
+        /** twopayment_cart_record rows as [id_cart][id_shop][record] => data (TWO-26094). */
+        public static array $cartRecords = [];
         /** @var array<int,string> ps_cart.checkout_session_data JSON by cart id */
         public static array $checkoutSessionData = [];
         /** @var array<string,array{window_start:int,hit_count:int}> TwoRateLimiter's twopayment_rate_limit rows, by rate_key */
@@ -474,6 +476,7 @@ namespace {
             self::$taxRules = [];
             self::$dbLocks = [];
             self::$surchargeSyncSeqs = [];
+            self::$cartRecords = [];
             self::$checkoutSessionData = [];
             self::$rateLimitRows = [];
             self::$orderDetails = [];
@@ -2491,6 +2494,20 @@ namespace {
                 StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
             }
             if (preg_match(
+                '/^REPLACE INTO `ps_twopayment_cart_record` \(`id_cart`, `id_shop`, `record`, `data`, `updated_at`\) VALUES \((\d+), (\d+), "(\w+)", "(.*)", "[^"]*"\)$/s',
+                $sql,
+                $m
+            )) {
+                StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[3]] = stripslashes($m[4]);
+            }
+            if (preg_match('/^DELETE FROM `ps_twopayment_cart_record` WHERE `id_cart` = (\d+)(?: AND `id_shop` = (\d+) AND `record` = "(\w+)")?$/', $sql, $m)) {
+                if (isset($m[3])) {
+                    unset(StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[3]]);
+                } else {
+                    unset(StubStore::$cartRecords[(int) $m[1]]);
+                }
+            }
+            if (preg_match(
                 '/REPLACE INTO `ps_twopayment_rate_limit` \(`rate_key`, `window_start`, `hit_count`\) VALUES'
                 . ' \("([^"]+)", (\d+), (\d+)\)/',
                 $sql,
@@ -2577,6 +2594,9 @@ namespace {
             }
             if (preg_match('/SELECT checkout_session_data FROM `ps_cart` WHERE id_cart = (\d+)/', $sql, $m)) {
                 return StubStore::$checkoutSessionData[(int) $m[1]] ?? false;
+            }
+            if (preg_match('/SELECT `data` FROM `ps_twopayment_cart_record` WHERE `id_cart` = (\d+) AND `id_shop` = (\d+) AND `record` = "(\w+)"$/', $sql, $m)) {
+                return StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[3]] ?? false;
             }
             if (preg_match('/SELECT `seq` FROM `ps_twopayment_surcharge_sync` WHERE `id_cart` = (\d+)/', $sql, $m)) {
                 return StubStore::$surchargeSyncSeqs[(int) $m[1]] ?? false;
@@ -3166,65 +3186,69 @@ namespace {
     }
 
     /**
-     * Field-level view of the encoded company and mirror-write cookie records
-     * (TWO-26094), so a spec can seed or inspect one field; 'cart' is the stamp.
+     * Field-level view of the company and mirror-write rows in the module's cart
+     * record table (TWO-26094), so a spec can seed or inspect one field. 'cart' is
+     * the cart the row is stored under; a row never given one sits under cart 0,
+     * which the module never reads.
      */
     final class TwoSessionRecord
     {
-        private const COOKIE_KEYS = ['company' => 'two_company_record', 'mirror' => 'two_mirror_record'];
-
-        public static function get(Cookie $cookie, string $record, string $field): ?string
+        public static function get(string $record, string $field): ?string
         {
-            $data = self::load($cookie, $record);
-            if ($field === 'cart') {
-                return isset($data['cart']) ? (string) $data['cart'] : null;
-            }
-
-            return isset($data['fields'][$field]) ? (string) $data['fields'][$field] : null;
-        }
-
-        public static function has(Cookie $cookie, string $record, string $field): bool
-        {
-            return self::get($cookie, $record, $field) !== null;
-        }
-
-        /** A record never given a 'cart' is stored unstamped, which the module reads as absent. */
-        public static function set(Cookie $cookie, string $record, string $field, ?string $value): void
-        {
-            $data = self::load($cookie, $record) ?? ['fields' => []];
-            if ($field === 'cart') {
-                $data['cart'] = (int) $value;
-            } elseif ($value === null) {
-                unset($data['fields'][$field]);
-            } else {
-                $data['fields'][$field] = $value;
-            }
-            $key = self::COOKIE_KEYS[$record];
-            $cookie->{$key} = str_replace(['|', '¤'], ['\\u007c', '\\u00a4'], (string) json_encode($data, JSON_UNESCAPED_UNICODE));
-        }
-
-        public static function remove(Cookie $cookie, string $record, string $field): void
-        {
-            if ($field === 'cart') {
-                $data = self::load($cookie, $record) ?? ['fields' => []];
-                unset($data['cart']);
-                $key = self::COOKIE_KEYS[$record];
-                $cookie->{$key} = str_replace(['|', '¤'], ['\\u007c', '\\u00a4'], (string) json_encode($data, JSON_UNESCAPED_UNICODE));
-
-                return;
-            }
-            self::set($cookie, $record, $field, null);
-        }
-
-        private static function load(Cookie $cookie, string $record): ?array
-        {
-            $key = self::COOKIE_KEYS[$record];
-            if (!isset($cookie->{$key})) {
+            $cartId = self::cartOf($record);
+            if ($cartId === null) {
                 return null;
             }
-            $data = json_decode((string) $cookie->{$key}, true);
+            if ($field === 'cart') {
+                return (string) $cartId;
+            }
+            $data = json_decode(StubStore::$cartRecords[$cartId][self::shop()][$record], true);
 
-            return is_array($data) ? $data : null;
+            return isset($data[$field]) ? (string) $data[$field] : null;
+        }
+
+        public static function has(string $record, string $field): bool
+        {
+            return self::get($record, $field) !== null;
+        }
+
+        public static function set(string $record, string $field, ?string $value): void
+        {
+            $cartId = self::cartOf($record);
+            $data = $cartId === null ? [] : (array) json_decode(StubStore::$cartRecords[$cartId][self::shop()][$record], true);
+            if ($cartId !== null) {
+                unset(StubStore::$cartRecords[$cartId][self::shop()][$record]);
+            }
+            if ($field === 'cart') {
+                $cartId = (int) $value;
+            } elseif ($value === null) {
+                unset($data[$field]);
+            } else {
+                $data[$field] = $value;
+            }
+            StubStore::$cartRecords[(int) $cartId][self::shop()][$record] = (string) json_encode($data);
+        }
+
+        /** Removing 'cart' moves the row to cart 0, where the module cannot read it. */
+        public static function remove(string $record, string $field): void
+        {
+            self::set($record, $field, $field === 'cart' ? '0' : null);
+        }
+
+        private static function cartOf(string $record): ?int
+        {
+            foreach (StubStore::$cartRecords as $cartId => $shops) {
+                if (isset($shops[self::shop()][$record])) {
+                    return (int) $cartId;
+                }
+            }
+
+            return null;
+        }
+
+        private static function shop(): int
+        {
+            return (int) Context::getContext()->shop->id;
         }
     }
 
