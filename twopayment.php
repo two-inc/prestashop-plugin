@@ -5144,12 +5144,15 @@ class Twopayment extends PaymentModule
 
         $deduction = 0.0;
         if ($excl !== null) {
+            $lines = $this->getTwoCreditSlipTaxLines($slip);
             $lines_excl = 0.0;
-            foreach ($this->getTwoCreditSlipTaxLines($slip) as $line) {
+            foreach ($lines as $line) {
                 $lines_excl += (float)$line['amount_tax_excl'];
             }
+            // Under PS_ROUND_TYPE ROUND_TOTAL core rounds the slip's tax-excluded total once per tax group
+            // while each line is rounded on its own, so the two differ by up to a cent per line without any voucher.
             $gap = round($lines_excl - $excl, 2);
-            $deduction = $gap > 0.01 ? $gap : 0.0;
+            $deduction = $gap > 0.01 * max(1, count($lines)) + 0.0001 ? $gap : 0.0;
         }
 
         return round($incl - $deduction + $shipping, 2);
@@ -5285,11 +5288,33 @@ class Twopayment extends PaymentModule
             $this->addTwoTaxBucket($buckets, (float)$line['rate'], (float)$line['amount_tax_excl'] * $factor, (float)$line['amount_tax_incl'] * $factor);
         }
         if ($shipping_incl > 0) {
-            $shipping_rate = isset($order->carrier_tax_rate) ? (float)$order->carrier_tax_rate : 0.0;
-            $shipping_excl = isset($slip->total_shipping_tax_excl) && $slip->total_shipping_tax_excl !== null && $slip->total_shipping_tax_excl !== ''
-                ? (float)$slip->total_shipping_tax_excl
-                : $shipping_incl / (1 + $shipping_rate / 100);
-            $this->addTwoTaxBucket($buckets, $shipping_rate, $shipping_excl, $shipping_incl);
+            $shipping_excl = $this->getTwoSlipField($slip, 'total_shipping_tax_excl');
+            if ($shipping_excl === null) {
+                $rate = isset($order->carrier_tax_rate) ? (float)$order->carrier_tax_rate : 0.0;
+                $shipping_excl = round($shipping_incl / (1 + $rate / 100), 2);
+            }
+            $shipping_tax = round($shipping_incl - $shipping_excl, 2);
+            $classes = $this->resolveTwoSlipShippingClasses($order, $shipping_excl, $shipping_tax);
+            if ($classes === null) {
+                return array();
+            }
+            $weights = array();
+            foreach ($classes as $key => $class) {
+                $weights[$key] = (float)$class['net_weight'];
+            }
+            $net_shares = count($classes) === 1 ? array(key($classes) => $shipping_excl) : $this->allocateTwoAmountByWeights($shipping_excl, $weights);
+            $tax_left = $shipping_tax;
+            $last = null;
+            foreach ($net_shares as $key => $net) {
+                $tax = round((float)$net * (float)$classes[$key]['rate'], 2);
+                $tax_left = round($tax_left - $tax, 2);
+                $this->addTwoTaxBucket($buckets, (float)$classes[$key]['rate'] * 100, (float)$net, (float)$net + $tax);
+                $last = (float)$classes[$key]['rate'];
+            }
+            if ($last !== null && $tax_left != 0.0) {
+                // The cent per-class rounding left, on the last class, so shipping sums to what the slip refunded.
+                $this->addTwoTaxBucket($buckets, $last * 100, 0.0, $tax_left);
+            }
         }
         if (empty($buckets)) {
             return array();
@@ -5325,6 +5350,44 @@ class Twopayment extends PaymentModule
         }
 
         return $tax_subtotals;
+    }
+
+    /**
+     * The rate classes refunded shipping was taxed at, in the order updates' resolution order (TWO-26085): the order's
+     * carrier_tax_rate, then the classes declared at placement, then the Default shipping tax code, each only if it
+     * reconciles with the slip's stored shipping amounts. A carrier-less order leaves carrier_tax_rate at 0.
+     *
+     * @param Order $order
+     * @param float $net refunded shipping, tax excluded
+     * @param float $tax refunded shipping tax
+     * @return array|null classes of rate (decimal) and net_weight; null when none reconciles
+     */
+    protected function resolveTwoSlipShippingClasses($order, $net, $tax)
+    {
+        $carrier = array(array('rate' => (float)(isset($order->carrier_tax_rate) ? $order->carrier_tax_rate : 0) / 100, 'net_weight' => 1.0));
+        if ($this->doTwoRateClassesReconcile($carrier, $net, $tax)) {
+            return $carrier;
+        }
+        $row = $this->getTwoOrderPaymentData((int)$order->id);
+        $declared = is_array($row) ? $this->decodeTwoDeclaredChargeRates($row) : array('shipping' => array());
+        if (!empty($declared['shipping']) && $this->doTwoRateClassesReconcile($declared['shipping'], $net, $tax)) {
+            return $declared['shipping'];
+        }
+        try {
+            $cart = new Cart((int)(isset($order->id_cart) ? $order->id_cart : 0));
+            $groupId = Validate::isLoadedObject($cart) ? $this->getTwoDefaultShippingTaxRulesGroupId($cart) : null;
+            if ($groupId !== null) {
+                $default = array(array('rate' => $this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart), 'net_weight' => 1.0));
+                if ($this->doTwoRateClassesReconcile($default, $net, $tax)) {
+                    return $default;
+                }
+            }
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Default shipping tax code unavailable for a credit slip - ' . $e->getMessage(), 2);
+        }
+        PrestaShopLogger::addLog('TwoPayment: Credit slip shipping ' . $net . ' net, ' . $tax . ' tax on order ' . (int)$order->id . ' reconciles with no stored or configured rate', 3);
+
+        return null;
     }
 
     /**
