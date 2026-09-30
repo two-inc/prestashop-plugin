@@ -344,6 +344,8 @@ namespace {
         public static array $cartRecords = [];
         /** twopayment_cart_record.updated_at, shaped like $cartRecords. */
         public static array $cartRecordUpdatedAt = [];
+        /** twopayment_cart_record.id_customer, shaped like $cartRecords. */
+        public static array $cartRecordCustomer = [];
         /** @var array<int,string> ps_cart.checkout_session_data JSON by cart id */
         public static array $checkoutSessionData = [];
         /** @var array<string,array{window_start:int,hit_count:int}> TwoRateLimiter's twopayment_rate_limit rows, by rate_key */
@@ -480,6 +482,7 @@ namespace {
             self::$surchargeSyncSeqs = [];
             self::$cartRecords = [];
             self::$cartRecordUpdatedAt = [];
+            self::$cartRecordCustomer = [];
             self::$checkoutSessionData = [];
             self::$rateLimitRows = [];
             self::$orderDetails = [];
@@ -2510,12 +2513,22 @@ namespace {
                 StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
             }
             if (preg_match(
-                '/^REPLACE INTO `ps_twopayment_cart_record` \(`id_cart`, `id_shop`, `record`, `data`, `updated_at`\) VALUES \((\d+), (\d+), "(\w+)", "(.*)", "([^"]*)"\)$/s',
+                '/^REPLACE INTO `ps_twopayment_cart_record` \(`id_cart`, `id_shop`, `id_customer`, `record`, `data`, `updated_at`\) VALUES \((\d+), (\d+), (\d+), "(\w+)", "(.*)", "([^"]*)"\)$/s',
                 $sql,
                 $m
             )) {
-                StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[3]] = stripslashes($m[4]);
-                StubStore::$cartRecordUpdatedAt[(int) $m[1]][(int) $m[2]][$m[3]] = $m[5];
+                StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[4]] = stripslashes($m[5]);
+                StubStore::$cartRecordUpdatedAt[(int) $m[1]][(int) $m[2]][$m[4]] = $m[6];
+                StubStore::$cartRecordCustomer[(int) $m[1]][(int) $m[2]][$m[4]] = (int) $m[3];
+            }
+            if (preg_match('/^UPDATE `ps_twopayment_cart_record` SET `id_customer` = (\d+) WHERE `id_cart` = (\d+) AND `id_customer` = 0$/', $sql, $m)) {
+                foreach (StubStore::$cartRecordCustomer[(int) $m[2]] ?? [] as $shopId => $customers) {
+                    foreach ($customers as $record => $customerId) {
+                        if ($customerId === 0) {
+                            StubStore::$cartRecordCustomer[(int) $m[2]][$shopId][$record] = (int) $m[1];
+                        }
+                    }
+                }
             }
             if (preg_match('/^DELETE FROM `ps_twopayment_cart_record` WHERE `updated_at` < "([^"]+)"$/', $sql, $m)) {
                 foreach (StubStore::$cartRecordUpdatedAt as $cartId => $shops) {
@@ -2533,9 +2546,9 @@ namespace {
                     unset(StubStore::$cartRecords[(int) ($order['id_cart'] ?? 0)][(int) ($order['id_shop'] ?? 0)]);
                 }
             }
-            if (preg_match('/^DELETE `cr` FROM `ps_twopayment_cart_record` `cr`' . self::CUSTOMER_CART_JOIN . '$/', $sql, $m)) {
-                foreach (self::customerCartShops($m[1]) as [$cartId, $shopId]) {
-                    unset(StubStore::$cartRecords[$cartId][$shopId]);
+            if (preg_match('/^DELETE FROM `ps_twopayment_cart_record`' . self::CUSTOMER_WHERE . '$/', $sql, $m)) {
+                foreach (self::customerRecords($m[1]) as [$cartId, $shopId, $record]) {
+                    unset(StubStore::$cartRecords[$cartId][$shopId][$record]);
                 }
             }
             if (preg_match('/^DELETE FROM `ps_twopayment_cart_record` WHERE `id_cart` = (\d+)(?: AND `id_shop` = (\d+) AND `record` = "(\w+)")?$/', $sql, $m)) {
@@ -2709,17 +2722,21 @@ namespace {
             return false;
         }
 
-        /** The module's customer-to-cart join, capturing the id_customer list. */
-        private const CUSTOMER_CART_JOIN = ' INNER JOIN `ps_cart` `c` ON `c`.`id_cart` = `cr`.`id_cart` AND `c`.`id_shop` = `cr`.`id_shop` WHERE `c`.`id_customer` IN \\(([\\d,]+)\\)';
+        /** The module's GDPR customer filter, capturing the id_customer list. */
+        private const CUSTOMER_WHERE = ' WHERE `id_customer` IN \\(([\\d,]+)\\)';
 
-        /** @return array<int,array{int,int}> [id_cart, id_shop] of every stubbed cart owned by the listed customers */
-        private static function customerCartShops(string $customerIds): array
+        /** @return array<int,array{int,int,string}> [id_cart, id_shop, record] of every stubbed row owned by the listed customers */
+        private static function customerRecords(string $customerIds): array
         {
             $ids = array_map('intval', explode(',', $customerIds));
             $matches = [];
-            foreach (StubStore::$carts as $cartId => $cart) {
-                if (in_array((int) ($cart['id_customer'] ?? 0), $ids, true)) {
-                    $matches[] = [(int) $cartId, (int) ($cart['id_shop'] ?? 1)];
+            foreach (StubStore::$cartRecordCustomer as $cartId => $shops) {
+                foreach ($shops as $shopId => $customers) {
+                    foreach ($customers as $record => $customerId) {
+                        if (in_array($customerId, $ids, true) && isset(StubStore::$cartRecords[$cartId][$shopId][$record])) {
+                            $matches[] = [(int) $cartId, (int) $shopId, (string) $record];
+                        }
+                    }
                 }
             }
 
@@ -2729,12 +2746,10 @@ namespace {
         public function executeS($sql): array
         {
             StubStore::$dbLastExecuteS[] = (string) $sql;
-            if (preg_match('/^SELECT `cr`\.`id_cart`, `cr`\.`record`, `cr`\.`data`, `cr`\.`updated_at` FROM `ps_twopayment_cart_record` `cr`' . self::CUSTOMER_CART_JOIN . '$/', (string) $sql, $m)) {
+            if (preg_match('/^SELECT `id_cart`, `record`, `data`, `updated_at` FROM `ps_twopayment_cart_record`' . self::CUSTOMER_WHERE . '$/', (string) $sql, $m)) {
                 $rows = [];
-                foreach (self::customerCartShops($m[1]) as [$cartId, $shopId]) {
-                    foreach (StubStore::$cartRecords[$cartId][$shopId] ?? [] as $record => $data) {
-                        $rows[] = ['id_cart' => (string) $cartId, 'record' => $record, 'data' => $data, 'updated_at' => StubStore::$cartRecordUpdatedAt[$cartId][$shopId][$record] ?? ''];
-                    }
+                foreach (self::customerRecords($m[1]) as [$cartId, $shopId, $record]) {
+                    $rows[] = ['id_cart' => (string) $cartId, 'record' => $record, 'data' => StubStore::$cartRecords[$cartId][$shopId][$record], 'updated_at' => StubStore::$cartRecordUpdatedAt[$cartId][$shopId][$record] ?? ''];
                 }
 
                 return $rows;

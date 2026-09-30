@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * TWO-26094: twopayment_cart_record holds buyer-typed company and address data,
  * so it is purged daily from any storefront request, and deleted on a psgdpr
- * erasure request.
+ * erasure request by the id_customer stored on each row.
  */
 final class CartRecordRetentionSpec
 {
@@ -20,10 +20,12 @@ final class CartRecordRetentionSpec
             [[[4, 1, 1], [4, 2, 1]], [[4, 1]], [], ['front'], ['4:2'], 'the same cart id on a different shop is isolated from the purge'],
             [[[2, 1, 91]], [], [], ['front', 'attempt purge fails'], [], 'the record purge runs when the attempt purge fails'],
             [[[2, 1, 91]], [], [], ['front', 'ran an hour ago'], ['2:1'], 'the purge runs at most once a day'],
+            [[[1, 1, 89], [2, 1, 91]], [], [], ['setMedia'], ['1:1'], 'the purge also runs from actionFrontControllerSetMedia, for 1.7.6'],
+            [[[2, 1, 91]], [], [], ['setMedia', 'ran an hour ago'], ['2:1'], 'the actionFrontControllerSetMedia purge keeps the once-a-day throttle'],
             [[[10, 1, 1], [11, 1, 1]], [], $customer5, ['gdpr', ['id' => 5]], ['11:1'], 'GDPR delete removes only that customer\'s rows (psgdpr 1.x shape)'],
-            [[[10, 1, 1], [11, 1, 1]], [], $customer5, ['gdpr', ['5']], ['11:1'], 'GDPR delete by customer id (psgdpr 2.x shape)'],
+            [[[10, 1, 1], [11, 1, 1]], [], $customer5, ['gdpr', ['5'], 'carts anonymised first'], ['11:1'], 'GDPR delete by customer id after psgdpr 2.x has anonymised the carts'],
             [[[10, 1, 1], [11, 1, 1]], [], $customer5, ['gdpr', [['email' => 'five@example.com']]], ['11:1'], 'GDPR delete by email'],
-            [[[10, 1, 1], [10, 2, 1]], [], $customer5, ['gdpr', ['id' => 5]], ['10:2'], 'GDPR delete: the same cart id on a different shop is isolated'],
+            [[[10, 1, 1], [11, 1, 1]], [], $customer5, ['gdpr', ['id' => 5], 'written as guest, then claimed'], ['11:1'], 'a guest cart\'s rows are claimed when it gets a customer, then erased'],
         ];
 
         $failures = [];
@@ -48,15 +50,33 @@ final class CartRecordRetentionSpec
         self::seed($records, $orders, $carts);
         $module = new TwopaymentTestHarness();
 
-        if ($action[0] === 'front') {
+        if ($action[0] === 'front' || $action[0] === 'setMedia') {
             if (($action[1] ?? '') === 'attempt purge fails') {
                 StubStore::$dbFailOn = ['/twopayment_attempt/'];
             }
             if (($action[1] ?? '') === 'ran an hour ago') {
                 Configuration::updateValue('PS_TWO_ATTEMPT_CLEANUP_LAST_RUN', (string) (time() - 3600));
             }
-            $module->hookActionFrontControllerInitAfter([]);
+            if ($action[0] === 'front') {
+                $module->hookActionFrontControllerInitAfter([]);
+            } else {
+                $module->hookActionFrontControllerSetMedia();
+            }
         } else {
+            if (($action[2] ?? '') === 'written as guest, then claimed') {
+                foreach (StubStore::$cartRecordCustomer as $cartId => $shops) {
+                    StubStore::$cartRecordCustomer[$cartId] = array_map(static fn (array $r): array => array_map(static fn (): int => 0, $r), $shops);
+                }
+                $module->hookActionObjectCartUpdateAfter(['object' => new Cart(10)]);
+            }
+            if (($action[2] ?? '') === 'carts anonymised first') {
+                // psgdpr 2.x BackResponderByCustomerId::delete() reassigns the carts to its anonymous customer before firing the hook.
+                foreach (StubStore::$carts as $cartId => $cart) {
+                    if ($cart['id_customer'] === 5) {
+                        StubStore::$carts[$cartId]['id_customer'] = 99;
+                    }
+                }
+            }
             TinyAssert::same('true', $module->hookActionDeleteGDPRCustomer($action[1]), 'psgdpr success return');
         }
 
@@ -72,13 +92,14 @@ final class CartRecordRetentionSpec
         require_once __DIR__ . '/../upgrade/upgrade-2.7.19.php';
         StubStore::$registerHookCalls = [];
         TinyAssert::true(upgrade_module_2_7_19(new TwopaymentTestHarness()), 'upgrade succeeds');
-        TinyAssert::same(['actionDeleteGDPRCustomer', 'actionExportGDPRData'], StubStore::$registerHookCalls, 'upgrade registers the GDPR hooks');
+        TinyAssert::same(['actionDeleteGDPRCustomer', 'actionExportGDPRData', 'actionObjectCartUpdateAfter'], StubStore::$registerHookCalls, 'upgrade registers the GDPR and cart hooks');
     }
 
     private static function seed(array $records, array $orders, array $carts): void
     {
         StubStore::$cartRecords = [];
         StubStore::$cartRecordUpdatedAt = [];
+        StubStore::$cartRecordCustomer = [];
         StubStore::$dbFailOn = [];
         StubStore::$orders = [];
         StubStore::$carts = [];
@@ -88,6 +109,7 @@ final class CartRecordRetentionSpec
         foreach ($records as [$cartId, $shopId, $daysOld]) {
             StubStore::$cartRecords[$cartId][$shopId]['company'] = '{"name":"Acme Ltd"}';
             StubStore::$cartRecordUpdatedAt[$cartId][$shopId]['company'] = date('Y-m-d H:i:s', time() - $daysOld * 86400);
+            StubStore::$cartRecordCustomer[$cartId][$shopId]['company'] = $carts[$cartId][0] ?? 0;
         }
         foreach ($orders as $i => [$cartId, $shopId]) {
             StubStore::$orders[900 + $i] = ['id_cart' => $cartId, 'id_shop' => $shopId, 'module' => 'ps_wirepayment'];
