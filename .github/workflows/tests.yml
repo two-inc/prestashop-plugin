@@ -56,6 +56,9 @@ jobs:
           php -l tests/MerchantRecordPolicySpec.php
           php -l tests/SoleTraderTokenPreconditionSpec.php
           php -l classes/TwoOverrideMigrator.php
+          php -l classes/TwoDiscrepancySnapshot.php
+          php -l controllers/admin/AdminTwoErrorLogController.php
+          php -l tests/DiscrepancySnapshotSpec.php
           php -l upgrade/upgrade-2.7.1.php
           php -l tests/run.php
           # Integration probes + their harness. They only run inside a
@@ -64,6 +67,7 @@ jobs:
           php -l tests/integration/default-shipping-tax-code.php
           php -l tests/integration/line-item-image.php
           php -l tests/integration/multi-carrier-update.php
+          php -l tests/integration/discrepancy-snapshot.php
           php -l tests/integration/fixtures/twocarrierlesstest/twocarrierlesstest.php
           php -l tests/integration/lib/probe-helpers.php
           php -l tests/integration/matrix/carrierless-shipping-cell.php

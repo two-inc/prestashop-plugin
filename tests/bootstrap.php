@@ -970,14 +970,27 @@ namespace {
     {
     }
 
+    class Hook
+    {
+        /** @var array<string,array<int,array{module:string}>> modules registered per hook */
+        public static array $execLists = [];
+
+        public static function getHookModuleExecList($hookName = null)
+        {
+            return self::$execLists[$hookName] ?? false;
+        }
+    }
+
     class PrestaShopLogger
     {
-        /** @var array<int,array{message:string,severity:int}> */
+        /** @var array<int,array{message:string,severity:int,object_type:?string,object_id:?int}> */
         public static array $logs = [];
 
         public static function addLog($message, $severity = 1, $errorCode = null, $objectType = null, $objectId = null, $allowDuplicate = false): bool
         {
-            self::$logs[] = ['message' => (string) $message, 'severity' => (int) $severity];
+            // Core stores the message through pSQL() without html_ok: strip_tags(nl2br()) on 1.7, 8 and 9.
+            $message = strip_tags(str_replace(["\r\n", "\r", "\n"], '<br />', (string) $message));
+            self::$logs[] = ['message' => $message, 'severity' => (int) $severity, 'object_type' => $objectType, 'object_id' => $objectId];
             return true;
         }
 

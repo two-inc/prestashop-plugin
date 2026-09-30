@@ -784,6 +784,73 @@ The module builds order payloads that exactly match PrestaShop invoices:
     group assigned
   - Contact Two support with the log entry if the configuration looks correct
 
+### Discrepancy snapshot
+When an order is refused by a tax or totals gate (order lines not reconciling with the
+cart total, line formulas or tax subtotals that do not hold, a declared tax rate
+contradicting the applied amounts, shipping with no declared tax rate, or any other refusal while
+pricing the cart), the module writes one JSON record for that cart to the PrestaShop
+log (object type `TwoDiscrepancySnapshot`, object id = the cart id). With Debug Mode on
+it also writes one for every cart that passes, as a baseline to compare against.
+An update to a placed order is priced from that order, not its cart, so it writes no snapshot.
+
+- **Where**: Module Configuration → Diagnostics → "View last 100 error log records" lists
+  the snapshots with a **Download JSON** link each (employee login and token required).
+- **What it holds**: `Cart::getOrderTotal` with and without tax for every total type, and
+  `residual` = BOTH − (PRODUCTS + SHIPPING + WRAPPING − DISCOUNTS); each product line's
+  amounts, declared and implied rate and `delta` = total_wt − total × (1 + declared rate);
+  the carrier, delivery options and package shipping cost; which core classes are
+  overridden and which modules sit on price and shipping hooks; cart rules, gift wrapping
+  and the tax and rounding settings; the failed gate and the lines that would have been
+  sent. Of the buyer's addresses it keeps the country, the state id and whether a VAT
+  number is present, nothing else. The sent lines' names can carry merchant-authored text
+  (product, cart rule and carrier names). A section that failed to read holds only
+  `{error, code}`: the exception class and code, never its message.
+- **Size**: products, cart rules, delivery options, sent lines and each hook's and class's
+  list keep their first 40 rows; `truncated` counts the rows cut from each, including a
+  whole section shed to fit the size limit.
+- **Cost**: once one `Cart` pricing read throws, the remaining ones are recorded as
+  `{error: "skipped"}` rather than re-run, since core does not cache a failed price.
+  `products` is read first, so a carrier that throws never skips it.
+- **Log growth**: one row per refused order, and with Debug Mode on two or three per order
+  (each pricing pass leaves a baseline), so switch Debug Mode off once done.
+- **Reading it**: the record's `shape` field applies this decision tree, first match wins:
+
+  | Shape | Snapshot values | Cart shape |
+  | --- | --- | --- |
+  | C | `residual` ≠ 0 and `ONLY_SHIPPING` = 0 | a cost is added to the cart total outside the shipping total, so no tax rule covers it |
+  | A | `ONLY_SHIPPING` > 0, incl = excl, every carrier id is 0 | shipping priced without a carrier and without tax |
+  | B | `ONLY_SHIPPING` incl > excl, every carrier id is 0 | shipping priced without a carrier, with tax nothing declares |
+  | other | anything else, including any input that failed to read | read the gate numbers and product lines directly |
+
+  A and B come only from PrestaShop 1.7's `'0,'` option key: on 8 and 9 a package with no carrier gets no delivery option, so `priced_option` is `[]` and the shape is other.
+
+  "Every carrier id is 0" means every carrier id in `priced_option`, the delivery option
+  core prices shipping from: when the cart's own `delivery_option` is empty or stale, core
+  auto-selects one, and a multi-carrier option lists all its carriers. A real carrier whose
+  tax rules group is 0 ("No tax") still has a carrier, so it is never A or B. C also
+  needs `BOTH` > 0, since stacked vouchers clamp it to 0.
+
+  Product lines carry no shape label: their raw `declared_rate`, `implied_rate` and
+  `delta` (which already allows for ecotax taxed under its own group) are read directly,
+  beside the overrides and hooks sections.
+
+#### Snapshot invariants
+- The snapshot never changes, fails or slows a checkout. Every one of its own failures is
+  swallowed, including its fallback logging.
+- Every refusal of the pricing build writes exactly one snapshot, named after the gate that
+  recorded its numbers (also when that exception arrives wrapped) or else after the
+  exception class. Nothing is written when nothing
+  refused (the Debug Mode baseline aside), nor for a cart with no valid line items.
+- No buyer PII leaves the address section. Third-party exception messages are never
+  stored, only the class and code.
+- A `Cart` pricing read that throws is made once per snapshot, never repeated.
+- An unrecorded refusal names its exception class, code and throw site (module-relative
+  file and line), never its message.
+- The shape is a positive identification only. Any errored, missing or ambiguous input
+  yields `other`, never A, B or C.
+- The stored JSON survives PrestaShop's log storage on 1.7, 8 and 9 byte-for-byte: `<` and
+  `>` are escaped, since core runs `strip_tags()` on every log message.
+
 ### Debug Mode
 - **When to use**: Only enable when requested by Two support for troubleshooting
 - **How to enable**: 
@@ -791,7 +858,8 @@ The module builds order payloads that exactly match PrestaShop invoices:
   2. Toggle "Enable Debug Mode" to Yes
   3. Save settings
   4. Reproduce the issue
-  5. Check PrestaShop logs (`var/logs/`)
+  5. Check PrestaShop logs (`var/logs/`); each cart priced while it is on also leaves a
+     baseline discrepancy snapshot (see above)
   6. Disable Debug Mode when done
 
 ## Security
