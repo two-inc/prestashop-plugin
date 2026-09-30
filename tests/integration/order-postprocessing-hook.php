@@ -73,6 +73,22 @@ class OppProbeTwopayment extends Twopayment
     {
         return true;
     }
+
+    // The credit slip driver passes a slip core never stored: claim and record it in memory, and give it the one
+    // 21% line it refunds, so the probe exercises the send rather than the refund table (TWO-26093).
+    protected function claimTwoCreditSlip($id_order, $id_order_slip)
+    {
+        return true;
+    }
+
+    protected function recordTwoRefundOutcome($id_order, $id_order_slip, $status, $payload, $reason)
+    {
+    }
+
+    public function getTwoCreditSlipTaxLines($slip)
+    {
+        return array(array('amount_tax_excl' => '24.79', 'amount_tax_incl' => '30.00', 'rate' => '21.000'));
+    }
 }
 
 class OppResponded extends Error
