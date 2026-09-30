@@ -5892,6 +5892,9 @@ require __DIR__ . '/BuyerCountryGateSpec.php';
 require __DIR__ . '/TwoRateLimiterSpec.php';
 require __DIR__ . '/AdminFirewallRateLimitFieldsSpec.php';
 require __DIR__ . '/DefaultShippingTaxCodeSpec.php';
+require __DIR__ . '/fixtures/symfony-console-stubs.php';
+require __DIR__ . '/ShippingTaxFallbackGateSpec.php';
+require __DIR__ . '/ServiceConfigParametersSpec.php';
 require __DIR__ . '/EomTermTypeVisibilitySpec.php';
 require __DIR__ . '/IntentDeclinedNoticeSpec.php';
 require __DIR__ . '/DeprecatedCustomPaymentTermSpec.php';
@@ -5961,6 +5964,8 @@ $tests = [
     'TwoRateLimiterSpec::runAll' => [TwoRateLimiterSpec::class, 'runAll'],
     'AdminFirewallRateLimitFieldsSpec::runAll' => [AdminFirewallRateLimitFieldsSpec::class, 'runAll'],
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
+    'ShippingTaxFallbackGateSpec::runAll' => [ShippingTaxFallbackGateSpec::class, 'runAll'],
+    'ServiceConfigParametersSpec::runAll' => [ServiceConfigParametersSpec::class, 'runAll'],
     'EomTermTypeVisibilitySpec::runAll' => [EomTermTypeVisibilitySpec::class, 'runAll'],
     'IntentDeclinedNoticeSpec::runAll' => [IntentDeclinedNoticeSpec::class, 'runAll'],
     'DeprecatedCustomPaymentTermSpec::runAll' => [DeprecatedCustomPaymentTermSpec::class, 'runAll'],

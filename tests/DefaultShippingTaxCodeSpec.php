@@ -13,9 +13,10 @@ declare(strict_types=1);
  * that sentinel, so TWO-25161's carrier lookup has nothing to read and the
  * order is refused.
  *
- * The field is always visible in Order Management, like every other setting
- * on that tab - no build-time flag, no runtime "hide until configured" gate.
- * This spec covers the two things about it that are easy to get wrong:
+ * Since TWO-26082 the field and the fallback exist only once Two has enabled
+ * them for a merchant (ShippingTaxFallbackGateSpec covers that gate), so every
+ * case here starts enabled. This spec covers the two things about the enabled
+ * setting that are easy to get wrong:
  *
  *   1. UNSET must be byte-for-byte the pre-TWO-25200 loud refusal. There is
  *      no default value and nothing seeds one.
@@ -33,7 +34,7 @@ final class DefaultShippingTaxCodeSpec
 
     public static function runAll(): void
     {
-        self::testFieldIsAlwaysRendered();
+        self::testFieldRendersWhenEnabled();
         self::testFieldPreSelectsNothingWhenUnset();
         self::testFieldPreSelectsTheStoredGroup();
         self::testInactiveStoredGroupStaysInTheOptionList();
@@ -60,6 +61,7 @@ final class DefaultShippingTaxCodeSpec
     {
         StubStore::reset();
         PrestaShopLogger::reset();
+        Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
     }
 
     /** Did any log line mention this fragment? */
@@ -226,7 +228,7 @@ final class DefaultShippingTaxCodeSpec
     // Field presence and admin form behaviour
     // -----------------------------------------------------------------
 
-    private static function testFieldIsAlwaysRendered(): void
+    private static function testFieldRendersWhenEnabled(): void
     {
         self::reset();
         StubStore::$taxRulesGroups[4210] = ['name' => 'IVA 21%', 'active' => 1];
@@ -234,7 +236,7 @@ final class DefaultShippingTaxCodeSpec
 
         $module = new DefaultShippingTaxCodeHarness();
         $names = self::orderManagementFieldNames($module);
-        TinyAssert::true(in_array(self::CONFIG_KEY, $names, true), 'The field must always render on Order Management');
+        TinyAssert::true(in_array(self::CONFIG_KEY, $names, true), 'The field must render on Order Management once enabled');
         // The rest of Order Management is untouched.
         TinyAssert::true(in_array('PS_TWO_ENABLE_TAX_SUBTOTALS', $names, true));
 
