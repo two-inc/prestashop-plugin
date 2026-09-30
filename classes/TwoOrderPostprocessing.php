@@ -1,7 +1,7 @@
 <?php
 /**
  * The stable extension contract "order postprocessing" (TWO-26092): names,
- * codes and the pure payload helpers the module's choke function uses.
+ * the failure code and the pure payload helpers the module's choke function uses.
  *
  * Every name here is part of a permanent public contract. See README
  * "Stable extension contract: order postprocessing" before changing one.
@@ -29,12 +29,9 @@ class TwoOrderPostprocessing
     const REQUEST_CANCEL = 'cancel';
 
     const CODE_HOOK_FAILED = 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED';
-    const CODE_BODY_NOT_ACCEPTED = 'TWO_ORDER_POSTPROCESSING_BODY_NOT_ACCEPTED';
-    const CODE_LINE_INCONSISTENT = 'TWO_ORDER_POSTPROCESSING_LINE_INCONSISTENT';
-    const CODE_SUBTOTALS_INCONSISTENT = 'TWO_ORDER_POSTPROCESSING_SUBTOTALS_INCONSISTENT';
-    const CODE_TOTALS_INCONSISTENT = 'TWO_ORDER_POSTPROCESSING_TOTALS_INCONSISTENT';
 
     const MAX_STRING = 120;
+    const MAX_DIFF_ENTRIES = 40;
 
     // Diff values outside these paths can carry buyer data, so only their path is kept.
     const VALUE_PATHS = '#^/(line_items|tax_subtotals)(/|$)|^/(gross_amount|net_amount|tax_amount|discount_amount|discount_rate|amount|currency)$#';
@@ -67,6 +64,24 @@ class TwoOrderPostprocessing
         self::diffInto($out, '', $before, $after, true, true);
 
         return $out;
+    }
+
+    /**
+     * What the subscribers changed, for the debug log: redacted, and cut to MAX_DIFF_ENTRIES.
+     *
+     * @param array $before
+     * @param array $after
+     * @return array{subscribers:string[],changes:int,diff:array}
+     */
+    public static function compactDiff(array $before, array $after)
+    {
+        $diff = self::diff($before, $after);
+
+        return array(
+            'subscribers' => self::subscribers(),
+            'changes' => count($diff),
+            'diff' => self::redactDiff(array_slice($diff, 0, self::MAX_DIFF_ENTRIES)),
+        );
     }
 
     /**
