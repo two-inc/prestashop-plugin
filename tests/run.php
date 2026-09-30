@@ -177,6 +177,7 @@ final class OrderBuilderSpec
         self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
         self::testSaveGeneralFormPreservesHiddenBackendWithdrawnTermPreference();
         self::testStoreTwoFeeQuoteInSessionForcesImmediateCookieWrite();
+        self::testFeeQuoteIsReusedByTheNextRequestThroughTheCookie();
     }
 
     private static function reset(): void
@@ -5262,14 +5263,55 @@ final class OrderBuilderSpec
         // storeTwoFeeQuoteInSession() is private; invoke via reflection rather
         // than widening its visibility just for the test.
         $method = new ReflectionMethod(Twopayment::class, 'storeTwoFeeQuoteInSession');
-        $method->invoke($module, '7|100.00|GB|GBP', [
+        $method->invoke($module, '7:100.00:GB:GBP', [
             'buyer_fee_share' => '1.23',
             'total_fee_tax_rate' => '0.20',
             'currency' => 'GBP',
         ]);
 
         TinyAssert::same(1, $spyCookie->writeCalls);
-        TinyAssert::same('7|100.00|GB|GBP', (string) $spyCookie->two_fee_quote_key);
+        TinyAssert::same('7:100.00:GB:GBP', (string) $spyCookie->two_fee_quote_key);
+    }
+
+    /**
+     * TWO-26084: a charge-path fee quote fetched in one request is served from
+     * the cookie in the next, with no second pricing call. Core's cookie
+     * refuses '|' and '¤', so a key carrying either never reached the cookie.
+     */
+    private static function testFeeQuoteIsReusedByTheNextRequestThroughTheCookie(): void
+    {
+        $cases = [
+            [30, 100.0, 'GB', 'GBP', 'whole amount'],
+            [60, 1234.5, 'NO', 'NOK', 'fractional amount'],
+            [90, 0.01, 'SE', 'SEK', 'smallest amount'],
+        ];
+        foreach ($cases as [$days, $gross, $country, $currency, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_' . $days, '2');
+            $request = function () use ($currency) {
+                $module = new class extends TwopaymentTestHarness {
+                    public $feeCalls = 0;
+                    public $quoteCurrency = '';
+                    public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                    {
+                        $this->feeCalls++;
+                        return ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => $this->quoteCurrency];
+                    }
+                };
+                $module->quoteCurrency = $currency;
+
+                return $module;
+            };
+
+            $first = $request();
+            $quote = $first->fetchTwoTermFee($days, $gross, $country, $currency, true);
+            TinyAssert::same(1, $first->feeCalls, 'first request must price: ' . $description);
+
+            $second = $request();
+            TinyAssert::same($quote, $second->fetchTwoTermFee($days, $gross, $country, $currency, true), 'cached quote must match: ' . $description);
+            TinyAssert::same(0, $second->feeCalls, 'second request must be served from the cookie: ' . $description);
+        }
     }
 
     private static function testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo(): void
@@ -5794,6 +5836,7 @@ final class OrderBuilderSpec
 require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
 require __DIR__ . '/TwoInvoiceRetrievalSpec.php';
 require __DIR__ . '/TrackingNumberSpec.php';
+require __DIR__ . '/PlacedOrderUpdateSpec.php';
 require __DIR__ . '/RefundSpec.php';
 require __DIR__ . '/SurchargeSpec.php';
 require __DIR__ . '/DefaultPaymentTermSpec.php';
@@ -5850,6 +5893,9 @@ require __DIR__ . '/BuyerCountryGateSpec.php';
 require __DIR__ . '/TwoRateLimiterSpec.php';
 require __DIR__ . '/AdminFirewallRateLimitFieldsSpec.php';
 require __DIR__ . '/DefaultShippingTaxCodeSpec.php';
+require __DIR__ . '/fixtures/symfony-console-stubs.php';
+require __DIR__ . '/ShippingTaxFallbackGateSpec.php';
+require __DIR__ . '/ServiceConfigParametersSpec.php';
 require __DIR__ . '/EomTermTypeVisibilitySpec.php';
 require __DIR__ . '/IntentDeclinedNoticeSpec.php';
 require __DIR__ . '/DeprecatedCustomPaymentTermSpec.php';
@@ -5862,6 +5908,7 @@ $tests = [
     'CustomerAddressFormatterOverrideSpec::runAll' => [CustomerAddressFormatterOverrideSpec::class, 'runAll'],
     'TwoInvoiceRetrievalSpec::runAll' => [TwoInvoiceRetrievalSpec::class, 'runAll'],
     'TrackingNumberSpec::runAll' => [TrackingNumberSpec::class, 'runAll'],
+    'PlacedOrderUpdateSpec::runAll' => [PlacedOrderUpdateSpec::class, 'runAll'],
     'RefundSpec::runAll' => [RefundSpec::class, 'runAll'],
     'SurchargeSpec::runAll' => [SurchargeSpec::class, 'runAll'],
     'DefaultPaymentTermSpec::runAll' => [DefaultPaymentTermSpec::class, 'runAll'],
@@ -5919,6 +5966,8 @@ $tests = [
     'TwoRateLimiterSpec::runAll' => [TwoRateLimiterSpec::class, 'runAll'],
     'AdminFirewallRateLimitFieldsSpec::runAll' => [AdminFirewallRateLimitFieldsSpec::class, 'runAll'],
     'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
+    'ShippingTaxFallbackGateSpec::runAll' => [ShippingTaxFallbackGateSpec::class, 'runAll'],
+    'ServiceConfigParametersSpec::runAll' => [ServiceConfigParametersSpec::class, 'runAll'],
     'EomTermTypeVisibilitySpec::runAll' => [EomTermTypeVisibilitySpec::class, 'runAll'],
     'IntentDeclinedNoticeSpec::runAll' => [IntentDeclinedNoticeSpec::class, 'runAll'],
     'DeprecatedCustomPaymentTermSpec::runAll' => [DeprecatedCustomPaymentTermSpec::class, 'runAll'],

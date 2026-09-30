@@ -27,6 +27,14 @@
  *                               fixture inert, so merely installing it changes
  *                               nothing
  *   TWO_CARRIERLESS_TEST_NET   - shipping net (== gross for a zero-tax run)
+ *   TWO_CARRIERLESS_TEST_MODE  - 'external_only' injects a FREE carrier-less
+ *                               option instead, and the Cart override adds
+ *                               the gross to getOrderTotal(*, BOTH) only - the
+ *                               "cost exists outside core's shipping total" shape
+ *
+ * The Cart override (override/classes/Cart.php) and the two_test_external_shipping
+ * table model a shipping cost priced outside core: getExternalShippingCost()
+ * and a per-cart row pointing at a real carrier reference.
  *
  * @see dev/ci/seed-carrierless-cart.sh
  * @see tests/integration/default-shipping-tax-code.php
@@ -40,6 +48,8 @@ class Twocarrierlesstest extends Module
 {
     const CONFIG_GROSS = 'TWO_CARRIERLESS_TEST_GROSS';
     const CONFIG_NET = 'TWO_CARRIERLESS_TEST_NET';
+    const CONFIG_MODE = 'TWO_CARRIERLESS_TEST_MODE';
+    const MODE_EXTERNAL_ONLY = 'external_only';
 
     public function __construct()
     {
@@ -61,7 +71,26 @@ class Twocarrierlesstest extends Module
 
     public function install()
     {
-        return parent::install() && $this->registerHook('actionFilterDeliveryOptionList');
+        return parent::install()
+            && self::installExternalShippingTable()
+            && $this->registerHook('actionFilterDeliveryOptionList');
+    }
+
+    /**
+     * Read by the Cart override's getExternalShippingCost().
+     *
+     * @return bool
+     */
+    public static function installExternalShippingTable()
+    {
+        return Db::getInstance()->execute(
+            'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . 'two_test_external_shipping` (
+                `id_cart` INT UNSIGNED NOT NULL,
+                `id_product` INT UNSIGNED NOT NULL,
+                `id_carrier_reference` INT UNSIGNED NOT NULL,
+                PRIMARY KEY (`id_cart`, `id_product`)
+            ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8mb4'
+        );
     }
 
     /**
@@ -82,6 +111,10 @@ class Twocarrierlesstest extends Module
         $net = round((float) Configuration::get(self::CONFIG_NET), 2);
         if ($net <= 0 || $net > $gross) {
             $net = $gross;
+        }
+        if ((string) Configuration::get(self::CONFIG_MODE) === self::MODE_EXTERNAL_ONLY) {
+            $gross = 0.0;
+            $net = 0.0;
         }
 
         $cart = isset($params['cart']) ? $params['cart'] : null;
@@ -115,7 +148,7 @@ class Twocarrierlesstest extends Module
                     ),
                     'total_price_with_tax' => $gross,
                     'total_price_without_tax' => $net,
-                    'is_free' => false,
+                    'is_free' => $gross <= 0,
                     'position' => 0,
                 ),
             ),
