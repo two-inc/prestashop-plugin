@@ -728,7 +728,7 @@ Once per outbound order request, immediately before it is sent:
 
 | `request_type` | When |
 | --- | --- |
-| `order_intent` | The checkout's order-intent pre-check (`precheck`; its payload goes to the browser, which relays it) and the authoritative check at payment submit (`strict_intent`) |
+| `order_intent` | The checkout's order-intent pre-check (`precheck`), both when it is built for the checkout and when the module sends it to Two, which it rebuilds from the cart rather than take from the browser; and the authoritative check at payment submit (`strict_intent`) |
 | `order_create` | Order creation at checkout (`checkout`), and the rebuild the confirmation step hashes to detect a cart changed during payment (`snapshot_hash`, not sent) |
 | `order_update` | An admin order edit, a tracking number, and the merchant order id sync after confirmation |
 | `order_confirm` | The buyer's return from verification |

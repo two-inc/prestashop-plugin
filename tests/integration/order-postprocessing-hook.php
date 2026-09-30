@@ -75,6 +75,25 @@ class OppProbeTwopayment extends Twopayment
     }
 }
 
+class OppResponded extends Error
+{
+}
+
+if (class_exists('ModuleFrontController')) {
+    require_once _PS_MODULE_DIR_ . 'twopayment/controllers/front/orderintent.php';
+
+    /**
+     * The checkout's controller, answering by exception rather than exit.
+     */
+    class OppProbeOrderintentController extends TwopaymentOrderintentModuleFrontController
+    {
+        public function sendJsonResponse($content)
+        {
+            throw new OppResponded((string) $content);
+        }
+    }
+}
+
 // PrestaShop 9 prices carts through the Symfony container.
 function oppBootKernel()
 {
@@ -326,7 +345,7 @@ function oppRunScenario($name, &$detail)
     Configuration::updateValue('TWO_OPP_TEST_RATE', '0.21');
     Configuration::updateValue('PS_TWO_DEBUG_MODE', '0');
     Configuration::updateValue('PS_MAIL_METHOD', 3);
-    $mode = in_array($name, array('unarmed', 'paths', 'context_rate'), true) ? ($name === 'paths' ? 'record' : '') : ($name === 'throws_prod' ? 'throws' : $name);
+    $mode = in_array($name, array('unarmed', 'paths', 'context_rate', 'relay'), true) ? (in_array($name, array('paths', 'relay'), true) ? 'record' : '') : ($name === 'throws_prod' ? 'throws' : $name);
     Configuration::updateValue('TWO_OPP_TEST_MODE', $mode);
     $module = new OppProbeTwopayment();
     $checks = array();
@@ -432,6 +451,10 @@ function oppRunScenario($name, &$detail)
         return $checks;
     }
 
+    if ($name === 'relay') {
+        return oppRelayChecks($module, $cart, $customer, $currency, $address);
+    }
+
     if ($name === 'body_on_cancel') {
         $response = $module->sendTwoOrderRequest('cancel', 'status_change', '/v1/order/' . OPP_TWO_ORDER . '/cancel', array(), 'POST', null, $order);
         $checks[] = array($module->sent, array(), 'a cancel given a body is not sent');
@@ -487,6 +510,71 @@ function oppRunScenario($name, &$detail)
     return $checks;
 }
 
+/**
+ * Drive the checkout's order-intent controller as the browser does: the
+ * pre-check, then the relay with a tampered payload posted beside the buyer
+ * fields, then payment submit.
+ *
+ * @return array<int,array{0:mixed,1:mixed,2:string}>
+ */
+function oppRelayChecks(OppProbeTwopayment $module, Cart $cart, Customer $customer, Currency $currency, Address $address)
+{
+    require_once _PS_MODULE_DIR_ . 'twopayment/controllers/front/orderintent.php';
+    $_GET['module'] = 'twopayment';
+    $_SERVER['REQUEST_METHOD'] = 'POST';
+    Configuration::updateValue('PS_TWO_ENABLE_ORDER_INTENT', 1);
+    Context::getContext()->customer = $customer;
+    $buyer = array('token' => Tools::getToken(false), 'company' => 'Hook Probe AS', 'companyid' => '123456789', 'id_address_invoice' => (string) $address->id);
+    $tampered = json_encode(array(
+        'gross_amount' => '1.00', 'net_amount' => '1.00', 'tax_amount' => '0.00', 'currency' => 'EUR',
+        'buyer' => array('company' => array('company_name' => 'Someone Else AS', 'organization_number' => '999999999', 'country_prefix' => 'NO')),
+        'line_items' => array(array('name' => 'x', 'gross_amount' => '1.00')),
+    ));
+    $foreign = (int) Db::getInstance()->getValue('SELECT id_address FROM `' . _DB_PREFIX_ . 'address` WHERE deleted = 0 AND id_customer NOT IN (0, ' . (int) $customer->id . ')');
+    $checks = array();
+
+    $checked = oppDriveController($module, 'ajaxProcessCheckOrderIntent', $buyer);
+    $checks[] = array(isset($checked['success']) ? $checked['success'] : $checked, true, 'the pre-check builds a payload');
+    Twoorderpostprocessingtest::$calls = array();
+    $module->sent = array();
+    oppDriveController($module, 'ajaxProcessOrderIntent', $buyer + array('payload' => $tampered));
+    $checks[] = array(count($module->sent), 1, 'the relay sends once');
+    $relayed = isset($module->sent[0]) ? $module->sent[0]['payload'] : null;
+    $checks[] = array(is_array($relayed) ? array($relayed['gross_amount'], count($relayed['line_items']), $relayed['buyer']['company']['organization_number']) : $relayed, array('150.00', 2, '123456789'), 'the relay sends the cart and the buyer fields, not the posted payload');
+    $checks[] = array($relayed, isset($checked['payload']) ? $checked['payload'] : null, 'the relay sends what the pre-check built');
+    $calls = Twoorderpostprocessingtest::$calls;
+    $checks[] = array(count($calls) === 1 ? array($calls[0]['context']['request_type'], $calls[0]['context']['trigger']) : count($calls), array('order_intent', 'precheck'), 'the relay fires the hook once');
+    $module->sent = array();
+    $module->checkTwoOrderIntentApprovalAtPayment($cart, $customer, $currency, $address);
+    $checks[] = array(isset($module->sent[0]) ? $module->sent[0]['payload'] : null, $relayed, 'the preview equals the payment-time intent');
+
+    $module->sent = array();
+    $refused = oppDriveController($module, 'ajaxProcessOrderIntent', array('id_address_invoice' => (string) $foreign) + $buyer);
+    $checks[] = array(array($foreign > 0, isset($refused['error_code']) ? $refused['error_code'] : $refused, $module->sent), array(true, 'INVALID_REQUEST', array()), 'another customer\'s address is refused and nothing sent');
+    $refused = oppDriveController($module, 'ajaxProcessOrderIntent', array('company' => "Evil\nCo") + $buyer);
+    $checks[] = array(array(isset($refused['error_code']) ? $refused['error_code'] : $refused, $module->sent), array('invalid_request', array()), 'a malformed company field is refused and nothing sent');
+
+    return $checks;
+}
+
+/**
+ * @return mixed the JSON the controller answered with
+ */
+function oppDriveController(OppProbeTwopayment $module, $action, array $post)
+{
+    $_POST = $post;
+    $_GET = array('module' => 'twopayment');
+    $controller = new OppProbeOrderintentController();
+    $controller->module = $module;
+    try {
+        $controller->{$action}();
+    } catch (OppResponded $e) {
+        return json_decode($e->getMessage(), true);
+    }
+
+    return 'no response';
+}
+
 function oppRun($name)
 {
     $detail = '';
@@ -530,7 +618,7 @@ if (!Module::isInstalled('twoorderpostprocessingtest')) {
 oppBootKernel();
 oppSeed();
 $exit = 0;
-foreach (array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'throws_prod', 'non_array', 'body_on_cancel') as $scenario_name) {
+foreach (array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay') as $scenario_name) {
     $status = 0;
     passthru(escapeshellarg(PHP_BINARY) . ' -d memory_limit=512M ' . escapeshellarg(__FILE__) . ' ' . escapeshellarg($scenario_name), $status);
     $exit = $status !== 0 ? 1 : $exit;

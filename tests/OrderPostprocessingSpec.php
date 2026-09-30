@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../controllers/front/orderintent.php';
+
 /**
  * TWO-26092: the order postprocessing hook (actionTwoOrderPostprocessing).
  *
@@ -31,6 +33,7 @@ final class OrderPostprocessingSpec
         self::testSubscriberThrowingGetsTheGenericCheckoutMessage();
         self::testDispatchKeepsCoreSemanticsButNotItsSwallow();
         self::testAdminEditSurvivesAThrowingSubscriber();
+        self::testOrderIntentRelayBuildsThePayloadItself();
         self::testEachRequestTypeFiresExactlyOnce();
         self::testRecomputeTotalsHelper();
         self::testSnapshotRecordsTheHook();
@@ -58,6 +61,7 @@ final class OrderPostprocessingSpec
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
         StubStore::$countries[34] = 'ES';
         StubStore::$addresses[self::ADDRESS] = [
+            'id_customer' => self::CART,
             'id_country' => 34,
             'company' => 'Hook Shop SL',
             'companyid' => 'B12345678',
@@ -543,6 +547,104 @@ final class OrderPostprocessingSpec
     }
 
     /**
+     * The browser's order-intent relay sends what the server builds from the
+     * session cart, through the hook and its gates, never a posted payload.
+     * Only the buyer's company fields and address choice come from the
+     * browser, and only once validated.
+     */
+    private static function testOrderIntentRelayBuildsThePayloadItself(): void
+    {
+        $tampered = json_encode([
+            'gross_amount' => '1.00', 'net_amount' => '1.00', 'tax_amount' => '0.00', 'currency' => 'EUR',
+            'buyer' => ['company' => ['company_name' => 'Someone Else AS', 'organization_number' => '999999999', 'country_prefix' => 'NO']],
+            'line_items' => [['name' => 'x', 'gross_amount' => '1.00']],
+        ]);
+        // [posted fields, expected: 'sent' | error_code, sent organisation number, description]
+        $cases = [
+            [['payload' => $tampered], 'sent', 'B12345678', 'a posted payload is ignored: amounts, lines and company are the server\'s'],
+            [['payload' => $tampered, 'company' => 'Posted Co SL', 'companyid' => 'B87654321'], 'sent', 'B87654321', 'the company comes from the buyer fields, not the payload'],
+            [['company' => ['x'], 'companyid' => 'B1'], 'invalid_request', null, 'a company field that is not a string is refused'],
+            [['company' => "Evil\nCo", 'companyid' => 'B1'], 'invalid_request', null, 'a control character is refused'],
+            [['company' => 'Co', 'companyid' => str_repeat('9', 65)], 'invalid_request', null, 'an overlong organisation number is refused'],
+            [['id_address_invoice' => '9712'], 'INVALID_REQUEST', null, 'another customer\'s address is refused'],
+            [['id_address_invoice' => '12 OR 1=1'], 'invalid_request', null, 'an address id that is not a number is refused'],
+        ];
+        foreach ($cases as [$post, $expected, $orgNumber, $description]) {
+            $cart = self::seed(true);
+            StubStore::$addresses[9712] = ['id_customer' => 4242] + StubStore::$addresses[self::ADDRESS];
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $body = self::relay($module, $cart, $post);
+            if ($expected !== 'sent') {
+                TinyAssert::same($expected, $body['error_code'] ?? null, $description . ': refused');
+                TinyAssert::same([], $module->sent, $description . ': nothing sent');
+                continue;
+            }
+            TinyAssert::count(1, $module->sent, $description . ': one send');
+            $built = $module->getTwoIntentOrderData($cart, new Customer(self::CART), new Currency(978), self::buyerAddress($post));
+            TinyAssert::same(['/v1/order_intent', $built], [$module->sent[0]['endpoint'], $module->sent[0]['payload']], $description . ': the server-built payload');
+            TinyAssert::same(['150.00', $orgNumber], [$module->sent[0]['payload']['gross_amount'], $module->sent[0]['payload']['buyer']['company']['organization_number']], $description . ': amount and company');
+        }
+
+        // The preview asks Two exactly what payment submit asks, hook and gates included.
+        foreach (['none' => null, 'the README re-split' => 'resplit'] as $label => $mode) {
+            $cart = self::seed($mode === null);
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $calls = [];
+            if ($mode !== null) {
+                self::subscribe($mode, $calls);
+            }
+            self::relay($module, $cart, []);
+            $module->checkTwoOrderIntentApprovalAtPayment($cart, new Customer(self::CART), new Currency(978), new Address(self::ADDRESS));
+            TinyAssert::count(2, $module->sent, $label . ': preview and payment both send');
+            TinyAssert::same($module->sent[1]['payload'], $module->sent[0]['payload'], $label . ': the preview equals the payment-time intent');
+        }
+    }
+
+    /**
+     * @return array the relayed body (the CLI keeps no status once output has started)
+     */
+    private static function relay(TwopaymentTestHarness $module, Cart $cart, array $post): array
+    {
+        Tools::resetTestValues();
+        Tools::setTestValue('token', 'token');
+        foreach ($post as $key => $value) {
+            Tools::setTestValue($key, $value);
+        }
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        Context::getContext()->cart = $cart;
+        $controller = new class extends TwopaymentOrderintentModuleFrontController {
+            public array $emitted = [];
+
+            public function sendJsonResponse($content)
+            {
+                $this->emitted[] = json_decode((string) $content, true);
+
+                throw new StubOrderIntentResponded('responded');
+            }
+        };
+        $controller->module = $module;
+        try {
+            $controller->ajaxProcessOrderIntent();
+        } catch (StubOrderIntentResponded $e) {
+        }
+
+        return $controller->emitted[0] ?? [];
+    }
+
+    private static function buyerAddress(array $post): Address
+    {
+        $address = new Address(self::ADDRESS);
+        if (isset($post['companyid'])) {
+            $address->company = (string) $post['company'];
+            $address->companyid = (string) $post['companyid'];
+        }
+
+        return $address;
+    }
+
+    /**
      * Every request type fires the hook exactly once, with the contract's
      * context, and sends exactly what the subscribers left.
      */
@@ -757,7 +859,7 @@ final class OrderPostprocessingSpec
             'twopayment.php::hookActionAdminOrdersTrackingNumberUpdate' => 'getTwoUpdateOrderData postprocesses',
             'payment.php::postProcess' => 'getTwoNewOrderData postprocesses',
             'confirmation.php::syncTwoMerchantOrderId' => 'getTwoUpdateOrderData postprocesses',
-            'orderintent.php::ajaxProcessOrderIntent' => 'relays the post-hook payload ajaxProcessCheckOrderIntent built',
+            'orderintent.php::ajaxProcessOrderIntent' => 'buildBuyerOrderIntent() builds it through getTwoIntentOrderData, which postprocesses',
         ];
         $builders = ['buildTwoIntentOrderData', 'getTwoNewOrderData', 'getTwoUpdateOrderData', 'sendTwoOrderRequest'];
         $found = [];

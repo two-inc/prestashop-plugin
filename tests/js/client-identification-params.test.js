@@ -273,16 +273,32 @@ describe('order intent is relayed through the module controller', () => {
         document.body.innerHTML = '';
     });
 
-    test('relays action=orderIntent with the JSON payload as a string field, never straight to Two', () => {
+    test('relays action=orderIntent with the buyer fields only, never a payload and never straight to Two', () => {
         const intent = new TwoOrderIntent({ checkoutHost: CHECKOUT_HOST });
-        intent.callTwoOrderIntent({ gross_amount: '100.00' });
+        intent.callTwoOrderIntent({
+            ajax: 1,
+            action: 'checkOrderIntent',
+            token: 'test-token',
+            company: 'Acme AS',
+            companyid: '123456789',
+            id_address_invoice: 7,
+            id_address_delivery: 7,
+            gross_amount: '100.00'
+        });
 
         const call = ajax.last();
         expect(call.url).toBe(ORDER_INTENT_URL);
         expect(call.settings.type).toBe('POST');
-        expect(call.settings.data.action).toBe('orderIntent');
-        expect(call.settings.data.token).toBe('test-token');
-        expect(JSON.parse(call.settings.data.payload)).toEqual({ gross_amount: '100.00' });
+        // TWO-26092: the server builds the payload from the session cart.
+        expect(call.settings.data).toEqual({
+            ajax: 1,
+            action: 'orderIntent',
+            token: 'test-token',
+            company: 'Acme AS',
+            companyid: '123456789',
+            id_address_invoice: 7,
+            id_address_delivery: 7
+        });
         // Never the client-identification pair here - see the company-search
         // describe block above for why.
         expect(call.url).not.toContain('client=');
