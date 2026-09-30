@@ -102,6 +102,10 @@ if [ -n "$TWO_API_BASE_URL" ]; then
   ENV_ARGS=(-e "TWO_API_BASE_URL=$TWO_API_BASE_URL")
 fi
 
+# The image's /tmp/docker_run.sh runs under `set -e` and removes install/
+# with `rm -r` after the installer. From PrestaShop 9.2 the installer removes
+# that folder itself, so the `rm -r` fails and the container exits before
+# Apache starts. `rm -rf` accepts either; on older images it changes nothing.
 docker run --detach --name "ps-$SFX" --network "psnet-$SFX" "${PORT_ARGS[@]}" "${ENV_ARGS[@]}" \
   -e DB_SERVER="psdb-$SFX" -e DB_NAME=prestashop \
   -e DB_USER=root -e DB_PASSWD=admin \
@@ -109,13 +113,16 @@ docker run --detach --name "ps-$SFX" --network "psnet-$SFX" "${PORT_ARGS[@]}" "$
   -e PS_LANGUAGE=en -e PS_COUNTRY=NO -e PS_ALL_LANGUAGES=0 \
   -e PS_DEMO_MODE=0 -e PS_FOLDER_ADMIN=admin-dev \
   -e ADMIN_MAIL=exampleuser@two.inc -e ADMIN_PASSWD=examplepassword123 \
-  "$PS_IMAGE"
+  "$PS_IMAGE" \
+  /bin/sh -c 'sed -i "s#rm -r /var/www/html/#rm -rf /var/www/html/#" /tmp/docker_run.sh && exec /tmp/docker_run.sh'
 
 # Auto-install takes 60-120s. Same completion signals the dev Makefile
-# polls: config written AND the install/ directory gone.
+# polls: config written AND the install/ directory gone. From 9.2 the
+# installer removes install/ itself, before the image's script has finished
+# setting up, so also wait for that script's install.lock to go.
 tries=0
 until docker exec "ps-$SFX" bash -c \
-    '{ [ -f /var/www/html/config/settings.inc.php ] || [ -f /var/www/html/app/config/parameters.php ]; } && [ ! -d /var/www/html/install ]' \
+    '{ [ -f /var/www/html/config/settings.inc.php ] || [ -f /var/www/html/app/config/parameters.php ]; } && [ ! -d /var/www/html/install ] && [ ! -f /var/www/html/install.lock ]' \
     2>/dev/null; do
   tries=$((tries + 1))
   if [ "$tries" -ge 120 ]; then
