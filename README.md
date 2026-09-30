@@ -410,8 +410,10 @@ Retired ids are recorded whenever the fee product is replaced. Ids from before t
   - Calls Two's refund API endpoint (`/v1/order/{id}/refund`) with the slip's amount, currency and per-rate tax subtotals
   - Uses an idempotency key derived from the credit slip, so two slips of the same amount on one order are separate refunds
   - Refuses to send more than the order's remaining refundable balance
+- A specific-amount refund sends the amount you chose, and a refund excluding the voucher sends the products less the voucher
 - **Do NOT also refund the same amount in the Two Merchant Portal.** The refund already reaches Two from the credit slip, so refunding it in the portal as well refunds the buyer twice
-- A slip the module does not send (for example, one exceeding the remaining balance, or with no stored lines to derive tax subtotals from) is logged under "TwoPayment: Partial refund" with the reason. Handle a refund in the Two Merchant Portal only when that log shows it was not sent
+- Changing the order status to Refunded after credit slips were sent refunds only what is left of the order
+- A slip the module does not send (for example, one exceeding the remaining balance, or one whose amount cannot be split across the order's tax rates) is logged under "TwoPayment: Partial refund" with the reason, and the order page and the order's private notes say it was not sent. Handle a refund in the Two Merchant Portal only when the module says it was not sent
 
 **Refund Requirements:**
 - Order must be in `FULFILLED` state in Two (cannot refund unfulfilled orders)
