@@ -2778,7 +2778,6 @@ namespace {
         public $id_lang = 1;
         public $module = '';
         public $total_paid = 0.0;
-        public $module = '';
         public bool $loaded = false;
 
         public function __construct($id = 0)
@@ -2792,7 +2791,6 @@ namespace {
                 $this->id_cart = (int) ($row['id_cart'] ?? 0);
                 $this->id_customer = (int) ($row['id_customer'] ?? 0);
                 $this->id_carrier = (int) ($row['id_carrier'] ?? 0);
-                $this->module = (string) ($row['module'] ?? '');
                 $this->total_paid = (float) ($row['total_paid'] ?? 0.0);
             }
         }
