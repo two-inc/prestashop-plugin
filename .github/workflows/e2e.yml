@@ -1,12 +1,11 @@
 name: E2E (Playwright checkout flow)
 
-# PS version matrix (TWO-25110): Docker Hub's prestashop/prestashop repo
-# has dropped versioned 1.6/1.7 tags entirely — only bare major tags `8`
-# and `9` exist as of 2026-07-16. The module's declared floor
-# (ps_versions_compliancy min in twopayment.php) is 1.7.6.0, but with no
-# CI image left for that line it cannot be smoke-tested here. That gap is
-# made explicit via the "1.7 (no CI image)" skip job below rather than
-# silently dropped from the matrix — see its step for the full reasoning.
+# PS version matrix (TWO-25110, TWO-26083): the module's declared floor
+# (ps_versions_compliancy min in twopayment.php) is 1.7.6.0, and the 1.7.6
+# leg pins prestashop/prestashop:1.7.6.5-7.2-apache, which ships PHP 7.2,
+# the module's declared PHP floor. 1.7 is past PrestaShop's own support
+# window, but merchants still run it, so it stays covered. The 8 and 9 legs
+# follow the moving major tags.
 #
 # Scope (see tests/e2e/pages/checkout.ts and the spec file for the full
 # reasoning): this suite drives a real guest checkout — cart, address,
@@ -51,13 +50,18 @@ jobs:
         # $SFX for the same reason) in case this workflow ever moves off
         # isolated per-matrix-leg GitHub-hosted VMs.
         include:
+          - ps-version: "1.7.6"
+            ps-tag: "1.7.6.5-7.2"
+            host-port: "18170"
           - ps-version: "8"
+            ps-tag: "8"
             host-port: "18180"
           - ps-version: "9"
+            ps-tag: "9"
             host-port: "18190"
     env:
       SFX: e2e-${{ matrix.ps-version }}-${{ github.run_id }}
-      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-version }}-apache
+      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-tag }}-apache
       PS_HOST_PORT: ${{ matrix.host-port }}
       # Points the module at an in-container stub (dev/ci/two-api-stub.php,
       # started below) rather than at Two's real sandbox: this repo is public
@@ -84,6 +88,23 @@ jobs:
           set -o pipefail
           mkdir -p /tmp/head-module
           git ls-files -z | tar --null -cf - -T - | tar -xf - -C /tmp/head-module
+
+      # The specs check out with a US address. PS 1.7's installer activates
+      # only the shop country, and a payment module's install restricts it to
+      # the countries active at that moment, so this has to precede the install.
+      # A no-op on 8 and 9, which install with the US already active.
+      - name: Activate the buyer country (US)
+        run: |
+          docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
+            require "/var/www/html/config/config.inc.php";
+            $country = new Country((int) Country::getByIso("US"));
+            if (!Validate::isLoadedObject($country)) {
+              fwrite(STDERR, "country US does not exist\n");
+              exit(1);
+            }
+            $country->active = true;
+            exit($country->update() ? 0 : 1);
+          '
 
       - name: Install module from HEAD
         run: dev/ci/install-module.sh /tmp/head-module
@@ -134,18 +155,3 @@ jobs:
         run: |
           docker rm -f "ps-$SFX" "psdb-$SFX" 2>/dev/null || true
           docker network rm "psnet-$SFX" 2>/dev/null || true
-
-  # Explicit skip (TWO-25110): the module's declared version floor
-  # (ps_versions_compliancy min in twopayment.php) is 1.7.6.0, but Docker
-  # Hub's prestashop/prestashop repo has dropped all 1.6/1.7 tags — only
-  # bare major tags `8` and `9` remain (confirmed live 2026-07-16). There is
-  # no CI image left to smoke-test the 1.7 line against. This job exists so
-  # that gap is a visible, explained skip in the checks list rather than a
-  # silently-missing leg of coverage.
-  skip-1-7-no-ci-image:
-    name: E2E checkout flow (PS 1.7 — SKIPPED, no CI image)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Explain the skip
-        run: |
-          echo "::warning::PS 1.7 (module floor: ps_versions_compliancy min 1.7.6.0) is not covered by this suite. Docker Hub's prestashop/prestashop repo has dropped all 1.6/1.7 tags (only bare major tags 8 and 9 remain, confirmed 2026-07-16) - there is no CI image left to boot for that line. Skipped intentionally, not dropped silently."
