@@ -2711,6 +2711,24 @@ namespace {
             return $this->payments;
         }
 
+        /** The product and discount totals core keeps on the order, as its order_detail and order_cart_rule rows add up. */
+        public function __get(string $name)
+        {
+            $sum = function (array $rows, string $field): float {
+                return round(array_sum(array_map(fn ($row) => (float) $row[$field], $rows)), 2);
+            };
+            $details = array_filter(StubStore::$orderDetails, fn ($row) => (int) $row['id_order'] === (int) $this->id);
+            switch ($name) {
+                case 'total_products':
+                    return $sum($details, 'total_price_tax_excl');
+                case 'total_products_wt':
+                    return $sum($details, 'total_price_tax_incl');
+                case 'total_discounts_tax_excl':
+                    return $sum(StubStore::$orderCartRules[$this->id] ?? [], 'value_tax_excl');
+            }
+            throw new LogicException('PlacedOrderStub has no ' . $name);
+        }
+
         /** As core: the other orders placed from the same cart under the same reference. */
         public function getBrother(): array
         {

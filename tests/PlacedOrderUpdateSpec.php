@@ -147,6 +147,16 @@ final class PlacedOrderUpdateSpec
             [self::splitCart(...), $track, 'tracking',
                 'PUT PHYSICAL 20.00/5.00/25.00@0.25; PHYSICAL 40.00/6.00/46.00@0.15; SHIPPING_FEE 12.00/3.00/15.00@0.25 = 86.00 NOK',
                 'multi-carrier split: the update carries both orders'],
+            [function ($o) {
+                self::splitCart($o);
+                // PS 9 stores the whole cart's shipping on every order of the split, while each order's total charges its own.
+                foreach (StubStore::$placedOrders as $placed) {
+                    $placed->total_shipping_tax_excl = 12.00;
+                    $placed->total_shipping_tax_incl = 15.00;
+                }
+            }, $track, 'tracking',
+                'PUT PHYSICAL 20.00/5.00/25.00@0.25; PHYSICAL 40.00/6.00/46.00@0.15; SHIPPING_FEE 12.00/3.00/15.00@0.25 = 86.00 NOK',
+                'PS 9 multi-carrier split: shipping as each order charged it, not the whole cart\'s on each'],
             [self::splitCart(...), function ($o) {
                 $sibling = StubStore::$placedOrders[self::SIBLING];
                 StubStore::$orderDetails[1]['product_quantity'] = 2;
