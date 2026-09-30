@@ -1,0 +1,127 @@
+<?php
+
+/**
+ * @author Plugin Developer from Two <jgang@two.inc> <support@two.inc>
+ * @copyright Since 2021 Two Team
+ * @license Two Commercial License
+ */
+
+/**
+ * The tax code a 0% line carries (TWO-24877). Two requires one on every 0% line of a Spanish merchant's order.
+ *
+ * 1. A code the merchant mapped to the line's tax rules group wins, for any merchant country.
+ * 2. Otherwise, for a Spanish merchant only, a code derived from the order: goods follow the delivery address,
+ *    services follow the country of the buyer company.
+ * 3. Otherwise no code. The plugin never refuses and never coerces a rate: Two's API validates what is sent.
+ *
+ * Lines at any other rate never carry a code, so their payloads are unchanged.
+ */
+class TwoTaxCodeResolver
+{
+    /** The 27 member states, plus Monaco, which is inside the EU VAT area as part of France. */
+    const EU_VAT_AREA = array(
+        'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'IE', 'IT', 'LV',
+        'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE', 'HU', 'MC',
+    );
+
+    /** Spanish postcode prefixes outside the EU VAT area: Canarias (35, 38), Ceuta (51), Melilla (52). */
+    const ES_OUTSIDE_VAT_AREA_POSTCODES = array('35', '38', '51', '52');
+
+    /**
+     * Derivation, first matching row wins. Each row names the facts that must all hold.
+     * Anything unmatched (a mainland or Balearic destination, an EU destination with a Spanish buyer,
+     * a service to a Spanish or non-EU buyer) derives nothing.
+     */
+    const DERIVATION = array(
+        'goods' => array(
+            array(array('dest_outside_eu'), 'ES_IVA_EXPORT'),
+            array(array('dest_es_outside_vat_area'), 'ES_IVA_EXPORT'),
+            array(array('dest_other_eu', 'buyer_other_eu'), 'ES_IVA_INTRA_COMMUNITY'),
+        ),
+        'services' => array(
+            array(array('buyer_other_eu'), 'ES_IVA_REVERSE_CHARGE'),
+        ),
+    );
+
+    /**
+     * @param string|float $rate the line's tax_rate as sent
+     * @param string|null $mapped the code the merchant mapped to the line's tax rules group
+     * @param bool $goods a goods line (see the class doc of the caller); false for a service line
+     * @param array $order ['merchant_country', 'dest_country', 'dest_postcode', 'buyer_country']
+     * @return string|null
+     */
+    public static function resolve($rate, $mapped, $goods, array $order)
+    {
+        if (!self::isZeroRate($rate)) {
+            return null;
+        }
+        if (is_string($mapped) && $mapped !== '') {
+            return $mapped;
+        }
+        if (self::iso(isset($order['merchant_country']) ? $order['merchant_country'] : '') !== 'ES') {
+            return null;
+        }
+
+        return self::derive($goods, $order);
+    }
+
+    /**
+     * @param bool $goods
+     * @param array $order
+     * @return string|null
+     */
+    public static function derive($goods, array $order)
+    {
+        $facts = self::facts($order);
+        foreach (self::DERIVATION[$goods ? 'goods' : 'services'] as $row) {
+            list($needs, $code) = $row;
+            $holds = true;
+            foreach ($needs as $fact) {
+                $holds = $holds && $facts[$fact];
+            }
+            if ($holds) {
+                return $code;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param string|float $rate
+     * @return bool
+     */
+    public static function isZeroRate($rate)
+    {
+        return is_numeric($rate) && (float) $rate == 0.0;
+    }
+
+    /**
+     * @param array $order
+     * @return array<string,bool>
+     */
+    private static function facts(array $order)
+    {
+        $dest = self::iso(isset($order['dest_country']) ? $order['dest_country'] : '');
+        $buyer = self::iso(isset($order['buyer_country']) ? $order['buyer_country'] : '');
+        $postcode = trim((string) (isset($order['dest_postcode']) ? $order['dest_postcode'] : ''));
+        $destInEu = in_array($dest, self::EU_VAT_AREA, true);
+
+        return array(
+            // An unknown destination is no evidence the goods left the EU.
+            'dest_outside_eu' => $dest !== '' && !$destInEu,
+            'dest_es_outside_vat_area' => $dest === 'ES' && in_array(substr($postcode, 0, 2), self::ES_OUTSIDE_VAT_AREA_POSTCODES, true),
+            'dest_other_eu' => $destInEu && $dest !== 'ES',
+            'buyer_other_eu' => in_array($buyer, self::EU_VAT_AREA, true) && $buyer !== 'ES',
+        );
+    }
+
+    /**
+     * @param mixed $country
+     * @return string
+     */
+    private static function iso($country)
+    {
+        return strtoupper(trim((string) $country));
+    }
+}
