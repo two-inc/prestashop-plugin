@@ -4978,7 +4978,7 @@ class Twopayment extends PaymentModule
             }
             $two_order_id = $orderpaymentdata['two_order_id'];
 
-            $slip_amount = $this->getTwoCreditSlipGrossAmount($slip);
+            $slip_amount = $this->getTwoCreditSlipGrossAmount($slip, $order);
             if ($slip_amount <= 0) {
                 PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - non-positive slip amount for Two order ID: ' . $two_order_id . ', Slip ID: ' . $slip_id, 2);
                 return;
@@ -5123,9 +5123,10 @@ class Twopayment extends PaymentModule
      * products total in whichever basis the refund was entered.
      *
      * @param object $slip OrderSlip
+     * @param object|null $order the slip's order, whose round_type decides what gap is rounding
      * @return float
      */
-    public function getTwoCreditSlipGrossAmount($slip)
+    public function getTwoCreditSlipGrossAmount($slip, $order = null)
     {
         $shipping = $this->getTwoCreditSlipShippingTaxIncl($slip);
         $incl = $this->getTwoSlipField($slip, 'total_products_tax_incl');
@@ -5149,10 +5150,14 @@ class Twopayment extends PaymentModule
             foreach ($lines as $line) {
                 $lines_excl += (float)$line['amount_tax_excl'];
             }
-            // Under PS_ROUND_TYPE ROUND_TOTAL core rounds the slip's tax-excluded total once per tax group
-            // while each line is rounded on its own, so the two differ by up to a cent per line without any voucher.
+            // Invariant: a gap between the lines and total_products_tax_excl is a voucher unless the order's own rounding
+            // mode can produce it. Only ROUND_TOTAL (Order::$round_type 3) can: core rounds the slip's tax-excluded total
+            // once per tax group while each line is rounded on its own, so up to a cent per line is rounding there.
+            // Under ROUND_ITEM and ROUND_LINE core sums the same rounded lines, so any whole cent is a voucher.
+            $round_total = is_object($order) && isset($order->round_type) && (int)$order->round_type === 3;
+            $tolerance = $round_total ? 0.01 * max(1, count($lines)) : 0.0;
             $gap = round($lines_excl - $excl, 2);
-            $deduction = $gap > 0.01 * max(1, count($lines)) + 0.0001 ? $gap : 0.0;
+            $deduction = $gap > $tolerance + 0.005 ? $gap : 0.0;
         }
 
         return round($incl - $deduction + $shipping, 2);
