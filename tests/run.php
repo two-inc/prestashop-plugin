@@ -5868,6 +5868,7 @@ require __DIR__ . '/CompanySearchCountrySourcingSpec.php';
 require __DIR__ . '/SessionCompanyClearSpec.php';
 require __DIR__ . '/MirrorWriteRecordSpec.php';
 require __DIR__ . '/CartRecordStorageSpec.php';
+require __DIR__ . '/CartRecordRetentionSpec.php';
 require __DIR__ . '/OrderCompanyPersistenceSpec.php';
 require __DIR__ . '/SoleTraderTokenPreconditionSpec.php';
 require __DIR__ . '/OverrideMigrationSpec.php';
@@ -5945,6 +5946,7 @@ $tests = [
     'SessionCompanyClearSpec::runAll' => [SessionCompanyClearSpec::class, 'runAll'],
     'MirrorWriteRecordSpec::runAll' => [MirrorWriteRecordSpec::class, 'runAll'],
     'CartRecordStorageSpec::runAll' => [CartRecordStorageSpec::class, 'runAll'],
+    'CartRecordRetentionSpec::runAll' => [CartRecordRetentionSpec::class, 'runAll'],
     'OrderCompanyPersistenceSpec::runAll' => [OrderCompanyPersistenceSpec::class, 'runAll'],
     'SoleTraderTokenPreconditionSpec::runAll' => [SoleTraderTokenPreconditionSpec::class, 'runAll'],
     'OverrideMigrationSpec::runAll' => [OverrideMigrationSpec::class, 'runAll'],

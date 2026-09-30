@@ -7,6 +7,9 @@
  * shop. They used to live in the PrestaShop cookie, where a `|` or `¤` in a
  * company name, or a long address, made core's cookie write throw.
  *
+ * Registers actionDeleteGDPRCustomer and actionExportGDPRData, so psgdpr
+ * erases and exports the table's rows for a customer.
+ *
  * Idempotent: the table is created with IF NOT EXISTS, and the module also
  * creates it lazily for a shop whose files were swapped without an upgrade.
  *
@@ -19,12 +22,15 @@ if (!defined('_PS_VERSION_')) {
 
 function upgrade_module_2_7_19($module)
 {
-    if (!$module->ensureTwoCartRecordTable()) {
+    if (!$module->ensureTwoCartRecordTable()
+        || !$module->registerHook('actionDeleteGDPRCustomer')
+        || !$module->registerHook('actionExportGDPRData')
+    ) {
         return false;
     }
 
     PrestaShopLogger::addLog(
-        'Two Payment: Successfully upgraded to version 2.7.19 - created the cart record table',
+        'Two Payment: Successfully upgraded to version 2.7.19 - created the cart record table and registered the GDPR hooks',
         1,
         null,
         'Module',

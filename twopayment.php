@@ -693,6 +693,8 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->registerHook('actionCustomerAddressSave') &&
             $this->registerHook('actionFrontControllerInitAfter') &&
+            $this->registerHook('actionDeleteGDPRCustomer') &&
+            $this->registerHook('actionExportGDPRData') &&
             $this->registerHook('actionObjectOrderDetailAddBefore') &&
             $this->registerHook('actionPresentCart') &&
             $this->registerHook('displayProductAdditionalInfo') &&
@@ -1014,6 +1016,8 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionAdminOrdersTrackingNumberUpdate') &&
             $this->unregisterHook('actionCustomerAddressSave') &&
             $this->unregisterHook('actionFrontControllerInitAfter') &&
+            $this->unregisterHook('actionDeleteGDPRCustomer') &&
+            $this->unregisterHook('actionExportGDPRData') &&
             $this->unregisterHook('actionObjectOrderDetailAddBefore') &&
             $this->unregisterHook('actionPresentCart') &&
             $this->uninstallTwoInvoiceAdminTab() &&
@@ -18214,6 +18218,12 @@ class Twopayment extends PaymentModule
         $this->requirePhoneOnAddressForms();
 
         try {
+            $this->maybeCleanupStaleTwoCheckoutAttempts();
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Daily purge failed: ' . $e->getMessage(), 2);
+        }
+
+        try {
             $cart = isset($this->context->cart) ? $this->context->cart : null;
             if (!Validate::isLoadedObject($cart)) {
                 return;
@@ -20734,7 +20744,9 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Periodically purge stale checkout attempts to keep table size bounded.
+     * At most once a day, purge checkout attempts and cart records older than
+     * ATTEMPT_RETENTION_DAYS, and cart records of carts ordered in their shop
+     * by any payment method. Runs from every storefront request, so it needs no cron.
      *
      * @param bool $force
      * @return void
@@ -20746,26 +20758,101 @@ class Twopayment extends PaymentModule
         if (!$force && $last_run > 0 && ($now - $last_run) < self::ATTEMPT_CLEANUP_INTERVAL_SECONDS) {
             return;
         }
+        // Stamped before the work: a failing DELETE must wait a day, not retry on every page view.
+        Configuration::updateValue('PS_TWO_ATTEMPT_CLEANUP_LAST_RUN', (string)$now);
 
         $cutoff = date('Y-m-d H:i:s', $now - (self::ATTEMPT_RETENTION_DAYS * 86400));
         $sql = 'DELETE FROM `' . _DB_PREFIX_ . 'twopayment_attempt` WHERE `updated_at` < "' . pSQL($cutoff) . '"';
-        $ok = Db::getInstance()->execute($sql);
-        if (!$ok) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Failed to purge stale checkout attempts older than ' . $cutoff,
-                2
-            );
-            return;
+        if (!Db::getInstance()->execute($sql)) {
+            PrestaShopLogger::addLog('TwoPayment: Failed to purge stale checkout attempts older than ' . $cutoff, 2);
         }
 
-        // Records of carts since ordered by any payment method, or abandoned.
-        $this->ensureTwoCartRecordTable();
-        Db::getInstance()->execute(
-            'DELETE FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` WHERE `updated_at` < "' . pSQL($cutoff)
-            . '" OR `id_cart` IN (SELECT `id_cart` FROM `' . _DB_PREFIX_ . 'orders`)'
+        $table = '`' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '`';
+        $purged = $this->ensureTwoCartRecordTable();
+        $purged = $purged && Db::getInstance()->execute('DELETE FROM ' . $table . ' WHERE `updated_at` < "' . pSQL($cutoff) . '"');
+        $purged = $purged && Db::getInstance()->execute(
+            'DELETE `cr` FROM ' . $table . ' `cr` INNER JOIN `' . _DB_PREFIX_ . 'orders` `o`'
+            . ' ON `o`.`id_cart` = `cr`.`id_cart` AND `o`.`id_shop` = `cr`.`id_shop`'
         );
+        if (!$purged) {
+            PrestaShopLogger::addLog('TwoPayment: Failed to purge stale or ordered cart records', 2);
+        }
+    }
 
-        Configuration::updateValue('PS_TWO_ATTEMPT_CLEANUP_LAST_RUN', (string)$now);
+    /**
+     * psgdpr erasure: delete the customer's cart records. psgdpr ignores the
+     * return; core modules answer json_encode(true) or an error message.
+     *
+     * @param array $params
+     * @return string
+     */
+    public function hookActionDeleteGDPRCustomer($params)
+    {
+        $customerIds = $this->getGdprCustomerIds($params);
+        if ($customerIds === array() || ($this->ensureTwoCartRecordTable() && Db::getInstance()->execute(
+            'DELETE `cr` FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` `cr`' . $this->getGdprCustomerCartJoin($customerIds)
+        ))) {
+            return json_encode(true);
+        }
+
+        return json_encode($this->l('Unable to delete the saved checkout company details.'));
+    }
+
+    /**
+     * psgdpr export: the customer's cart records, as a JSON list of rows.
+     *
+     * @param array $params
+     * @return string
+     */
+    public function hookActionExportGDPRData($params)
+    {
+        $customerIds = $this->getGdprCustomerIds($params);
+        if ($customerIds === array()) {
+            return json_encode(array());
+        }
+        $this->ensureTwoCartRecordTable();
+        $rows = Db::getInstance()->executeS(
+            'SELECT `cr`.`id_cart`, `cr`.`record`, `cr`.`data`, `cr`.`updated_at` FROM `' . _DB_PREFIX_ . self::CART_RECORD_TABLE . '` `cr`'
+            . $this->getGdprCustomerCartJoin($customerIds)
+        );
+        if (!is_array($rows)) {
+            return json_encode($this->l('Unable to export the saved checkout company details.'));
+        }
+
+        return json_encode($rows);
+    }
+
+    /**
+     * psgdpr 1.x passes the customer as an array ('id' or 'email'); 2.x wraps
+     * the id, or array('email' => ...), in a one-element list.
+     *
+     * @param mixed $params
+     * @return int[]
+     */
+    private function getGdprCustomerIds($params)
+    {
+        $subject = is_array($params) && isset($params[0]) ? $params[0] : $params;
+        if (!is_array($subject)) {
+            $subject = array('id' => $subject);
+        }
+        if (!empty($subject['id']) && (int) $subject['id'] > 0) {
+            return array((int) $subject['id']);
+        }
+        if (!empty($subject['email']) && Validate::isEmail($subject['email'])) {
+            return array_map('intval', array_column((array) Customer::getCustomersByEmail($subject['email']), 'id_customer'));
+        }
+
+        return array();
+    }
+
+    /**
+     * @param int[] $customerIds
+     * @return string
+     */
+    private function getGdprCustomerCartJoin(array $customerIds)
+    {
+        return ' INNER JOIN `' . _DB_PREFIX_ . 'cart` `c` ON `c`.`id_cart` = `cr`.`id_cart` AND `c`.`id_shop` = `cr`.`id_shop`'
+            . ' WHERE `c`.`id_customer` IN (' . implode(',', array_map('intval', $customerIds)) . ')';
     }
 
     /**

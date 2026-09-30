@@ -309,7 +309,7 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Customer selects a company from search results
 - Module stores organization number in hidden `companyid` field
 - Address fields, DNI and VAT number auto-fill from Two's data when available, and a re-search overwrites them with the newly selected company's values. Merchant-configurable (Company Lookup -> "Autofill company address", enabled by default); with it off, the company search still records the company name and organisation number but writes nothing into the address step
-- Selection persists server-side against the cart to survive checkout step changes. Cart-scoped company and mirror-address data live in the module's `twopayment_cart_record` table, keyed by cart and shop, and are deleted once the order is confirmed. The cookie carries none of it, so nothing a buyer types can break or overflow the cookie
+- Selection persists server-side against the cart to survive checkout step changes. Cart-scoped company and mirror-address data live in the module's `twopayment_cart_record` table, keyed by cart and shop. A cart's records are deleted when its Two order is confirmed. On the first storefront request at least 24 hours after the last run, a purge also deletes the records of every cart ordered in its shop by any payment method, and every record not updated for 90 days. A GDPR erasure request made through the official GDPR module (psgdpr) deletes the customer's records, and its data export includes them. The cookie carries none of it, so nothing a buyer types can break or overflow the cookie
 
 #### 2. Payment Step
 - Two payment option appears for business accounts
