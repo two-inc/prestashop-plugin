@@ -476,6 +476,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
 
         try {
             // Also records the hash that lets later unchanged saves skip their PUT (TWO-26085).
+            $update_payload = null;
             $update_response = $this->module->putTwoOrderUpdate($order, $payment_data, $update_payload, 'merchant_order_id');
             if ($update_response === null) {
                 // A repeated callback: Two already holds exactly this order, merchant_order_id included.
