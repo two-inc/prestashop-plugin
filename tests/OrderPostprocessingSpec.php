@@ -30,6 +30,7 @@ final class OrderPostprocessingSpec
         self::testGatesOnTheWorkedExampleCart();
         self::testSubscriberThrowingGetsTheGenericCheckoutMessage();
         self::testDispatchKeepsCoreSemanticsButNotItsSwallow();
+        self::testAdminEditSurvivesAThrowingSubscriber();
         self::testEachRequestTypeFiresExactlyOnce();
         self::testRecomputeTotalsHelper();
         self::testSnapshotRecordsTheHook();
@@ -209,6 +210,16 @@ final class OrderPostprocessingSpec
 
             public function setTwoOrderPaymentData($id_order, $payment_data)
             {
+                return true;
+            }
+
+            /** @var string[] */
+            public array $warnings = [];
+
+            public function addTwoBackOfficeWarning($message)
+            {
+                $this->warnings[] = (string) $message;
+
                 return true;
             }
         };
@@ -506,6 +517,29 @@ final class OrderPostprocessingSpec
                 TinyAssert::true(strpos($error->getMessage(), $expected) !== false, $description . ': today\'s refusal, got "' . $error->getMessage() . '"');
             }
         }
+    }
+
+    /**
+     * Core has saved an admin order edit before its hook runs, so a throwing
+     * subscriber there must not reach core's order-edit AJAX as a 500.
+     */
+    private static function testAdminEditSurvivesAThrowingSubscriber(): void
+    {
+        self::seed(true);
+        $module = self::module();
+        self::harnessAsInstance($module);
+        $calls = [];
+        self::subscribe('throws', $calls);
+        $thrown = null;
+        try {
+            $module->hookActionOrderEdited(['order' => self::order()]);
+        } catch (Throwable $e) {
+            $thrown = get_class($e) . ': ' . $e->getMessage();
+        }
+        TinyAssert::same(null, $thrown, 'nothing escapes into core\'s order-edit request');
+        TinyAssert::same([], $module->sent, 'the update is not sent');
+        TinyAssert::true(in_array('This order edit was saved in PrestaShop but was not sent to the invoice provider. Do not repeat the edit. Please contact support.', $module->warnings, true), 'the merchant is told not to repeat the edit');
+        TinyAssert::true(self::logged('order edit saved but not sent to Two - ' . TwoOrderPostprocessing::CODE_HOOK_FAILED), 'the log names the code');
     }
 
     /**
