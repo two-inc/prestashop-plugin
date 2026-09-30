@@ -170,7 +170,7 @@ final class RefundSpec
                 }));
             }
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
             {
                 return ['tax_subtotals' => $this->placedSubtotals];
             }

@@ -225,6 +225,22 @@ final class OrderPostprocessingSpec
             {
                 $this->notes[] = (string) $text;
             }
+
+            protected function claimTwoCreditSlip($id_order, $id_order_slip)
+            {
+                return true;
+            }
+
+            protected function recordTwoRefundOutcome($id_order, $id_order_slip, $status, $payload, $reason)
+            {
+            }
+
+            public function getTwoCreditSlipTaxLines($slip)
+            {
+                $amount = (string) $slip->total_products_tax_incl;
+
+                return [['amount_tax_excl' => $amount, 'amount_tax_incl' => $amount, 'rate' => '0.000']];
+            }
         };
     }
 
