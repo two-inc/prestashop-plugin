@@ -261,11 +261,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_78ed75859c56af62c3804c75ca86d7d8'] = '%s-bestelstatustoewijzing';
 $_MODULE['<{twopayment}prestashop>twopayment_779cdd79fa95885841e60852c8d17b1f'] = 'Momenteel actieve statussen die uitlevering activeren:';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Volledige terugbetalingen verwerken via de PrestaShop-beheeromgeving';
+$_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Gedeeltelijke terugbetalingen (creditnota\'s) automatisch naar %s sturen - betaal ze niet ook terug in de Merchant Portal';
 $_MODULE['<{twopayment}prestashop>twopayment_7aa0ef00af5612e50834b5bf969457e6'] = 'Zoeken naar bedrijven is tijdelijk niet beschikbaar. Probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_7b7813f00f42b7e5366e7065aaa798c6'] = 'inclusief';
 $_MODULE['<{twopayment}prestashop>twopayment_7d211a5d9cccb0df11ba75b9db2e28a5'] = 'Te veel verzoeken. Wacht even en probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_8c663cce717ad261932283cd6ca35073'] = 'B2C-betalingen (consumenten) verwerken - %s is uitsluitend B2B';
-$_MODULE['<{twopayment}prestashop>twopayment_35fba6fd0a77563c7b9e41075a751844'] = 'Gedeeltelijke terugbetalingen verwerken - gebruik hiervoor de %s Merchant Portal';
 $_MODULE['<{twopayment}prestashop>twopayment_7de934009c752b9208f359e4db589fa0'] = 'Je hebt geen toegang tot deze factuur.';
 $_MODULE['<{twopayment}prestashop>twopayment_7e13e4b7dc934c4f24deede7949d856b'] = 'Volledige terugbetaling uitgevoerd vanuit PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_7ea9d1186c856a865c57c49847891350'] = 'E-mailadres factuur';
@@ -581,3 +581,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] 
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Wijzigingen in deze bestelling sinds %s zijn opgeslagen in PrestaShop, maar hebben %s niet bereikt, dus de factuur komt mogelijk niet overeen met deze bestelling. Voer een wijziging niet opnieuw uit om het nog eens te proberen; neem contact op met support.';
 $_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'Creditnota #%1$s is opgeslagen in PrestaShop maar niet naar %2$s verzonden, omdat %3$s. Betaal deze terug in de %2$s Merchant Portal.';
 $_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'het terugbetaalde bedrag niet over de btw-tarieven van de bestelling kon worden verdeeld';
+$_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] = 'de bestelling niet bij de aanbieder kon worden opgehaald';
+$_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'de bestelling nog niet is afgehandeld';
+$_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] = 'het totaal van de bestelling niet bij de aanbieder kon worden opgehaald';
+$_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'het meer is dan er van de bestelling nog terug te betalen is';
+$_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'de valuta van de bestelling niet kon worden bepaald';
+$_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'de aanbieder het niet heeft geaccepteerd (HTTP %s)';
+$_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'De bestelling is in PrestaShop als terugbetaald gemarkeerd, maar wat na de creditnota\'s nog terug te betalen was, is niet naar %1$s verzonden, omdat %2$s. Betaal de rest terug in de %1$s Merchant Portal.';
+$_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'een onverwachte fout dit verhinderde';
