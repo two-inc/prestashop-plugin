@@ -31,9 +31,13 @@ amounts overridden (`quantity` 1, `unit_price` = net, `discount_amount` 0, net, 
 fills in the rest, `tax_code` included, from that line. The lines are derived from the refund's own
 tax subtotals: each rate's gross is spread over the Two lines at that rate with a positive net,
 first by kind (a slip records how much of the rate was products and how much shipping; a kind with
-no line at that rate passes its share on), then by line net, in cents. Each line's net is its gross
-over 1 + rate. The tax subtotals are still sent and still recorded. When a rate has no line at Two
-the refund goes without lines, logged, and is never held back.
+no line at that rate passes its share on), then by what is left on each line (its gross less what
+the order's refunds already credited it, by `prototype_id`), in cents, never above what is left.
+Each line's net is its gross over 1 + rate. The tax subtotals are still sent and still recorded,
+less any rate refunding nothing. A slip's rates are rounded as placement rounds them. When a rate
+has no line, or less left than the refund, or a 0% parent line with no tax code on a Spanish (or
+not yet known) merchant, the refund goes without lines as before, logged and noted on the order,
+and is never held back.
 
 **Alternatives Considered**: Matching each slip product to its Two line. Two lines carry no
 PrestaShop identifier, and matching names or product URLs breaks on combinations and URL settings.
@@ -47,7 +51,10 @@ with the rate.
 
 **Consequences**: Within one rate and kind the split is by net, not by what the slip refunded per
 product, so a slip of one product on an order of several at the same rate is spread over all of
-them on the credit note. A hook subscriber that changes a refund's amount must keep the lines
+them on the credit note; matching each slip product to its own line through a line reference sent
+at placement is a separate follow-up. Discount lines (negative net) are never credited or reversed:
+a refund of a discounted order credits each product at less than its value instead. The per-rate
+amounts are right either way. A hook subscriber that changes a refund's amount must keep the lines
 consistent or drop them.
 
 ---
