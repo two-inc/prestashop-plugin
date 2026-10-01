@@ -8327,11 +8327,13 @@ class Twopayment extends PaymentModule
      * @param Address $deliveryAddress
      * @param Address $invoiceAddress
      * @param string $buyerCountry the payload's buyer.company.country_prefix
+     * @param Address $buyerAddress the address that country_prefix came from, whose postcode tells a buyer in the
+     *                              Canaries, Ceuta or Melilla
      * @param array|null $stored the codes placement resolved, by line key; null on a create, which records them
      * @return array
      * @throws Exception when a 0% line needs the stored mapping and it is unreadable
      */
-    private function applyTwoTaxCodes(array $lineItems, array $keys, $deliveryAddress, $invoiceAddress, $buyerCountry, $stored = null)
+    private function applyTwoTaxCodes(array $lineItems, array $keys, $deliveryAddress, $invoiceAddress, $buyerCountry, $buyerAddress, $stored = null)
     {
         if (count($keys) !== count($lineItems) || array_keys($keys) !== array_keys($lineItems)) {
             // Never a refusal: the lines go out uncoded and the API decides.
@@ -8348,7 +8350,7 @@ class Twopayment extends PaymentModule
             'dest_country' => Validate::isLoadedObject($destination) ? (string) Country::getIsoById((int) $destination->id_country) : '',
             'dest_postcode' => Validate::isLoadedObject($destination) ? (string) $destination->postcode : '',
             'buyer_country' => trim((string) $buyerCountry) !== '' ? (string) $buyerCountry : $invoiceCountry,
-            'buyer_postcode' => Validate::isLoadedObject($invoiceAddress) ? (string) $invoiceAddress->postcode : '',
+            'buyer_postcode' => Validate::isLoadedObject($buyerAddress) ? (string) $buyerAddress->postcode : '',
         );
         $hasGoods = false;
         foreach ($keys as $key) {
@@ -9507,7 +9509,14 @@ class Twopayment extends PaymentModule
             'terms' => $this->buildTermsPayload(),
         ];
 
-        $request_data['line_items'] = $this->applyTwoTaxCodes($line_items, $pricingData['line_tax_keys'], $delivery_address, $invoice_address, $buyerCompany['country_iso']);
+        $request_data['line_items'] = $this->applyTwoTaxCodes(
+            $line_items,
+            $pricingData['line_tax_keys'],
+            $delivery_address,
+            $invoice_address,
+            $buyerCompany['country_iso'],
+            $this->resolveBuyerCompanyAddress($buyerData, $invoice_address, $delivery_address)
+        );
 
         if ($this->shouldIncludeTaxSubtotals()) {
             $request_data['tax_subtotals'] = $tax_subtotals;
@@ -10004,13 +10013,17 @@ class Twopayment extends PaymentModule
         // A pair: completing a half-stored company from an address would name a
         // buyer the order was never placed with. No country is stored beside it,
         // so the prefix alone still follows the invoice address.
-        $buyerCompany = ($storedOrgNumber !== '' || $storedCompanyName !== '')
+        $hasStoredCompany = $storedOrgNumber !== '' || $storedCompanyName !== '';
+        $buyerCompany = $hasStoredCompany
             ? array(
                 'company_name' => $storedCompanyName,
                 'organization_number' => $storedOrgNumber,
                 'country_iso' => $buyerData['country_iso'],
             )
             : $this->resolveBuyerCompanyData($buyerData, $shippingData);
+        $buyerCompanyAddress = $hasStoredCompany
+            ? $invoice_address
+            : $this->resolveBuyerCompanyAddress($buyerData, $invoice_address, $delivery_address);
         $buyerOrgNumber = $buyerCompany['organization_number'];
         $buyerCompanyName = $buyerCompany['company_name'];
         $buyerCountryIso = $buyerCompany['country_iso'];
@@ -10073,6 +10086,7 @@ class Twopayment extends PaymentModule
             $delivery_address,
             $invoice_address,
             $buyerCountryIso,
+            $buyerCompanyAddress,
             $this->decodeTwoDeclaredChargeRates($orderpaymentdata)['tax_codes']
         );
 
@@ -13421,10 +13435,30 @@ class Twopayment extends PaymentModule
      */
     private function resolveBuyerCompanyData($invoice_company, $shipping_company)
     {
-        $has_invoice_company = trim((string) $invoice_company['company_name']) !== ''
-            || trim((string) $invoice_company['organization_number']) !== '';
+        return $this->hasTwoInvoiceCompany($invoice_company) ? $invoice_company : $shipping_company;
+    }
 
-        return $has_invoice_company ? $invoice_company : $shipping_company;
+    /**
+     * The address resolveBuyerCompanyData() took the buyer company, and so `country_prefix`, from (TWO-26151).
+     *
+     * @param array $invoice_company getCompanyDataWithFallbacks() output for the invoice address
+     * @param Address $invoice_address
+     * @param Address $delivery_address
+     * @return Address
+     */
+    private function resolveBuyerCompanyAddress($invoice_company, $invoice_address, $delivery_address)
+    {
+        return $this->hasTwoInvoiceCompany($invoice_company) ? $invoice_address : $delivery_address;
+    }
+
+    /**
+     * @param array $invoice_company getCompanyDataWithFallbacks() output for the invoice address
+     * @return bool
+     */
+    private function hasTwoInvoiceCompany($invoice_company)
+    {
+        return trim((string) $invoice_company['company_name']) !== ''
+            || trim((string) $invoice_company['organization_number']) !== '';
     }
 
     /**
