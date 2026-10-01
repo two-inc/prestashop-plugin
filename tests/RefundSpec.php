@@ -25,6 +25,162 @@ final class RefundSpec
         self::testRefundedStatusAfterPartialsRefundsTheRemainder();
         self::testFailureAfterClaimTellsTheMerchant();
         self::testWhatTheHookSentIsWhatIsRecorded();
+        self::testSlipsAreSentAsLinesOfTheTwoOrder();
+        self::testRemainderIsSentAsLinesOfTheTwoOrder();
+        self::testTheHookSeesAndCanEditTheLines();
+    }
+
+    /** A Two order line as the order GET returns it. */
+    private static function twoLine(string $id, string $type, string $rate, string $net): array
+    {
+        return ['id' => $id, 'type' => $type, 'tax_rate' => $rate, 'net_amount' => $net, 'tax_code' => 'CODE-' . $id];
+    }
+
+    /** The refund lines sent, as [id, net, tax, gross]; null when none were sent. */
+    private static function sentLines(array $payload): ?array
+    {
+        if (!isset($payload['line_items'])) {
+            return null;
+        }
+        return array_map(static function ($l) {
+            TinyAssert::same(['id', 'quantity', 'unit_price', 'discount_amount', 'net_amount', 'tax_amount', 'gross_amount'], array_keys($l), 'only amounts are overridden: name, rate and tax_code are inherited');
+            TinyAssert::same($l['net_amount'], $l['unit_price'], 'one unit at the net');
+            return [$l['id'], $l['net_amount'], $l['tax_amount'], $l['gross_amount']];
+        }, $payload['line_items']);
+    }
+
+    /**
+     * TWO-26143: a credit slip is sent as lines of the order Two holds, each referencing its parent line's id so it
+     * inherits that line's tax_code, with the lines summing to the amount exactly. Columns: slip lines; slip fields
+     * (products tax incl / excl, amount, order_slip_type); slip shipping tax incl / excl and carrier rate; the Two
+     * order's lines; expected [id, net, tax, gross] lines (null: sent without lines, and logged); description.
+     */
+    private static function testSlipsAreSentAsLinesOfTheTwoOrder(): void
+    {
+        $es = [self::twoLine('p1', 'PHYSICAL', '0', '100.00'), self::twoLine('s1', 'SHIPPING_FEE', '0', '10.00')];
+        $mixed = [self::twoLine('p1', 'PHYSICAL', '0.25', '100.00'), self::twoLine('p2', 'PHYSICAL', '0.25', '300.00'), self::twoLine('p3', 'PHYSICAL', '0.15', '40.00'), self::twoLine('s1', 'SHIPPING_FEE', '0.15', '20.00'), self::twoLine('d1', 'DIGITAL', '0.25', '-10.00')];
+        $a = self::line(100.00, 125.00, '25.000');
+        $b = self::line(40.00, 46.00, '15.000');
+        $cases = [
+            [[self::line(30.00, 30.00, '0.000')], [30.00], 0.0, 0.0, 0.0, $es, [['p1', '30.00', '0.00', '30.00']], '0% product slip: the product line, its tax_code inherited'],
+            [[self::line(30.00, 30.00, '0.000')], [30.00], 5.00, 5.00, 0.0, $es, [['p1', '30.00', '0.00', '30.00'], ['s1', '5.00', '0.00', '5.00']], '0% products and shipping: each to its own line'],
+            [[$a, $b], [171.00], 23.00, 20.00, 15.0, $mixed, [['p3', '40.00', '6.00', '46.00'], ['s1', '20.00', '3.00', '23.00'], ['p1', '25.00', '6.25', '31.25'], ['p2', '75.00', '18.75', '93.75']], 'two rates with shipping: by rate, then kind, then net; the discount line is never refunded'],
+            [[$a], [125.00, 100.00, 50.00, 2], 0.0, 0.0, 0.0, $mixed, [['p1', '10.00', '2.50', '12.50'], ['p2', '30.00', '7.50', '37.50']], 'specific amount: pro-rated over the rate\'s lines'],
+            [[$a, $b], [171.00, 130.00, 171.00, 1], 0.0, 0.0, 0.0, $mixed, [['p3', '37.66', '5.65', '43.31'], ['p1', '23.54', '5.88', '29.42'], ['p2', '70.62', '17.65', '88.27']], 'voucher excluded: the reduced subtotals pro-rated'],
+            [[$b], [46.00], 0.0, 0.0, 0.0, [self::twoLine('s1', 'SHIPPING_FEE', '0.15', '20.00')], [['s1', '40.00', '6.00', '46.00']], 'no line of the slip\'s kind at the rate: the rate\'s other lines take it'],
+            [[$a, $b], [171.00], 0.0, 0.0, 0.0, [self::twoLine('p1', 'PHYSICAL', '0.25', '100.00')], null, 'a rate with no line at Two: sent without lines'],
+            [[$a], [125.00], 0.0, 0.0, 0.0, [], null, 'no lines in the Two order: sent without lines'],
+        ];
+
+        foreach ($cases as $i => [$lines, $fields, $shipIncl, $shipExcl, $carrierRate, $twoLines, $expected, $desc]) {
+            StubStore::reset();
+            PrestaShopLogger::$logs = [];
+            StubStore::$dbExecuteSResponses = [$lines];
+            $twoOrder = self::fulfilledOrder(1000.00, [], 'EUR');
+            $twoOrder['line_items'] = $twoLines;
+            $module = self::makeModule($twoOrder);
+            $module->readSlipLinesFromDb = true;
+            $order = self::makeOrder();
+            $order->carrier_tax_rate = $carrierRate;
+            $slip = self::makeSlip(650 + $i, $fields[0], $shipIncl);
+            $slip->total_shipping_tax_excl = $shipExcl;
+            $slip->total_products_tax_excl = $fields[1] ?? null;
+            $slip->amount = $fields[2] ?? null;
+            $slip->order_slip_type = $fields[3] ?? 0;
+
+            $module->hookActionOrderSlipAdd(['order' => $order, 'order_slip' => $slip]);
+
+            $refunds = $module->refundCalls();
+            TinyAssert::count(1, $refunds, $desc . ': sent either way');
+            TinyAssert::count(0, $module->notSent, $desc . ': the merchant is not told to refund it in the portal');
+            $payload = $refunds[0]['payload'];
+            $got = self::sentLines($payload);
+            TinyAssert::same($expected, $got, $desc . ': got ' . json_encode($got));
+            $logged = strpos(implode(' | ', array_column(PrestaShopLogger::$logs, 'message')), 'without line items') !== false;
+            TinyAssert::same($expected === null, $logged, $desc . ': a refund sent without lines is logged');
+            if ($got !== null) {
+                TinyAssert::same($payload['amount'], number_format(array_sum(array_column($got, 3)), 2, '.', ''), $desc . ': lines sum to the amount');
+            }
+        }
+    }
+
+    /**
+     * TWO-26143: the Refunded remainder is sent as lines too, each rate's share spread over that rate's lines at Two.
+     * Columns: the Two order's lines, expected [id, net, tax, gross] lines (null: sent without lines), description.
+     */
+    private static function testRemainderIsSentAsLinesOfTheTwoOrder(): void
+    {
+        $sub = static function (string $rate, string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => $rate];
+        };
+        $cases = [
+            [[self::twoLine('p1', 'PHYSICAL', '0.25', '100.00'), self::twoLine('p2', 'PHYSICAL', '0.15', '10.00'), self::twoLine('s1', 'SHIPPING_FEE', '0.15', '10.00')], [['p2', '10.00', '1.50', '11.50'], ['s1', '10.00', '1.50', '11.50'], ['p1', '60.00', '15.00', '75.00']], 'remainder over two rates, by each line\'s net'],
+            [[self::twoLine('p1', 'PHYSICAL', '0.25', '100.00')], null, 'a rate with no line at Two: sent without lines'],
+        ];
+        foreach ($cases as [$twoLines, $expected, $desc]) {
+            StubStore::reset();
+            StubStore::$orders[5100] = ['module' => 'twopayment'];
+            StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+            $twoOrder = self::fulfilledOrder(148.00, [['total_amount' => '-50.00']]);
+            $twoOrder['state'] = 'REFUNDED';
+            $twoOrder['line_items'] = $twoLines;
+            $module = self::makeModule($twoOrder);
+            $module->placedSubtotals = [$sub('0.250000', '100.00', '25.00'), $sub('0.150000', '20.00', '3.00')];
+            $module->refundRows[1] = ['id_order_slip' => 1, 'status' => 'SENT', 'amount' => '50.00', 'tax_subtotals' => [$sub('0.250000', '40.00', '10.00')]];
+            $status = new OrderState();
+            $status->id = 7;
+            $status->name = 'Refunded';
+
+            $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+
+            $calls = $module->refundCalls();
+            TinyAssert::count(1, $calls, $desc);
+            TinyAssert::same('98.00', $calls[0]['payload']['amount'], $desc . ': amount');
+            TinyAssert::same($expected, self::sentLines($calls[0]['payload']), $desc . ': got ' . json_encode($calls[0]['payload']));
+        }
+    }
+
+    /**
+     * TWO-26143: the order postprocessing hook receives the lines, and what it returns is what is sent and recorded.
+     * Columns: the subscriber's edit, expected lines sent, expected recorded amount, description.
+     */
+    private static function testTheHookSeesAndCanEditTheLines(): void
+    {
+        $cases = [
+            [static function (array &$p): void {
+            }, [['p1', '30.00', '0.00', '30.00']], '30.00', 'untouched: the lines are sent'],
+            [static function (array &$p): void {
+                $p['line_items'][0]['name'] = 'Renamed';
+            }, [['p1', '30.00', '0.00', '30.00', 'Renamed']], '30.00', 'a subscriber renames a line: sent as edited'],
+            [static function (array &$p): void {
+                unset($p['line_items']);
+            }, null, '30.00', 'a subscriber drops the lines: sent without them'],
+        ];
+        foreach ($cases as [$edit, $expected, $recorded, $desc]) {
+            StubStore::reset();
+            $seen = null;
+            Hook::$subscribers[TwoOrderPostprocessing::HOOK]['refundspecsubscriber'] = static function (array $params) use ($edit, &$seen): void {
+                $seen = $params['payload']['line_items'] ?? null;
+                $edit($params['payload']);
+            };
+            $twoOrder = self::fulfilledOrder(100.00, [], 'EUR');
+            $twoOrder['line_items'] = [self::twoLine('p1', 'PHYSICAL', '0', '100.00')];
+            $module = self::makeModule($twoOrder);
+
+            $module->hookActionOrderSlipAdd(['order' => self::makeOrder(), 'orderSlipCreated' => self::makeSlip(906, 30.00)]);
+
+            TinyAssert::count(1, $seen ?? [], $desc . ': the hook saw the lines');
+            $payload = $module->refundCalls()[0]['payload'];
+            $got = isset($payload['line_items']) ? array_map(static function ($l) {
+                return array_values(array_filter([$l['id'], $l['net_amount'], $l['tax_amount'], $l['gross_amount'], $l['name'] ?? null], static function ($v) {
+                    return $v !== null;
+                }));
+            }, $payload['line_items']) : null;
+            TinyAssert::same($expected, $got, $desc . ': got ' . json_encode($got));
+            TinyAssert::same('SENT', $module->refundRows[906]['status'], $desc . ': recorded SENT');
+            TinyAssert::same($recorded, (string) $module->refundRows[906]['amount'], $desc . ': recorded amount');
+        }
+        Hook::$subscribers = [];
     }
 
     /**
