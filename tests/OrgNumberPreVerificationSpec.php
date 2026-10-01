@@ -144,15 +144,15 @@ final class OrgNumberPreVerificationSpec
         $cookie = Context::getContext()->cookie;
         TinyAssert::same(
             'B12345678',
-            (string) ($cookie->two_company_id ?? ''),
+            (string) (TwoSessionRecord::get('company', 'id') ?? ''),
             'no org number other than the address\'s own may be cached for this buyer'
         );
         TinyAssert::same(
             'Tienda Ejemplo SL',
-            (string) ($cookie->two_company_name ?? ''),
+            (string) (TwoSessionRecord::get('company', 'name') ?? ''),
             'no company name other than the address\'s own may be cached for this buyer'
         );
-        TinyAssert::same('ES', (string) ($cookie->two_company_country ?? ''));
+        TinyAssert::same('ES', (string) (TwoSessionRecord::get('company', 'country') ?? ''));
     }
 
     /**
@@ -240,6 +240,7 @@ final class OrgNumberPreVerificationSpec
         PrestaShopLogger::reset();
         Tools::resetTestValues();
         Context::getContext()->cookie = new Cookie();
+        StubStore::$cartRecords = [];
         Tools::setTestValue('token', Tools::getToken(false));
         Tools::setTestValue('id_address_invoice', self::ADDRESS_ID);
         // The handler only serves POSTs.

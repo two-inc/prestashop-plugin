@@ -390,6 +390,7 @@ final class OrderCompanyPersistenceSpec
         PrestaShopLogger::reset();
         Tools::resetTestValues();
         Context::getContext()->cookie = new Cookie();
+        StubStore::$cartRecords = [];
     }
 
     /** The `ALTER TABLE ... ADD` column names issued so far, sorted. */
@@ -489,11 +490,11 @@ final class OrderCompanyPersistenceSpec
     private static function seedSessionCompany(string $organizationNumber): void
     {
         $cookie = Context::getContext()->cookie;
-        $cookie->two_company_name = 'Example Trading Ltd';
-        $cookie->two_company_id = $organizationNumber;
-        $cookie->two_company_country = 'GB';
-        $cookie->two_company_address_id = (string) self::INVOICE_ADDRESS_ID;
-        $cookie->two_company_cart_id = (string) self::CART_ID;
+        TwoSessionRecord::set('company', 'name', 'Example Trading Ltd');
+        TwoSessionRecord::set('company', 'id', $organizationNumber);
+        TwoSessionRecord::set('company', 'country', 'GB');
+        TwoSessionRecord::set('company', 'address_id', (string) self::INVOICE_ADDRESS_ID);
+        TwoSessionRecord::set('company', 'cart', (string) self::CART_ID);
         Context::getContext()->cart = new Cart(self::CART_ID);
     }
 

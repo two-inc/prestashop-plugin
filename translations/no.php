@@ -604,3 +604,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_759ff422efd0250045ed55a9a958546b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_280d19d2479762ed9a0d8aaed614e8bb'] = 'Forhandlerens land er ikke kjent ennå, så ingen avgiftskoder kan vises. Lagre en gyldig API-nøkkel, eller oppdater forhandlerprofilen i fanen Diagnostikk.';
 $_MODULE['<{twopayment}prestashop>twopayment_31804353a7d42acedb8d202c17571abf'] = 'Listen over avgiftskoder kunne ikke leses fra %1$s (HTTP %2$s). Lagrede tilknytninger fungerer fortsatt i kassen; last inn siden på nytt for å prøve igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_d592cdbb1c59d9ba9f0308c01863437c'] = 'den lagrede tilknytningen av avgiftskoder kan ikke leses. Lagre Avgiftskoder for linjer med 0 % på nytt.';
+$_MODULE['<{twopayment}prestashop>twopayment_1493bd5d032828e60663be984220ad7e'] = 'Kunne ikke slette de lagrede firmaopplysningene fra kassen.';
+$_MODULE['<{twopayment}prestashop>twopayment_b6dd1a9c89709b3b2e3750f24560c7e5'] = 'Kunne ikke eksportere de lagrede firmaopplysningene fra kassen.';

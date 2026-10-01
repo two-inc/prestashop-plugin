@@ -214,7 +214,7 @@ final class BuyerCompanyFallbackSpec
             $cookie = Context::getContext()->cookie;
             TinyAssert::same(
                 $expectedSurvivor,
-                isset($cookie->two_company_id) ? (string) $cookie->two_company_id : '',
+                TwoSessionRecord::has('company', 'id') ? (string) TwoSessionRecord::get('company', 'id') : '',
                 'surviving organisation number - ' . $description
             );
         }
@@ -246,7 +246,7 @@ final class BuyerCompanyFallbackSpec
 
         TinyAssert::same(
             'FR-999',
-            (string) Context::getContext()->cookie->two_company_id,
+            (string) TwoSessionRecord::get('company', 'id'),
             'resolving the invoice address must not destroy a selection held for the delivery address'
         );
     }
@@ -260,11 +260,11 @@ final class BuyerCompanyFallbackSpec
         Context::getContext()->cart = new Cart(self::CART_ID);
 
         $cookie = Context::getContext()->cookie;
-        $cookie->two_company_name = 'Searched FR Co';
-        $cookie->two_company_id = 'FR-999';
-        $cookie->two_company_country = 'FR';
-        $cookie->two_company_address_id = (string) $stampedOn;
-        $cookie->two_company_cart_id = (string) self::CART_ID;
+        TwoSessionRecord::set('company', 'name', 'Searched FR Co');
+        TwoSessionRecord::set('company', 'id', 'FR-999');
+        TwoSessionRecord::set('company', 'country', 'FR');
+        TwoSessionRecord::set('company', 'address_id', (string) $stampedOn);
+        TwoSessionRecord::set('company', 'cart', (string) self::CART_ID);
     }
 
     /** @return array the create payload, with a cart-scoped selection stamped on $addressId */
@@ -275,11 +275,11 @@ final class BuyerCompanyFallbackSpec
         Context::getContext()->cart = new Cart(self::CART_ID);
 
         $cookie = Context::getContext()->cookie;
-        $cookie->two_company_name = 'Searched Co Ltd';
-        $cookie->two_company_id = 'SEARCHED-999';
-        $cookie->two_company_country = 'GB';
-        $cookie->two_company_address_id = (string) $addressId;
-        $cookie->two_company_cart_id = (string) self::CART_ID;
+        TwoSessionRecord::set('company', 'name', 'Searched Co Ltd');
+        TwoSessionRecord::set('company', 'id', 'SEARCHED-999');
+        TwoSessionRecord::set('company', 'country', 'GB');
+        TwoSessionRecord::set('company', 'address_id', (string) $addressId);
+        TwoSessionRecord::set('company', 'cart', (string) self::CART_ID);
 
         return self::buildPayload(new TwopaymentTestHarness(), 'create');
     }
@@ -318,6 +318,7 @@ final class BuyerCompanyFallbackSpec
         PrestaShopLogger::reset();
         Tools::resetTestValues();
         Context::getContext()->cookie = new Cookie();
+        StubStore::$cartRecords = [];
     }
 
     private static function seedCart(

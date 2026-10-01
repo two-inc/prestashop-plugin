@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { test, expect } from "@playwright/test";
 
 import { addFirstProductToCartAndGoToCheckout } from "../pages/store.js";
-import { completeGuestStep, twoPaymentOption } from "../pages/checkout.js";
+import { completeGuestStep, selectAddressCountry, twoPaymentOption } from "../pages/checkout.js";
 
 /**
  * TWO-25326. No new admin setting was added - the EXISTING
@@ -90,8 +90,7 @@ test.describe("TWO-25326 company-search location", () => {
     await expect(companyField).toHaveValue("Plain Typed Company Name");
 
     // Fill the rest of the address and advance.
-    await addr.locator('select[name="id_country"]').selectOption({ label: "United States" });
-    await page.waitForLoadState("networkidle");
+    await selectAddressCountry(page, addr, "United States");
     await addr.locator('input[name="firstname"]').fill("Test");
     await addr.locator('input[name="lastname"]').fill("Buyer");
     await addr.locator('input[name="address1"]').fill("123 Test Street");

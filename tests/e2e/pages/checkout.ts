@@ -98,6 +98,26 @@ async function fillCompanyName(page: Page, addr: Locator, company: string) {
   await expect(field).toHaveValue(company);
 }
 
+/**
+ * Picks the address country and waits until core's POST ?action=addressForm
+ * has swapped in the rebuilt form. networkidle returns before that request
+ * starts, so fills made after it raced the swap and were intermittently lost.
+ */
+export async function selectAddressCountry(page: Page, addr: Locator, label: string) {
+  await page.evaluate(() => {
+    const w = window as unknown as { twoAddressFormRefreshed?: boolean; prestashop: { once(event: string, cb: () => void): void } };
+    w.twoAddressFormRefreshed = false;
+    w.prestashop.once("updatedAddressForm", () => {
+      w.twoAddressFormRefreshed = true;
+    });
+  });
+  const refresh = page.waitForResponse((r) => r.url().includes("action=addressForm"));
+  await addr.locator('select[name="id_country"]').selectOption({ label });
+  await refresh;
+  // The response lands before core's handler replaces the form and restores the typed values.
+  await page.waitForFunction(() => (window as unknown as { twoAddressFormRefreshed?: boolean }).twoAddressFormRefreshed === true);
+}
+
 export async function completeAddressStep(page: Page, company: string) {
   const addr = page.locator("#checkout-addresses-step");
   // PS 9's demo fixture defaults the address country to Norway, whose
@@ -111,8 +131,7 @@ export async function completeAddressStep(page: Page, company: string) {
   // Selecting a country makes PS re-render the address form via AJAX
   // (country-specific fields like the US state <select> appear), so do it
   // FIRST and let the reload settle before filling anything.
-  await addr.locator('select[name="id_country"]').selectOption({ label: "United States" });
-  await page.waitForLoadState("networkidle");
+  await selectAddressCountry(page, addr, "United States");
   await addr.locator('input[name="firstname"]').fill("Test");
   await addr.locator('input[name="lastname"]').fill("Buyer");
   await fillCompanyName(page, addr, company);

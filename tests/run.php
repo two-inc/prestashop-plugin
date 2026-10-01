@@ -200,7 +200,7 @@ final class OrderBuilderSpec
      * omitted the stamp would be testing the discard path rather than whatever it
      * meant to test.
      *
-     * @param array<string,string> $fields short field names, per Twopayment::COMPANY_SESSION_KEYS
+     * @param array<string,string> $fields short field names, per Twopayment::COMPANY_SESSION_FIELDS
      */
     private static function seedSessionCompany(TwopaymentTestHarness $module, array $fields): void
     {
@@ -4568,9 +4568,9 @@ final class OrderBuilderSpec
         TinyAssert::same('', $data['company_name']);
         TinyAssert::same('', $data['organization_number']);
         TinyAssert::same('ES', $data['country_iso']);
-        TinyAssert::false(isset($module->context->cookie->two_company_name));
-        TinyAssert::false(isset($module->context->cookie->two_company_id));
-        TinyAssert::false(isset($module->context->cookie->two_company_country));
+        TinyAssert::false(TwoSessionRecord::has('company', 'name'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'id'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'country'));
     }
 
     private static function testGetTwoCheckoutCompanyDataIgnoresStaleCookieWhenAddressCompanyChangesSameCountry(): void
@@ -5555,9 +5555,9 @@ final class OrderBuilderSpec
 
         TinyAssert::same('', $data['company_name']);
         TinyAssert::same('', $data['organization_number']);
-        TinyAssert::false(isset($module->context->cookie->two_company_name));
-        TinyAssert::false(isset($module->context->cookie->two_company_id));
-        TinyAssert::false(isset($module->context->cookie->two_company_country));
+        TinyAssert::false(TwoSessionRecord::has('company', 'name'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'id'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'country'));
     }
 
     private static function testGetTwoValidatedSessionCompanyDataRejectsLegacySessionWithoutCountryMarker(): void
@@ -5575,8 +5575,8 @@ final class OrderBuilderSpec
 
         TinyAssert::same('', $data['company_name']);
         TinyAssert::same('', $data['organization_number']);
-        TinyAssert::false(isset($module->context->cookie->two_company_name));
-        TinyAssert::false(isset($module->context->cookie->two_company_id));
+        TinyAssert::false(TwoSessionRecord::has('company', 'name'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'id'));
     }
 
     private static function testBuildTwoApiResponseLogSummaryRedactsNestedProviderPayload(): void
@@ -5867,6 +5867,8 @@ require __DIR__ . '/UpgradeScriptVersionSpec.php';
 require __DIR__ . '/CompanySearchCountrySourcingSpec.php';
 require __DIR__ . '/SessionCompanyClearSpec.php';
 require __DIR__ . '/MirrorWriteRecordSpec.php';
+require __DIR__ . '/CartRecordStorageSpec.php';
+require __DIR__ . '/CartRecordRetentionSpec.php';
 require __DIR__ . '/OrderCompanyPersistenceSpec.php';
 require __DIR__ . '/SoleTraderTokenPreconditionSpec.php';
 require __DIR__ . '/OverrideMigrationSpec.php';
@@ -5943,6 +5945,8 @@ $tests = [
     'CompanySearchCountrySourcingSpec::runAll' => [CompanySearchCountrySourcingSpec::class, 'runAll'],
     'SessionCompanyClearSpec::runAll' => [SessionCompanyClearSpec::class, 'runAll'],
     'MirrorWriteRecordSpec::runAll' => [MirrorWriteRecordSpec::class, 'runAll'],
+    'CartRecordStorageSpec::runAll' => [CartRecordStorageSpec::class, 'runAll'],
+    'CartRecordRetentionSpec::runAll' => [CartRecordRetentionSpec::class, 'runAll'],
     'OrderCompanyPersistenceSpec::runAll' => [OrderCompanyPersistenceSpec::class, 'runAll'],
     'SoleTraderTokenPreconditionSpec::runAll' => [SoleTraderTokenPreconditionSpec::class, 'runAll'],
     'OverrideMigrationSpec::runAll' => [OverrideMigrationSpec::class, 'runAll'],
