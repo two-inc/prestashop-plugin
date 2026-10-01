@@ -34,8 +34,9 @@ first by kind (a slip records how much of the rate was products and how much shi
 no line at that rate passes its share on), then by what is left on each line (its gross less what
 the order's refunds already credited it, by `prototype_id`), in cents, never above what is left.
 Each line's net is its gross over 1 + rate. The tax subtotals are still sent and still recorded,
-less any rate refunding nothing. A slip's rates are rounded as placement rounds them. When a rate
-has no line, or less left than the refund, or a 0% parent line with no tax code on a Spanish (or
+less any rate refunding nothing. A slip's product and shipping rates are rounded as placement
+rounds them. When a rate has no line, or less left than the refund, or tax refunded at 0% (a 0%
+line carries none), or a 0% parent line with no tax code on a Spanish (or
 not yet known) merchant, the refund goes without lines as before, logged and noted on the order,
 and is never held back.
 
