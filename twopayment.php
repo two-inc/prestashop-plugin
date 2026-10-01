@@ -5235,11 +5235,11 @@ class Twopayment extends PaymentModule
      * cover credit slips, so partial refunds previously reached Two only when
      * the merchant used the Two merchant portal.
      *
-     * This hook builds an {amount, currency, tax_subtotals} partial-refund
-     * payload from the credit slip and calls POST /v1/order/{id}/refund. Two's
-     * PartialRefundRequestSchema requires those three fields (line_items is
-     * optional), so we avoid mapping PrestaShop's credit-slip product list to
-     * Two line items.
+     * This hook builds an {amount, currency, line_items, tax_subtotals}
+     * partial-refund payload from the credit slip and calls
+     * POST /v1/order/{id}/refund. The lines reference the Two order's own
+     * lines by id (buildTwoRefundLineItems()), so each inherits its parent's
+     * tax code; an e-invoiced correcting invoice cannot be built without them.
      *
      * Idempotency + duplicate-refund protection:
      *  - The idempotency key is derived from the credit slip ID
@@ -5388,13 +5388,15 @@ class Twopayment extends PaymentModule
         }
 
         // Two's partial-refund contract requires tax_subtotals.
-        $tax_subtotals = $this->buildTwoCreditSlipTaxSubtotals($slip, $order, $slip_amount);
+        $kind_gross = array();
+        $tax_subtotals = $this->buildTwoCreditSlipTaxSubtotals($slip, $order, $slip_amount, $kind_gross);
         if (empty($tax_subtotals)) {
             PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not build tax subtotals from the credit slip. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
             return $this->l('its refunded amount could not be split across the order\'s tax rates');
         }
 
-        $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency, $tax_subtotals);
+        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $current_two_order, $kind_gross, 'Credit slip ' . $slip_id . ' on order ' . $id_order);
+        $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency, $tax_subtotals, $line_items);
 
         // Idempotency key derived from the credit slip ID (NOT amount) so two
         // same-amount partial refunds on one order don't collide, and scoped by
@@ -5749,7 +5751,8 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        $payload = $this->buildTwoPartialRefundPayload($remainder, $currency, $tax_subtotals);
+        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $two_order, array(), 'Refund remainder on order ' . $id_order);
+        $payload = $this->buildTwoPartialRefundPayload($remainder, $currency, $tax_subtotals, $line_items);
         $slip_ids = array_map(function ($row) {
             return (int)$row['id_order_slip'];
         }, $sent);
@@ -5947,21 +5950,98 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Build the {amount, currency, tax_subtotals} partial-refund payload for
-     * Two. Amount is a 2dp decimal string, matching Two's Money format.
+     * Build the {amount, currency, line_items, tax_subtotals} partial-refund
+     * payload for Two. Amount is a 2dp decimal string, matching Two's Money
+     * format. line_items is left out when the refund could not be itemised.
      *
      * @param float $amount Gross refund amount
      * @param string $currency ISO currency code
      * @param array $tax_subtotals From buildTwoCreditSlipTaxSubtotals()
+     * @param array|null $line_items From buildTwoRefundLineItems()
      * @return array
      */
-    public function buildTwoPartialRefundPayload($amount, $currency, $tax_subtotals = array())
+    public function buildTwoPartialRefundPayload($amount, $currency, $tax_subtotals = array(), $line_items = null)
     {
-        return array(
+        $payload = array(
             'amount' => number_format((float)$amount, 2, '.', ''),
             'currency' => $currency,
-            'tax_subtotals' => $tax_subtotals,
         );
+        if (!empty($line_items)) {
+            $payload['line_items'] = $line_items;
+        }
+        $payload['tax_subtotals'] = $tax_subtotals;
+
+        return $payload;
+    }
+
+    /**
+     * A partial refund's lines (TWO-26143): each references the Two order line it refunds by id, so Two copies that
+     * line's name, rate and tax code onto it, and overrides only the amounts. Each rate's subtotal is spread over the
+     * Two order's lines at that rate with a positive net, weighted first by line kind when the refund records how much
+     * of the rate each kind took (a credit slip's products and shipping), then by each line's net. The amounts are
+     * allocated in cents, so each rate's lines sum to its subtotal and the lines to the refund amount exactly.
+     *
+     * @param array $tax_subtotals the refund's TaxSubtotalSchema entries, which sum to its amount
+     * @param array $two_order the Two order as just read
+     * @param array $kind_gross per rate, the gross each line kind took; empty to weight by net alone
+     * @param string $label what the log names when the refund cannot be itemised
+     * @return array|null null when a rate has no line to refund, so the refund goes without lines
+     */
+    public function buildTwoRefundLineItems(array $tax_subtotals, $two_order, array $kind_gross, $label)
+    {
+        $order_lines = isset($two_order['line_items']) && is_array($two_order['line_items']) ? $two_order['line_items'] : array();
+        $lines = array();
+        foreach ($tax_subtotals as $subtotal) {
+            $rate = (float)$subtotal['tax_rate'];
+            $gross = round((float)$subtotal['taxable_amount'] + (float)$subtotal['tax_amount'], 2);
+            if ($gross == 0.0) {
+                continue;
+            }
+            $by_kind = array();
+            foreach ($order_lines as $line) {
+                if (!empty($line['id']) && isset($line['tax_rate']) && abs((float)$line['tax_rate'] - $rate) < 0.0000005 && (float)$line['net_amount'] > 0) {
+                    $by_kind[$this->getTwoRefundLineKind($line)][(string)$line['id']] = (float)$line['net_amount'];
+                }
+            }
+            if ($gross < 0 || $by_kind === array()) {
+                PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - no order line at Two to refund ' . $gross . ' at rate ' . $subtotal['tax_rate'] . ' against; sending the refund without line items', 2);
+                return null;
+            }
+            $kinds = isset($kind_gross[$subtotal['tax_rate']]) ? array_intersect_key($kind_gross[$subtotal['tax_rate']], $by_kind) : array();
+            $weights = array();
+            foreach ($by_kind as $kind => $nets) {
+                $share = $kinds === array() ? array_sum($nets) : (isset($kinds[$kind]) ? max(0.0, (float)$kinds[$kind]) : 0.0);
+                foreach ($nets as $id => $net) {
+                    $weights[$id] = $share * $net / array_sum($nets);
+                }
+            }
+            foreach ($this->allocateTwoAmountByWeights($gross, $weights) as $id => $line_gross) {
+                if ($line_gross <= 0) {
+                    continue;
+                }
+                $net = round($line_gross / (1 + $rate), 2);
+                $lines[] = array(
+                    'id' => (string)$id,
+                    'quantity' => 1,
+                    'unit_price' => $this->getTwoRoundAmount($net),
+                    'discount_amount' => '0.00',
+                    'net_amount' => $this->getTwoRoundAmount($net),
+                    'tax_amount' => $this->getTwoRoundAmount($line_gross - $net),
+                    'gross_amount' => $this->getTwoRoundAmount($line_gross),
+                );
+            }
+        }
+
+        return $lines === array() ? null : $lines;
+    }
+
+    /**
+     * @param array $line a Two order line
+     * @return string shipping for a shipping line, products for any other
+     */
+    private function getTwoRefundLineKind(array $line)
+    {
+        return isset($line['type']) && $line['type'] === 'SHIPPING_FEE' ? 'shipping' : 'products';
     }
 
     /**
@@ -6011,10 +6091,12 @@ class Twopayment extends PaymentModule
      * @param object $slip OrderSlip
      * @param object $order Order
      * @param float $refund_amount Gross amount being refunded
+     * @param array|null $kind_gross set to each rate's gross per line kind (products, shipping), for buildTwoRefundLineItems()
      * @return array TaxSubtotalSchema entries; empty when none can be derived
      */
-    public function buildTwoCreditSlipTaxSubtotals($slip, $order, $refund_amount)
+    public function buildTwoCreditSlipTaxSubtotals($slip, $order, $refund_amount, &$kind_gross = null)
     {
+        $kind_gross = array();
         $shipping_incl = $this->getTwoCreditSlipShippingTaxIncl($slip);
         $products_amount = round($refund_amount - $shipping_incl, 2);
         $buckets = array();
@@ -6027,7 +6109,7 @@ class Twopayment extends PaymentModule
         }
         $factor = $products_amount > 0 ? $products_amount / $lines_incl : 0.0;
         foreach ($factor > 0 ? $this->getTwoCreditSlipTaxLines($slip) : array() as $line) {
-            $this->addTwoTaxBucket($buckets, (float)$line['rate'], (float)$line['amount_tax_excl'] * $factor, (float)$line['amount_tax_incl'] * $factor);
+            $this->addTwoTaxBucket($buckets, (float)$line['rate'], (float)$line['amount_tax_excl'] * $factor, (float)$line['amount_tax_incl'] * $factor, 'products');
         }
         if ($shipping_incl > 0) {
             $shipping_excl = $this->getTwoSlipField($slip, 'total_shipping_tax_excl');
@@ -6050,16 +6132,19 @@ class Twopayment extends PaymentModule
             foreach ($net_shares as $key => $net) {
                 $tax = round((float)$net * (float)$classes[$key]['rate'], 2);
                 $tax_left = round($tax_left - $tax, 2);
-                $this->addTwoTaxBucket($buckets, (float)$classes[$key]['rate'] * 100, (float)$net, (float)$net + $tax);
+                $this->addTwoTaxBucket($buckets, (float)$classes[$key]['rate'] * 100, (float)$net, (float)$net + $tax, 'shipping');
                 $last = (float)$classes[$key]['rate'];
             }
             if ($last !== null && $tax_left != 0.0) {
                 // The cent per-class rounding left, on the last class, so shipping sums to what the slip refunded.
-                $this->addTwoTaxBucket($buckets, $last * 100, 0.0, $tax_left);
+                $this->addTwoTaxBucket($buckets, $last * 100, 0.0, $tax_left, 'shipping');
             }
         }
         if (empty($buckets)) {
             return array();
+        }
+        foreach ($buckets as $rate => $bucket) {
+            $kind_gross[$rate] = $bucket['kinds'];
         }
 
         return $this->formatTwoTaxSubtotals($buckets, $refund_amount);
@@ -6166,15 +6251,19 @@ class Twopayment extends PaymentModule
      * @param float $rate_percent
      * @param float $excl
      * @param float $incl
+     * @param string|null $kind what getTwoRefundLineKind() names the Two lines this part refunds, tracked per rate
      */
-    private function addTwoTaxBucket(array &$buckets, $rate_percent, $excl, $incl)
+    private function addTwoTaxBucket(array &$buckets, $rate_percent, $excl, $incl, $kind = null)
     {
         $rate = number_format($rate_percent / 100, 6, '.', '');
         if (!isset($buckets[$rate])) {
-            $buckets[$rate] = array('excl' => 0.0, 'incl' => 0.0);
+            $buckets[$rate] = array('excl' => 0.0, 'incl' => 0.0, 'kinds' => array());
         }
         $buckets[$rate]['excl'] += $excl;
         $buckets[$rate]['incl'] += $incl;
+        if ($kind !== null) {
+            $buckets[$rate]['kinds'][$kind] = (isset($buckets[$rate]['kinds'][$kind]) ? $buckets[$rate]['kinds'][$kind] : 0.0) + $incl;
+        }
     }
 
     /**
