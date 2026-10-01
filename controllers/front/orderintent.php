@@ -518,93 +518,15 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-
-
-        $cart = $this->context->cart;
-        $customer = new Customer($cart->id_customer);
-        $currency = new Currency($cart->id_currency);
-        
-        // Invoice/billing address is the authoritative company identity source.
-        $addressId = (int)Tools::getValue('id_address_invoice');
-        if (empty($addressId)) {
-            // Older clients may still send delivery id only.
-            $addressId = (int)Tools::getValue('id_address_delivery');
-        }
-        if (empty($addressId)) {
-            $addressId = $cart->id_address_invoice ?: $cart->id_address_delivery;
-        }
-
-        $address = new Address($addressId);
-
-
-        if ($cart->id_customer == 0 || !Validate::isLoadedObject($customer) || !Validate::isLoadedObject($address)) {
-            PrestaShopLogger::addLog('TwoPayment: Invalid cart, customer, or address data in order intent (address ID: ' . $addressId . ')', 3);
-            $this->sendJsonResponse(json_encode([
-                'success' => false,
-                'error' => $this->module->l('Invalid cart or customer data')
-            ]));
+        $built = $this->buildBuyerOrderIntent(true);
+        if (isset($built['error'])) {
+            $this->sendJsonResponse(json_encode(array('success' => false) + $built['error']));
             return;
         }
-
-        // Buyer-country gate (TWO-40): no point building an intent payload for
-        // an order the payment submit will refuse on the same cart.
-        if (!$this->module->isTwoBuyerCountrySupported($cart)) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Order intent refused - unsupported buyer country ('
-                . $this->module->describeTwoBuyerCountryRefusal($cart) . ')',
-                2
-            );
-            $this->sendJsonResponse(json_encode([
-                'success' => false,
-                'status' => 'buyer_country_not_supported',
-                'error' => $this->module->l('This payment method is not available.')
-            ]));
-            return;
-        }
-
-        $companyData = $this->getCompanyDataWithFallbacks();
-        $companyName = $companyData['company'];
-        $companyId = $companyData['companyid'];
-
-        $this->storeCompanyDataInSession($companyData);
-
-        // An org number is the business identity Two resolves against the
-        // company registry, and it resolves the company NAME from that registry
-        // too - overwriting whatever the plugin sent. So an org number without a
-        // local company name is a complete, usable identity and must not be
-        // blocked here (TWO-25206); the payload path has always sent it that way.
-        if (empty($companyId)) {
-            if (empty($companyName)) {
-                PrestaShopLogger::addLog('TwoPayment: No company name provided - prompting user', 2);
-                $this->sendJsonResponse(json_encode([
-                    'success' => false,
-                    'status' => 'no_company',
-                    'error' => sprintf($this->module->l('To pay with %s, go back to your billing address and enter your company name in the Company field.'), $this->module->getTwoBrandConfig('product_name'))
-                ]));
-                return;
-            }
-
-            PrestaShopLogger::addLog('TwoPayment: Company name exists but no org number - prompting user to search', 2);
-            $this->sendJsonResponse(json_encode([
-                'success' => false,
-                'status' => 'incomplete_company',
-                'error' => sprintf($this->module->l('To pay with %s, go back to your billing address and search for your company name. Select your company from the results to verify your business.'), $this->module->getTwoBrandConfig('product_name'))
-            ]));
-            return;
-        }
-
-        // An org number is the business guard (TWO-24755): enrolled sole traders
-        // carry the synthetic org number their Two registration minted, so they
-        // arrive here as a valid business - there is no account-type selector to
-        // also check. Whether the org number is real is Two's call, made on the
-        // order-intent request itself (TWO-25206).
+        $cart = $built['cart'];
+        $paymentdata = $built['payload'];
 
         try {
-            $address->company = $companyName;
-            $address->companyid = $companyId;
-
-            $paymentdata = $this->module->getTwoIntentOrderData($cart, $customer, $currency, $address);
-
             // TWO-24799: snapshot-dedupe the UX-only intent check. Every checkout
             // update re-runs this handler and the browser then pays a 2.5-3s
             // /v1/order_intent round trip even when no decision input moved. Any
@@ -637,18 +559,142 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
             $this->context->cookie->write();
 
-            // Payload only - the frontend calls the Two API directly.
+            // The payload goes back for display only: the relay rebuilds it rather than take it from the browser.
             $this->sendJsonResponse(json_encode($response));
             return;
         } catch (Exception $e) {
-            PrestaShopLogger::addLog('TwoPayment: Build order intent payload exception - ' . $e->getMessage(), 3);
-            
+            PrestaShopLogger::addLog('TwoPayment: Order intent snapshot exception - ' . $e->getMessage(), 3);
+
             $this->sendJsonResponse(json_encode([
                 'success' => false,
                 'error' => $this->module->l('Failed to build order intent payload')
             ]));
             return;
         }
+    }
+
+    /**
+     * The order-intent payload for the session cart, built here through the
+     * order builder, the postprocessing hook and its gates. Only buyer fields
+     * come from the browser: the company name and number and the address the
+     * buyer picked, each validated (TWO-26092).
+     *
+     * @param bool $persistCompany store the resolved company in the session, as the pre-check does
+     * @return array{cart?:Cart,payload?:array,error?:array} error: the JSON the pre-check answers with
+     */
+    private function buildBuyerOrderIntent($persistCompany)
+    {
+        $invalid = array('status' => 'invalid_request', 'error' => $this->module->l('Invalid cart or customer data'));
+        if (!$this->hasValidBuyerFields()) {
+            PrestaShopLogger::addLog('TwoPayment: Order intent refused - malformed buyer fields', 2);
+            return array('error' => $invalid);
+        }
+
+        $cart = $this->context->cart;
+        $customer = new Customer($cart->id_customer);
+        $currency = new Currency($cart->id_currency);
+
+        // Invoice/billing address is the authoritative company identity source.
+        $addressId = (int)Tools::getValue('id_address_invoice');
+        if (empty($addressId)) {
+            // Older clients may still send delivery id only.
+            $addressId = (int)Tools::getValue('id_address_delivery');
+        }
+        if (empty($addressId)) {
+            $addressId = $cart->id_address_invoice ?: $cart->id_address_delivery;
+        }
+
+        $address = new Address($addressId);
+
+        // The address id comes from the browser, so it must be one of this buyer's own.
+        if ($cart->id_customer == 0 || !Validate::isLoadedObject($customer) || !Validate::isLoadedObject($address)
+            || (int) $address->id_customer !== (int) $cart->id_customer) {
+            PrestaShopLogger::addLog('TwoPayment: Invalid cart, customer, or address data in order intent (address ID: ' . $addressId . ')', 3);
+            return array('error' => array('error' => $invalid['error']));
+        }
+
+        // Buyer-country gate (TWO-40): no point building an intent payload for
+        // an order the payment submit will refuse on the same cart.
+        if (!$this->module->isTwoBuyerCountrySupported($cart)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Order intent refused - unsupported buyer country ('
+                . $this->module->describeTwoBuyerCountryRefusal($cart) . ')',
+                2
+            );
+            return array('error' => array(
+                'status' => 'buyer_country_not_supported',
+                'error' => $this->module->l('This payment method is not available.'),
+            ));
+        }
+
+        $companyData = $this->getCompanyDataWithFallbacks();
+        $companyName = $companyData['company'];
+        $companyId = $companyData['companyid'];
+
+        if ($persistCompany) {
+            $this->storeCompanyDataInSession($companyData);
+        }
+
+        // An org number is the business identity Two resolves against the
+        // company registry, and it resolves the company NAME from that registry
+        // too - overwriting whatever the plugin sent. So an org number without a
+        // local company name is a complete, usable identity and must not be
+        // blocked here (TWO-25206); the payload path has always sent it that way.
+        if (empty($companyId)) {
+            if (empty($companyName)) {
+                PrestaShopLogger::addLog('TwoPayment: No company name provided - prompting user', 2);
+                return array('error' => array(
+                    'status' => 'no_company',
+                    'error' => sprintf($this->module->l('To pay with %s, go back to your billing address and enter your company name in the Company field.'), $this->module->getTwoBrandConfig('product_name')),
+                ));
+            }
+
+            PrestaShopLogger::addLog('TwoPayment: Company name exists but no org number - prompting user to search', 2);
+            return array('error' => array(
+                'status' => 'incomplete_company',
+                'error' => sprintf($this->module->l('To pay with %s, go back to your billing address and search for your company name. Select your company from the results to verify your business.'), $this->module->getTwoBrandConfig('product_name')),
+            ));
+        }
+
+        // An org number is the business guard (TWO-24755): enrolled sole traders
+        // carry the synthetic org number their Two registration minted, so they
+        // arrive here as a valid business - there is no account-type selector to
+        // also check. Whether the org number is real is Two's call, made on the
+        // order-intent request itself (TWO-25206).
+        try {
+            $address->company = $companyName;
+            $address->companyid = $companyId;
+
+            return array('cart' => $cart, 'payload' => $this->module->getTwoIntentOrderData($cart, $customer, $currency, $address));
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Build order intent payload exception - ' . $e->getMessage(), 3);
+
+            return array('error' => array('error' => $this->module->l('Failed to build order intent payload')));
+        }
+    }
+
+    /**
+     * The browser's buyer fields are strings of a sane length with no control
+     * characters; the address ids are whole numbers.
+     *
+     * @return bool
+     */
+    private function hasValidBuyerFields()
+    {
+        foreach (array('company' => 255, 'companyid' => 64) as $field => $max) {
+            $value = Tools::getValue($field, '');
+            if (!is_string($value) || Tools::strlen($value) > $max || preg_match('/[\x00-\x1F\x7F]/', $value)) {
+                return false;
+            }
+        }
+        foreach (array('id_address_invoice', 'id_address_delivery') as $field) {
+            $value = Tools::getValue($field, '');
+            if ((!is_string($value) && !is_int($value)) || !preg_match('/^\d{0,10}$/', (string) $value)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public function ajaxProcessBuildPayload()
@@ -847,6 +893,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
     /**
      * Order-intent decision, relayed server-side. See ajaxProcessCompanySearch().
+     * The payload is the one buildBuyerOrderIntent() builds, never the browser's.
      */
     public function ajaxProcessOrderIntent()
     {
@@ -855,15 +902,27 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        $payload = json_decode((string) Tools::getValue('payload'), true);
-        if (!is_array($payload)) {
-            $this->relayTwoApiResponse(array('http_status' => 400, 'data' => array(
-                'error_code' => 'INVALID_REQUEST',
-            )));
+        if (!$this->module->isTwoOrderIntentPreviewEnabled() || !$this->isPost()) {
+            $this->relayTwoApiResponse(array('http_status' => 400, 'data' => array('error_code' => 'INVALID_REQUEST')));
             return;
         }
 
-        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest('/v1/order_intent', $payload, 'POST'));
+        // Built here from the session cart; a `payload` the browser posts is never read (TWO-26092).
+        $built = $this->buildBuyerOrderIntent(false);
+        if (isset($built['error'])) {
+            $this->relayTwoApiResponse(array('http_status' => 400, 'data' => array(
+                'error_code' => isset($built['error']['status']) ? $built['error']['status'] : 'INVALID_REQUEST',
+                'error_message' => $built['error']['error'],
+            )));
+            return;
+        }
+        // The decision the browser reports next belongs to what Two was actually asked.
+        $this->module->markTwoPendingOrderIntentSnapshot(
+            $this->module->calculateTwoOrderIntentSnapshotHash($built['cart'], $built['payload'])
+        );
+        $this->context->cookie->write();
+
+        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest('/v1/order_intent', $built['payload'], 'POST'));
     }
 
     /**

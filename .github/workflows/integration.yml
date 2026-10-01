@@ -65,6 +65,9 @@ jobs:
       - name: Seed the carrier-less shipping cart
         run: dev/ci/seed-carrierless-cart.sh
 
+      - name: Install the order postprocessing subscriber fixture
+        run: dev/ci/install-order-postprocessing-fixture.sh
+
       - name: Run integration probes
         run: dev/ci/run-integration-probes.sh
 

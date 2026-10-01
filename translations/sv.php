@@ -587,9 +587,12 @@ $_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'den är mer än vad som återstår att återbetala på ordern';
 $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'orderns valuta inte kunde fastställas';
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'leverantören inte godtog den (HTTP %s)';
+$_MODULE['<{twopayment}prestashop>twopayment_d9fc87827359830e1eb23b712a935d76'] = 'hooken för efterbehandling av ordern stoppade den';
 $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] = 'Ordern markerades som återbetald i PrestaShop, men det som återstod att återbetala efter kreditnotorna skickades inte till %1$s, eftersom %2$s. Återbetala resten i %1$ss handlarportal.';
 $_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'ett oväntat fel stoppade den';
 $_MODULE['<{twopayment}prestashop>twopayment_b324ba130c48d915b7f4065f928d9019'] = 'Ögonblicksbilder av avvikelser';
 $_MODULE['<{twopayment}prestashop>twopayment_0fafc015674a68481a377c36125bc110'] = 'Inga ögonblicksbilder av avvikelser har registrerats.';
 $_MODULE['<{twopayment}prestashop>twopayment_a85eba4c6c699122b2bb1387ea4813ad'] = 'Varukorg';
 $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] = 'Ladda ned JSON';
+$_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'Efterbearbetningskroken för ordrar stoppade den här %1$s-begäran, så den skickades inte till %2$s (%3$s). Se modulloggen för mer information.';
+$_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Ändringen av ordern sparades i PrestaShop men skickades inte till fakturaleverantören. Upprepa inte ändringen. Kontakta support.';

@@ -136,7 +136,7 @@ final class TrackingNumberSpec
                 return ['two_order_id' => 'two-order-uuid', 'two_order_reference' => 'ref-1'];
             }
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
             {
                 return ['marker' => 'update-body'];
             }
@@ -205,7 +205,7 @@ final class TrackingNumberSpec
                 return ['two_order_id' => 'two-order-uuid'];
             }
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
             {
                 throw new Exception('Cart is empty or invalid');
             }
@@ -233,7 +233,7 @@ final class TrackingNumberSpec
                 return ['two_order_id' => 'two-order-uuid'];
             }
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
             {
                 return ['gross_amount' => '105.50'];
             }
@@ -264,7 +264,7 @@ final class TrackingNumberSpec
                 return ['two_order_id' => 'two-order-uuid'];
             }
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
             {
                 return ['gross_amount' => '105.50'];
             }

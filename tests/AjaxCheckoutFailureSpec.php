@@ -379,7 +379,7 @@ final class AjaxCheckoutFailureSpec
                 return 'merchant-ajax-1';
             }
 
-            public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null, $syncSurchargeCartLine = true)
+            public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null, $syncSurchargeCartLine = true, $trigger = 'checkout')
             {
                 if ($this->payloadException !== null) {
                     throw $this->payloadException;

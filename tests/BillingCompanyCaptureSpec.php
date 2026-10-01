@@ -150,6 +150,7 @@ final class BillingCompanyCaptureSpec
         ];
         foreach ([self::SHIPPING_ADDRESS_ID => 'Shipping Trading Ltd', self::BILLING_ADDRESS_ID => 'Billing Trading Ltd'] as $id => $company) {
             StubStore::$addresses[$id] = [
+                'id_customer' => self::CUSTOMER_ID,
                 'id_country' => self::COUNTRY_ID,
                 'company' => $company,
                 // The plugin never writes the organisation number onto the
