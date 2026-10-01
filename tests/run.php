@@ -318,7 +318,7 @@ final class OrderBuilderSpec
             'link_rewrite' => 'smart-tv',
             'name' => 'Smart TV',
             'description_short' => 'Test description',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '1234567890123',
             'upc' => '012345678905',
             'total' => 100.00,
@@ -1757,7 +1757,7 @@ final class OrderBuilderSpec
 
         $lineItems = [
             [
-                'name' => 'TV LG 4K UHD',
+                'name' => 'TV Acme 4K UHD',
                 'description' => 'Product',
                 'gross_amount' => '1609.76',
                 'net_amount' => '1330.38',
@@ -1771,7 +1771,7 @@ final class OrderBuilderSpec
                 'image_url' => '',
                 'product_page_url' => '',
                 'type' => 'PHYSICAL',
-                'details' => ['brand' => 'LG', 'barcodes' => [], 'categories' => []],
+                'details' => ['brand' => 'Acme', 'barcodes' => [], 'categories' => []],
             ],
             [
                 'name' => 'Envio gratis (+1 mas)',
@@ -2280,10 +2280,10 @@ final class OrderBuilderSpec
 
         StubStore::$cartProducts[491] = [[
             'id_product' => 777,
-            'link_rewrite' => 'tv-lg',
-            'name' => 'TV LG 4K UHD',
+            'link_rewrite' => 'tv-acme',
+            'name' => 'TV Acme 4K UHD',
             'description_short' => 'TV',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '',
             'upc' => '',
             'total' => 1320.66,
@@ -3418,10 +3418,10 @@ final class OrderBuilderSpec
 
         StubStore::$cartProducts[6101] = [[
             'id_product' => 9101,
-            'link_rewrite' => 'tv-lg-4k',
-            'name' => 'TV LG 4K UHD, SmartTV con IA, 164 cm (65")',
+            'link_rewrite' => 'tv-acme-4k',
+            'name' => 'TV Acme 4K UHD, SmartTV con IA, 164 cm (65")',
             'description_short' => 'TV',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '',
             'upc' => '',
             'total' => 1320.66,
@@ -3549,10 +3549,10 @@ final class OrderBuilderSpec
 
         StubStore::$cartProducts[6102] = [[
             'id_product' => 9201,
-            'link_rewrite' => 'lg-projector',
-            'name' => 'LG CineBeam LED Projector with SmartTV WebOS',
+            'link_rewrite' => 'acme-projector',
+            'name' => 'Acme LED Projector with SmartTV',
             'description_short' => 'Projector',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '',
             'upc' => '',
             'total' => 548.53,
@@ -3640,10 +3640,10 @@ final class OrderBuilderSpec
 
         StubStore::$cartProducts[6103] = [[
             'id_product' => 9301,
-            'link_rewrite' => 'lg-xboom',
-            'name' => 'LG XBOOM High Voltage Speaker, 1000W',
+            'link_rewrite' => 'acme-speaker',
+            'name' => 'Acme High Voltage Speaker, 1000W',
             'description_short' => 'Speaker',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '',
             'upc' => '',
             'total' => 409.24,

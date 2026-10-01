@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * TWO-25161 - shipping-cost sourcing must not depend on a Carrier object.
  *
- * A merchant who prices shipping through symbolic "logistics carriers" leaves
+ * A merchant who prices shipping outside PrestaShop's carrier table leaves
  * `id_carrier = 0` on a cart that still carries a real shipping cost. The old
  * builder keyed the SHIPPING_FEE line off `new Carrier($cart->id_carrier)`, so
  * that cost silently vanished from the payload and the cart-vs-lines
@@ -118,7 +118,7 @@ final class ShippingCostSourcingSpec
         StubStore::$countries[34] = 'ES';
         StubStore::$addresses[$addressId] = [
             'id_country' => 34,
-            'company' => 'LOGISTICS SHOP',
+            'company' => 'CARRIERLESS SHOP',
             'companyid' => 'E20468708',
             'address1' => 'Calle Uno 1',
             'city' => 'Madrid',
@@ -138,8 +138,8 @@ final class ShippingCostSourcingSpec
     {
         StubStore::$cartProducts[$cart->id] = [[
             'id_product' => $productId,
-            'link_rewrite' => 'logistics-product',
-            'name' => 'Logistics Product',
+            'link_rewrite' => 'carrierless-product',
+            'name' => 'Carrierless Product',
             'description_short' => 'Product',
             'manufacturer_name' => 'ACME',
             'ean13' => '',

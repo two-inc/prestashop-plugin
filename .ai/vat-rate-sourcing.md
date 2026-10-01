@@ -69,7 +69,7 @@ PrestaShop-authoritative total by largest-remainder cent distribution
 
 PrestaShop declares shipping VAT on the carrier row (`carrier_tax_rules_group_shop`) and
 nowhere else — there is no shop-level shipping group. A shop pricing shipping outside the
-carrier table (custom logistics, `id_carrier = 0`, which makes core discard the whole
+carrier table (carrier-less shipping, `id_carrier = 0`, which makes core discard the whole
 delivery-option list) has no core row to declare it on. `resolveTwoCartShippingRateClasses()`
 decides where the rate comes from (TWO-26117):
 
