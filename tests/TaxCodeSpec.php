@@ -204,6 +204,7 @@ final class TaxCodeSpec
             ['123456789', 'gr', 'EL123456789', 'normalise: an unprefixed number in Greece gains EL'],
             ['123456789', '', '123456789', 'normalise: with no address country an unprefixed number stays unprefixed'],
             ['123456789', 'MC', 'FR123456789', 'normalise: an unprefixed number in Monaco gains FR'],
+            ["DE\u{00A0}123\t456\n789", 'FR', 'DE123456789', 'normalise: tabs, newlines and non-breaking spaces are stripped too'],
             ['1A23', 'NL', 'NL1A23', 'normalise: a number whose first two characters are not both letters gains the prefix'],
         ];
     }
