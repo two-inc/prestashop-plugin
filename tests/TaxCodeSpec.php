@@ -476,7 +476,7 @@ final class TaxCodeSpec
         $module = new TwopaymentTestHarness();
         $method = new ReflectionMethod(Twopayment::class, 'applyTwoTaxCodes');
 
-        return $method->invoke($module, $lines, $keys, $delivery, $invoice, $buyer);
+        return $method->invoke($module, $lines, $keys, $delivery, $invoice, $buyer, $invoice);
     }
 
     private static function seed(string $merchant, string $cart, string $destCountry, string $destPostcode, string $buyerCountry, array $map, string $rate): void
