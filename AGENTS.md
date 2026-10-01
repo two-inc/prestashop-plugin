@@ -219,6 +219,8 @@ builders, before the postprocessing hook, so a subscriber can change it. The REA
   `ES_IVA_EXEMPT_OTHER`, `ES_IGIC_ZERO` or `ES_IPSI_ZERO`.
 - **Only 0% lines are touched.** Every other payload, and every payload of an unmapped
   non-Spanish merchant, stays byte-identical; `TaxCodeSpec` holds goldens for that.
+- **The mapping is read only for a 0% line**, and an unreadable one withholds Two in
+  `hookPaymentOptions()` rather than failing the order after submit.
 - **Placement's codes win on update.** They live in `two_declared_rates` under `tax_codes`,
   written only when a code resolved, so an order with none keeps its row byte-identical.
 - The line builder tags every line it appends (`tagTwoLineTaxKeys()`); a new kind of line needs
