@@ -407,6 +407,8 @@ class Twopayment extends PaymentModule
 
     /** @var string the hook trigger of the order_update rebuilt, not sent, to split a Refunded remainder by rate */
     const TRIGGER_REFUND_REMAINDER = 'refund_remainder';
+    /** @var float how far a refund subtotal's tax may stray from taxable x rate and still be itemised: half of Two's 1.00 tolerance, leaving room for per-line cent rounding (TWO-26143) */
+    const TWO_REFUND_LINE_TAX_MARGIN = 0.50;
 
     /** @var array|null the charge rates the last create payload declared, persisted on the Two row for updates (TWO-26085) */
     private $twoDeclaredChargeRates = null;
@@ -6013,9 +6015,10 @@ class Twopayment extends PaymentModule
                 PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - a negative amount ' . $gross . ' at rate ' . $subtotal['tax_rate'] . ' cannot be itemised; sending the refund without line items', 3);
                 return null;
             }
-            if ($rate == 0.0 && round((float)$subtotal['tax_amount'], 2) != 0.0) {
-                // A 0% line carries no tax, so lines could not describe it, and Two would refuse lines that disagree with the subtotal.
-                PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - tax ' . $subtotal['tax_amount'] . ' refunded at 0% cannot be itemised; sending the refund without line items', 3);
+            if (abs(round((float)$subtotal['tax_amount'], 2) - round((float)$subtotal['taxable_amount'] * $rate, 2)) > self::TWO_REFUND_LINE_TAX_MARGIN) {
+                // Lines carry tax at their rate, so they could not describe this subtotal, and with lines Two checks each
+                // rate's tax against its taxable amount: the refund would be refused where it is accepted without lines.
+                PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - tax ' . $subtotal['tax_amount'] . ' on ' . $subtotal['taxable_amount'] . ' is not the rate ' . $subtotal['tax_rate'] . ' and cannot be itemised; sending the refund without line items', 3);
                 return null;
             }
             $by_kind = array();
@@ -6346,7 +6349,7 @@ class Twopayment extends PaymentModule
                 $cart = new Cart((int)(isset($order->id_cart) ? $order->id_cart : 0));
                 $groupId = Validate::isLoadedObject($cart) ? $this->getTwoDefaultShippingTaxRulesGroupId($cart) : null;
                 if ($groupId !== null) {
-                    $default = array(array('rate' => $this->normalizeTwoTaxRateToPercentPrecision($this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart)), 'net_weight' => 1.0));
+                    $default = array(array('rate' => $this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart), 'net_weight' => 1.0));
                     if ($this->doTwoRateClassesReconcile($default, $net, $tax)) {
                         return $default;
                     }
