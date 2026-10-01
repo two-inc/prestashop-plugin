@@ -95,6 +95,11 @@ final class RefundSpec
             [[self::line(25.00, 30.00, '20.000'), self::line(0.0, 0.0, '10.000')], [30.00], 0.0, 0.0, 0.0, [self::twoLine('p1', 'PHYSICAL', '0.2', '100.00')], [['p1', '25.00', '5.00', '30.00']], 'a rate refunding nothing: no line, and no subtotal'],
             [[self::line(50.00, 50.00, '0.000')], [50.00], 0.0, 0.0, 0.0, ['lines' => $es0, 'refunds' => [self::twoRefund('-100.00', ['p1' => '-100.00'])]], [['p2', '50.00', '0.00', '50.00']], 'a line already refunded in full takes nothing'],
             [[self::line(30.00, 30.00, '0.000')], [30.00], 0.0, 0.0, 0.0, ['lines' => [$es0[0]], 'refunds' => [self::twoRefund('-80.00', ['p1' => '-80.00'])]], null, 'more than the rate\'s lines have left: sent without lines'],
+            [[self::line(30.00, 30.00, '0.000')], [30.00], 5.00, 5.00, 0.0, ['lines' => [$es0[0], self::twoLine('s1', 'SHIPPING_FEE', '0', '20.00')], 'refunds' => [self::twoRefund('-80.00', ['p1' => '-80.00'])]], [['p1', '20.00', '0.00', '20.00'], ['s1', '15.00', '0.00', '15.00']], 'a line is never credited more than it has left: the excess goes to the rate\'s other lines'],
+            [[self::line(30.00, 30.00, '0.000')], [30.00], 0.0, 0.0, 0.0, ['lines' => [$es0[0], self::twoLine('s1', 'SHIPPING_FEE', '0', '20.00')], 'refunds' => [self::twoRefund('-80.00', ['p1' => '-80.00'])]], [['p1', '20.00', '0.00', '20.00'], ['s1', '10.00', '0.00', '10.00']], 'a capped kind\'s excess goes to a line of another kind'],
+            [[], [0.0], 11.50, 10.00, 14.975, [self::twoLine('s1', 'SHIPPING_FEE', '0.1498', '20.00')], [['s1', '10.00', '1.50', '11.50']], 'a combined carrier rate rounded as placement rounds it matches the shipping line'],
+            [[self::line(30.00, 30.00, '0.000')], [30.00], 0.0, 0.0, 0.0, ['lines' => [self::twoLine('p1', 'PHYSICAL', '0', '100.00', null)], 'country' => 'NO'], [['p1', '30.00', '0.00', '30.00']], 'a known non-Spanish merchant\'s uncoded 0% line still takes its share'],
+            [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2, '{"shipping":[],"shipping_rate_provided":false}'], 12.50, 10.00, 0.0, [self::twoLine('p1', 'PHYSICAL', '0.2', '100.00'), self::twoLine('s1', 'SHIPPING_FEE', '0', '20.00')], null, 'tax refunded at 0%: sent without lines, as before'],
         ];
 
         foreach ($cases as $i => [$lines, $fields, $shipIncl, $shipExcl, $carrierRate, $twoLines, $expected, $desc]) {
@@ -102,9 +107,11 @@ final class RefundSpec
             PrestaShopLogger::$logs = [];
             StubStore::$dbExecuteSResponses = [$lines];
             $twoOrder = self::fulfilledOrder(1000.00, $twoLines['refunds'] ?? [], 'EUR');
+            $country = $twoLines['country'] ?? null;
             $twoLines = $twoLines['lines'] ?? $twoLines;
             $twoOrder['line_items'] = $twoLines;
-            $module = self::makeModule($twoOrder);
+            $module = self::makeModule($twoOrder, ['two_order_id' => 'two-order-uuid', 'two_declared_rates' => $fields[4] ?? null]);
+            $module->merchantCountry = $country;
             $module->readSlipLinesFromDb = true;
             $order = self::makeOrder();
             $order->carrier_tax_rate = $carrierRate;
@@ -210,6 +217,7 @@ final class RefundSpec
             }, $payload['line_items']) : null;
             TinyAssert::same($expected, $got, $desc . ': got ' . json_encode($got));
             TinyAssert::same('SENT', $module->refundRows[906]['status'], $desc . ': recorded SENT');
+            TinyAssert::count($expected === null ? 1 : 0, $module->privateNotes, $desc . ': the order notes a refund sent without lines');
             TinyAssert::same($recorded, (string) $module->refundRows[906]['amount'], $desc . ': recorded amount');
         }
         Hook::$subscribers = [];
@@ -302,6 +310,14 @@ final class RefundSpec
             public function setTwoOrderPaymentData($id_order, $payment_data)
             {
                 return true;
+            }
+
+            /** The merchant's country; null reads it as the module does. */
+            public ?string $merchantCountry = null;
+
+            public function getTwoMerchantCountry()
+            {
+                return $this->merchantCountry ?? parent::getTwoMerchantCountry();
             }
 
             /** @var string[] the order's private notes */
