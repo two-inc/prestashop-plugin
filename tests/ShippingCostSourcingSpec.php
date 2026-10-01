@@ -118,7 +118,7 @@ final class ShippingCostSourcingSpec
         StubStore::$countries[34] = 'ES';
         StubStore::$addresses[$addressId] = [
             'id_country' => 34,
-            'company' => 'LOGISTICS SHOP',
+            'company' => 'CARRIERLESS SHOP',
             'companyid' => 'E20468708',
             'address1' => 'Calle Uno 1',
             'city' => 'Madrid',
@@ -138,8 +138,8 @@ final class ShippingCostSourcingSpec
     {
         StubStore::$cartProducts[$cart->id] = [[
             'id_product' => $productId,
-            'link_rewrite' => 'logistics-product',
-            'name' => 'Logistics Product',
+            'link_rewrite' => 'carrierless-product',
+            'name' => 'Carrierless Product',
             'description_short' => 'Product',
             'manufacturer_name' => 'ACME',
             'ean13' => '',
