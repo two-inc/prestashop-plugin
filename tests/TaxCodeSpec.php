@@ -162,6 +162,8 @@ final class TaxCodeSpec
             ['ES', 'goods', 'FR', 'FR', 'fr 123.456-789', '', [], [self::INTRA, self::INTRA], 'FR123456789', 'a VAT number is stripped of spaces, dots and hyphens and upper-cased'],
             ['ES', 'goods', 'FR', 'FR', '123456789', '', [], [self::INTRA, self::INTRA], 'FR123456789', 'an unprefixed VAT number gains the invoice country'],
             ['ES', 'goods', 'FR', 'DE', ' .- ', '', [], [null, null], null, 'a VAT number of separators only is no number'],
+            ['ES', 'goods', 'FR', 'MC', 'MC12345678901', '', [], [null, null], 'MC12345678901', 'a Monaco buyer with an MC-prefixed number: MC is no VAT prefix, nothing derived'],
+            ['ES', 'goods', 'FR', 'MC', '12345678901', '', [], [self::INTRA, self::INTRA], 'FR12345678901', 'an unprefixed Monaco number gains FR, the prefix Monaco businesses hold'],
             ['ES', 'goods', 'FR', 'DE', '', 'DE123456789', [], [null, null], null, 'the delivery address VAT number is never a source: only the invoice address'],
             ['ES', 'goods', 'FR', 'DE', 'DE111111111', 'NL222222222', [], [self::INTRA, self::INTRA], 'DE111111111', 'the invoice address VAT number wins over the delivery one'],
             ['ES', 'goods', 'FR', 'DE', '', '', [$lamp => self::ART20], [self::ART20, null], null, 'with no VAT number a mapping still wins, and the unmapped shipping derives nothing'],
@@ -201,6 +203,7 @@ final class TaxCodeSpec
             ['FR 123.456-789', 'DE', 'FR123456789', 'normalise: a prefixed number keeps its own prefix'],
             ['123456789', 'gr', 'EL123456789', 'normalise: an unprefixed number in Greece gains EL'],
             ['123456789', '', '123456789', 'normalise: with no address country an unprefixed number stays unprefixed'],
+            ['123456789', 'MC', 'FR123456789', 'normalise: an unprefixed number in Monaco gains FR'],
             ['1A23', 'NL', 'NL1A23', 'normalise: a number whose first two characters are not both letters gains the prefix'],
         ];
     }
