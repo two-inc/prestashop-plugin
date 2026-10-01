@@ -5905,6 +5905,7 @@ require __DIR__ . '/ReconciliationDriftMessageSpec.php';
 require __DIR__ . '/OrderPostprocessingSpec.php';
 require __DIR__ . '/ShippingRateControlSpec.php';
 require __DIR__ . '/DiscrepancySnapshotSpec.php';
+require __DIR__ . '/TaxCodeSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5954,6 +5955,7 @@ $tests = [
     'TwoAnchorOnlyHtmlSpec::runAll' => [TwoAnchorOnlyHtmlSpec::class, 'runAll'],
     'PaymentTileAboutControlSpec::runAll' => [PaymentTileAboutControlSpec::class, 'runAll'],
     'DiscrepancySnapshotSpec::runAll' => [DiscrepancySnapshotSpec::class, 'runAll'],
+    'TaxCodeSpec::runAll' => [TaxCodeSpec::class, 'runAll'],
     'ConfigFallbackSpec::runAll' => [ConfigFallbackSpec::class, 'runAll'],
     'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],
     'CompanyRefusalMessageSpec::runAll' => [CompanyRefusalMessageSpec::class, 'runAll'],

@@ -187,6 +187,27 @@ Notes:
 - Selecting a group that is later deleted is treated as "not set", and the shop log says so.
 - Every order that actually uses the fallback writes a warning to the shop log naming the group, its id and the resolved rate, e.g. `assuming the configured Default shipping tax code "IVA 21%" (tax_rules_group=12, rate=21%)`. If you never see that line, the fallback is not being used.
 
+### Tax codes for 0% lines
+
+Two requires a `tax_code` on every line at a 0% rate for a Spanish merchant, on order create, order update and refunds alike. The module sends one on each 0% line it builds (products, shipping, gift wrapping, the buyer fee, ecotax and discount lines) in two ways. **The plugin never refuses an order over a tax code; the API does.** A line the module cannot code goes out without one, and Two's API validates what arrives. The module never picks `ES_IVA_EXEMPT_OTHER`, `ES_IGIC_ZERO` or `ES_IPSI_ZERO` itself, and never changes a rate. Lines at any other rate carry no code and are sent exactly as before.
+
+**1. The mapping.** In **Module Configuration → Order management → Tax codes for 0% lines**, each of the shop's tax rules groups has a dropdown of the codes Two lists for the merchant's country (`GET /v1/tax_codes/<country>`, cached for a day), plus **(none)**, the default. A 0% line taxed by a mapped group carries its code, for any merchant country. A product line maps by the product's tax rules group; shipping by the group that supplied its rate: the Default shipping tax code's, or the carriers' when every carrier in the selected delivery option declares the same group; wrapping by the gift-wrapping group; ecotax by the ecotax group; the buyer fee by its own group. A "No tax" carrier, no carrier, or carriers declaring different groups give no group, so only the derivation applies. Codes that need a reason from the caller (today only `ES_IVA_EXEMPT_OTHER`) are not offered: a merchant who needs one sets the code and its `tax_exemption_reason_code` in the order postprocessing hook. If the list cannot be fetched, the section shows why (retrying at most every five minutes), and saved mappings keep working at checkout. A stored mapping the form could not have written withholds the payment method at checkout, and the configuration health panel names it; an order with no 0% line never reads the mapping.
+
+**2. The derivation**, for a Spanish merchant and an unmapped line. A product is a service when it is virtual, and goods otherwise; a shipping, wrapping, fee or discount line counts as goods when the order holds any physical product, and as a service otherwise. Goods follow the delivery address (the invoice address when there is none); services follow the buyer company's country, the country the module sends as `buyer.company.country_prefix`.
+
+| Line | Condition | Code |
+|---|---|---|
+| Goods | Delivered outside the EU (Monaco counts as France) | `ES_IVA_EXPORT` |
+| Goods | Delivered to the Canary Islands (postcodes 35, 38), Ceuta (51) or Melilla (52) | `ES_IVA_EXPORT` |
+| Goods | Delivered to another EU country, for a buyer company in another EU country (not necessarily the same one) | `ES_IVA_INTRA_COMMUNITY` |
+| Goods | Anything else: mainland Spain or the Balearics, or an EU destination with a Spanish buyer | none |
+| Service | Buyer company in another EU country | `ES_IVA_REVERSE_CHARGE` |
+| Service | Buyer company in Spain or outside the EU | none |
+
+A 0% discount line takes the code its order's other 0% lines share; when they do not share one, it follows the goods like a charge. The code is set while the module builds the payload, so a postprocessing hook subscriber sees it and may change it.
+
+Placement records the codes it resolved on the order's Two row. An order update sends those, not what today's mapping or addresses would give; a line placement did not code (a product added in an admin edit, or an order placed before this feature) is resolved when the update is built. Refunds send no line items (a full refund copies the order's lines at Two, a partial one sends an amount and tax subtotals), so they need no code from the module.
+
 ### Merchant profile refresh
 
 Your offerable payment terms, buyer-surcharge rates, minimum order value and default term are read from Two's merchant record and cached in the shop's configuration. Checkout and admin pages read that cache and never block on the API.
@@ -668,6 +689,7 @@ container is created.
 - `/v1/order_intent` - Order Intent check
 - `/v1/order` - Order creation
 - `/v1/order/{id}` - Order updates, refunds
+- `/v1/tax_codes/{country}` - The tax codes offered in the 0% line mapping
 - `/v1/invoice/{id}/upload` - Invoice upload initiation
 - `/companies/v2/company` - Company search
 

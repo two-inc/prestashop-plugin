@@ -205,6 +205,27 @@ path and nothing selects a second file, so every value in it - the payment tile'
 replace the file. Building per-brand resolution is TWO-24746 and has not been done here; do not
 improvise one for a single key.
 
+## Tax Codes On 0% Lines Are An Aid, Never A Gate
+
+TWO-24877. Two requires a `tax_code` on every 0% line of a Spanish merchant's order.
+`TwoTaxCodeResolver` decides it and `applyTwoTaxCodes()` applies it in the create and update
+builders, before the postprocessing hook, so a subscriber can change it. The README section
+"Tax codes for 0% lines" is the specification, table included.
+
+- **Never refuse and never coerce.** An uncodable line goes out without a code and Two's API
+  decides. Do not add a module-side refusal, a fallback code or a rate change: the Spanish
+  canonical-rate fallback this module once had was exactly that failure mode, and it is gone.
+- **The merchant's mapping wins, then the derivation, then nothing.** Never derive
+  `ES_IVA_EXEMPT_OTHER`, `ES_IGIC_ZERO` or `ES_IPSI_ZERO`.
+- **Only 0% lines are touched.** Every other payload, and every payload of an unmapped
+  non-Spanish merchant, stays byte-identical; `TaxCodeSpec` holds goldens for that.
+- **The mapping is read only for a 0% line**, and an unreadable one withholds Two in
+  `hookPaymentOptions()` rather than failing the order after submit.
+- **Placement's codes win on update.** They live in `two_declared_rates` under `tax_codes`,
+  written only when a code resolved, so an order with none keeps its row byte-identical.
+- The line builder tags every line it appends (`tagTwoLineTaxKeys()`); a new kind of line needs
+  a descriptor of its own, or it is resolved as an order-level charge.
+
 ## Company Search: This Module's Own Implementation
 
 `views/js/modules/TwoCompanySearch.js` is this module's own panel. The Magento and

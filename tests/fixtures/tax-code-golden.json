@@ -1,0 +1,446 @@
+{
+    "goods-eu-dest-es-buyer": {
+        "gross_amount": "129.00",
+        "net_amount": "129.00",
+        "currency": "EUR",
+        "discount_amount": "0.00",
+        "discount_rate": "0",
+        "invoice_type": "FUNDED_INVOICE",
+        "tax_amount": "0.00",
+        "buyer": {
+            "company": {
+                "company_name": "Hook Shop SL",
+                "country_prefix": "ES",
+                "organization_number": "B12345678",
+                "website": ""
+            },
+            "representative": {
+                "email": "buyer@example.com",
+                "first_name": "Pia",
+                "last_name": "Sol",
+                "phone_number": "666666601"
+            }
+        },
+        "buyer_department": "",
+        "buyer_project": "",
+        "merchant_additional_info": "",
+        "merchant_order_id": "merchant-attempt-9701",
+        "merchant_reference": "PINNED",
+        "merchant_urls": {
+            "merchant_confirmation_url": "https://shop.local/confirm",
+            "merchant_cancel_order_url": "https://shop.local/cancel",
+            "merchant_edit_order_url": "",
+            "merchant_order_verification_failed_url": "",
+            "merchant_invoice_url": "",
+            "merchant_shipping_document_url": ""
+        },
+        "billing_address": {
+            "city": "Madrid",
+            "country": "ES",
+            "organization_name": "Hook Shop SL",
+            "postal_code": "28001",
+            "region": "",
+            "street_address": "Calle Uno 1"
+        },
+        "shipping_address": {
+            "city": "Madrid",
+            "country": "FR",
+            "organization_name": "Hook Shop SL",
+            "postal_code": "75001",
+            "region": "",
+            "street_address": "Calle Uno 1"
+        },
+        "shipping_details": {
+            "carrier_name": "Courier",
+            "tracking_number": "",
+            "expected_delivery_date": "PINNED"
+        },
+        "recurring": false,
+        "order_note": "",
+        "line_items": [
+            {
+                "name": "Lamp",
+                "description": "Lamp",
+                "gross_amount": "100.00",
+                "net_amount": "100.00",
+                "discount_amount": "0.00",
+                "tax_amount": "0.00",
+                "tax_class_name": "VAT 0.00%",
+                "tax_rate": "0",
+                "unit_price": "100.00",
+                "quantity": 1,
+                "quantity_unit": "pcs",
+                "image_url": "",
+                "product_page_url": "https://shop.local/product/9721",
+                "type": "PHYSICAL",
+                "details": {
+                    "brand": "ACME",
+                    "barcodes": [],
+                    "categories": [
+                        "General"
+                    ]
+                }
+            },
+            {
+                "name": "Courier",
+                "description": "Shipping cost for order",
+                "gross_amount": "29.00",
+                "net_amount": "29.00",
+                "discount_amount": "0.00",
+                "tax_amount": "0.00",
+                "tax_class_name": "VAT 0.00%",
+                "tax_rate": "0",
+                "unit_price": "29.00",
+                "quantity": 1,
+                "quantity_unit": "pcs",
+                "image_url": "",
+                "product_page_url": "",
+                "type": "SHIPPING_FEE"
+            }
+        ],
+        "terms": {
+            "type": "NET_TERMS",
+            "duration_days": 0
+        },
+        "tax_subtotals": [
+            {
+                "tax_rate": 0,
+                "taxable_amount": "129.00",
+                "tax_amount": "0.00"
+            }
+        ]
+    },
+    "goods-domestic": {
+        "gross_amount": "129.00",
+        "net_amount": "129.00",
+        "currency": "EUR",
+        "discount_amount": "0.00",
+        "discount_rate": "0",
+        "invoice_type": "FUNDED_INVOICE",
+        "tax_amount": "0.00",
+        "buyer": {
+            "company": {
+                "company_name": "Hook Shop SL",
+                "country_prefix": "FR",
+                "organization_number": "B12345678",
+                "website": ""
+            },
+            "representative": {
+                "email": "buyer@example.com",
+                "first_name": "Pia",
+                "last_name": "Sol",
+                "phone_number": "666666601"
+            }
+        },
+        "buyer_department": "",
+        "buyer_project": "",
+        "merchant_additional_info": "",
+        "merchant_order_id": "merchant-attempt-9701",
+        "merchant_reference": "PINNED",
+        "merchant_urls": {
+            "merchant_confirmation_url": "https://shop.local/confirm",
+            "merchant_cancel_order_url": "https://shop.local/cancel",
+            "merchant_edit_order_url": "",
+            "merchant_order_verification_failed_url": "",
+            "merchant_invoice_url": "",
+            "merchant_shipping_document_url": ""
+        },
+        "billing_address": {
+            "city": "Madrid",
+            "country": "FR",
+            "organization_name": "Hook Shop SL",
+            "postal_code": "28001",
+            "region": "",
+            "street_address": "Calle Uno 1"
+        },
+        "shipping_address": {
+            "city": "Madrid",
+            "country": "ES",
+            "organization_name": "Hook Shop SL",
+            "postal_code": "28001",
+            "region": "",
+            "street_address": "Calle Uno 1"
+        },
+        "shipping_details": {
+            "carrier_name": "Courier",
+            "tracking_number": "",
+            "expected_delivery_date": "PINNED"
+        },
+        "recurring": false,
+        "order_note": "",
+        "line_items": [
+            {
+                "name": "Lamp",
+                "description": "Lamp",
+                "gross_amount": "100.00",
+                "net_amount": "100.00",
+                "discount_amount": "0.00",
+                "tax_amount": "0.00",
+                "tax_class_name": "VAT 0.00%",
+                "tax_rate": "0",
+                "unit_price": "100.00",
+                "quantity": 1,
+                "quantity_unit": "pcs",
+                "image_url": "",
+                "product_page_url": "https://shop.local/product/9721",
+                "type": "PHYSICAL",
+                "details": {
+                    "brand": "ACME",
+                    "barcodes": [],
+                    "categories": [
+                        "General"
+                    ]
+                }
+            },
+            {
+                "name": "Courier",
+                "description": "Shipping cost for order",
+                "gross_amount": "29.00",
+                "net_amount": "29.00",
+                "discount_amount": "0.00",
+                "tax_amount": "0.00",
+                "tax_class_name": "VAT 0.00%",
+                "tax_rate": "0",
+                "unit_price": "29.00",
+                "quantity": 1,
+                "quantity_unit": "pcs",
+                "image_url": "",
+                "product_page_url": "",
+                "type": "SHIPPING_FEE"
+            }
+        ],
+        "terms": {
+            "type": "NET_TERMS",
+            "duration_days": 0
+        },
+        "tax_subtotals": [
+            {
+                "tax_rate": 0,
+                "taxable_amount": "129.00",
+                "tax_amount": "0.00"
+            }
+        ]
+    },
+    "non-es-unmapped": {
+        "gross_amount": "129.00",
+        "net_amount": "129.00",
+        "currency": "EUR",
+        "discount_amount": "0.00",
+        "discount_rate": "0",
+        "invoice_type": "FUNDED_INVOICE",
+        "tax_amount": "0.00",
+        "buyer": {
+            "company": {
+                "company_name": "Hook Shop SL",
+                "country_prefix": "DE",
+                "organization_number": "B12345678",
+                "website": ""
+            },
+            "representative": {
+                "email": "buyer@example.com",
+                "first_name": "Pia",
+                "last_name": "Sol",
+                "phone_number": "666666601"
+            }
+        },
+        "buyer_department": "",
+        "buyer_project": "",
+        "merchant_additional_info": "",
+        "merchant_order_id": "merchant-attempt-9701",
+        "merchant_reference": "PINNED",
+        "merchant_urls": {
+            "merchant_confirmation_url": "https://shop.local/confirm",
+            "merchant_cancel_order_url": "https://shop.local/cancel",
+            "merchant_edit_order_url": "",
+            "merchant_order_verification_failed_url": "",
+            "merchant_invoice_url": "",
+            "merchant_shipping_document_url": ""
+        },
+        "billing_address": {
+            "city": "Madrid",
+            "country": "DE",
+            "organization_name": "Hook Shop SL",
+            "postal_code": "28001",
+            "region": "",
+            "street_address": "Calle Uno 1"
+        },
+        "shipping_address": {
+            "city": "Madrid",
+            "country": "US",
+            "organization_name": "Hook Shop SL",
+            "postal_code": "10001",
+            "region": "",
+            "street_address": "Calle Uno 1"
+        },
+        "shipping_details": {
+            "carrier_name": "Courier",
+            "tracking_number": "",
+            "expected_delivery_date": "PINNED"
+        },
+        "recurring": false,
+        "order_note": "",
+        "line_items": [
+            {
+                "name": "Lamp",
+                "description": "Lamp",
+                "gross_amount": "100.00",
+                "net_amount": "100.00",
+                "discount_amount": "0.00",
+                "tax_amount": "0.00",
+                "tax_class_name": "VAT 0.00%",
+                "tax_rate": "0",
+                "unit_price": "100.00",
+                "quantity": 1,
+                "quantity_unit": "pcs",
+                "image_url": "",
+                "product_page_url": "https://shop.local/product/9721",
+                "type": "PHYSICAL",
+                "details": {
+                    "brand": "ACME",
+                    "barcodes": [],
+                    "categories": [
+                        "General"
+                    ]
+                }
+            },
+            {
+                "name": "Courier",
+                "description": "Shipping cost for order",
+                "gross_amount": "29.00",
+                "net_amount": "29.00",
+                "discount_amount": "0.00",
+                "tax_amount": "0.00",
+                "tax_class_name": "VAT 0.00%",
+                "tax_rate": "0",
+                "unit_price": "29.00",
+                "quantity": 1,
+                "quantity_unit": "pcs",
+                "image_url": "",
+                "product_page_url": "",
+                "type": "SHIPPING_FEE"
+            }
+        ],
+        "terms": {
+            "type": "NET_TERMS",
+            "duration_days": 0
+        },
+        "tax_subtotals": [
+            {
+                "tax_rate": 0,
+                "taxable_amount": "129.00",
+                "tax_amount": "0.00"
+            }
+        ]
+    },
+    "non-zero": {
+        "gross_amount": "150.00",
+        "net_amount": "123.97",
+        "currency": "EUR",
+        "discount_amount": "0.00",
+        "discount_rate": "0",
+        "invoice_type": "FUNDED_INVOICE",
+        "tax_amount": "26.03",
+        "buyer": {
+            "company": {
+                "company_name": "Hook Shop SL",
+                "country_prefix": "ES",
+                "organization_number": "B12345678",
+                "website": ""
+            },
+            "representative": {
+                "email": "buyer@example.com",
+                "first_name": "Pia",
+                "last_name": "Sol",
+                "phone_number": "666666601"
+            }
+        },
+        "buyer_department": "",
+        "buyer_project": "",
+        "merchant_additional_info": "",
+        "merchant_order_id": "merchant-attempt-9701",
+        "merchant_reference": "PINNED",
+        "merchant_urls": {
+            "merchant_confirmation_url": "https://shop.local/confirm",
+            "merchant_cancel_order_url": "https://shop.local/cancel",
+            "merchant_edit_order_url": "",
+            "merchant_order_verification_failed_url": "",
+            "merchant_invoice_url": "",
+            "merchant_shipping_document_url": ""
+        },
+        "billing_address": {
+            "city": "Madrid",
+            "country": "ES",
+            "organization_name": "Hook Shop SL",
+            "postal_code": "28001",
+            "region": "",
+            "street_address": "Calle Uno 1"
+        },
+        "shipping_address": {
+            "city": "Madrid",
+            "country": "US",
+            "organization_name": "Hook Shop SL",
+            "postal_code": "10001",
+            "region": "",
+            "street_address": "Calle Uno 1"
+        },
+        "shipping_details": {
+            "carrier_name": "Courier",
+            "tracking_number": "",
+            "expected_delivery_date": "PINNED"
+        },
+        "recurring": false,
+        "order_note": "",
+        "line_items": [
+            {
+                "name": "Lamp",
+                "description": "Lamp",
+                "gross_amount": "121.00",
+                "net_amount": "100.00",
+                "discount_amount": "0.00",
+                "tax_amount": "21.00",
+                "tax_class_name": "VAT 21.00%",
+                "tax_rate": "0.21",
+                "unit_price": "100.00",
+                "quantity": 1,
+                "quantity_unit": "pcs",
+                "image_url": "",
+                "product_page_url": "https://shop.local/product/9721",
+                "type": "PHYSICAL",
+                "details": {
+                    "brand": "ACME",
+                    "barcodes": [],
+                    "categories": [
+                        "General"
+                    ]
+                }
+            },
+            {
+                "name": "Courier",
+                "description": "Shipping cost for order",
+                "gross_amount": "29.00",
+                "net_amount": "23.97",
+                "discount_amount": "0.00",
+                "tax_amount": "5.03",
+                "tax_class_name": "VAT 21.00%",
+                "tax_rate": "0.21",
+                "unit_price": "23.97",
+                "quantity": 1,
+                "quantity_unit": "pcs",
+                "image_url": "",
+                "product_page_url": "",
+                "type": "SHIPPING_FEE"
+            }
+        ],
+        "terms": {
+            "type": "NET_TERMS",
+            "duration_days": 0
+        },
+        "tax_subtotals": [
+            {
+                "tax_rate": "0.21",
+                "taxable_amount": "123.97",
+                "tax_amount": "26.03"
+            }
+        ]
+    }
+}

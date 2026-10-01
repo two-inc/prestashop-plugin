@@ -51,6 +51,13 @@ final class CheckoutWithholdReasonSpec
                 'Payment option hidden - the saved surcharge method is not recognised',
                 'an unrecognised stored surcharge method names the withhold, not only itself',
             ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue('PS_TWO_TAX_CODE_MAP', '{"not-a-group":"ES_IVA_EXPORT"}');
+                },
+                'Payment option hidden - the saved tax code mapping is unreadable',
+                'TWO-24877: an unreadable tax code mapping withholds Two up front rather than failing the order after submit',
+            ],
         ];
 
         foreach ($cases as [$mutate, $fragment, $description]) {
@@ -207,6 +214,13 @@ final class CheckoutWithholdReasonSpec
                 },
                 'the saved surcharge method is not recognised. Check Surcharge method.',
                 'an unrecognised stored surcharge method names its own admin field',
+            ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue('PS_TWO_TAX_CODE_MAP', '{"not-a-group":"ES_IVA_EXPORT"}');
+                },
+                'the saved tax code mapping is unreadable. Save Tax codes for 0% lines again.',
+                'TWO-24877: an unreadable tax code mapping names its own admin section',
             ],
             [
                 static function ($module): void {
