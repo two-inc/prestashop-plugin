@@ -238,6 +238,11 @@ builders, before the postprocessing hook, so a subscriber can change it. The REA
   Spanish domestic reverse charge only. Services to a buyer outside the EU derive
   `ES_IVA_NON_EU_SERVICES`, and a Spanish buyer counts as outside when its invoice postcode is in
   the Canaries, Ceuta or Melilla (TWO-26151).
+- **Both intra-community codes need the buyer's VAT number** (TWO-26153): the invoice address
+  `vat_number`, normalised by `TwoTaxCodeResolver::normaliseVatNumber()`, whose prefix names an EU
+  member state other than the merchant's country. Without one the line gets no code; never fall
+  through to another code. A Spanish merchant's create alone sends it as `buyer_vat_number`, never
+  for a Spanish buyer company and never as an empty key. It is never an organisation number (TWO-40).
 - **Only 0% lines are touched.** Every other payload, and every payload of an unmapped
   non-Spanish merchant, stays byte-identical; `TaxCodeSpec` holds goldens for that.
 - **The mapping is read only for a 0% line**, and an unreadable one withholds Two in
