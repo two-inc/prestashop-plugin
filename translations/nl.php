@@ -607,3 +607,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_d592cdbb1c59d9ba9f0308c01863437c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1493bd5d032828e60663be984220ad7e'] = 'De opgeslagen bedrijfsgegevens van de checkout konden niet worden verwijderd.';
 $_MODULE['<{twopayment}prestashop>twopayment_b6dd1a9c89709b3b2e3750f24560c7e5'] = 'De opgeslagen bedrijfsgegevens van de checkout konden niet worden geëxporteerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_39e26661e69ccad178937f28d643dabe'] = 'Deze terugbetaling is zonder orderregels verzonden, dus de creditnota is mogelijk niet gespecificeerd.';
+$_MODULE['<{twopayment}prestashop>twopayment_479a96dde61b01e9598837045234d7f5'] = '%1$s heeft deze bestelling al geheel of gedeeltelijk gefactureerd, dus deze wijziging is niet naar %1$s verzonden.';
+$_MODULE['<{twopayment}prestashop>twopayment_ac31926e928b7bcc427d03cde2a2e45e'] = '%1$s accepteert geen wijzigingen meer voor deze bestelling (%2$s), dus deze wijziging is niet naar %1$s verzonden.';

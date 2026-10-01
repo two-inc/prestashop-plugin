@@ -607,3 +607,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_d592cdbb1c59d9ba9f0308c01863437c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1493bd5d032828e60663be984220ad7e'] = 'Det gick inte att radera de sparade företagsuppgifterna från kassan.';
 $_MODULE['<{twopayment}prestashop>twopayment_b6dd1a9c89709b3b2e3750f24560c7e5'] = 'Det gick inte att exportera de sparade företagsuppgifterna från kassan.';
 $_MODULE['<{twopayment}prestashop>twopayment_39e26661e69ccad178937f28d643dabe'] = 'Denna återbetalning skickades utan orderrader, så kreditnotan kanske inte är specificerad.';
+$_MODULE['<{twopayment}prestashop>twopayment_479a96dde61b01e9598837045234d7f5'] = '%1$s har redan fakturerat hela eller delar av den här beställningen, så ändringen skickades inte till %1$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_ac31926e928b7bcc427d03cde2a2e45e'] = '%1$s tar inte längre emot ändringar av den här beställningen (%2$s), så ändringen skickades inte till %1$s.';

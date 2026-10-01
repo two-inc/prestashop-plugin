@@ -143,7 +143,10 @@ final class TrackingNumberSpec
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
-                $this->requests[] = [$endpoint, $payload, $method];
+                // The state lookup before the edit (TWO-26150) is not the edit.
+                if ($method !== 'GET') {
+                    $this->requests[] = [$endpoint, $payload, $method];
+                }
                 return ['http_status' => 200, 'data' => []];
             }
         };
