@@ -37,7 +37,7 @@ class TwoTaxCodeResolver
         'goods' => array(
             array(array('dest_outside_eu'), 'ES_IVA_EXPORT'),
             array(array('dest_es_outside_vat_area'), 'ES_IVA_EXPORT'),
-            array(array('dest_other_eu', 'buyer_other_eu'), 'ES_IVA_INTRA_COMMUNITY_GOODS'),
+            array(array('dest_other_eu', 'buyer_other_eu'), 'ES_IVA_INTRA_COMMUNITY'),
         ),
         'services' => array(
             array(array('buyer_other_eu'), 'ES_IVA_INTRA_COMMUNITY_SERVICES'),

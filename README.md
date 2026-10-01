@@ -199,7 +199,7 @@ Two requires a `tax_code` on every line at a 0% rate for a Spanish merchant, on 
 |---|---|---|
 | Goods | Delivered outside the EU (Monaco counts as France) | `ES_IVA_EXPORT` |
 | Goods | Delivered to the Canary Islands (postcodes 35, 38), Ceuta (51) or Melilla (52) | `ES_IVA_EXPORT` |
-| Goods | Delivered to another EU country, for a buyer company in another EU country (not necessarily the same one) | `ES_IVA_INTRA_COMMUNITY_GOODS` |
+| Goods | Delivered to another EU country, for a buyer company in another EU country (not necessarily the same one) | `ES_IVA_INTRA_COMMUNITY` |
 | Goods | Anything else: mainland Spain or the Balearics, or an EU destination with a Spanish buyer | none |
 | Service | Buyer company in another EU country | `ES_IVA_INTRA_COMMUNITY_SERVICES` |
 | Service | Buyer company outside the EU, or a Spanish buyer invoiced in the Canary Islands, Ceuta or Melilla | `ES_IVA_NON_EU_SERVICES` |
