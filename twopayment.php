@@ -210,7 +210,14 @@ class Twopayment extends PaymentModule
     const API_TIMEOUT_PDF_FETCH = 10; // Tight timeout for synchronous invoice PDF fetches (buyer + admin download clicks)
     const API_TIMEOUT_SURCHARGE_PRICING = 30; // Ceiling for every buyer surcharge quote, gate and charge alike (ABN-546)
     const API_CONNECT_TIMEOUT = 5; // Connection-establishment timeout for all Two API calls
-    
+
+    // The order states and statuses in which the API accepts an edit; it refuses any other (TWO-26150).
+    const TWO_EDITABLE_STATES = array('UNVERIFIED', 'VERIFIED', 'CONFIRMED');
+    const TWO_EDITABLE_STATUSES = array('APPROVED', 'REJECTED', 'DECLINED');
+    // States and status meaning all or part of the order has been invoiced.
+    const TWO_INVOICED_STATES = array('FULFILLING', 'FULFILMENT_NEEDS_MANUAL_RESOLUTION', 'FULFILLED', 'DELIVERED', 'REFUNDED');
+    const TWO_PARTIAL_STATUS = 'PARTIAL';
+
     // Constants for validation tolerances
     const TAX_FORMULA_TOLERANCE = 0.02; // Tolerance for tax formula validation
     const NET_FORMULA_TOLERANCE = 0.05; // Tolerance for net formula validation. Deliberately NOT tightened to 0.02 yet: the emitted unit_price is 2dp while the discount is derived at 6dp, so a legitimate high-quantity line with a >2dp unit price can drift up to qty*0.005. Tighten only after that absorption gap is fixed (design 4.3 pt 4).
@@ -4642,6 +4649,10 @@ class Twopayment extends PaymentModule
             if ($placement !== null) {
                 $syncId = (int) $placement['order']->id;
                 $response = $this->putTwoOrderUpdate($placement['order'], $placement['row']);
+                if ($response === false) {
+                    // Not sent, as Two would refuse it; the admin has been told why.
+                    return;
+                }
                 $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
                 // A null response is an update identical to the last one Two accepted.
                 if ($response !== null && ($http_status < 200 || $http_status >= 300)) {
@@ -4692,7 +4703,8 @@ class Twopayment extends PaymentModule
      * @param array $orderpaymentdata
      * @param array|null $paymentdata set to the payload built
      * @param string $trigger the order postprocessing hook's context trigger
-     * @return array|null the response; null when nothing changed since the last accepted PUT
+     * @return array|false|null the response; null when nothing changed since the last accepted PUT;
+     *   false when Two would refuse the edit, so it was not sent and the admin was told why
      */
     public function putTwoOrderUpdate($order, $orderpaymentdata, &$paymentdata = null, $trigger = 'admin_edit')
     {
@@ -4701,6 +4713,20 @@ class Twopayment extends PaymentModule
         if (isset($orderpaymentdata['two_update_hash']) && $orderpaymentdata['two_update_hash'] === $hash) {
             return null;
         }
+        // Only an admin's edit is checked: the buyer's confirmation sync runs on an order Two has just confirmed.
+        $adminEdit = in_array($trigger, array('admin_edit', 'tracking_number'), true);
+        $refusal = $adminEdit ? $this->getTwoOrderEditRefusal($orderpaymentdata['two_order_id']) : null;
+        if ($refusal !== null) {
+            // The API would refuse this edit, so say why plainly instead of sending it (TWO-26150).
+            $this->addTwoBackOfficeWarning($refusal);
+            try {
+                $this->addTwoOrderPrivateNote((int) $order->id, $refusal);
+            } catch (Throwable $e) {
+                PrestaShopLogger::addLog('TwoPayment: TWO-26150 could not note on order ' . (int) $order->id . ' that an edit was not sent - ' . $e->getMessage(), 3);
+            }
+
+            return false;
+        }
         $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
         $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
         if ($http_status >= 200 && $http_status < 300 && in_array('two_update_hash', $this->ensureTwoPaymentColumns(), true)) {
@@ -4708,6 +4734,44 @@ class Twopayment extends PaymentModule
         }
 
         return $response;
+    }
+
+    /**
+     * Why the API would refuse an edit to this order, or null when it would accept one (TWO-26150).
+     *
+     * Reads the order's live state and status and applies the same rule as the API's edit handler: only
+     * the editable states and statuses above are accepted. The stored two_order_state cannot stand in,
+     * because it is not refreshed when the order is fulfilled outside this shop or in part. After a
+     * partial fulfilment the order has the PARTIAL status, and once every part is fulfilled its state
+     * becomes FULFILLED. A failed lookup returns null, so the edit is sent and any refusal is reported as before.
+     *
+     * @param string $two_order_id
+     * @return string|null
+     */
+    protected function getTwoOrderEditRefusal($two_order_id)
+    {
+        $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, array(), 'GET', array(), self::API_TIMEOUT_STATE_CHECK);
+        $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        if ($http_status < 200 || $http_status >= 300) {
+            return null;
+        }
+        $state = isset($response['state']) && is_string($response['state']) ? $response['state'] : null;
+        $status = isset($response['status']) && is_string($response['status']) ? $response['status'] : null;
+        $refusedState = $state !== null && !in_array($state, self::TWO_EDITABLE_STATES, true);
+        $refusedStatus = $status !== null && !in_array($status, self::TWO_EDITABLE_STATUSES, true);
+        if (!$refusedState && !$refusedStatus) {
+            return null;
+        }
+        $productName = $this->getTwoBrandConfig('product_name');
+        if (in_array($state, self::TWO_INVOICED_STATES, true) || $status === self::TWO_PARTIAL_STATUS) {
+            return sprintf($this->l('%1$s has already invoiced all or part of this order, so this change was not sent to %1$s.'), $productName);
+        }
+
+        return sprintf(
+            $this->l('%1$s no longer accepts changes to this order (%2$s), so this change was not sent to %1$s.'),
+            $productName,
+            $refusedState ? $state : $status
+        );
     }
 
     /**
@@ -4746,7 +4810,7 @@ class Twopayment extends PaymentModule
      *
      * Best-effort by design: the Two API only accepts order edits before
      * fulfilment, so a tracking number added after the order was fulfilled
-     * is rejected server-side. Nothing here may break the admin action
+     * in full or in part is not sent (TWO-26150). Nothing here may break the admin action
      * that saved the tracking number — failures are logged and surfaced
      * as a back-office warning instead.
      */
@@ -4767,6 +4831,10 @@ class Twopayment extends PaymentModule
             $orderpaymentdata = $placement['row'];
 
             $response = $this->putTwoOrderUpdate($placement['order'], $orderpaymentdata, $paymentdata, 'tracking_number');
+            if ($response === false) {
+                // Not sent, as Two would refuse it; the admin has been told why.
+                return;
+            }
             if ($response === null) {
                 $this->recordTwoOrderSync($syncId, null);
                 return;
