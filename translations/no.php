@@ -606,3 +606,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_31804353a7d42acedb8d202c17571abf'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d592cdbb1c59d9ba9f0308c01863437c'] = 'den lagrede tilknytningen av avgiftskoder kan ikke leses. Lagre Avgiftskoder for linjer med 0 % på nytt.';
 $_MODULE['<{twopayment}prestashop>twopayment_1493bd5d032828e60663be984220ad7e'] = 'Kunne ikke slette de lagrede firmaopplysningene fra kassen.';
 $_MODULE['<{twopayment}prestashop>twopayment_b6dd1a9c89709b3b2e3750f24560c7e5'] = 'Kunne ikke eksportere de lagrede firmaopplysningene fra kassen.';
+$_MODULE['<{twopayment}prestashop>twopayment_39e26661e69ccad178937f28d643dabe'] = 'Denne refusjonen ble sendt uten varelinjer, så kreditnotaen er kanskje ikke spesifisert.';
