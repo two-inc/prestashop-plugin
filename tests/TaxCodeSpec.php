@@ -173,6 +173,7 @@ final class TaxCodeSpec
             ['ES', 'service', 'ES', 'NO', '', '', [], [self::NON_EU, self::NON_EU], null, 'non-EU services need no VAT number'],
             ['ES', 'goods', 'FR', 'ES', 'ESB12345678', '', [], [null, null], null, 'a Spanish buyer\'s VAT number is never sent'],
             ['DE', 'goods', 'FR', 'FR', 'FR123456789', '', [], [null, null], null, 'a non-Spanish merchant never sends the VAT number'],
+            ['', 'goods', 'FR', 'DE', 'DE123456789', '', [], [null, null], null, 'merchant country not known yet (a cold or failed record): nothing derived, and no key'],
         ];
     }
 
