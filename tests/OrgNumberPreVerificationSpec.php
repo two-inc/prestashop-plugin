@@ -248,6 +248,7 @@ final class OrgNumberPreVerificationSpec
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
         StubStore::$countries[self::ES_COUNTRY_ID] = 'ES';
         StubStore::$addresses[self::ADDRESS_ID] = [
+            'id_customer' => self::CUSTOMER_ID,
             'id_country' => self::ES_COUNTRY_ID,
             'company' => $addressFields['company'],
             'dni' => $addressFields['dni'],

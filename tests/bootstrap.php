@@ -400,6 +400,8 @@ namespace {
 
         public static function reset(): void
         {
+            Hook::$subscribers = [];
+            Hook::$ids = [];
             self::$configurationGroup = [];
             self::$configurationShop = [];
             self::$configurationLang = [];
@@ -582,7 +584,22 @@ namespace {
          */
         public static function getInstanceByName($name)
         {
-            return StubStore::$moduleInstances[(string) $name] ?? null;
+            if (isset(StubStore::$moduleInstances[(string) $name])) {
+                return StubStore::$moduleInstances[(string) $name];
+            }
+            foreach (Hook::$subscribers as $hook => $callbacks) {
+                if (isset($callbacks[(string) $name])) {
+                    return new StubHookSubscriberModule((string) $name);
+                }
+            }
+
+            return null;
+        }
+
+        /** Core's "native module" list, which PS_DISABLE_NON_NATIVE_MODULE keeps. */
+        public static function getNativeModuleList(): array
+        {
+            return ['ps_shoppingcart', 'ps_emailsubscription'];
         }
 
         /**
@@ -975,9 +992,98 @@ namespace {
         /** @var array<string,array<int,array{module:string}>> modules registered per hook */
         public static array $execLists = [];
 
+        /** @var array<string,array<string,callable>> subscriber callbacks per hook, keyed by module name */
+        public static array $subscribers = [];
+        /** @var array<string,int> hook rows by name, as Hook::getIdByName() finds them */
+        public static array $ids = [];
+
+        public $id = 0;
+        public $name = '';
+        public $title = '';
+        public $description = '';
+        public $position = 1;
+
         public static function getHookModuleExecList($hookName = null)
         {
-            return self::$execLists[$hookName] ?? false;
+            if (isset(self::$execLists[$hookName])) {
+                return self::$execLists[$hookName];
+            }
+            if (!empty(self::$subscribers[$hookName])) {
+                return array_map(static function ($module) {
+                    return ['module' => $module];
+                }, array_keys(self::$subscribers[$hookName]));
+            }
+
+            return false;
+        }
+
+        /**
+         * Core's call shape: each subscriber gets the args array by value, so only
+         * elements the caller bound by reference travel back. Like core 8 and 9
+         * outside debug mode (Hook::callHookOn()), a subscriber's Exception is
+         * discarded and the hook returns ''.
+         */
+        public static function exec($hookName, $hookArgs = [], $idModule = null, $arrayReturn = false)
+        {
+            foreach (self::getHookModuleExecList($hookName) ?: [] as $row) {
+                $module = Module::getInstanceByName($row['module']);
+                $method = 'hook' . ucfirst($hookName);
+                if (!$module || !is_callable([$module, $method])) {
+                    continue;
+                }
+                try {
+                    $module->{$method}($hookArgs);
+                } catch (Exception $e) {
+                }
+            }
+
+            return '';
+        }
+
+        public static function getIdByName($hookName)
+        {
+            return self::$ids[$hookName] ?? false;
+        }
+
+        public function add(): bool
+        {
+            $this->id = count(self::$ids) + 1;
+            self::$ids[$this->name] = $this->id;
+
+            return true;
+        }
+
+        public static function reset(): void
+        {
+            self::$execLists = [];
+            self::$subscribers = [];
+            self::$ids = [];
+        }
+    }
+
+    /**
+     * A module registered on a hook through Hook::$subscribers: its hook method
+     * runs the spec's callback.
+     */
+    class StubHookSubscriberModule
+    {
+        public $name;
+        public $active = true;
+
+        public function __construct(string $name)
+        {
+            $this->name = $name;
+        }
+
+        public function __call($method, $args)
+        {
+            foreach (Hook::$subscribers as $hook => $callbacks) {
+                if (strcasecmp('hook' . $hook, $method) === 0 && isset($callbacks[$this->name])) {
+                    return $callbacks[$this->name]($args[0]);
+                }
+            }
+
+            return null;
         }
     }
 
@@ -1572,6 +1678,7 @@ namespace {
 
         public bool $loaded = false;
         public int $id = 0;
+        public int $id_customer = 0;
         public int $id_country = 0;
         public int $id_state = 0;
         public string $company = '';
@@ -2667,8 +2774,10 @@ namespace {
         public $id = 0;
         public $id_cart = 0;
         public $id_customer = 0;
-        public $total_paid = 0.0;
+        public $id_carrier = 0;
+        public $id_lang = 1;
         public $module = '';
+        public $total_paid = 0.0;
         public bool $loaded = false;
 
         public function __construct($id = 0)
@@ -2681,6 +2790,7 @@ namespace {
                 $this->module = (string) ($row['module'] ?? '');
                 $this->id_cart = (int) ($row['id_cart'] ?? 0);
                 $this->id_customer = (int) ($row['id_customer'] ?? 0);
+                $this->id_carrier = (int) ($row['id_carrier'] ?? 0);
                 $this->total_paid = (float) ($row['total_paid'] ?? 0.0);
             }
         }
