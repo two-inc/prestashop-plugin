@@ -7,11 +7,12 @@
  */
 
 /**
- * The tax code a 0% line carries (TWO-24877). Two requires one on every 0% line of a Spanish merchant's order.
+ * The tax code a 0% line carries (TWO-24877, TWO-26151). Two requires one on every 0% line of a Spanish merchant's order.
  *
  * 1. A code the merchant mapped to the line's tax rules group wins, for any merchant country.
  * 2. Otherwise, for a Spanish merchant only, a code derived from the order: goods follow the delivery address,
- *    services follow the country of the buyer company.
+ *    services follow the country of the buyer company. The Canaries, Ceuta and Melilla are outside the EU VAT
+ *    area, told by the delivery postcode for goods and by the invoice postcode for a Spanish buyer of services.
  * 3. Otherwise no code. The plugin never refuses and never coerces a rate: Two's API validates what is sent.
  *
  * Lines at any other rate never carry a code, so their payloads are unchanged.
@@ -30,16 +31,18 @@ class TwoTaxCodeResolver
     /**
      * Derivation, first matching row wins. Each row names the facts that must all hold.
      * Anything unmatched (a mainland or Balearic destination, an EU destination with a Spanish buyer,
-     * a service to a Spanish or non-EU buyer) derives nothing.
+     * a service to a mainland or Balearic Spanish buyer) derives nothing.
      */
     const DERIVATION = array(
         'goods' => array(
             array(array('dest_outside_eu'), 'ES_IVA_EXPORT'),
             array(array('dest_es_outside_vat_area'), 'ES_IVA_EXPORT'),
-            array(array('dest_other_eu', 'buyer_other_eu'), 'ES_IVA_INTRA_COMMUNITY'),
+            array(array('dest_other_eu', 'buyer_other_eu'), 'ES_IVA_INTRA_COMMUNITY_GOODS'),
         ),
         'services' => array(
-            array(array('buyer_other_eu'), 'ES_IVA_REVERSE_CHARGE'),
+            array(array('buyer_other_eu'), 'ES_IVA_INTRA_COMMUNITY_SERVICES'),
+            array(array('buyer_outside_eu'), 'ES_IVA_NON_EU_SERVICES'),
+            array(array('buyer_es_outside_vat_area'), 'ES_IVA_NON_EU_SERVICES'),
         ),
     );
 
@@ -47,7 +50,7 @@ class TwoTaxCodeResolver
      * @param string|float $rate the line's tax_rate as sent
      * @param string|null $mapped the code the merchant mapped to the line's tax rules group
      * @param bool $goods a goods line (see the class doc of the caller); false for a service line
-     * @param array $order ['merchant_country', 'dest_country', 'dest_postcode', 'buyer_country']
+     * @param array $order ['merchant_country', 'dest_country', 'dest_postcode', 'buyer_country', 'buyer_postcode']
      * @return string|null
      */
     public static function resolve($rate, $mapped, $goods, array $order)
@@ -105,6 +108,7 @@ class TwoTaxCodeResolver
         $dest = self::iso(isset($order['dest_country']) ? $order['dest_country'] : '');
         $buyer = self::iso(isset($order['buyer_country']) ? $order['buyer_country'] : '');
         $postcode = trim((string) (isset($order['dest_postcode']) ? $order['dest_postcode'] : ''));
+        $buyerPostcode = trim((string) (isset($order['buyer_postcode']) ? $order['buyer_postcode'] : ''));
         $destInEu = in_array($dest, self::EU_VAT_AREA, true);
 
         return array(
@@ -113,6 +117,8 @@ class TwoTaxCodeResolver
             'dest_es_outside_vat_area' => $dest === 'ES' && in_array(substr($postcode, 0, 2), self::ES_OUTSIDE_VAT_AREA_POSTCODES, true),
             'dest_other_eu' => $destInEu && $dest !== 'ES',
             'buyer_other_eu' => in_array($buyer, self::EU_VAT_AREA, true) && $buyer !== 'ES',
+            'buyer_outside_eu' => $buyer !== '' && !in_array($buyer, self::EU_VAT_AREA, true),
+            'buyer_es_outside_vat_area' => $buyer === 'ES' && in_array(substr($buyerPostcode, 0, 2), self::ES_OUTSIDE_VAT_AREA_POSTCODES, true),
         );
     }
 
