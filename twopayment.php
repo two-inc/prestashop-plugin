@@ -3419,7 +3419,7 @@ class Twopayment extends PaymentModule
             'name' => 'PS_TWO_TAX_CODE_MAP_INTRO',
             'html_content' => '',
             'desc' => sprintf(
-                $this->l('%s requires a tax code on every line at a 0%% rate for a Spanish merchant. For a Spanish merchant the module derives one where the order decides it: goods delivered outside the EU, or to the Canary Islands, Ceuta or Melilla, are exports; goods delivered to another EU country for a buyer company in another EU country are intra-community supplies; services for a buyer company in another EU country are intra-community services, and services for a buyer company outside the EU, or for a Spanish buyer invoiced in the Canary Islands, Ceuta or Melilla, are non-EU services. Map a tax rules group to send its code on every 0%% line taxed by that group instead. Leave (none) to rely on the derivation. The module never refuses an order over a tax code; %s validates it.'),
+                $this->l('%s requires a tax code on every line at a 0%% rate for a Spanish merchant. For a Spanish merchant the module derives one where the order decides it: goods delivered outside the EU, or to the Canary Islands, Ceuta or Melilla, are exports; goods delivered to another EU country for a buyer company in another EU country are intra-community supplies, and services for a buyer company in another EU country are intra-community services, both only when the invoice address carries a VAT number from an EU country other than the merchant\'s; services for a buyer company outside the EU, or for a Spanish buyer invoiced in the Canary Islands, Ceuta or Melilla, are non-EU services. Map a tax rules group to send its code on every 0%% line taxed by that group instead. Leave (none) to rely on the derivation. The module never refuses an order over a tax code; %s validates it.'),
                 $this->getTwoBrandConfig('product_name'),
                 $this->getTwoBrandConfig('product_name')
             ),
@@ -8014,6 +8014,7 @@ class Twopayment extends PaymentModule
             'dest_postcode' => Validate::isLoadedObject($destination) ? (string) $destination->postcode : '',
             'buyer_country' => trim((string) $buyerCountry) !== '' ? (string) $buyerCountry : $invoiceCountry,
             'buyer_postcode' => Validate::isLoadedObject($buyerAddress) ? (string) $buyerAddress->postcode : '',
+            'buyer_vat_number' => $this->getTwoBuyerVatNumber($invoiceAddress),
         );
         $hasGoods = false;
         foreach ($keys as $key) {
@@ -8058,6 +8059,26 @@ class Twopayment extends PaymentModule
         }
 
         return $lineItems;
+    }
+
+    /**
+     * The buyer's VAT number (TWO-26153): the invoice address `vat_number`, the field the `vatnumber` module validates
+     * and stores, normalised against the invoice address country by TwoTaxCodeResolver::normaliseVatNumber(). It is
+     * never a source for the organisation number (TWO-40).
+     *
+     * @param Address $invoiceAddress
+     * @return string '' when the buyer gave none
+     */
+    private function getTwoBuyerVatNumber($invoiceAddress)
+    {
+        if (!Validate::isLoadedObject($invoiceAddress)) {
+            return '';
+        }
+
+        return TwoTaxCodeResolver::normaliseVatNumber(
+            $invoiceAddress->vat_number,
+            (int) $invoiceAddress->id_country > 0 ? (string) Country::getIsoById((int) $invoiceAddress->id_country) : ''
+        );
     }
 
     /**
@@ -9050,6 +9071,14 @@ class Twopayment extends PaymentModule
             $buyerCompany['country_iso'],
             $this->resolveBuyerCompanyAddress($buyerData, $invoice_address, $delivery_address)
         );
+
+        // A Spanish merchant's order tells Two the buyer's VAT number (TWO-26153), on create only: an edit that omits
+        // it keeps the stored one, and a refund reads that. Never for a Spanish buyer, whose VAT number Two requires to
+        // equal its organisation number; absent rather than empty when there is none, so other payloads are unchanged.
+        $buyerVatNumber = $this->getTwoBuyerVatNumber($invoice_address);
+        if ($buyerVatNumber !== '' && strtoupper(trim((string) $buyerCompany['country_iso'])) !== 'ES' && $this->getTwoMerchantCountry() === 'ES') {
+            $request_data['buyer_vat_number'] = $buyerVatNumber;
+        }
 
         if ($this->shouldIncludeTaxSubtotals()) {
             $request_data['tax_subtotals'] = $tax_subtotals;
