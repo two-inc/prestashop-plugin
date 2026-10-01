@@ -19,6 +19,34 @@
 
 ---
 
+## [2026-09-30] Cart-Scoped Company And Mirror Records Live Server-Side (TWO-26094)
+
+**Context**: The company selection and the mirror-write record were kept in the PrestaShop cookie.
+Core's cookie throws on `|` and `¤`, which a company name can hold, and PS 8/9 `Cookie::write`
+throws past 4096 bytes, which a long Nordic company and address reach between them. Either way the
+request crashed on something the buyer typed.
+
+**Decision**: Invariant: cart-scoped company and mirror-address data live server-side, keyed by
+`id_cart` and shop, in the module's `twopayment_cart_record` table (one row per cart, shop and
+record, the record stored as one JSON value and written whole). The cookie carries none of it.
+Rows are deleted when the Two order is confirmed, and the daily attempt purge also deletes rows
+for carts ordered by any method or untouched for the attempt retention period. Values in the
+pre-2.7.19 per-field cookie keys are read as absent and purged, so a buyer mid-checkout during the
+upgrade re-picks their company.
+
+**Alternatives Considered**: Escaping the forbidden characters and compacting the encoding kept
+the records in the cookie, but only moved the failure: the mirror fields have no length cap the
+module controls, so any overflow still throws.
+
+**Rationale**: Nothing a buyer types can break or overflow the cookie if none of it is in the
+cookie. Keying by the context cart keeps the isolation the cookie stamp gave: a buyer can only
+reach rows for the cart core has already authenticated to them.
+
+**Consequences**: One small table, created at install, by `upgrade-2.7.19.php`, and lazily for a
+shop whose files were swapped without an upgrade. Two indexed queries per checkout page render.
+
+---
+
 ## [2026-09-30] An Order Update Carries The Stored Order, And The Whole Two Order
 
 **Context**: An order update (tracking save, back-office edit, the confirmation sync) rebuilt its
@@ -805,6 +833,8 @@ document without re-deciding them:
   alongside the existing four instead. Restructuring the record would have rewritten the shape every
   read site consumes for no gain the requirement asks for. The keys are centralised in
   `Twopayment::COMPANY_SESSION_KEYS` so they cannot drift, which is what the blob was really for.
+  **Superseded by TWO-26094:** both records now live server-side in `twopayment_cart_record`, keyed
+  by cart and shop, and no longer in the cookie at all. The read shape callers see is unchanged.
 - **Step 2 (drop the company writes' `setExpire`) — not done, and it was wrong.** PrestaShop's cookie
   has one expiry for the whole cookie, not one per key: `Cookie::setExpire()` assigns the single
   expiry scalar that the cookie's own `setcookie()` call uses. So removing those calls would not

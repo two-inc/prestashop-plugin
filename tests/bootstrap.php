@@ -340,6 +340,12 @@ namespace {
         public static array $dbLocks = [];
         /** @var array<int,int> Last-applied surcharge sync seq by cart id */
         public static array $surchargeSyncSeqs = [];
+        /** twopayment_cart_record rows as [id_cart][id_shop][record] => data (TWO-26094). */
+        public static array $cartRecords = [];
+        /** twopayment_cart_record.updated_at, shaped like $cartRecords. */
+        public static array $cartRecordUpdatedAt = [];
+        /** twopayment_cart_record.id_customer, shaped like $cartRecords. */
+        public static array $cartRecordCustomer = [];
         /** @var array<int,string> ps_cart.checkout_session_data JSON by cart id */
         public static array $checkoutSessionData = [];
         /** @var array<string,array{window_start:int,hit_count:int}> TwoRateLimiter's twopayment_rate_limit rows, by rate_key */
@@ -474,6 +480,9 @@ namespace {
             self::$taxRules = [];
             self::$dbLocks = [];
             self::$surchargeSyncSeqs = [];
+            self::$cartRecords = [];
+            self::$cartRecordUpdatedAt = [];
+            self::$cartRecordCustomer = [];
             self::$checkoutSessionData = [];
             self::$rateLimitRows = [];
             self::$orderDetails = [];
@@ -770,6 +779,18 @@ namespace {
         public function write(): void
         {
             ++$this->writes;
+        }
+
+        /** Core's size check in encryptAndSetCookie(): name plus hex defuse ciphertext (84 bytes overhead) of write()'s serialisation. */
+        public function coreSetCookieBytes(): int
+        {
+            $serialised = '';
+            foreach ($this->content as $key => $value) {
+                $serialised .= $key . '|' . $value . '¤';
+            }
+            $serialised .= 'checksum|' . hash('sha256', $serialised);
+
+            return strlen('PrestaShop-' . md5('')) + 2 * (84 + strlen($serialised));
         }
     }
 
@@ -1907,6 +1928,19 @@ namespace {
                 $this->loaded = true;
             }
         }
+
+        /** @return array<int,array{id_customer:string}> */
+        public static function getCustomersByEmail($email): array
+        {
+            $rows = [];
+            foreach (StubStore::$customers as $id => $customer) {
+                if (($customer['email'] ?? '') === $email) {
+                    $rows[] = ['id_customer' => (string) $id];
+                }
+            }
+
+            return $rows;
+        }
     }
 
     class Currency
@@ -2479,6 +2513,52 @@ namespace {
                 StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
             }
             if (preg_match(
+                '/^REPLACE INTO `ps_twopayment_cart_record` \(`id_cart`, `id_shop`, `id_customer`, `record`, `data`, `updated_at`\) VALUES \((\d+), (\d+), (\d+), "(\w+)", "(.*)", "([^"]*)"\)$/s',
+                $sql,
+                $m
+            )) {
+                StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[4]] = stripslashes($m[5]);
+                StubStore::$cartRecordUpdatedAt[(int) $m[1]][(int) $m[2]][$m[4]] = $m[6];
+                StubStore::$cartRecordCustomer[(int) $m[1]][(int) $m[2]][$m[4]] = (int) $m[3];
+            }
+            if (preg_match('/^UPDATE `ps_twopayment_cart_record` SET `id_customer` = (\d+) WHERE `id_cart` = (\d+) AND `id_customer` = 0$/', $sql, $m)) {
+                foreach (StubStore::$cartRecordCustomer[(int) $m[2]] ?? [] as $shopId => $customers) {
+                    foreach ($customers as $record => $customerId) {
+                        if ($customerId === 0) {
+                            StubStore::$cartRecordCustomer[(int) $m[2]][$shopId][$record] = (int) $m[1];
+                        }
+                    }
+                }
+            }
+            if (preg_match('/^DELETE FROM `ps_twopayment_cart_record` WHERE `updated_at` < "([^"]+)"$/', $sql, $m)) {
+                foreach (StubStore::$cartRecordUpdatedAt as $cartId => $shops) {
+                    foreach ($shops as $shopId => $times) {
+                        foreach ($times as $record => $updatedAt) {
+                            if ($updatedAt < $m[1]) {
+                                unset(StubStore::$cartRecords[$cartId][$shopId][$record]);
+                            }
+                        }
+                    }
+                }
+            }
+            if ($sql === 'DELETE `cr` FROM `ps_twopayment_cart_record` `cr` INNER JOIN `ps_orders` `o` ON `o`.`id_cart` = `cr`.`id_cart` AND `o`.`id_shop` = `cr`.`id_shop`') {
+                foreach (StubStore::$orders as $order) {
+                    unset(StubStore::$cartRecords[(int) ($order['id_cart'] ?? 0)][(int) ($order['id_shop'] ?? 0)]);
+                }
+            }
+            if (preg_match('/^DELETE FROM `ps_twopayment_cart_record`' . self::CUSTOMER_WHERE . '$/', $sql, $m)) {
+                foreach (self::customerRecords($m[1]) as [$cartId, $shopId, $record]) {
+                    unset(StubStore::$cartRecords[$cartId][$shopId][$record]);
+                }
+            }
+            if (preg_match('/^DELETE FROM `ps_twopayment_cart_record` WHERE `id_cart` = (\d+)(?: AND `id_shop` = (\d+) AND `record` = "(\w+)")?$/', $sql, $m)) {
+                if (isset($m[3])) {
+                    unset(StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[3]]);
+                } else {
+                    unset(StubStore::$cartRecords[(int) $m[1]]);
+                }
+            }
+            if (preg_match(
                 '/REPLACE INTO `ps_twopayment_rate_limit` \(`rate_key`, `window_start`, `hit_count`\) VALUES'
                 . ' \("([^"]+)", (\d+), (\d+)\)/',
                 $sql,
@@ -2566,6 +2646,9 @@ namespace {
             if (preg_match('/SELECT checkout_session_data FROM `ps_cart` WHERE id_cart = (\d+)/', $sql, $m)) {
                 return StubStore::$checkoutSessionData[(int) $m[1]] ?? false;
             }
+            if (preg_match('/SELECT `data` FROM `ps_twopayment_cart_record` WHERE `id_cart` = (\d+) AND `id_shop` = (\d+) AND `record` = "(\w+)"$/', $sql, $m)) {
+                return StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[3]] ?? false;
+            }
             if (preg_match('/SELECT `seq` FROM `ps_twopayment_surcharge_sync` WHERE `id_cart` = (\d+)/', $sql, $m)) {
                 return StubStore::$surchargeSyncSeqs[(int) $m[1]] ?? false;
             }
@@ -2639,9 +2722,38 @@ namespace {
             return false;
         }
 
+        /** The module's GDPR customer filter, capturing the id_customer list. */
+        private const CUSTOMER_WHERE = ' WHERE `id_customer` IN \\(([\\d,]+)\\)';
+
+        /** @return array<int,array{int,int,string}> [id_cart, id_shop, record] of every stubbed row owned by the listed customers */
+        private static function customerRecords(string $customerIds): array
+        {
+            $ids = array_map('intval', explode(',', $customerIds));
+            $matches = [];
+            foreach (StubStore::$cartRecordCustomer as $cartId => $shops) {
+                foreach ($shops as $shopId => $customers) {
+                    foreach ($customers as $record => $customerId) {
+                        if (in_array($customerId, $ids, true) && isset(StubStore::$cartRecords[$cartId][$shopId][$record])) {
+                            $matches[] = [(int) $cartId, (int) $shopId, (string) $record];
+                        }
+                    }
+                }
+            }
+
+            return $matches;
+        }
+
         public function executeS($sql): array
         {
             StubStore::$dbLastExecuteS[] = (string) $sql;
+            if (preg_match('/^SELECT `id_cart`, `record`, `data`, `updated_at` FROM `ps_twopayment_cart_record`' . self::CUSTOMER_WHERE . '$/', (string) $sql, $m)) {
+                $rows = [];
+                foreach (self::customerRecords($m[1]) as [$cartId, $shopId, $record]) {
+                    $rows[] = ['id_cart' => (string) $cartId, 'record' => $record, 'data' => StubStore::$cartRecords[$cartId][$shopId][$record], 'updated_at' => StubStore::$cartRecordUpdatedAt[$cartId][$shopId][$record] ?? ''];
+                }
+
+                return $rows;
+            }
             if (!empty(StubStore::$dbExecuteSResponses)) {
                 $next = array_shift(StubStore::$dbExecuteSResponses);
                 return is_array($next) ? $next : [];
@@ -3150,6 +3262,73 @@ namespace {
         public static function recordKeyStampForTest(string $apiKey): string
         {
             return static::verificationSlotKey($apiKey);
+        }
+    }
+
+    /**
+     * Field-level view of the company and mirror-write rows in the module's cart
+     * record table (TWO-26094), so a spec can seed or inspect one field. 'cart' is
+     * the cart the row is stored under; a row never given one sits under cart 0,
+     * which the module never reads.
+     */
+    final class TwoSessionRecord
+    {
+        public static function get(string $record, string $field): ?string
+        {
+            $cartId = self::cartOf($record);
+            if ($cartId === null) {
+                return null;
+            }
+            if ($field === 'cart') {
+                return (string) $cartId;
+            }
+            $data = json_decode(StubStore::$cartRecords[$cartId][self::shop()][$record], true);
+
+            return isset($data[$field]) ? (string) $data[$field] : null;
+        }
+
+        public static function has(string $record, string $field): bool
+        {
+            return self::get($record, $field) !== null;
+        }
+
+        public static function set(string $record, string $field, ?string $value): void
+        {
+            $cartId = self::cartOf($record);
+            $data = $cartId === null ? [] : (array) json_decode(StubStore::$cartRecords[$cartId][self::shop()][$record], true);
+            if ($cartId !== null) {
+                unset(StubStore::$cartRecords[$cartId][self::shop()][$record]);
+            }
+            if ($field === 'cart') {
+                $cartId = (int) $value;
+            } elseif ($value === null) {
+                unset($data[$field]);
+            } else {
+                $data[$field] = $value;
+            }
+            StubStore::$cartRecords[(int) $cartId][self::shop()][$record] = (string) json_encode($data);
+        }
+
+        /** Removing 'cart' moves the row to cart 0, where the module cannot read it. */
+        public static function remove(string $record, string $field): void
+        {
+            self::set($record, $field, $field === 'cart' ? '0' : null);
+        }
+
+        private static function cartOf(string $record): ?int
+        {
+            foreach (StubStore::$cartRecords as $cartId => $shops) {
+                if (isset($shops[self::shop()][$record])) {
+                    return (int) $cartId;
+                }
+            }
+
+            return null;
+        }
+
+        private static function shop(): int
+        {
+            return (int) Context::getContext()->shop->id;
         }
     }
 

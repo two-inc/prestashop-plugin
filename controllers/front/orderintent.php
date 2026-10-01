@@ -349,7 +349,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         $fields['address_id'] = (string) $addressId;
         $this->module->storeTwoCartScopedCompany($fields);
         $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
-        PrestaShopLogger::addLog('TwoPayment: Saved company in cookie for session', 1);
+        PrestaShopLogger::addLog('TwoPayment: Saved company against the cart', 1);
         $this->sendJsonResponse(json_encode(['success' => true]));
     }
 
@@ -417,7 +417,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
 
         $fields = [];
-        foreach (array_keys(Twopayment::MIRROR_WRITE_SESSION_KEYS) as $field) {
+        foreach (Twopayment::MIRROR_WRITE_SESSION_FIELDS as $field) {
             $posted = Tools::getValue($field, null);
             if ($posted === null || $posted === false) {
                 continue;
@@ -1020,7 +1020,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $selectedAddressId = (int) $this->context->cart->id_address_delivery;
         }
 
-        // Priority 2: PrestaShop session/cookie (persisted from previous steps or company search)
+        // Priority 2: the cart-scoped company record (persisted from previous steps or company search)
         // Validate session company country against the current selected address country.
         $currentCountryIso = '';
         if ($selectedAddressId > 0) {
@@ -1095,8 +1095,8 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                         1
                     );
 
-                    // Deliberately NOT cached in the two_company_* cookie: that
-                    // cookie holds company data verified by the company search,
+                    // Deliberately NOT cached in the cart-scoped company record: that
+                    // record holds company data verified by the company search,
                     // and this org number has not been verified by anything yet.
                     return [
                         'company' => trim((string) $address->company),
