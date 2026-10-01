@@ -124,14 +124,15 @@ class TwoTaxCodeResolver
             'buyer_other_eu' => in_array($buyer, self::EU_VAT_AREA, true) && $buyer !== 'ES',
             'buyer_outside_eu' => $buyer !== '' && !in_array($buyer, self::EU_VAT_AREA, true),
             'buyer_es_outside_vat_area' => $buyer === 'ES' && in_array(substr($buyerPostcode, 0, 2), self::ES_OUTSIDE_VAT_AREA_POSTCODES, true),
-            // The buyer's VAT number names an EU member state other than the merchant's country.
-            'vat_other_eu' => in_array($vatCountry, self::EU_VAT_AREA, true) && $vatCountry !== $merchant,
+            // The buyer's VAT number names an EU member state other than the merchant's country. MC is in the EU VAT
+            // area as a destination but is no VAT prefix.
+            'vat_other_eu' => in_array($vatCountry, self::EU_VAT_AREA, true) && $vatCountry !== 'MC' && $vatCountry !== $merchant,
         );
     }
 
     /**
      * A buyer VAT number as the resolver and Two read it (TWO-26153): spaces, dots and hyphens stripped, upper-cased,
-     * and the address country prepended when it does not start with two letters (Greece as EL, its VAT prefix).
+     * and the address country prepended when it does not start with two letters (Greece as EL, Monaco as FR).
      * Without an address country an unprefixed number stays unprefixed, and so names no country.
      *
      * @param mixed $raw
@@ -145,8 +146,10 @@ class TwoTaxCodeResolver
             return $vat;
         }
         $country = self::iso($addressCountry);
+        // VAT prefixes: Greece is EL, and Monaco businesses hold French numbers.
+        $prefixes = array('GR' => 'EL', 'MC' => 'FR');
 
-        return ($country === 'GR' ? 'EL' : $country) . $vat;
+        return (isset($prefixes[$country]) ? $prefixes[$country] : $country) . $vat;
     }
 
     /**
