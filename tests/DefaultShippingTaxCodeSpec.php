@@ -161,7 +161,7 @@ final class DefaultShippingTaxCodeSpec
     }
 
     /**
-     * The custom-logistics shape: a cart with a real shipping cost, `id_carrier = 0`, and no
+     * The carrier-less shape: a cart with a real shipping cost, `id_carrier = 0`, and no
      * delivery-option list at all - which is what core hands back once
      * getDeliveryOptionList() has discarded the no-available-carrier sentinel.
      * No carrier exists to declare a shipping tax-rules group.
@@ -451,7 +451,7 @@ final class DefaultShippingTaxCodeSpec
     }
 
     /**
-     * The custom-logistics case end to end: no carrier, a real 29.00 shipping charge, and a
+     * The carrier-less case end to end: no carrier, a real 29.00 shipping charge, and a
      * declared default of 21%. The shipping line carries the DECLARED 0.21 -
      * note the emitted 2dp amounts imply 20.98% (5.03 / 23.97), so a derived
      * rate would differ - the payload reconciles against the cart total, and

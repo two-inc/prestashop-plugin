@@ -9201,7 +9201,7 @@ class Twopayment extends PaymentModule
         // the very figure PrestaShop folded into Cart::BOTH, so it is the only
         // shipping amount that can reconcile with the cart total - and it
         // resolves without a loadable Carrier. Merchants who price shipping
-        // through symbolic "logistics carriers" leave id_carrier = 0 on a cart
+        // outside PrestaShop's carrier table leave id_carrier = 0 on a cart
         // that nonetheless carries a real shipping cost; keying the shipping
         // line off `new Carrier($cart->id_carrier)` silently dropped that cost
         // and the reconciliation gate then rejected the whole order.

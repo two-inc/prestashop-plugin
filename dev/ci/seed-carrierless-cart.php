@@ -336,7 +336,7 @@ function probeCart($customer, $address, $id_lang, $id_product)
         }
     }
 
-    // Carrier 0 with a delivery option selected: the custom-logistics shape.
+    // Carrier 0 with a delivery option selected: the carrier-less shape.
     return probeNewCart($customer, $address, $id_lang, $id_product, 2, 0);
 }
 
