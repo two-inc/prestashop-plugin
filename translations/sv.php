@@ -606,3 +606,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_31804353a7d42acedb8d202c17571abf'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d592cdbb1c59d9ba9f0308c01863437c'] = 'den sparade kopplingen av skattekoder går inte att läsa. Spara Skattekoder för rader med 0 % igen.';
 $_MODULE['<{twopayment}prestashop>twopayment_1493bd5d032828e60663be984220ad7e'] = 'Det gick inte att radera de sparade företagsuppgifterna från kassan.';
 $_MODULE['<{twopayment}prestashop>twopayment_b6dd1a9c89709b3b2e3750f24560c7e5'] = 'Det gick inte att exportera de sparade företagsuppgifterna från kassan.';
+$_MODULE['<{twopayment}prestashop>twopayment_39e26661e69ccad178937f28d643dabe'] = 'Denna återbetalning skickades utan orderrader, så kreditnotan kanske inte är specificerad.';
