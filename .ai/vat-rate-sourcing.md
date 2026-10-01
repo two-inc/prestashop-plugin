@@ -65,37 +65,44 @@ canonical product rate classes instead. Any apportioned charge reconciles to the
 PrestaShop-authoritative total by largest-remainder cent distribution
 (`allocateTwoAmountByWeights`), or fails loud.
 
-## Shipping with no resolvable carrier group
+## Shipping no carrier provides a rate for
 
 PrestaShop declares shipping VAT on the carrier row (`carrier_tax_rules_group_shop`) and
 nowhere else — there is no shop-level shipping group. A shop pricing shipping outside the
 carrier table (custom logistics, `id_carrier = 0`, which makes core discard the whole
-delivery-option list) has no core row to declare it on. Resolution order, in
-`resolveTwoCartShippingRateClasses()`:
+delivery-option list) has no core row to declare it on. `resolveTwoCartShippingRateClasses()`
+decides where the rate comes from (TWO-26117):
 
-1. the tax-rules group(s) the selected delivery option's carrier(s) declare;
-2. `PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP` — the merchant's own declaration, moved onto
-   the module (`resolveTwoDefaultShippingRateClasses()`). Consulted **only** on the path
-   that would otherwise refuse, so a shop with a working carrier table never reaches it.
-   Unset, or pointing at a since-deleted group, counts as **not declared**;
-3. loud refusal.
+1. a carrier in the selected delivery option that declares a tax-rules group **provides**
+   the rate, an explicit 0% group included. It is relayed as is, with no module check;
+2. "No tax" (group 0), no carrier, or a carrier that cannot be read provides **none**.
+   `PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP` — the merchant's own declaration, moved onto
+   the module (`resolveTwoDefaultShippingRateClasses()`) — then supplies it, and only this
+   rate is checked against the line's tax. Unset, disabled, or pointing at a since-deleted
+   group counts as **not declared**;
+3. with neither, the line goes out at rate 0 with the tax it was charged, and Two's API
+   judges it. The module never refuses on shipping tax unless step 2 applies.
 
 This does not weaken the relay rule: step 2 is still a merchant declaration resolved
-through the same helper, not a rate inferred from amounts. The whole charge goes into one
-rate class — the per-carrier split of step 1 is unavailable by construction here.
+through the same helper, and step 3 relays the absence of one rather than inferring a
+rate from amounts. The whole charge goes into one rate class — the per-carrier split of
+step 1 is unavailable by construction here.
+
+Placement records which case applied (`shipping_rate_provided` beside the declared classes
+in the Two row), and updates and credit slips read that record rather than the carrier or
+the setting as they are later.
 
 Using step 2 logs at severity 2 naming the group, its id and the resolved rate, so "this
-shop is on the fallback" is a log grep, not an inference. When a default is configured the
-refusal log drops from severity 3 to 2, because the refusal is then internal control flow
-rather than a failure.
+shop is on the fallback" is a log grep, not an inference. The missing-carrier log is a
+severity 2 warning either way, since neither step 2 nor step 3 is a failure.
 
-The admin field renders on Order management like every other setting on that tab —
-no build-time flag, no runtime gate. See the README's "Default shipping tax code" section
-for the merchant-facing instructions.
+The admin field is hidden until Two enables it with `twopayment:shipping-tax-fallback`.
+See the README's "Default shipping tax code" section for the merchant-facing instructions.
 
 ## Divergence handling
 
-`assertTwoDeclaredRateReconcilesWithAmounts()` runs per charge line: if
+`assertTwoDeclaredRateReconcilesWithAmounts()` runs per charge line (on shipping, only for the
+Default shipping tax code's rate, TWO-26117): if
 `|applied_tax − round(net × declared_rate, 2)| > TAX_FORMULA_TOLERANCE` (**0.02**) it logs
 the declared rate, net, applied tax and expected tax at level 3, then throws
 `TwoCheckoutAmountException`. All throw-reachable call sites — approval precheck, live
@@ -104,7 +111,7 @@ to a controlled decline; the actionable detail is a merchant/log artefact, the b
 generic notice.
 
 `validateTwoLineItems()` then checks the **emitted 2dp** payload: `tax ≈ rate · net`
-(`TAX_FORMULA_TOLERANCE`), exact `gross == net + tax` in cents, and
+(`TAX_FORMULA_TOLERANCE`, skipped on a shipping line whose rate is relayed unchecked), exact `gross == net + tax` in cents, and
 `net == qty · unit_price − discount` (`NET_FORMULA_TOLERANCE`).
 
 ## Rate precision

@@ -445,7 +445,12 @@ final class RefundSpec
             [array_fill(0, 4, self::line(8.38, 10.05, '20.000')), [40.20, 33.50, 40.20, 0, null, 3], 0.0, 0.0, 0.0, '40.20', [['0.200000', '33.52', '6.68']], 'ROUND_TOTAL, entered tax incl: a cent per line of rounding is not a voucher'],
             [array_fill(0, 3, self::line(10.00, 12.00, '20.000')), [36.00, 29.97, 36.00, 1, null, 1], 0.0, 0.0, 0.0, '35.97', [['0.200000', '29.98', '5.99']], 'ROUND_ITEM, entered tax incl: a 0.03 voucher on 3 lines is a voucher, not rounding'],
             [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2, '{"shipping":[{"rate":0.25,"net_weight":10}]}'], 12.50, 10.00, 0.0, '42.50', [['0.200000', '25.00', '5.00'], ['0.250000', '10.00', '2.50']], 'carrier-less order: shipping at the rate declared at placement'],
-            [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2], 12.50, 10.00, 0.0, null, null, 'shipping no stored or configured rate reconciles with fails closed'],
+            [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2], 12.50, 10.00, 0.0, '42.50', [['0.000000', '10.00', '2.50'], ['0.200000', '25.00', '5.00']], 'placed before the record, no shipping rate reconciles: sent at the rate the order records'],
+            // TWO-26117: what placement recorded about the shipping rate decides.
+            [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2, '{"shipping":[],"shipping_rate_provided":false}'], 12.50, 10.00, 0.0, '42.50', [['0.000000', '10.00', '2.50'], ['0.200000', '25.00', '5.00']], 'no rate and no Default shipping tax code at placement: 0% with the tax refunded'],
+            [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2, '{"shipping":[{"rate":0.25,"net_weight":10}],"shipping_rate_provided":false}'], 12.50, 10.00, 0.0, '42.50', [['0.200000', '25.00', '5.00'], ['0.250000', '10.00', '2.50']], 'no rate, placed at the Default shipping tax code: that rate'],
+            [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2, '{"shipping":[{"rate":0.15,"net_weight":10}],"shipping_rate_provided":false}'], 12.50, 10.00, 0.0, null, null, 'no rate, the Default shipping tax code it was placed at does not reconcile: not sent'],
+            [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2, '{"shipping":[{"rate":0.15,"net_weight":10}],"shipping_rate_provided":true}'], 12.50, 10.00, 0.0, '42.50', [['0.150000', '10.00', '2.50'], ['0.200000', '25.00', '5.00']], 'a provided rate that does not reconcile goes out as is'],
             [[], [30.00], 0.0, 0.0, 0.0, null, null, 'no stored lines fails closed'],
             [[], [125.00, 100.00, 50.00, 2], 0.0, 0.0, 0.0, null, null, 'specific amount with no lines to apportion over fails closed'],
         ];

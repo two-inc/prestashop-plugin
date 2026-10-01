@@ -45,16 +45,22 @@ const PROBE_DELETED_GROUP_ID = 999001;
 function probeScenarios()
 {
     return array(
-        // The shipped state. No declaration anywhere, so the order must be
-        // refused rather than shipped with a guessed shipping rate.
+        // The shipped state. No carrier provides a rate and no default is set,
+        // so the line goes out at 0% with the tax it was charged, for Two's API
+        // to judge: never refused, never at a guessed rate (TWO-26117).
         'unset' => array(
             'group' => '',
             'gross' => '29.00',
             'net' => '23.20',
-            'expect' => 'refusal',
+            'expect' => array(
+                'gross_amount' => '29.00',
+                'net_amount' => '23.20',
+                'tax_amount' => '5.80',
+                'tax_rate' => '0',
+                'tax_class_name' => 'VAT 0.00%',
+            ),
             'log_present' => array(
-                array(3, 'No deliverable carrier for the cart shipping cost'),
-                array(3, 'Configure a carrier that covers this delivery address'),
+                array(2, 'No Default shipping tax code is set, so it goes out at 0% with the tax it was charged.'),
             ),
             'log_absent' => array('assuming the configured Default shipping tax code'),
         ),
@@ -100,17 +106,36 @@ function probeScenarios()
             'log_absent' => array('Configure a carrier that covers this delivery address'),
         ),
         // A selection whose group has since been deleted is not a declaration
-        // any more. It must refuse, NOT silently relay 0%.
+        // any more, so the control is blank: 0% with the tax charged, and the
+        // log names the dangling selection.
         'missing' => array(
             'group' => (string) PROBE_DELETED_GROUP_ID,
             'gross' => '29.00',
             'net' => '23.20',
-            'expect' => 'refusal',
+            'expect' => array(
+                'gross_amount' => '29.00',
+                'net_amount' => '23.20',
+                'tax_amount' => '5.80',
+                'tax_rate' => '0',
+                'tax_class_name' => 'VAT 0.00%',
+            ),
             'log_present' => array(
                 array(3, 'which no longer exists'),
-                array(3, 'No deliverable carrier for the cart shipping cost'),
+                array(2, 'No deliverable carrier for the cart shipping cost'),
             ),
             'log_absent' => array('assuming the configured Default shipping tax code'),
+        ),
+        // A populated control is checked against the line's tax (TWO-26117):
+        // 25% declared on untaxed shipping refuses, before the hook.
+        'declared_mismatch' => array(
+            'group' => 'PROBE_TRG',
+            'gross' => '29.00',
+            'net' => '29.00',
+            'expect' => 'refusal',
+            'log_present' => array(
+                array(3, 'Declared tax rate does not reconcile with applied amounts for shipping'),
+            ),
+            'log_absent' => array(),
         ),
     );
 }
