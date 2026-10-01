@@ -57,6 +57,7 @@ final class TaxCodeSpec
         }
         $tests = [
             'testUpdateKeepsPlacementCodes', 'testUpdateOfUnrecordedOrderResolvesNow', 'testAddressFallbacks',
+            'testTheBuyerPostcodeComesFromTheCompanyAddress',
             'testDescriptorMismatchSendsLinesUncoded', 'testMappingIsReadOnlyForAZeroLineAndFailsLoud',
             'testMerchantCountryIsStoredAndRefetchedOnce', 'testTaxCodeListHidesCodesNeedingAReason',
             'testTaxCodeListRetriesOnAFloor', 'testFormSaveValidatesPostedCodes',
@@ -107,7 +108,7 @@ final class TaxCodeSpec
             ['ES', 'goods', 'ES', '07001', 'ES', [], '0', [null, null], null, 'goods delivered to the Balearics (07): domestic, nothing derived'],
             ['ES', 'service', 'ES', '28001', 'FR', [], '0', [self::SERVICES, self::SERVICES], null, 'a service for a French buyer: intra-community services, and shipping follows the services'],
             ['ES', 'service', 'FR', '75001', 'ES', [], '0', [null, null], null, 'a service for a Spanish buyer, delivered to France: nothing derived'],
-            ['ES', 'service', 'NO', '0150', 'NO', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer outside the EU: non-EU services'],
+            ['ES', 'service', 'NO', '0150', 'NO', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer outside the EU: non-EU services, and shipping follows the non-EU services'],
             ['ES', 'service', 'ES', '28001', 'US', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer outside the EU, delivered in Spain: non-EU services'],
             ['ES', 'service', 'ES', '28001', 'ES 35001', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Las Palmas (35): non-EU services'],
             ['ES', 'service', 'ES', '28001', 'ES 38001', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Tenerife (38): non-EU services'],
@@ -314,6 +315,22 @@ final class TaxCodeSpec
             );
             TinyAssert::same($expected, $lines[0]['tax_code'] ?? null, $description);
         }
+    }
+
+    /**
+     * The buyer postcode comes from the address that gave country_prefix (TWO-26151). Here the invoice address in
+     * Grenoble (38000) carries no company, so the Spanish company on the Madrid delivery address is the buyer, and
+     * 38 is a French postcode, not Tenerife.
+     */
+    private static function testTheBuyerPostcodeComesFromTheCompanyAddress(): void
+    {
+        self::seed('ES', 'service', 'ES', '28001', 'FR 38000', [], '0');
+        StubStore::$addresses[self::INVOICE]['company'] = '';
+        StubStore::$addresses[self::INVOICE]['companyid'] = '';
+        $payload = (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-' . self::CART, new Cart(self::CART), self::merchantUrls());
+
+        TinyAssert::same('ES', $payload['buyer']['company']['country_prefix'] ?? null, 'the Spanish delivery company is the buyer');
+        TinyAssert::same([null, null], self::codes($payload), 'a mainland Spanish buyer invoiced in Grenoble derives nothing (got: ' . json_encode(self::codes($payload)) . ')');
     }
 
     private static function testDescriptorMismatchSendsLinesUncoded(): void
