@@ -3454,7 +3454,7 @@ class Twopayment extends PaymentModule
             'name' => 'PS_TWO_TAX_CODE_MAP_INTRO',
             'html_content' => '',
             'desc' => sprintf(
-                $this->l('%s requires a tax code on every line at a 0%% rate for a Spanish merchant. For a Spanish merchant the module derives one where the order decides it: goods delivered outside the EU, or to the Canary Islands, Ceuta or Melilla, are exports; goods delivered to another EU country for a buyer company in another EU country are intra-community supplies; services for a buyer company in another EU country are reverse charge. Map a tax rules group to send its code on every 0%% line taxed by that group instead. Leave (none) to rely on the derivation. The module never refuses an order over a tax code; %s validates it.'),
+                $this->l('%s requires a tax code on every line at a 0%% rate for a Spanish merchant. For a Spanish merchant the module derives one where the order decides it: goods delivered outside the EU, or to the Canary Islands, Ceuta or Melilla, are exports; goods delivered to another EU country for a buyer company in another EU country are intra-community supplies; services for a buyer company in another EU country are intra-community services, and services for a buyer company outside the EU, or for a Spanish buyer invoiced in the Canary Islands, Ceuta or Melilla, are non-EU services. Map a tax rules group to send its code on every 0%% line taxed by that group instead. Leave (none) to rely on the derivation. The module never refuses an order over a tax code; %s validates it.'),
                 $this->getTwoBrandConfig('product_name'),
                 $this->getTwoBrandConfig('product_name')
             ),
