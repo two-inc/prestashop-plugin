@@ -11,6 +11,11 @@
  * type and asserts the hook fired once with the contract's context, that the
  * sent payload is the post-hook one, as the subscriber returned it.
  *
+ * The carrier-less scenarios (TWO-26117) use the carrier-less cart
+ * (dev/ci/seed-carrierless-cart.sh) with the Default shipping tax code blank:
+ * shipping no carrier provides a rate for goes out at 0% with the tax it was
+ * charged, and a subscriber's re-split of it is sent as returned.
+ *
  * One process per scenario, for the same per-request caches reason as
  * default-shipping-tax-code.php. Requires dev/ci/install-order-postprocessing-fixture.sh.
  * Hermetic: sends are recorded by a subclass, never made.
@@ -401,10 +406,42 @@ function oppRunScenario($name, &$detail)
     Configuration::updateValue('PS_TWO_DEBUG_MODE', '0');
     Configuration::updateValue('PS_MAIL_METHOD', 3);
     $mode = in_array($name, array('unarmed', 'paths', 'context_rate', 'relay'), true) ? (in_array($name, array('paths', 'relay'), true) ? 'record' : '') : ($name === 'throws_prod' ? 'throws' : $name);
+    $mode = $name === 'carrierless' ? 'record' : (in_array($name, array('carrierless_resplit', 'refund_resplit'), true) ? 'resplit' : $mode);
     Configuration::updateValue('TWO_OPP_TEST_MODE', $mode);
     $module = new OppProbeTwopayment();
     $checks = array();
     $currency = new Currency((int) $cart->id_currency);
+
+    if ($name === 'refund_resplit') {
+        // A credit slip refunding the "No tax" carrier's 29.00: the README subscriber re-splits its untaxed share at 21%.
+        $module->twoState = 'FULFILLED';
+        $slip = new stdClass();
+        $slip->id = 8;
+        $slip->id_order = (int) $order->id;
+        $slip->total_products_tax_incl = 0.0;
+        $slip->total_shipping_tax_incl = 29.0;
+        Module::getInstanceByName('twoorderpostprocessingtest');
+        Twoorderpostprocessingtest::$calls = array();
+        $module->hookActionOrderSlipAdd(array('order' => $order, 'order_slip' => $slip));
+        $subtotals = function ($payload) {
+            return is_array($payload) && isset($payload['tax_subtotals']) ? array_map(function ($s) {
+                return array($s['tax_rate'], $s['taxable_amount'], $s['tax_amount']);
+            }, $payload['tax_subtotals']) : $payload;
+        };
+        $calls = Twoorderpostprocessingtest::$calls;
+        $refunds = array_values(array_filter($module->sent, function ($r) {
+            return strpos($r['endpoint'], '/refund') !== false;
+        }));
+        $checks[] = array(count($calls) === 1 ? $subtotals($calls[0]['payload_in']) : count($calls), array(array('0.000000', '29.00', '0.00')), 'the slip reaches the hook at 0%');
+        $checks[] = array(count($refunds) === 1 ? $subtotals($refunds[0]['payload']) : count($refunds), array(array('0.210000', '23.97', '5.03')), 'the re-split slip is sent as returned');
+        $checks[] = array(count($refunds) === 1 ? $refunds[0]['payload']['amount'] : null, '29.00', 'the amount is unchanged');
+
+        return $checks;
+    }
+
+    if ($name === 'carrierless' || $name === 'carrierless_resplit') {
+        return oppCarrierlessChecks($module, $name === 'carrierless');
+    }
 
     if ($name === 'unarmed') {
         $payload = $module->getTwoNewOrderData('opp-attempt', $cart, oppMerchantUrls());
@@ -569,6 +606,63 @@ function oppRunScenario($name, &$detail)
 }
 
 /**
+ * TWO-26117: the carrier-less cart, the Default shipping tax code blank, 29.00 of shipping taxed (23.20 + 5.80) or
+ * untaxed. Taxed, the line goes out at 0% with the tax charged, never refused; untaxed, the subscriber re-splits it
+ * at 21% and the module sends what it returned.
+ *
+ * @return array<int,array{0:mixed,1:mixed,2:string}>
+ */
+function oppCarrierlessChecks(OppProbeTwopayment $module, $taxed)
+{
+    $cart = new Cart((int) Configuration::get('TWO_CARRIERLESS_TEST_ID_CART'));
+    if (!Validate::isLoadedObject($cart)) {
+        return array(array('no carrier-less cart', 'the seeded carrier-less cart', 'dev/ci/seed-carrierless-cart.sh has run'));
+    }
+    $customer = new Customer((int) $cart->id_customer);
+    $address = new Address((int) $cart->id_address_invoice);
+    $context = Context::getContext();
+    $context->cart = $cart;
+    $context->customer = $customer;
+    $context->language = new Language((int) $cart->id_lang);
+    $context->currency = new Currency((int) $cart->id_currency);
+    $context->country = new Country((int) (new Address((int) $cart->id_address_delivery))->id_country);
+    $saved = array();
+    foreach (array('TWO_CARRIERLESS_TEST_NET', 'TWO_CARRIERLESS_TEST_MODE', 'PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP') as $key) {
+        $saved[$key] = Configuration::get($key);
+    }
+    Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', '29.00');
+    Configuration::updateValue('TWO_CARRIERLESS_TEST_NET', $taxed ? '23.20' : '29.00');
+    Configuration::updateValue('TWO_CARRIERLESS_TEST_MODE', '');
+    Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', '');
+    Module::getInstanceByName('twoorderpostprocessingtest');
+    Twoorderpostprocessingtest::$calls = array();
+    $checks = array();
+    try {
+        $payload = $module->getTwoIntentOrderData($cart, $customer, $context->currency, $address);
+        $shipping = function (array $payload) {
+            foreach ($payload['line_items'] as $line) {
+                if ($line['type'] === 'SHIPPING_FEE') {
+                    return array((string) $line['tax_rate'], $line['net_amount'], $line['tax_amount'], $line['gross_amount']);
+                }
+            }
+
+            return null;
+        };
+        $calls = Twoorderpostprocessingtest::$calls;
+        $checks[] = array((int) $cart->id_carrier, 0, 'the cart has no carrier');
+        $checks[] = array(count($calls) === 1 ? $shipping($calls[0]['payload_in']) : count($calls), $taxed ? array('0', '23.20', '5.80', '29.00') : array('0', '29.00', '0.00', '29.00'), 'the builder sends the line at 0% with the tax charged');
+        $checks[] = array(count($calls) === 1 ? $calls[0]['payload_out'] : count($calls), $payload, 'the payload is what the subscriber returned');
+        $checks[] = array($shipping($payload), $taxed ? array('0', '23.20', '5.80', '29.00') : array('0.21', '23.97', '5.03', '29.00'), $taxed ? 'sent at 0%, not refused' : 'the re-split is sent as returned');
+    } finally {
+        foreach ($saved as $key => $value) {
+            Configuration::updateValue($key, $value === false ? '' : (string) $value);
+        }
+    }
+
+    return $checks;
+}
+
+/**
  * Drive the checkout's order-intent controller as the browser does: the
  * pre-check, then the relay with a tampered payload posted beside the buyer
  * fields, then payment submit.
@@ -639,12 +733,16 @@ function oppRun($name)
     // The carrier-less fixture, once armed by another probe, replaces every cart's delivery options.
     $carrierless = Configuration::get('TWO_CARRIERLESS_TEST_GROSS');
     Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', '0');
+    // Blank, as another probe may leave it: populated, it would check the "No tax" carrier's line before the hook (TWO-26117).
+    $defaultGroup = Configuration::get('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP');
+    Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', '');
     try {
         $checks = oppRunScenario($name, $detail);
     } catch (Throwable $e) {
         $checks = array(array(get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine(), 'no exception', 'scenario ran'));
     }
     Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', $carrierless === false ? '0' : (string) $carrierless);
+    Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', $defaultGroup === false ? '' : (string) $defaultGroup);
     Configuration::updateValue('TWO_OPP_TEST_MODE', '');
     $failures = array();
     foreach ($checks as $check) {
@@ -676,7 +774,13 @@ if (!Module::isInstalled('twoorderpostprocessingtest')) {
 oppBootKernel();
 oppSeed();
 $exit = 0;
-foreach (array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay') as $scenario_name) {
+$scenario_names = array('unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit');
+// The carrier-less fixture injects through actionFilterDeliveryOptionList, which core only fires from 8.0.
+if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
+    $scenario_names[] = 'carrierless';
+    $scenario_names[] = 'carrierless_resplit';
+}
+foreach ($scenario_names as $scenario_name) {
     $status = 0;
     passthru(escapeshellarg(PHP_BINARY) . ' -d memory_limit=512M ' . escapeshellarg(__FILE__) . ' ' . escapeshellarg($scenario_name), $status);
     $exit = $status !== 0 ? 1 : $exit;

@@ -18,11 +18,12 @@ declare(strict_types=1);
  * case here starts enabled. This spec covers the two things about the enabled
  * setting that are easy to get wrong:
  *
- *   1. UNSET must be byte-for-byte the pre-TWO-25200 loud refusal. There is
- *      no default value and nothing seeds one.
+ *   1. UNSET means no rate: a carrier-less line goes out at 0% with the tax
+ *      it was charged, never refused (TWO-26117). There is no default value
+ *      and nothing seeds one.
  *   2. Resolution order: the carrier's own declared group always wins over
  *      the default, and a selection pointing at a deleted group is treated
- *      as unset rather than silently relayed at 0%.
+ *      as unset.
  */
 final class DefaultShippingTaxCodeSpec
 {
@@ -45,11 +46,11 @@ final class DefaultShippingTaxCodeSpec
         self::testValidationRejectsGarbageAndUnknownGroups();
         self::testValidationAcceptsBlankAndNoTax();
 
-        self::testUnsetDefaultStillRefusesCarrierlessCartLoudly();
+        self::testUnsetDefaultSendsCarrierlessCartAtZero();
         self::testCarrierlessCartRelaysTheDefaultShippingTaxCode();
         self::testNoTaxDefaultRelaysAnExplicitZeroRate();
         self::testCarrierDeclaredGroupWinsOverTheDefault();
-        self::testDeletedDefaultGroupRefusesRatherThanRelayZero();
+        self::testDeletedDefaultGroupCountsAsUnset();
         self::testRefusalLogDropsToWarningWhenADefaultIsConfigured();
     }
 
@@ -251,8 +252,8 @@ final class DefaultShippingTaxCodeSpec
             'The help text must state that the group applies to shipping only'
         );
         TinyAssert::true(
-            strpos((string) $input['desc'], 'cannot be resolved') !== false,
-            'The help text must state the unresolvable-carrier precondition'
+            strpos((string) $input['desc'], 'no carrier provides a rate') !== false,
+            'The help text must state the no-carrier-rate precondition'
         );
 
         $ids = array_column($input['options']['query'], 'id');
@@ -415,36 +416,37 @@ final class DefaultShippingTaxCodeSpec
     // -----------------------------------------------------------------
 
     /**
-     * Requirement 1, on the real builder: with no default configured, a
-     * cart is refused exactly as it was before this feature existed - same
-     * message, same error severity.
+     * Requirement 1, on the real builder: with no default configured, the
+     * shipping line provides no rate, so it goes out at 0% with the tax it was
+     * charged for Two's API to judge (TWO-26117). No rate is assumed.
      */
-    private static function testUnsetDefaultStillRefusesCarrierlessCartLoudly(): void
+    private static function testUnsetDefaultSendsCarrierlessCartAtZero(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
         $cart = self::seedCarrierlessCart(9301, 9311, 9321);
         self::seedTotalsFor21PercentShipping(9301);
 
-        TinyAssert::throws(
-            static function () use ($module, $cart): void {
-                $module->getTwoNewOrderData('merchant-attempt-9301', $cart, self::merchantUrls());
-            },
-            'No deliverable carrier for the cart shipping cost'
-        );
+        $shipping = self::shippingLines($module->getTwoNewOrderData('merchant-attempt-9301', $cart, self::merchantUrls()));
 
+        TinyAssert::same(['0', '23.97', '5.03'], [(string) $shipping[0]['tax_rate'], (string) $shipping[0]['net_amount'], (string) $shipping[0]['tax_amount']], 'Shipping goes out at 0% with the tax it was charged');
+        TinyAssert::same(
+            '{"shipping":[],"wrapping":null,"shipping_rate_provided":false}',
+            $module->getTwoDeclaredChargeRates(),
+            'The Two row records that no rate was provided and none was assumed, for updates and refunds'
+        );
         TinyAssert::false(
             self::loggedContains(self::FALLBACK_LOG),
             'Nothing may be assumed when no default is configured'
         );
         TinyAssert::same(
-            3,
+            2,
             self::loggedSeverity('No deliverable carrier for the cart shipping cost'),
-            'With no default configured the refusal stays an error-severity log'
+            'Not a failure: the missing carrier rate is a warning'
         );
         TinyAssert::true(
-            self::loggedContains('Configure a carrier that covers this delivery address'),
-            'The refusal must keep telling the merchant what to fix'
+            self::loggedContains('No Default shipping tax code is set, so it goes out at 0% with the tax it was charged.'),
+            'The log says what happened to the line'
         );
     }
 
@@ -478,7 +480,7 @@ final class DefaultShippingTaxCodeSpec
         TinyAssert::same('150.00', (string) $payload['gross_amount']);
         TinyAssert::same('123.97', (string) $payload['net_amount']);
         TinyAssert::same(
-            '{"shipping":[{"rate":0.21,"net_weight":29}],"wrapping":null}',
+            '{"shipping":[{"rate":0.21,"net_weight":29}],"wrapping":null,"shipping_rate_provided":false}',
             $module->getTwoDeclaredChargeRates(),
             'The declared rate is kept for the Two row, so an update of this carrier-less order can use it (TWO-26085)'
         );
@@ -592,7 +594,7 @@ final class DefaultShippingTaxCodeSpec
         TinyAssert::count(1, $shipping);
         TinyAssert::same('0.1', (string) $shipping[0]['tax_rate'], 'The carrier\'s declared 10% must win');
         TinyAssert::same(
-            '{"shipping":[{"rate":0.1,"net_weight":26.36}],"wrapping":null}',
+            '{"shipping":[{"rate":0.1,"net_weight":26.36}],"wrapping":null,"shipping_rate_provided":true}',
             $module->getTwoDeclaredChargeRates(),
             'The carrier\'s declared class is kept for the Two row'
         );
@@ -605,10 +607,10 @@ final class DefaultShippingTaxCodeSpec
 
     /**
      * A selection pointing at a group the merchant has since deleted is not a
-     * declaration any more. Refuse - never silently relay the 0% that a
-     * missing group resolves to.
+     * declaration any more, so the control is not populated: the line goes out
+     * as with no default set, and the log names the dangling selection.
      */
-    private static function testDeletedDefaultGroupRefusesRatherThanRelayZero(): void
+    private static function testDeletedDefaultGroupCountsAsUnset(): void
     {
         self::reset();
         // The row survives; the group does not (StubStore::$taxRulesGroups empty).
@@ -618,16 +620,12 @@ final class DefaultShippingTaxCodeSpec
         $cart = self::seedCarrierlessCart(9306, 9316, 9326);
         self::seedTotalsFor21PercentShipping(9306);
 
-        TinyAssert::throws(
-            static function () use ($module, $cart): void {
-                $module->getTwoNewOrderData('merchant-attempt-9306', $cart, self::merchantUrls());
-            },
-            'No deliverable carrier for the cart shipping cost'
-        );
+        $shipping = self::shippingLines($module->getTwoNewOrderData('merchant-attempt-9306', $cart, self::merchantUrls()));
+        TinyAssert::same(['0', '5.03'], [(string) $shipping[0]['tax_rate'], (string) $shipping[0]['tax_amount']], 'Shipping goes out at 0% with the tax it was charged');
 
         TinyAssert::false(self::loggedContains(self::FALLBACK_LOG));
         TinyAssert::true(
-            self::loggedContains('which no longer exists; treating shipping tax as unresolvable'),
+            self::loggedContains('which no longer exists; treating the Default shipping tax code as not set'),
             'A dangling selection must say so in the log'
         );
         TinyAssert::same(

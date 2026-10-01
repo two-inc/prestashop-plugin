@@ -313,16 +313,23 @@ class Twopayment extends PaymentModule
     const CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE = 'PS_TWO_SURCHARGE_TAX_MIGRATION_NOTICE';
 
     // Merchant-declared TaxRulesGroup assumed for SHIPPING when, and only
-    // when, the carrier's own declared group cannot be resolved for the order
-    // (TWO-25200). PrestaShop keeps the shipping tax declaration on the
-    // carrier row (`carrier_tax_rules_group_shop`) and nowhere else, so a
-    // merchant who prices shipping outside the carrier table (custom
-    // logistics, `id_carrier = 0`) has no carrier row to declare it on. This
+    // when, no carrier provides a rate for the order: no carrier, or one that
+    // declares "No tax" (TWO-25200, TWO-26117). PrestaShop keeps the shipping
+    // tax declaration on the carrier row (`carrier_tax_rules_group_shop`) and
+    // nowhere else, so a merchant who prices shipping outside the carrier
+    // table (`id_carrier = 0`) has no carrier row to declare
+    // it on. This
     // is that declaration, moved onto the module - still the merchant's own,
-    // never inferred from amounts. Unset (the shipped state) keeps the loud
-    // refusal; '0' is core's first-class "No tax" sentinel and is only ever
-    // stored when the merchant selected it.
+    // never inferred from amounts. Unset (the shipped state), such a line goes
+    // out at 0% with the tax it was charged; '0' is core's first-class "No tax"
+    // sentinel and is only ever stored when the merchant selected it.
     const CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP = TwoShippingTaxFallbackGate::CONFIG_GROUP;
+
+    // Where a shipping line's rate came from (TWO-26117). Only the Default shipping tax code's rate is checked
+    // against the line's tax; a carrier's is relayed as is, and a line with neither goes out at 0%.
+    const SHIPPING_RATE_CARRIER = 'carrier';
+    const SHIPPING_RATE_CONTROL = 'control';
+    const SHIPPING_RATE_NONE = 'none';
 
     // JSON array of {name, value, send_from_browser}.
     const CONFIG_CUSTOM_HEADERS = 'PS_TWO_CUSTOM_HEADERS';
@@ -390,6 +397,9 @@ class Twopayment extends PaymentModule
 
     /** @var array|null the charge rates the last create payload declared, persisted on the Two row for updates (TWO-26085) */
     private $twoDeclaredChargeRates = null;
+
+    /** @var string|null where the last built shipping line's rate came from, a SHIPPING_RATE_* value; null with none */
+    private $twoShippingRateSource = null;
 
     // Module metadata fields ModuleCore does not declare on all supported
     // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
@@ -2823,7 +2833,7 @@ class Twopayment extends PaymentModule
             'type' => 'select',
             'label' => $this->l('Default shipping tax code'),
             'name' => self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
-            'desc' => $this->l('Tax rules group ASSUMED FOR SHIPPING ONLY when the carrier\'s tax rate cannot be resolved for the order - for example when shipping is priced outside PrestaShop\'s carrier table, so no carrier declares a tax rules group. It is never used when a carrier does declare one: the carrier\'s own group always wins. Leave unset to keep refusing such orders rather than assuming a rate.'),
+            'desc' => $this->l('Tax rules group ASSUMED FOR SHIPPING ONLY when no carrier provides a rate for the order - for example when shipping is priced outside PrestaShop\'s carrier table, or the carrier\'s tax rules group is "No tax". It is never used when a carrier declares a tax rules group: the carrier\'s own group always wins. When it is used, the shipping tax must match its rate or the order is refused. Leave unset to send such shipping at a zero rate with the tax it was charged, with no check here.'),
             'options' => array(
                 'query' => $this->getTwoDefaultShippingTaxRulesGroupOptions(),
                 'id' => 'id',
@@ -5831,41 +5841,57 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The rate classes refunded shipping was taxed at, in the order updates' resolution order (TWO-26085): the order's
-     * carrier_tax_rate, then the classes declared at placement, then the Default shipping tax code, each only if it
-     * reconciles with the slip's stored shipping amounts. A carrier-less order leaves carrier_tax_rate at 0.
+     * The rate classes refunded shipping was taxed at, in the order updates' resolution order (TWO-26085, TWO-26117),
+     * from what placement recorded. With no rate provided: the Default shipping tax code's classes it declared, only
+     * if they reconcile with the slip's stored shipping amounts, or with none set, 0% and the tax as refunded. With a
+     * provided rate: the order's carrier_tax_rate, then the classes declared at placement, each if it reconciles, and
+     * otherwise the declared classes (else carrier_tax_rate) as they are. An order placed before that record also tries
+     * the Default shipping tax code. A carrier-less order leaves carrier_tax_rate at 0.
      *
      * @param Order $order
      * @param float $net refunded shipping, tax excluded
      * @param float $tax refunded shipping tax
-     * @return array|null classes of rate (decimal) and net_weight; null when none reconciles
+     * @return array|null classes of rate (decimal) and net_weight; null when the Default shipping tax code's do not reconcile
      */
     protected function resolveTwoSlipShippingClasses($order, $net, $tax)
     {
+        $row = $this->getTwoOrderPaymentData((int)$order->id);
+        $declared = is_array($row) ? $this->decodeTwoDeclaredChargeRates($row) : array('shipping' => array(), 'shipping_rate_provided' => null);
+        if ($declared['shipping_rate_provided'] === false) {
+            if ($declared['shipping'] === array()) {
+                return array(array('rate' => 0.0, 'net_weight' => 1.0));
+            }
+            if ($this->doTwoRateClassesReconcile($declared['shipping'], $net, $tax)) {
+                return $declared['shipping'];
+            }
+            PrestaShopLogger::addLog('TwoPayment: Credit slip shipping ' . $net . ' net, ' . $tax . ' tax on order ' . (int)$order->id . ' does not reconcile with the Default shipping tax code it was placed at', 3);
+
+            return null;
+        }
         $carrier = array(array('rate' => (float)(isset($order->carrier_tax_rate) ? $order->carrier_tax_rate : 0) / 100, 'net_weight' => 1.0));
         if ($this->doTwoRateClassesReconcile($carrier, $net, $tax)) {
             return $carrier;
         }
-        $row = $this->getTwoOrderPaymentData((int)$order->id);
-        $declared = is_array($row) ? $this->decodeTwoDeclaredChargeRates($row) : array('shipping' => array());
         if (!empty($declared['shipping']) && $this->doTwoRateClassesReconcile($declared['shipping'], $net, $tax)) {
             return $declared['shipping'];
         }
-        try {
-            $cart = new Cart((int)(isset($order->id_cart) ? $order->id_cart : 0));
-            $groupId = Validate::isLoadedObject($cart) ? $this->getTwoDefaultShippingTaxRulesGroupId($cart) : null;
-            if ($groupId !== null) {
-                $default = array(array('rate' => $this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart), 'net_weight' => 1.0));
-                if ($this->doTwoRateClassesReconcile($default, $net, $tax)) {
-                    return $default;
+        if ($declared['shipping_rate_provided'] === null) {
+            try {
+                $cart = new Cart((int)(isset($order->id_cart) ? $order->id_cart : 0));
+                $groupId = Validate::isLoadedObject($cart) ? $this->getTwoDefaultShippingTaxRulesGroupId($cart) : null;
+                if ($groupId !== null) {
+                    $default = array(array('rate' => $this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart), 'net_weight' => 1.0));
+                    if ($this->doTwoRateClassesReconcile($default, $net, $tax)) {
+                        return $default;
+                    }
                 }
+            } catch (Exception $e) {
+                PrestaShopLogger::addLog('TwoPayment: Default shipping tax code unavailable for a credit slip - ' . $e->getMessage(), 2);
             }
-        } catch (Exception $e) {
-            PrestaShopLogger::addLog('TwoPayment: Default shipping tax code unavailable for a credit slip - ' . $e->getMessage(), 2);
         }
-        PrestaShopLogger::addLog('TwoPayment: Credit slip shipping ' . $net . ' net, ' . $tax . ' tax on order ' . (int)$order->id . ' reconciles with no stored or configured rate', 3);
+        PrestaShopLogger::addLog('TwoPayment: Credit slip shipping ' . $net . ' net, ' . $tax . ' tax on order ' . (int)$order->id . ' reconciles with no stored rate; relaying the rate the shop provided as is', 2);
 
-        return null;
+        return !empty($declared['shipping']) ? $declared['shipping'] : $carrier;
     }
 
     /**
@@ -8486,11 +8512,17 @@ class Twopayment extends PaymentModule
         $wrappingNet = round($wrappingNet, 2);
         $wrappingGross = round($wrappingGross, 2);
         $placement = $this->getTwoOrderGroupPaymentData($order);
-        $declared = $placement !== null ? $this->decodeTwoDeclaredChargeRates($placement['row']) : array('shipping' => array(), 'wrapping' => null);
+        $declared = $placement !== null ? $this->decodeTwoDeclaredChargeRates($placement['row']) : array('shipping' => array(), 'wrapping' => null, 'shipping_rate_provided' => null);
         // PS_ATCP_SHIPWRAP taxes shipping and wrapping at the products' average, which the line builder splits over the product rates instead.
         $atcp = $this->isTwoAtcpShipWrapEnabled();
-        if (!$atcp && !$carrierRatesReconcile) {
-            $shipping['classes'] = $this->resolveTwoPlacedShippingClasses($order, $orderIds, $shipping, $declared['shipping'], $carrierRateLabels);
+        $shipping['source'] = self::SHIPPING_RATE_CARRIER;
+        if (!$atcp && $declared['shipping_rate_provided'] === false) {
+            // Recorded at placement (TWO-26117): no carrier provided a rate, so the Default shipping tax code's classes, then
+            // checked by the builder, or with none set, 0% with the tax charged.
+            $shipping['source'] = $declared['shipping'] === array() ? self::SHIPPING_RATE_NONE : self::SHIPPING_RATE_CONTROL;
+            $shipping['classes'] = $declared['shipping'] === array() ? array(array('rate' => 0.0, 'net_weight' => 1.0)) : $declared['shipping'];
+        } elseif (!$atcp && !$carrierRatesReconcile) {
+            $shipping['classes'] = $this->resolveTwoPlacedShippingClasses($order, $orderIds, $shipping, $declared['shipping'], $carrierRateLabels, $declared['shipping_rate_provided'] === null);
         }
         $wrappingRate = null;
         if (!$atcp && $wrappingGross > 0) {
@@ -8518,49 +8550,46 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The placed shipping's rate classes when carrier_tax_rate does not reconcile, which a carrier-less order leaves at 0.
-     * The rates declared at placement, then the Default shipping tax code, each only if it reconciles with the stored amounts.
+     * The placed shipping's rate classes when carrier_tax_rate does not reconcile, for a shipping rate a carrier provided
+     * (TWO-26117): the rates declared at placement if they reconcile with the stored amounts; an order placed before
+     * placement recorded where its rate came from also tries the Default shipping tax code. A provided rate is never
+     * refused: with no candidate reconciling, what placement declared, else what the order records, goes out as is.
      *
      * @param Order $order
      * @param int[] $orderIds
-     * @param array $shipping ['net', 'gross']
+     * @param array $shipping ['net', 'gross', 'classes' from carrier_tax_rate]
      * @param array $declared the classes the create payload declared
      * @param string[] $carrierRateLabels
+     * @param bool $unrecorded whether the Two row predates the record of where the rate came from
      * @return array
-     * @throws Exception when no candidate reconciles
      */
-    private function resolveTwoPlacedShippingClasses($order, $orderIds, $shipping, $declared, $carrierRateLabels)
+    private function resolveTwoPlacedShippingClasses($order, $orderIds, $shipping, $declared, $carrierRateLabels, $unrecorded)
     {
         $tax = round($shipping['gross'] - $shipping['net'], 2);
         if ($declared !== array() && $this->doTwoRateClassesReconcile($declared, $shipping['net'], $tax)) {
             return $declared;
         }
         $cart = new Cart((int) $order->id_cart);
-        $default = null;
-        $groupId = Validate::isLoadedObject($cart) ? $this->getTwoDefaultShippingTaxRulesGroupId($cart) : null;
+        $groupId = $unrecorded && Validate::isLoadedObject($cart) ? $this->getTwoDefaultShippingTaxRulesGroupId($cart) : null;
         if ($groupId !== null) {
             $default = array(array('rate' => $this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart), 'net_weight' => 1.0));
             if ($this->doTwoRateClassesReconcile($default, $shipping['net'], $tax)) {
                 return $default;
             }
         }
-        $describe = function ($classes) {
-            return $classes === null || $classes === array() ? 'none' : implode(' + ', array_map(function ($class) {
-                return $this->formatTwoRatePercent($class['rate']);
-            }, $classes));
-        };
-        $message = sprintf(
-            'Order %s records shipping %.2f net, %.2f tax, which no stored or configured rate reconciles with'
-            . ' (carrier_tax_rate %s, declared at placement %s, Default shipping tax code %s)',
+        $relayed = $declared !== array() ? $declared : $shipping['classes'];
+        PrestaShopLogger::addLog(sprintf(
+            'TwoPayment: Order %s records shipping %.2f net, %.2f tax, which its carrier_tax_rate (%s) does not reconcile with; relaying %s as the shop provided it',
             implode(', ', $orderIds),
             $shipping['net'],
             $tax,
             implode(' + ', array_unique($carrierRateLabels)),
-            $describe($declared),
-            $describe($default)
-        );
-        PrestaShopLogger::addLog('TwoPayment: ' . $message, 3);
-        throw new Exception($message);
+            implode(' + ', array_map(function ($class) {
+                return $this->formatTwoRatePercent($class['rate']);
+            }, $relayed))
+        ), 2);
+
+        return $relayed;
     }
 
     /**
@@ -8677,7 +8706,7 @@ class Twopayment extends PaymentModule
      * The shipping classes and wrapping rate the create payload declared, as the Two row keeps them.
      *
      * @param array $row the Two row
-     * @return array ['shipping' => classes, 'wrapping' => decimal rate|null]
+     * @return array ['shipping' => classes, 'wrapping' => decimal rate|null, 'shipping_rate_provided' => bool|null, null before TWO-26117]
      */
     private function decodeTwoDeclaredChargeRates($row)
     {
@@ -8689,8 +8718,9 @@ class Twopayment extends PaymentModule
             }
         }
         $wrapping = is_array($decoded) && isset($decoded['wrapping']) && is_numeric($decoded['wrapping']) ? (float) $decoded['wrapping'] : null;
+        $provided = is_array($decoded) && isset($decoded['shipping_rate_provided']) && is_bool($decoded['shipping_rate_provided']) ? $decoded['shipping_rate_provided'] : null;
 
-        return array('shipping' => $shipping, 'wrapping' => $wrapping);
+        return array('shipping' => $shipping, 'wrapping' => $wrapping, 'shipping_rate_provided' => $provided);
     }
 
     /**
@@ -8955,6 +8985,7 @@ class Twopayment extends PaymentModule
     private function buildTwoLineItems($cart, $placed)
     {
         $items = [];
+        $this->twoShippingRateSource = null;
         if ($placed === null) {
             $this->twoDeclaredChargeRates = array('shipping' => array(), 'wrapping' => null);
         }
@@ -9258,15 +9289,21 @@ class Twopayment extends PaymentModule
                 // failing — the exact class of silent approximation this change
                 // exists to remove. `id_carrier` now only supplies the line's
                 // name, delay text and by-weight/by-price suffix (above).
+                $shipping_rate_source = $placed !== null ? $placed['shipping']['source'] : self::SHIPPING_RATE_CARRIER;
                 $shipping_rate_classes = $placed !== null
                     ? $placed['shipping']['classes']
                     : $this->resolveTwoCartShippingRateClasses(
                         $cart,
                         $shipping_gross,
-                        $carrier_is_loaded ? $carrier : null
+                        $carrier_is_loaded ? $carrier : null,
+                        $shipping_rate_source
                     );
+                $this->twoShippingRateSource = $shipping_rate_source;
                 if ($placed === null) {
-                    $this->twoDeclaredChargeRates['shipping'] = array_values($shipping_rate_classes);
+                    // What later updates and refunds read instead of the carrier or the config (TWO-26117): no classes
+                    // on a line no carrier provides a rate for means no Default shipping tax code was set either.
+                    $this->twoDeclaredChargeRates['shipping'] = $shipping_rate_source === self::SHIPPING_RATE_NONE ? array() : array_values($shipping_rate_classes);
+                    $this->twoDeclaredChargeRates['shipping_rate_provided'] = $shipping_rate_source === self::SHIPPING_RATE_CARRIER;
                 }
 
                 if (count($shipping_rate_classes) > 1) {
@@ -9279,7 +9316,8 @@ class Twopayment extends PaymentModule
                         $shipping_net,
                         $shipping_tax_amount,
                         $shipping_rate_classes,
-                        'shipping'
+                        'shipping',
+                        $shipping_rate_source === self::SHIPPING_RATE_CONTROL
                     ) as $segment) {
                         $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, $segment);
                     }
@@ -9301,12 +9339,14 @@ class Twopayment extends PaymentModule
                         );
                     }
                     $shipping_tax_rate_decimal = (float) $shipping_rate_class['rate'];
-                    $this->assertTwoDeclaredRateReconcilesWithAmounts(
-                        'shipping (' . $shipping_name . ')',
-                        $shipping_net,
-                        $shipping_tax_amount,
-                        $shipping_tax_rate_decimal
-                    );
+                    if ($shipping_rate_source === self::SHIPPING_RATE_CONTROL) {
+                        $this->assertTwoDeclaredRateReconcilesWithAmounts(
+                            'shipping (' . $shipping_name . ')',
+                            $shipping_net,
+                            $shipping_tax_amount,
+                            $shipping_tax_rate_decimal
+                        );
+                    }
                     $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, [
                         'net' => $shipping_net,
                         'tax' => $shipping_tax_amount,
@@ -9482,10 +9522,12 @@ class Twopayment extends PaymentModule
      * @param float $charge_tax PrestaShop-authoritative tax for the charge
      * @param array<string,array{rate:float,net_weight:float}> $classes Keyed by formatted rate
      * @param string $label For error messages ('shipping', 'gift wrapping')
+     * @param bool $checked false for shipping rates the plugin relays unchecked (TWO-26117): what the nudge
+     *                      cannot place is re-shared by rate instead of refusing, never below zero
      * @return array<int,array{net:float,tax:float,gross:float,rate:float}>
      * @throws Exception
      */
-    private function splitTwoChargeAcrossRateClasses($charge_net, $charge_tax, $classes, $label)
+    private function splitTwoChargeAcrossRateClasses($charge_net, $charge_tax, $classes, $label, $checked = true)
     {
         $charge_net = round(max(0, (float) $charge_net), 2);
         $charge_tax = round((float) $charge_tax, 2);
@@ -9538,7 +9580,20 @@ class Twopayment extends PaymentModule
                 $residual_cents -= $step;
                 $applied = true;
             }
-            if (!$applied) {
+            if (!$applied && !$checked) {
+                // Relayed as recorded (TWO-26117): the tax charged, shared by what each class's rate implies for its
+                // net (by net where every rate is 0), so no line ever carries a tax the shop did not charge or a sign
+                // it never had. Two's API judges the lines.
+                $tax_weights = [];
+                foreach ($classes as $key => $class) {
+                    $tax_weights[$key] = (isset($allocated_nets[$key]) ? (float) $allocated_nets[$key] : 0.0) * max(0.0, (float) $class['rate']);
+                }
+                $shares = $this->allocateTwoAmountByWeights($charge_tax, array_sum($tax_weights) > 0 ? $tax_weights : $net_weights);
+                foreach (array_keys($tax_cents) as $key) {
+                    $tax_cents[$key] = isset($shares[$key]) ? $this->convertAmountToCents($shares[$key]) : 0;
+                }
+                $residual_cents = 0;
+            } elseif (!$applied) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Cannot reconcile ' . $label . ' tax split to PrestaShop totals. ' .
                     'Residual=' . $residual_cents . 'c beyond per-line tolerance',
@@ -10769,35 +10824,51 @@ class Twopayment extends PaymentModule
      * derived rate surfaces later as a bad invoice rather than a loud failure
      * here.
      *
+     * Which rate a shipping line carries (TWO-26117). A carrier that declares a tax rules group provides the rate,
+     * 0% included, and it is relayed as is. "No tax" (group 0), no carrier at all, or no readable carrier provides
+     * none: the Default shipping tax code, when enabled and set, supplies it and is checked against the line's tax;
+     * without it the line goes out at 0% with the tax it was charged. The plugin never refuses on shipping tax unless
+     * that control is populated.
+     *
      * @param Cart $cart
-     * @param float $shipping_gross Authoritative 2dp shipping gross, for the failure message
+     * @param float $shipping_gross Authoritative 2dp shipping gross
      * @param Carrier|null $fallback_carrier Cart's loaded carrier, used only when the
      *                                       delivery option yields no carrier at all
+     * @param string $source set to self::SHIPPING_RATE_CARRIER, SHIPPING_RATE_CONTROL or SHIPPING_RATE_NONE
      * @return array<string,array{rate:float,net_weight:float}> Keyed by formatted rate
-     * @throws TwoCheckoutAmountException When no carrier with a declared tax-rules group can be resolved
      */
-    private function resolveTwoCartShippingRateClasses($cart, $shipping_gross, $fallback_carrier = null)
+    private function resolveTwoCartShippingRateClasses($cart, $shipping_gross, $fallback_carrier = null, &$source = null)
     {
+        $failure = '';
+        $declaresGroup = false;
         try {
-            return $this->resolveTwoCartShippingRateClassesFromCarriers(
-                $cart,
-                $shipping_gross,
-                $fallback_carrier
-            );
-        } catch (TwoCheckoutAmountException $e) {
-            // Resolution order (TWO-25200): carrier's declared group first -
-            // it is the only source that is per-option and per-address - then
-            // the merchant's module-level default shipping tax code, then the
-            // loud refusal. The default is consulted ONLY here, on the path
-            // where no carrier group was resolvable at all, so a shop with a
-            // working carrier table never sees it.
-            $default_classes = $this->resolveTwoDefaultShippingRateClasses($cart, $shipping_gross, $e->getMessage());
-            if ($default_classes !== null) {
-                return $default_classes;
-            }
+            $classes = $this->resolveTwoCartShippingRateClassesFromCarriers($cart, $shipping_gross, $fallback_carrier, $declaresGroup);
+            if ($declaresGroup) {
+                $source = self::SHIPPING_RATE_CARRIER;
 
-            throw $e;
+                return $classes;
+            }
+            $failure = 'its carrier declares "No tax"';
+        } catch (TwoCheckoutAmountException $e) {
+            $failure = $e->getMessage();
         }
+        // The Default shipping tax code is consulted ONLY for a line no carrier provides a rate for.
+        $default_classes = $this->resolveTwoDefaultShippingRateClasses($cart, $shipping_gross, $failure);
+        if ($default_classes !== null) {
+            $source = self::SHIPPING_RATE_CONTROL;
+
+            return $default_classes;
+        }
+        $source = self::SHIPPING_RATE_NONE;
+        PrestaShopLogger::addLog(
+            'TwoPayment: Cart ' . (int) $cart->id . ' (id_carrier=' . (int) $cart->id_carrier . ') provides no shipping tax rate ('
+            . $failure . ') and no usable Default shipping tax code; sending shipping at 0% with the tax it was charged.',
+            1
+        );
+
+        return array(
+            $this->formatTwoTaxRate(0.0) => array('rate' => 0.0, 'net_weight' => max(0.0, (float) $shipping_gross)),
+        );
     }
 
     /**
@@ -10805,7 +10876,8 @@ class Twopayment extends PaymentModule
      * single rate class the whole shipping charge belongs to (TWO-25200).
      *
      * Returns NULL - never a rate - when no default is configured, which is
-     * the shipped state and leaves the caller's loud refusal untouched. The
+     * the shipped state: the caller then sends the line at 0% with the tax it
+     * was charged (TWO-26117). The
      * whole shipping gross goes into one class: the default is a declaration
      * about shipping as such, and the carrier-level split it replaces was
      * unavailable by definition on this path.
@@ -10825,13 +10897,13 @@ class Twopayment extends PaymentModule
         try {
             $rate = $this->getTwoConfiguredTaxRateDecimalForGroup($group_id, $cart);
         } catch (Throwable $e) {
-            // A configured-but-unresolvable default is not a rate either.
-            // Returning null hands the caller back its loud refusal rather
-            // than relaying a silent 0%.
+            // A configured-but-unresolvable default is not a rate either, so
+            // the control is not populated and the caller sends the line at 0%
+            // with the tax it was charged (TWO-26117), never a guessed rate.
             PrestaShopLogger::addLog(
                 'TwoPayment: Cart ' . (int) $cart->id . ' could not resolve the configured default shipping ' .
                 'tax code (tax_rules_group=' . $group_id . ') either (' . get_class($e) . ': ' .
-                $e->getMessage() . '); refusing rather than relaying a guessed rate.',
+                $e->getMessage() . '); treating it as not set rather than guessing a rate.',
                 3
             );
 
@@ -10884,7 +10956,7 @@ class Twopayment extends PaymentModule
      * @param Cart|null $cart Read for the cart's shop; null reads the context's (the admin form)
      * @return int|null Group id (0 = "No tax"), or null when unset/invalid or
      *                  the fallback is not enabled (TWO-26082) - null being
-     *                  the shipped state and the loud-refusal path
+     *                  the shipped state, where no rate is assumed (TWO-26117)
      */
     private function getTwoDefaultShippingTaxRulesGroupId($cart = null)
     {
@@ -10908,10 +10980,10 @@ class Twopayment extends PaymentModule
         $group_id = (int) $stored;
         if ($group_id > 0 && !Validate::isLoadedObject(new TaxRulesGroup($group_id))) {
             // The merchant deleted the group after selecting it. That is not
-            // a declaration any more - refuse loudly instead of relaying 0%.
+            // a declaration any more, so the control is not populated (TWO-26117).
             PrestaShopLogger::addLog(
                 'TwoPayment: The configured Default shipping tax code refers to tax rules group ' .
-                $group_id . ', which no longer exists; treating shipping tax as unresolvable.',
+                $group_id . ', which no longer exists; treating the Default shipping tax code as not set.',
                 3
             );
 
@@ -10931,11 +11003,13 @@ class Twopayment extends PaymentModule
      * @param Cart $cart
      * @param float $shipping_gross
      * @param Carrier|null $fallback_carrier
+     * @param bool $declaresGroup set to whether any carrier behind the classes declares a tax rules group, not "No tax"
      * @return array<string,array{rate:float,net_weight:float}>
      * @throws TwoCheckoutAmountException
      */
-    private function resolveTwoCartShippingRateClassesFromCarriers($cart, $shipping_gross, $fallback_carrier = null)
+    private function resolveTwoCartShippingRateClassesFromCarriers($cart, $shipping_gross, $fallback_carrier = null, &$declaresGroup = false)
     {
+        $declaresGroup = false;
         // NEITHER CORE CALL IS EXCEPTION-FREE. Both run
         // Cart::getPackageList() and, per candidate carrier,
         // Cart::getPackageShippingCost() - which instantiates ObjectModels
@@ -11039,6 +11113,7 @@ class Twopayment extends PaymentModule
                     try {
                         $group_id = (int) $instance->getIdTaxRulesGroup();
                         $rate = $this->getTwoConfiguredTaxRateDecimalForGroup($group_id, $cart);
+                        $declaresGroup = $declaresGroup || $group_id > 0;
                     } catch (Throwable $e) {
                         throw $this->buildTwoShippingRateUnresolvableException(
                             $cart,
@@ -11102,6 +11177,7 @@ class Twopayment extends PaymentModule
                         ? (int) $fallback_carrier->getIdTaxRulesGroup()
                         : 0;
                     $fallback_rate = $this->getTwoCarrierConfiguredTaxRateDecimal($fallback_carrier, $cart);
+                    $declaresGroup = $fallback_group_id > 0;
                 } catch (Throwable $e) {
                     throw $this->buildTwoShippingRateUnresolvableException(
                         $cart,
@@ -11192,11 +11268,9 @@ class Twopayment extends PaymentModule
             ', delivery option key=' . ($option_key === '' ? '(none)' : $option_key) .
             ', carrier in list=' . (int) $id_carrier;
 
-        // A configured Default shipping tax code (TWO-25200) turns this into
-        // a "not on the normal path" event rather than a failure: the caller
-        // catches the exception and relays that declaration instead. Logging
-        // it at error severity anyway would put a permanent red line in every
-        // such merchant's log for the designed behaviour.
+        // Not a failure (TWO-26117): the caller catches the exception and relays the configured Default shipping tax
+        // code (TWO-25200), or with none set sends the line at 0% with the tax it was charged. A warning, so it names
+        // the shop that is off the normal path without a permanent red line for the designed behaviour.
         $default_configured = $this->getTwoDefaultShippingTaxRulesGroupId($cart) !== null;
 
         PrestaShopLogger::addLog(
@@ -11204,8 +11278,8 @@ class Twopayment extends PaymentModule
             'tax rate exists to relay (' . $detail . '): ' . $reason . ', while the shipping is still ' .
             'priced. ' . ($default_configured
                 ? 'Falling back to the configured Default shipping tax code.'
-                : 'Configure a carrier that covers this delivery address and the cart contents.'),
-            $default_configured ? 2 : 3
+                : 'No Default shipping tax code is set, so it goes out at 0% with the tax it was charged.'),
+            2
         );
 
         // Buyer-facing by type: the detail is nothing but the cart's own
@@ -12338,9 +12412,11 @@ class Twopayment extends PaymentModule
             $quantity = (int)$item['quantity'];
             $discount_amount = (float)$item['discount_amount'];
 
-            // Critical validation: tax_amount = net_amount * tax_rate (tax_rate is decimal)
+            // Critical validation: tax_amount = net_amount * tax_rate (tax_rate is decimal). Not on a shipping line
+            // whose rate is relayed unchecked: only the Default shipping tax code's rate is checked (TWO-26117).
             $expected_tax_amount = $net_amount * $tax_rate;
-            if (abs($tax_amount - $expected_tax_amount) > self::TAX_FORMULA_TOLERANCE) {
+            $unchecked = isset($item['type']) && $item['type'] === 'SHIPPING_FEE' && in_array($this->twoShippingRateSource, array(self::SHIPPING_RATE_CARRIER, self::SHIPPING_RATE_NONE), true);
+            if (!$unchecked && abs($tax_amount - $expected_tax_amount) > self::TAX_FORMULA_TOLERANCE) {
                 PrestaShopLogger::addLog(
                     'TwoPayment CRITICAL Tax Formula Error - Item: ' . $item['name'] .
                     ', Got: ' . $tax_amount . ', Expected: ' . $expected_tax_amount .

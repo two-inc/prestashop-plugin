@@ -21,7 +21,8 @@ declare(strict_types=1);
  * the tax-rules group declared by the carriers in the cart's own selected
  * delivery option, which stay enumerable even with `id_carrier = 0`. When no
  * such carrier exists at all (PrestaShop's carrier_list = [0 => 0] sentinel)
- * the order is refused rather than shipped with a guessed rate.
+ * no rate is provided: with no Default shipping tax code set, the line goes out
+ * at 0% with the tax it was charged (TWO-26117), never at a guessed rate.
  */
 final class ShippingCostSourcingSpec
 {
@@ -30,14 +31,15 @@ final class ShippingCostSourcingSpec
         self::testCarrierlessCartKeepsShippingCostAndReconciles();
         self::testIncoherentCartIsRejectedWithSpecificMessage();
         self::testFreeShippingCarrierlessCartStillBuilds();
-        self::testUnloadableCarrierRefusesRatherThanGuessTheRate();
+        self::testUnloadableCarrierSendsZeroRatherThanGuessTheRate();
         self::testMixedDeclaredRatesSplitIntoOneLinePerRate();
         self::testStaleIdCarrierOnMultiAddressCartStillSplitsPerRate();
-        self::testDeletedCarrierRowRefusesRatherThanGuessTheRate();
-        self::testCarrierTaxGroupReadFailureRefusesRatherThanRelayZero();
+        self::testDeletedCarrierRowSendsZeroRatherThanGuessTheRate();
+        self::testCarrierTaxGroupReadFailureSendsZeroWithTheTaxCharged();
         self::testDeliveryOptionLookupRaiseFallsBackToCartCarrierDeclaredRate();
-        self::testEmptyCarrierListWithNoLoadableCarrierRefuses();
-        self::testNoTaxCarrierGroupRefusesWhenAmountsCarryTax();
+        self::testEmptyCarrierListWithNoLoadableCarrierSendsZero();
+        self::testNoTaxCarrierGroupSendsZeroWithTheTaxCharged();
+        self::testUnreconciledMixedRatesAreRelayedWithoutASignFlip();
     }
 
     /**
@@ -265,7 +267,7 @@ final class ShippingCostSourcingSpec
      * `'instance' => new Carrier(0)` (1.7.6.0:2858) - an UNLOADED carrier under
      * a real array entry. `[0 => 0]` never arrives; an unloaded instance does.
      */
-    private static function testUnloadableCarrierRefusesRatherThanGuessTheRate(): void
+    private static function testUnloadableCarrierSendsZeroRatherThanGuessTheRate(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -308,18 +310,12 @@ final class ShippingCostSourcingSpec
             ],
         ];
 
-        TinyAssert::throws(
-            static function () use ($module, $cart): void {
-                $module->getTwoNewOrderData('merchant-attempt-9104', $cart, self::merchantUrls());
-            },
-            'No deliverable carrier for the cart shipping cost: PrestaShop reports no available carrier ' .
-            '(carrier_list = [0 => 0]) for this cart, so there is no declared shipping tax-rules group to relay'
-        );
+        self::assertShippingSentAtZero($module->getTwoNewOrderData('merchant-attempt-9104', $cart, self::merchantUrls()), 'cart 9104');
 
         // The refusal names the condition and the numbers behind it.
         TinyAssert::true(
             self::loggedContains('cart 9104, id_carrier=0, shipping=29.00'),
-            'The refusal must log the cart, id_carrier and shipping amount'
+            'The log must name the cart, id_carrier and shipping amount'
         );
     }
 
@@ -635,9 +631,9 @@ final class ShippingCostSourcingSpec
      * is not always LOADED. A carrier row deleted or de-scoped between the
      * package build and the payload build leaves a real, positive carrier id
      * pointing at an unloaded object, i.e. no declared tax-rules group. Same
-     * answer as the sentinel: refuse, never infer.
+     * answer as the sentinel: no rate provided, never inferred.
      */
-    private static function testDeletedCarrierRowRefusesRatherThanGuessTheRate(): void
+    private static function testDeletedCarrierRowSendsZeroRatherThanGuessTheRate(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -665,15 +661,10 @@ final class ShippingCostSourcingSpec
         ];
         self::seedShippingTotals(9107, 29.00, 23.9669);
 
-        TinyAssert::throws(
-            static function () use ($module, $cart): void {
-                $module->getTwoNewOrderData('merchant-attempt-9107', $cart, self::merchantUrls());
-            },
-            'No deliverable carrier for the cart shipping cost'
-        );
+        self::assertShippingSentAtZero($module->getTwoNewOrderData('merchant-attempt-9107', $cart, self::merchantUrls()), 'cart 9107');
         TinyAssert::true(
             self::loggedContains('carrier in list=7031'),
-            'The refusal must name the carrier whose row would not load'
+            'The log must name the carrier whose row would not load'
         );
     }
 
@@ -683,10 +674,10 @@ final class ShippingCostSourcingSpec
      * `Context->shop` lookup (Carrier.php 1.7.6.0/8.1.7:1217, 9.0.0:1220), and
      * the group resolver then instantiates an Address (ObjectModel::__construct
      * throws PrestaShopException). A raise there used to become a 500 on the
-     * checkout page; now it refuses, naming the cause. Falling through to 0%
-     * would be the one unacceptable outcome.
+     * checkout page; now it counts as no rate provided, and the cause reaches
+     * the log (TWO-26117).
      */
-    private static function testCarrierTaxGroupReadFailureRefusesRatherThanRelayZero(): void
+    private static function testCarrierTaxGroupReadFailureSendsZeroWithTheTaxCharged(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -719,14 +710,8 @@ final class ShippingCostSourcingSpec
         ];
         self::seedShippingTotals(9108, 29.00, 23.9669);
 
-        TinyAssert::throws(
-            static function () use ($module, $cart): void {
-                $module->getTwoNewOrderData('merchant-attempt-9108', $cart, self::merchantUrls());
-            },
-            'the declared tax-rules group of carrier 7041 could not be read'
-        );
-        // The buyer-facing refusal must not carry the driver's SQL text; the
-        // shop log is where the cause belongs.
+        self::assertShippingSentAtZero($module->getTwoNewOrderData('merchant-attempt-9108', $cart, self::merchantUrls()), 'cart 9108');
+        // The cause belongs in the shop log.
         TinyAssert::true(
             self::loggedContains('carrier_tax_rules_group_shop unavailable'),
             'The underlying failure must reach the shop log'
@@ -834,14 +819,14 @@ final class ShippingCostSourcingSpec
      * no rate class at all.
      *
      * With no loadable `$cart->id_carrier` to fall back on there is no declared
-     * rate anywhere: refuse. Relaying 0%, deriving a rate from the amounts, or
-     * substituting PS_CARRIER_DEFAULT / Carrier::getIdTaxRulesGroupMostUsed()
-     * are all inventions, and core has no shop-level shipping tax-rules group
+     * rate anywhere: no rate provided (TWO-26117). Deriving a rate from the
+     * amounts, or substituting PS_CARRIER_DEFAULT /
+     * Carrier::getIdTaxRulesGroupMostUsed(), are inventions, and core has no shop-level shipping tax-rules group
      * (only PS_ECOTAX_TAX_RULES_GROUP(_ID) and PS_GIFT_WRAPPING_TAX_RULES_GROUP
      * exist; the shipping group lives per carrier in
      * `carrier_tax_rules_group_shop`).
      */
-    private static function testEmptyCarrierListWithNoLoadableCarrierRefuses(): void
+    private static function testEmptyCarrierListWithNoLoadableCarrierSendsZero(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -861,24 +846,16 @@ final class ShippingCostSourcingSpec
         ];
         self::seedShippingTotals(9110, 29.00, 23.9669);
 
-        TinyAssert::throws(
-            static function () use ($module, $cart): void {
-                $module->getTwoNewOrderData('merchant-attempt-9110', $cart, self::merchantUrls());
-            },
-            'PrestaShop exposes no readable delivery-option carrier list for this cart and its own carrier '
-                . 'does not load either'
-        );
+        self::assertShippingSentAtZero($module->getTwoNewOrderData('merchant-attempt-9110', $cart, self::merchantUrls()), 'cart 9110');
     }
 
     /**
      * (k) `getIdTaxRulesGroup()` legitimately returns 0 - core's "No tax"
-     * sentinel - and the group resolver maps 0 to a 0.0 rate by design. That is
-     * correct for a genuinely untaxed carrier, and it must NOT become a silent
-     * 0% on shipping that PrestaShop did tax. The declared-rate divergence gate
-     * is what separates the two, so a 0-group carrier on taxed shipping amounts
-     * refuses instead of relaying 0%.
+     * sentinel. It provides no rate (TWO-26117): with no Default shipping tax
+     * code set, taxed shipping on such a carrier goes out at 0% with the tax it
+     * was charged, for Two's API to judge, rather than being refused.
      */
-    private static function testNoTaxCarrierGroupRefusesWhenAmountsCarryTax(): void
+    private static function testNoTaxCarrierGroupSendsZeroWithTheTaxCharged(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -899,11 +876,64 @@ final class ShippingCostSourcingSpec
         ]);
         self::seedShippingTotals(9131, 29.00, 23.9669);
 
-        TinyAssert::throws(
-            static function () use ($module, $cart): void {
-                $module->getTwoNewOrderData('merchant-attempt-9131', $cart, self::merchantUrls());
-            },
-            'Declared tax rate diverges from applied tax amounts for shipping'
-        );
+        self::assertShippingSentAtZero($module->getTwoNewOrderData('merchant-attempt-9131', $cart, self::merchantUrls()), 'cart 9131');
+    }
+
+    /**
+     * No carrier provides a rate and no Default shipping tax code is set (TWO-26117): the line goes out at 0% with the
+     * tax it was charged, for Two's API to judge. Never refused, and never at a rate guessed from the amounts.
+     */
+    private static function assertShippingSentAtZero(array $payload, string $description): void
+    {
+        $shipping = [];
+        foreach ($payload['line_items'] as $line) {
+            if ($line['type'] === 'SHIPPING_FEE') {
+                $shipping[] = [$line['tax_rate'], $line['net_amount'], $line['tax_amount'], $line['gross_amount']];
+            }
+        }
+        TinyAssert::same([['0', '23.97', '5.03', '29.00']], $shipping, $description . ': shipping at 0% with the tax charged');
+    }
+
+    /**
+     * TWO-26117: a delivery option over carriers that declare groups provides its rates, and with the Default
+     * shipping tax code blank the lines go out unchecked. Where the tax charged does not reconcile with those
+     * rates, it is shared by what each rate implies for its net: never a negative line, never a tax the shop did
+     * not charge. Columns: carriers by id (net, gross, group), shipping gross and net, expected [rate, net, tax]
+     * lines, description.
+     */
+    private static function testUnreconciledMixedRatesAreRelayedWithoutASignFlip(): void
+    {
+        $cases = [
+            [[7011 => ['net' => 10.00, 'gross' => 12.10, 'group' => 7201], 7012 => ['net' => 20.00, 'gross' => 20.00, 'group' => 0]], 30.00, 30.00,
+                [['0.21', '10.00', '0.00'], ['0', '20.00', '0.00']], '21% and "No tax" carriers, shipping charged no tax'],
+            [[7011 => ['net' => 10.00, 'gross' => 12.10, 'group' => 7201], 7012 => ['net' => 16.00, 'gross' => 17.60, 'group' => 7202]], 31.00, 26.00,
+                [['0.21', '10.00', '2.84'], ['0.1', '16.00', '2.16']], '21% and 10% carriers, 5.00 charged where 3.70 reconciles'],
+        ];
+        foreach ($cases as $i => [$carriers, $gross, $net, $expected, $description]) {
+            self::reset();
+            StubStore::$taxRuleRates[7201] = 21.0;
+            StubStore::$taxRuleRates[7202] = 10.0;
+            $id = 9160 + $i;
+            self::seedCommonFixtures($id, $id + 10);
+            $cart = new Cart($id);
+            $cart->id_customer = $id;
+            $cart->id_currency = 978;
+            $cart->id_address_invoice = $id + 10;
+            $cart->id_address_delivery = $id + 10;
+            $cart->id_lang = 1;
+            $cart->id_carrier = 0;
+            self::seedProductLine($cart, $id + 20);
+            self::seedDeliveryOption($id, $id + 10, $carriers);
+            self::seedShippingTotals($id, $gross, $net);
+
+            $payload = (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-' . $id, $cart, self::merchantUrls());
+            $lines = [];
+            foreach ($payload['line_items'] as $line) {
+                if ($line['type'] === 'SHIPPING_FEE') {
+                    $lines[] = [(string) $line['tax_rate'], $line['net_amount'], $line['tax_amount']];
+                }
+            }
+            TinyAssert::same($expected, $lines, $description . ': got ' . json_encode($lines));
+        }
     }
 }
