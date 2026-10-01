@@ -28,6 +28,30 @@ final class RefundSpec
         self::testSlipsAreSentAsLinesOfTheTwoOrder();
         self::testRemainderIsSentAsLinesOfTheTwoOrder();
         self::testTheHookSeesAndCanEditTheLines();
+        self::testSubtotalsThatCannotBeItemised();
+    }
+
+    /**
+     * TWO-26143: subtotals lines cannot describe go without lines, so the lines never disagree with the amount.
+     * Columns: tax subtotals, expected [id, net, tax, gross] lines (null: none), description.
+     */
+    private static function testSubtotalsThatCannotBeItemised(): void
+    {
+        $sub = static function (string $rate, string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => $rate];
+        };
+        $twoOrder = ['line_items' => [self::twoLine('p1', 'PHYSICAL', '0.2', '100.00'), self::twoLine('p2', 'PHYSICAL', '0.1', '100.00')]];
+        $cases = [
+            [[$sub('0.200000', '50.00', '10.00'), $sub('0.100000', '10.00', '1.00')], [['p1', '50.00', '10.00', '60.00'], ['p2', '10.00', '1.00', '11.00']], 'both rates itemised'],
+            [[$sub('0.200000', '50.00', '10.00'), $sub('0.100000', '-10.00', '-1.00')], null, 'a negative rate: no lines, since lines for the other rate alone would not sum to the amount'],
+        ];
+        foreach ($cases as [$subtotals, $expected, $desc]) {
+            StubStore::reset();
+            $module = self::makeModule(self::fulfilledOrder(500.00));
+            $module->merchantCountry = 'NO';
+            $got = $module->buildTwoRefundLineItems($subtotals, $twoOrder, [], 'Spec');
+            TinyAssert::same($expected, $got === null ? null : self::sentLines(['line_items' => $got], $twoOrder['line_items']), $desc . ': got ' . json_encode($got));
+        }
     }
 
     /** A Two order line as the order GET returns it; a null code is a line placed without one. */
@@ -100,6 +124,9 @@ final class RefundSpec
             [[], [0.0], 11.50, 10.00, 14.975, [self::twoLine('s1', 'SHIPPING_FEE', '0.1498', '20.00')], [['s1', '10.00', '1.50', '11.50']], 'a combined carrier rate rounded as placement rounds it matches the shipping line'],
             [[self::line(30.00, 30.00, '0.000')], [30.00], 0.0, 0.0, 0.0, ['lines' => [self::twoLine('p1', 'PHYSICAL', '0', '100.00', null)], 'country' => 'NO'], [['p1', '30.00', '0.00', '30.00']], 'a known non-Spanish merchant\'s uncoded 0% line still takes its share'],
             [[self::line(25.00, 30.00, '20.000')], [30.00, 25.00, 30.00, 2, '{"shipping":[],"shipping_rate_provided":false}'], 12.50, 10.00, 0.0, [self::twoLine('p1', 'PHYSICAL', '0.2', '100.00'), self::twoLine('s1', 'SHIPPING_FEE', '0', '20.00')], null, 'tax refunded at 0%: sent without lines, as before'],
+            [[], [0.0, null, null, 0, '{"shipping":[{"rate":0.21,"net_weight":1}],"shipping_rate_provided":true}'], 110.00, 100.00, 0.0, [self::twoLine('s1', 'SHIPPING_FEE', '0.21', '200.00')], null, 'shipping declared at 21% but charged at 10%: sent without lines, as before'],
+            [[], [0.0, null, null, 0, '{"shipping":[{"rate":0.21,"net_weight":0.5},{"rate":0,"net_weight":0.5}],"shipping_rate_provided":true}'], 11.07, 10.01, 0.0, [self::twoLine('s0', 'SHIPPING_FEE', '0', '50.00'), self::twoLine('s21', 'SHIPPING_FEE', '0.21', '50.00')], [['s0', '5.01', '0.00', '5.01'], ['s21', '5.01', '1.05', '6.06']], 'a rounding cent of tax parked on a 0% shipping class is still itemised'],
+            [[self::line(30.00, 30.00, '0.000')], [30.00], 0.0, 0.0, 0.0, ['lines' => [$es0[0], self::twoLine('s1', 'SHIPPING_FEE', '0', '20.00'), self::twoLine('s2', 'SHIPPING_FEE', '0', '5.00')], 'refunds' => [self::twoRefund('-80.00', ['p1' => '-80.00'])]], [['p1', '20.00', '0.00', '20.00'], ['s1', '8.00', '0.00', '8.00'], ['s2', '2.00', '0.00', '2.00']], 'a capped kind\'s excess goes to the lines of another kind by what each has left'],
         ];
 
         foreach ($cases as $i => [$lines, $fields, $shipIncl, $shipExcl, $carrierRate, $twoLines, $expected, $desc]) {
