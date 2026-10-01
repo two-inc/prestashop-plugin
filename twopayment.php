@@ -8348,6 +8348,7 @@ class Twopayment extends PaymentModule
             'dest_country' => Validate::isLoadedObject($destination) ? (string) Country::getIsoById((int) $destination->id_country) : '',
             'dest_postcode' => Validate::isLoadedObject($destination) ? (string) $destination->postcode : '',
             'buyer_country' => trim((string) $buyerCountry) !== '' ? (string) $buyerCountry : $invoiceCountry,
+            'buyer_postcode' => Validate::isLoadedObject($invoiceAddress) ? (string) $invoiceAddress->postcode : '',
         );
         $hasGoods = false;
         foreach ($keys as $key) {
