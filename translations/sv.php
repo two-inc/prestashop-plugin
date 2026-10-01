@@ -603,3 +603,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_97139627c126d86a74d8ab820ad756d6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_759ff422efd0250045ed55a9a958546b'] = 'finns inte längre i listan';
 $_MODULE['<{twopayment}prestashop>twopayment_280d19d2479762ed9a0d8aaed614e8bb'] = 'Handlarens land är inte känt ännu, så inga skattekoder kan visas. Spara en giltig API-nyckel eller uppdatera handlarprofilen på fliken Diagnostik.';
 $_MODULE['<{twopayment}prestashop>twopayment_31804353a7d42acedb8d202c17571abf'] = 'Listan över skattekoder kunde inte läsas från %1$s (HTTP %2$s). Sparade kopplingar fungerar fortfarande i kassan; ladda om sidan för att försöka igen.';
+$_MODULE['<{twopayment}prestashop>twopayment_d592cdbb1c59d9ba9f0308c01863437c'] = 'den sparade kopplingen av skattekoder går inte att läsa. Spara Skattekoder för rader med 0 % igen.';

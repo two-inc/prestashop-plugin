@@ -339,6 +339,7 @@ class Twopayment extends PaymentModule
     const CONFIG_MERCHANT_COUNTRY_TRIED_TS = 'PS_TWO_MERCHANT_COUNTRY_TRIED_TS';
     const CONFIG_TAX_CODE_MAP = 'PS_TWO_TAX_CODE_MAP';
     const CONFIG_TAX_CODES = 'PS_TWO_TAX_CODES';
+    const CONFIG_TAX_CODES_TRIED_TS = 'PS_TWO_TAX_CODES_TRIED_TS';
     const TAX_CODES_TTL = 86400;
     // One select per tax rules group on the Order management form, suffixed with the group id.
     const TAX_CODE_MAP_FIELD_PREFIX = 'PS_TWO_TAX_CODE_MAP_';
@@ -409,6 +410,9 @@ class Twopayment extends PaymentModule
 
     /** @var array|null the charge rates the last create payload declared, persisted on the Two row for updates (TWO-26085) */
     private $twoDeclaredChargeRates = null;
+
+    /** @var bool the unreadable tax code mapping is logged once per request */
+    private $twoTaxCodeMapLogged = false;
 
     /** @var array[] one descriptor per line the last buildTwoLineItems() built, in line order, for applyTwoTaxCodes() (TWO-24877) */
     private $twoLineTaxKeys = array();
@@ -1124,6 +1128,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_MERCHANT_COUNTRY_TRIED_TS);
         Configuration::deleteByName(self::CONFIG_TAX_CODE_MAP);
         Configuration::deleteByName(self::CONFIG_TAX_CODES);
+        Configuration::deleteByName(self::CONFIG_TAX_CODES_TRIED_TS);
         return true;
     }
 
@@ -3536,6 +3541,21 @@ class Twopayment extends PaymentModule
         if ($held && (int) $cached['fetched_at'] + self::TAX_CODES_TTL > time()) {
             return $cached['codes'];
         }
+        // Stamped before the call, so an outage costs one attempt per backoff, not one per page load.
+        $tried = (int) Configuration::get(self::CONFIG_TAX_CODES_TRIED_TS);
+        if ($tried + self::MERCHANT_RECORD_RETRY_BACKOFF > time()) {
+            if ($held) {
+                return $cached['codes'];
+            }
+            $error = sprintf(
+                $this->l('The tax code list could not be read from %1$s (HTTP %2$s). Saved mappings keep working at checkout; reload this page to try again.'),
+                $this->getTwoBrandConfig('product_name'),
+                '-'
+            );
+
+            return null;
+        }
+        Configuration::updateValue(self::CONFIG_TAX_CODES_TRIED_TS, time());
         $response = $this->setTwoPaymentRequest('/v1/tax_codes/' . rawurlencode($country), array(), 'GET', array(), self::API_TIMEOUT_STATE_CHECK);
         $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
         $codes = $status === self::HTTP_STATUS_OK && isset($response['data']) && is_array($response['data'])
@@ -3933,6 +3953,9 @@ class Twopayment extends PaymentModule
         }
         if ($reason === null && $this->getTwoSurchargeSettingsOrNull() === null) {
             $reason = $this->l('the saved surcharge method is not recognised. Check Surcharge method.');
+        }
+        if ($reason === null && !$this->isTwoTaxCodeMapReadable()) {
+            $reason = $this->l('the saved tax code mapping is unreadable. Save Tax codes for 0% lines again.');
         }
         if ($reason === null) {
             $countryState = $this->getTwoBuyerCountryRestrictionState();
@@ -6931,6 +6954,13 @@ class Twopayment extends PaymentModule
             return [];
         }
 
+        // The order build refuses on an unreadable tax code mapping (TWO-24877), so withhold Two here instead of
+        // after the buyer submits.
+        if (!$this->isTwoTaxCodeMapReadable()) {
+            $this->logTwoPaymentOptionHidden('the saved tax code mapping is unreadable');
+            return [];
+        }
+
         // B2B checkout: Two shows for any company-bearing buyer. There is
         // no account-type selector to also gate on (TWO-24755 rework) -
         // the front-end prompts for the company at payment time when
@@ -7742,14 +7772,18 @@ class Twopayment extends PaymentModule
      * @param string $buyerCountry the payload's buyer.company.country_prefix
      * @param array|null $stored the codes placement resolved, by line key; null on a create, which records them
      * @return array
-     * @throws Exception when the stored mapping is unreadable, or the descriptors do not describe the lines
+     * @throws Exception when a 0% line needs the stored mapping and it is unreadable
      */
     private function applyTwoTaxCodes(array $lineItems, array $keys, $deliveryAddress, $invoiceAddress, $buyerCountry, $stored = null)
     {
-        if (count($keys) !== count($lineItems)) {
-            throw new Exception('Tax code resolution: ' . count($keys) . ' line descriptors for ' . count($lineItems) . ' lines');
+        if (count($keys) !== count($lineItems) || array_keys($keys) !== array_keys($lineItems)) {
+            // Never a refusal: the lines go out uncoded and the API decides.
+            PrestaShopLogger::addLog('TwoPayment: Tax codes not resolved - ' . count($keys) . ' line descriptors for ' . count($lineItems) . ' lines; sending the lines without codes', 3);
+
+            return $lineItems;
         }
-        $map = $this->getTwoTaxCodeMap();
+        // Read only once a 0% line needs it, so an order with none never depends on the stored mapping.
+        $map = null;
         $destination = Validate::isLoadedObject($deliveryAddress) ? $deliveryAddress : $invoiceAddress;
         $invoiceCountry = Validate::isLoadedObject($invoiceAddress) ? (string) Country::getIsoById((int) $invoiceAddress->id_country) : '';
         $order = array(
@@ -7773,6 +7807,9 @@ class Twopayment extends PaymentModule
             if ($stored !== null && $key['key'] !== null && isset($stored[$key['key']])) {
                 $codes[$i] = $stored[$key['key']];
                 continue;
+            }
+            if ($map === null) {
+                $map = $this->getTwoTaxCodeMap();
             }
             $mapped = $key['group'] > 0 && isset($map[$key['group']]) ? $map[$key['group']] : null;
             $codes[$i] = TwoTaxCodeResolver::resolve($line['tax_rate'], $mapped, $key['goods'] === null ? $hasGoods : $key['goods'], $order);
@@ -7840,11 +7877,30 @@ class Twopayment extends PaymentModule
         }
         $map = self::parseTwoTaxCodeMap($raw);
         if ($map === null) {
-            PrestaShopLogger::addLog('TwoPayment: The stored tax code mapping (' . self::CONFIG_TAX_CODE_MAP . ') is not one the settings form writes: ' . Tools::substr((string) $raw, 0, 200), 3);
+            if (!$this->twoTaxCodeMapLogged) {
+                $this->twoTaxCodeMapLogged = true;
+                PrestaShopLogger::addLog('TwoPayment: The stored tax code mapping (' . self::CONFIG_TAX_CODE_MAP . ') is not one the settings form writes: ' . Tools::substr((string) $raw, 0, 200), 3);
+            }
             throw new Exception('The stored tax code mapping is unreadable; re-save it in the module settings');
         }
 
         return $map;
+    }
+
+    /**
+     * The contained read, for the gates: whether the stored mapping is readable. getTwoTaxCodeMap() logs the value.
+     *
+     * @return bool
+     */
+    public function isTwoTaxCodeMapReadable()
+    {
+        try {
+            $this->getTwoTaxCodeMap();
+
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
     }
 
     /**
@@ -8812,9 +8868,11 @@ class Twopayment extends PaymentModule
         $paidNet = 0.0;
         $carrierRatesReconcile = true;
         $carrierRateLabels = array();
+        $carrierIds = array();
         foreach ($this->getTwoOrderGroup($order) as $member) {
             $orderId = (int) $member->id;
             $orderIds[] = $orderId;
+            $carrierIds[(int) $member->id_carrier] = (int) $member->id_carrier;
             foreach ($this->getTwoPlacedOrderDetailRows($orderId) as $row) {
                 // The fee replay decides on every row carrying the fee reference, and fails loud on an id the fee never had.
                 if ((string) $row['product_reference'] === self::TWO_SURCHARGE_PRODUCT_REFERENCE) {
@@ -8891,6 +8949,7 @@ class Twopayment extends PaymentModule
         $shipping['net'] = round($shipping['net'], 2);
         $shipping['gross'] = round($shipping['gross'], 2);
         $shipping['classes'] = array_values($shipping['classes']);
+        $carrierIds = array_values($carrierIds);
         $wrappingNet = round($wrappingNet, 2);
         $wrappingGross = round($wrappingGross, 2);
         $placement = $this->getTwoOrderGroupPaymentData($order);
@@ -8913,6 +8972,7 @@ class Twopayment extends PaymentModule
 
         return array(
             'id_carrier' => (int) $order->id_carrier,
+            'carrier_ids' => $carrierIds,
             'products' => $products,
             'fee_rows' => $feeRows,
             'shipping' => $shipping,
@@ -9703,7 +9763,11 @@ class Twopayment extends PaymentModule
                         $shipping_rate_source
                     );
                 $this->twoShippingRateSource = $shipping_rate_source;
-                $shipping_tax_group = $this->getTwoShippingTaxCodeGroup($shipping_rate_source, $shipping_rate_classes, $carrier_is_loaded ? $carrier : null, $cart);
+                $shipping_tax_group = $this->getTwoShippingTaxCodeGroup(
+                    $shipping_rate_source,
+                    $placed !== null ? $placed['carrier_ids'] : $this->getTwoCartDeliveryCarrierIds($cart),
+                    $cart
+                );
                 if ($placed === null) {
                     // What later updates and refunds read instead of the carrier or the config (TWO-26117): no classes
                     // on a line no carrier provides a rate for means no Default shipping tax code was set either.
@@ -9846,28 +9910,62 @@ class Twopayment extends PaymentModule
 
     /**
      * The tax rules group a shipping line's mapping is looked up by (TWO-24877): the group that declared its rate.
-     * That is the carrier's, or the Default shipping tax code's when it supplied the rate. A "No tax" carrier, no
-     * carrier, or a delivery option spanning several rates has none, so only derivation applies.
+     * That is the Default shipping tax code's when it supplied the rate, else the carriers' when every carrier behind
+     * the shipping declares the same one. A "No tax" carrier, no carrier, or carriers declaring different groups give
+     * none, so only derivation applies. Never `$cart->id_carrier` alone: core leaves it stale on a multi-address cart.
      *
      * @param string $source a SHIPPING_RATE_* value
-     * @param array $classes the shipping rate classes
-     * @param Carrier|null $carrier
+     * @param int[] $carrierIds the carriers behind the shipping
      * @param Cart $cart
      * @return int
      */
-    private function getTwoShippingTaxCodeGroup($source, $classes, $carrier, $cart)
+    private function getTwoShippingTaxCodeGroup($source, array $carrierIds, $cart)
     {
         if ($source === self::SHIPPING_RATE_CONTROL) {
             return (int) $this->getTwoDefaultShippingTaxRulesGroupId($cart);
         }
-        if ($source !== self::SHIPPING_RATE_CARRIER || count($classes) !== 1 || $carrier === null) {
+        if ($source !== self::SHIPPING_RATE_CARRIER) {
             return 0;
         }
+        $groups = array();
         try {
-            return (int) $carrier->getIdTaxRulesGroup();
+            foreach ($carrierIds as $idCarrier) {
+                $carrier = new Carrier((int) $idCarrier);
+                $groups[Validate::isLoadedObject($carrier) ? (int) $carrier->getIdTaxRulesGroup() : 0] = true;
+            }
         } catch (Throwable $e) {
             return 0;
         }
+
+        return count($groups) === 1 ? (int) key($groups) : 0;
+    }
+
+    /**
+     * The carriers of the cart's selected delivery option, across every address.
+     *
+     * @param Cart $cart
+     * @return int[] empty when the option cannot be read
+     */
+    private function getTwoCartDeliveryCarrierIds($cart)
+    {
+        $ids = array();
+        try {
+            $selected = $cart->getDeliveryOption(null, false, false);
+            $list = $cart->getDeliveryOptionList();
+        } catch (Throwable $e) {
+            return $ids;
+        }
+        foreach (is_array($selected) && is_array($list) ? $selected : array() as $idAddress => $key) {
+            $key = is_scalar($key) ? (string) $key : '';
+            $carriers = isset($list[$idAddress][$key]['carrier_list']) && is_array($list[$idAddress][$key]['carrier_list'])
+                ? $list[$idAddress][$key]['carrier_list']
+                : array();
+            foreach (array_keys($carriers) as $idCarrier) {
+                $ids[(int) $idCarrier] = (int) $idCarrier;
+            }
+        }
+
+        return array_values($ids);
     }
 
     /**

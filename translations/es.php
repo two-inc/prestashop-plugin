@@ -603,3 +603,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_97139627c126d86a74d8ab820ad756d6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_759ff422efd0250045ed55a9a958546b'] = 'ya no aparece en la lista';
 $_MODULE['<{twopayment}prestashop>twopayment_280d19d2479762ed9a0d8aaed614e8bb'] = 'Aún no se conoce el país del comerciante, así que no se pueden mostrar códigos fiscales. Guarda una clave API válida o actualiza el perfil de comerciante en la pestaña Diagnóstico.';
 $_MODULE['<{twopayment}prestashop>twopayment_31804353a7d42acedb8d202c17571abf'] = 'No se ha podido leer la lista de códigos fiscales de %1$s (HTTP %2$s). Las asignaciones guardadas siguen funcionando en el pago; recarga esta página para volver a intentarlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_d592cdbb1c59d9ba9f0308c01863437c'] = 'la asignación de códigos fiscales guardada no se puede leer. Vuelve a guardar Códigos fiscales para líneas al 0 %.';
