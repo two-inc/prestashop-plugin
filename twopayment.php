@@ -5999,7 +5999,9 @@ class Twopayment extends PaymentModule
     {
         $order_lines = isset($two_order['line_items']) && is_array($two_order['line_items']) ? $two_order['line_items'] : array();
         $refunded = $this->getTwoRefundedPerLine($two_order);
-        $needs_code = $this->getTwoMerchantCountry() !== '' ? $this->getTwoMerchantCountry() === 'ES' : true;
+        // Two requires a tax code on a Spanish merchant's 0% lines; a merchant whose country is not yet known is treated as one.
+        $country = $this->getTwoMerchantCountry();
+        $needs_code = $country === '' || $country === 'ES';
         $lines = array();
         foreach ($tax_subtotals as $subtotal) {
             $rate = (float)$subtotal['tax_rate'];
@@ -6009,6 +6011,11 @@ class Twopayment extends PaymentModule
             }
             if ($gross < 0) {
                 PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - a negative amount ' . $gross . ' at rate ' . $subtotal['tax_rate'] . ' cannot be itemised; sending the refund without line items', 3);
+                return null;
+            }
+            if ($rate == 0.0 && round((float)$subtotal['tax_amount'], 2) != 0.0) {
+                // A 0% line carries no tax, so lines could not describe it, and Two would refuse lines that disagree with the subtotal.
+                PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - tax ' . $subtotal['tax_amount'] . ' refunded at 0% cannot be itemised; sending the refund without line items', 3);
                 return null;
             }
             $by_kind = array();
@@ -6326,7 +6333,8 @@ class Twopayment extends PaymentModule
 
             return null;
         }
-        $carrier = array(array('rate' => (float)(isset($order->carrier_tax_rate) ? $order->carrier_tax_rate : 0) / 100, 'net_weight' => 1.0));
+        // Rounded as placement rounds the shipping line's rate, so the refund's rate matches that line (TWO-26143).
+        $carrier = array(array('rate' => $this->normalizeTwoTaxRateToPercentPrecision((float)(isset($order->carrier_tax_rate) ? $order->carrier_tax_rate : 0) / 100), 'net_weight' => 1.0));
         if ($this->doTwoRateClassesReconcile($carrier, $net, $tax)) {
             return $carrier;
         }
@@ -6338,7 +6346,7 @@ class Twopayment extends PaymentModule
                 $cart = new Cart((int)(isset($order->id_cart) ? $order->id_cart : 0));
                 $groupId = Validate::isLoadedObject($cart) ? $this->getTwoDefaultShippingTaxRulesGroupId($cart) : null;
                 if ($groupId !== null) {
-                    $default = array(array('rate' => $this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart), 'net_weight' => 1.0));
+                    $default = array(array('rate' => $this->normalizeTwoTaxRateToPercentPrecision($this->getTwoConfiguredTaxRateDecimalForGroup($groupId, $cart)), 'net_weight' => 1.0));
                     if ($this->doTwoRateClassesReconcile($default, $net, $tax)) {
                         return $default;
                     }
