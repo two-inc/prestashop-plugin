@@ -131,8 +131,8 @@ class TwoTaxCodeResolver
     }
 
     /**
-     * A buyer VAT number as the resolver and Two read it (TWO-26153): spaces, dots and hyphens stripped, upper-cased,
-     * and the address country prepended when it does not start with two letters (Greece as EL, Monaco as FR).
+     * A buyer VAT number as the resolver and Two read it (TWO-26153): whitespace (non-breaking included), dots and
+     * hyphens stripped, upper-cased, and the address country prepended when it does not start with two letters (Greece as EL, Monaco as FR).
      * Without an address country an unprefixed number stays unprefixed, and so names no country.
      *
      * @param mixed $raw
@@ -141,7 +141,7 @@ class TwoTaxCodeResolver
      */
     public static function normaliseVatNumber($raw, $addressCountry)
     {
-        $vat = strtoupper(str_replace(array(' ', '.', '-'), '', (string) $raw));
+        $vat = strtoupper((string) preg_replace('/[\s\x{00A0}.\-]+/u', '', (string) $raw));
         if ($vat === '' || preg_match('/^[A-Z]{2}/', $vat) === 1) {
             return $vat;
         }
