@@ -15,7 +15,7 @@
  * coverage broken the shipping cost is simply 0 and the fallback is never
  * reached. The reachable shape is a list that core built successfully and a
  * module then REPLACED with an option keyed to carrier 0, which is exactly
- * what a custom-logistics integration does.
+ * what a carrier-less shipping integration does.
  *
  * Placement matters: actionFilterDeliveryOptionList (Cart.php:3163) fires
  * AFTER that sentinel, so carrier coverage must stay INTACT for this hook to
