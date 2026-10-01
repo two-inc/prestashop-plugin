@@ -19,6 +19,39 @@
 
 ---
 
+## [2026-10-01] Partial Refunds Are Itemised Onto The Two Order's Own Lines (TWO-26143)
+
+**Context**: Credit slips and the Refunded remainder were sent as an amount and per-rate tax
+subtotals only. Two accepts that, but an order invoiced through an e-invoicing provider cannot get
+its correcting invoice built without lines, and a Spanish 0% line needs its tax code.
+
+**Decision**: Every partial refund also carries `line_items`. Each line is a prototype: the `id` of
+a line of the order as Two holds it, read by the GET each refund path already makes, with only the
+amounts overridden (`quantity` 1, `unit_price` = net, `discount_amount` 0, net, tax, gross). Two
+fills in the rest, `tax_code` included, from that line. The lines are derived from the refund's own
+tax subtotals: each rate's gross is spread over the Two lines at that rate with a positive net,
+first by kind (a slip records how much of the rate was products and how much shipping; a kind with
+no line at that rate passes its share on), then by line net, in cents. Each line's net is its gross
+over 1 + rate. The tax subtotals are still sent and still recorded. When a rate has no line at Two
+the refund goes without lines, logged, and is never held back.
+
+**Alternatives Considered**: Matching each slip product to its Two line. Two lines carry no
+PrestaShop identifier, and matching names or product URLs breaks on combinations and URL settings.
+Sending lines without subtotals: the subtotals are part of the documented contract and are what
+the remainder is computed from.
+
+**Rationale**: The subtotals already carry every amount rule (specific amount, voucher, shipping
+classes, remainder), so itemising them adds no second derivation. Allocating gross in cents makes
+the lines sum to the amount exactly, which Two requires, and per-line net and tax stay consistent
+with the rate.
+
+**Consequences**: Within one rate and kind the split is by net, not by what the slip refunded per
+product, so a slip of one product on an order of several at the same rate is spread over all of
+them on the credit note. A hook subscriber that changes a refund's amount must keep the lines
+consistent or drop them.
+
+---
+
 ## [2026-09-30] Cart-Scoped Company And Mirror Records Live Server-Side (TWO-26094)
 
 **Context**: The company selection and the mirror-write record were kept in the PrestaShop cookie.
