@@ -35,8 +35,9 @@ final class TaxCodeSpec
     private const COUNTRIES = [34 => 'ES', 8 => 'FR', 1 => 'DE', 21 => 'US', 17 => 'NO', 6 => 'NL', 148 => 'MC'];
 
     private const EXPORT = 'ES_IVA_EXPORT';
-    private const INTRA = 'ES_IVA_INTRA_COMMUNITY';
-    private const REVERSE = 'ES_IVA_REVERSE_CHARGE';
+    private const INTRA = 'ES_IVA_INTRA_COMMUNITY_GOODS';
+    private const SERVICES = 'ES_IVA_INTRA_COMMUNITY_SERVICES';
+    private const NON_EU = 'ES_IVA_NON_EU_SERVICES';
     private const ART20 = 'ES_IVA_EXEMPT_ART20';
     private const ART22 = 'ES_IVA_EXEMPT_ART22';
 
@@ -84,7 +85,7 @@ final class TaxCodeSpec
 
     /**
      * Columns: merchant country, cart ('goods', 'service' or 'mixed'), delivery country, delivery postcode, invoice
-     * (buyer company) country, mapping (tax rules group => code), rate ('0' or '21'), the expected codes as
+     * (buyer company) country optionally followed by a space and the invoice postcode, mapping (tax rules group => code), rate ('0' or '21'), the expected codes as
      * [lamp, (service product,) shipping], golden fixture name or null, description.
      *
      * @return array<int,array>
@@ -104,10 +105,17 @@ final class TaxCodeSpec
             ['ES', 'goods', 'FR', '75001', 'ES', [], '0', [null, null], 'goods-eu-dest-es-buyer', 'goods delivered to France for a Spanish buyer: nothing derived'],
             ['ES', 'goods', 'ES', '28001', 'FR', [], '0', [null, null], 'goods-domestic', 'goods delivered in mainland Spain, even for a French buyer: nothing derived'],
             ['ES', 'goods', 'ES', '07001', 'ES', [], '0', [null, null], null, 'goods delivered to the Balearics (07): domestic, nothing derived'],
-            ['ES', 'service', 'ES', '28001', 'FR', [], '0', [self::REVERSE, self::REVERSE], null, 'a service for a French buyer: reverse charge, and shipping follows the services'],
+            ['ES', 'service', 'ES', '28001', 'FR', [], '0', [self::SERVICES, self::SERVICES], null, 'a service for a French buyer: intra-community services, and shipping follows the services'],
             ['ES', 'service', 'FR', '75001', 'ES', [], '0', [null, null], null, 'a service for a Spanish buyer, delivered to France: nothing derived'],
-            ['ES', 'service', 'NO', '0150', 'NO', [], '0', [null, null], null, 'a service for a buyer outside the EU: nothing derived'],
-            ['ES', 'mixed', 'FR', '75001', 'NL', [], '0', [self::INTRA, self::REVERSE, self::INTRA], null, 'goods and a service to the Netherlands: each by its own rule, shipping follows the goods'],
+            ['ES', 'service', 'NO', '0150', 'NO', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer outside the EU: non-EU services'],
+            ['ES', 'service', 'ES', '28001', 'US', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer outside the EU, delivered in Spain: non-EU services'],
+            ['ES', 'service', 'ES', '28001', 'ES 35001', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Las Palmas (35): non-EU services'],
+            ['ES', 'service', 'ES', '28001', 'ES 38001', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Tenerife (38): non-EU services'],
+            ['ES', 'service', 'ES', '28001', 'ES 51001', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Ceuta (51): non-EU services'],
+            ['ES', 'service', 'ES', '28001', 'ES 52001', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Melilla (52): non-EU services'],
+            ['ES', 'service', 'ES', '35001', 'ES 28001', [], '0', [null, null], null, 'a service delivered to the Canaries for a mainland buyer: nothing derived'],
+            ['ES', 'goods', 'ES', '28001', 'ES 35001', [], '0', [null, null], null, 'goods delivered in mainland Spain for a buyer invoiced in the Canaries: nothing derived'],
+            ['ES', 'mixed', 'FR', '75001', 'NL', [], '0', [self::INTRA, self::SERVICES, self::INTRA], null, 'goods and a service to the Netherlands: each by its own rule, shipping follows the goods'],
             ['ES', 'goods', 'ES', '28001', 'ES', [$lamp => self::ART20], '0', [self::ART20, null], null, 'a mapped product group: its code, and the unmapped shipping derives nothing domestic'],
             ['ES', 'goods', 'US', '10001', 'ES', [$lamp => self::ART20], '0', [self::ART20, self::EXPORT], null, 'mapping beats derivation'],
             ['ES', 'goods', 'ES', '28001', 'ES', [self::CARRIER_GROUP => self::ART22], '0', [null, self::ART22], null, 'shipping maps by its carrier\'s tax rules group'],
@@ -164,7 +172,7 @@ final class TaxCodeSpec
                 $service('NL');
                 $abroad('FR');
                 self::addProduct(1, false, true, 'Crate');
-            }, ['Lamp' => self::REVERSE, 'Lamp - Ecotax' => self::REVERSE, 'Crate' => self::INTRA, 'Courier' => self::INTRA], 'ecotax on a service follows its product, not the order\'s goods'],
+            }, ['Lamp' => self::SERVICES, 'Lamp - Ecotax' => self::SERVICES, 'Crate' => self::INTRA, 'Courier' => self::INTRA], 'ecotax on a service follows its product, not the order\'s goods'],
             [function () use ($wrapping, $map) {
                 $wrapping();
                 $map([self::WRAPPING_GROUP => self::ART20]);
@@ -180,7 +188,7 @@ final class TaxCodeSpec
             [function () use ($fee, $service) {
                 $fee();
                 $service('FR');
-            }, ['Lamp' => self::REVERSE, 'Courier' => self::REVERSE, 'Fee' => self::REVERSE], 'an unmapped fee on a services-only order follows the services'],
+            }, ['Lamp' => self::SERVICES, 'Courier' => self::SERVICES, 'Fee' => self::SERVICES], 'an unmapped fee on a services-only order follows the services'],
             [function () use ($discount, $map) {
                 $discount();
                 $map([self::PRODUCT_GROUP => self::ART20, self::CARRIER_GROUP => self::ART20]);
@@ -194,7 +202,7 @@ final class TaxCodeSpec
                 $discount();
                 $abroad('FR');
                 StubStore::$addresses[self::INVOICE]['id_country'] = array_flip(self::COUNTRIES)['NL'];
-            }, ['Lamp' => self::INTRA, 'Service' => self::REVERSE, 'Courier' => self::INTRA, 'discount' => self::INTRA], 'with no shared code a 0% discount follows the goods: intra-community'],
+            }, ['Lamp' => self::INTRA, 'Service' => self::SERVICES, 'Courier' => self::INTRA, 'discount' => self::INTRA], 'with no shared code a 0% discount follows the goods: intra-community'],
             [function () use ($map) {
                 StubStore::$carriers[self::CARRIER]['tax_rules_group_id'] = 0;
                 Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
@@ -290,7 +298,7 @@ final class TaxCodeSpec
         self::seed('ES', 'goods', 'ES', '28001', 'FR', [], '0');
         StubStore::$addresses[self::INVOICE]['postcode'] = '75001';
         $rows = [
-            ['', self::DELIVERY, false, self::REVERSE, 'a service with no country_prefix follows the invoice (French) country'],
+            ['', self::DELIVERY, false, self::SERVICES, 'a service with no country_prefix follows the invoice (French) country'],
             ['ES', self::DELIVERY, false, null, 'a service follows the country_prefix sent, not the invoice country'],
             ['ES', 0, true, null, 'goods with no delivery address follow the invoice address (France), and a Spanish buyer derives nothing'],
             ['DE', 0, true, self::INTRA, 'goods with no delivery address follow the invoice address: France for a German buyer'],
@@ -478,7 +486,11 @@ final class TaxCodeSpec
         foreach (self::COUNTRIES as $id => $iso) {
             StubStore::$countries[$id] = $iso;
         }
+        [$buyerCountry, $buyerPostcode] = array_pad(explode(' ', $buyerCountry, 2), 2, null);
         StubStore::$addresses[self::INVOICE]['id_country'] = $ids[$buyerCountry];
+        if ($buyerPostcode !== null) {
+            StubStore::$addresses[self::INVOICE]['postcode'] = $buyerPostcode;
+        }
         StubStore::$addresses[self::DELIVERY] = ['id_country' => $ids[$destCountry], 'postcode' => $destPostcode] + StubStore::$addresses[self::INVOICE];
         StubStore::$carts[self::CART]['id_address_delivery'] = self::DELIVERY;
 

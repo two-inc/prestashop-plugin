@@ -234,7 +234,10 @@ builders, before the postprocessing hook, so a subscriber can change it. The REA
   decides. Do not add a module-side refusal, a fallback code or a rate change: the Spanish
   canonical-rate fallback this module once had was exactly that failure mode, and it is gone.
 - **The merchant's mapping wins, then the derivation, then nothing.** Never derive
-  `ES_IVA_EXEMPT_OTHER`, `ES_IGIC_ZERO` or `ES_IPSI_ZERO`.
+  `ES_IVA_EXEMPT_OTHER`, `ES_IGIC_ZERO` or `ES_IPSI_ZERO`, nor `ES_IVA_REVERSE_CHARGE`, which is
+  Spanish domestic reverse charge only. Services to a buyer outside the EU derive
+  `ES_IVA_NON_EU_SERVICES`, and a Spanish buyer counts as outside when its invoice postcode is in
+  the Canaries, Ceuta or Melilla (TWO-26151).
 - **Only 0% lines are touched.** Every other payload, and every payload of an unmapped
   non-Spanish merchant, stays byte-identical; `TaxCodeSpec` holds goldens for that.
 - **The mapping is read only for a 0% line**, and an unreadable one withholds Two in
