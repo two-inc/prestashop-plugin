@@ -13,6 +13,8 @@
  * 2. Otherwise, for a Spanish merchant only, a code derived from the order: goods follow the delivery address,
  *    services follow the country of the buyer company. The Canaries, Ceuta and Melilla are outside the EU VAT
  *    area, told by the delivery postcode for goods and by the invoice postcode for a Spanish buyer of services.
+ *    Both intra-community codes also need a buyer VAT number whose prefix names an EU member state other than the
+ *    merchant's country (TWO-26153); without one the line gets no code and Two's API refuses it.
  * 3. Otherwise no code. The plugin never refuses and never coerces a rate: Two's API validates what is sent.
  *
  * Lines at any other rate never carry a code, so their payloads are unchanged.
@@ -31,16 +33,16 @@ class TwoTaxCodeResolver
     /**
      * Derivation, first matching row wins. Each row names the facts that must all hold.
      * Anything unmatched (a mainland or Balearic destination, an EU destination with a Spanish buyer,
-     * a service to a mainland or Balearic Spanish buyer) derives nothing.
+     * a service to a mainland or Balearic Spanish buyer, an EU buyer with no qualifying VAT number) derives nothing.
      */
     const DERIVATION = array(
         'goods' => array(
             array(array('dest_outside_eu'), 'ES_IVA_EXPORT'),
             array(array('dest_es_outside_vat_area'), 'ES_IVA_EXPORT'),
-            array(array('dest_other_eu', 'buyer_other_eu'), 'ES_IVA_INTRA_COMMUNITY'),
+            array(array('dest_other_eu', 'buyer_other_eu', 'vat_other_eu'), 'ES_IVA_INTRA_COMMUNITY'),
         ),
         'services' => array(
-            array(array('buyer_other_eu'), 'ES_IVA_INTRA_COMMUNITY_SERVICES'),
+            array(array('buyer_other_eu', 'vat_other_eu'), 'ES_IVA_INTRA_COMMUNITY_SERVICES'),
             array(array('buyer_outside_eu'), 'ES_IVA_NON_EU_SERVICES'),
             array(array('buyer_es_outside_vat_area'), 'ES_IVA_NON_EU_SERVICES'),
         ),
@@ -50,7 +52,8 @@ class TwoTaxCodeResolver
      * @param string|float $rate the line's tax_rate as sent
      * @param string|null $mapped the code the merchant mapped to the line's tax rules group
      * @param bool $goods a goods line (see the class doc of the caller); false for a service line
-     * @param array $order ['merchant_country', 'dest_country', 'dest_postcode', 'buyer_country', 'buyer_postcode']
+     * @param array $order ['merchant_country', 'dest_country', 'dest_postcode', 'buyer_country', 'buyer_postcode',
+     *                     'buyer_vat_number' (normalised, see normaliseVatNumber())]
      * @return string|null
      */
     public static function resolve($rate, $mapped, $goods, array $order)
@@ -110,6 +113,8 @@ class TwoTaxCodeResolver
         $postcode = trim((string) (isset($order['dest_postcode']) ? $order['dest_postcode'] : ''));
         $buyerPostcode = trim((string) (isset($order['buyer_postcode']) ? $order['buyer_postcode'] : ''));
         $destInEu = in_array($dest, self::EU_VAT_AREA, true);
+        $merchant = self::iso(isset($order['merchant_country']) ? $order['merchant_country'] : '');
+        $vatCountry = self::vatCountry(isset($order['buyer_vat_number']) ? $order['buyer_vat_number'] : '');
 
         return array(
             // An unknown destination is no evidence the goods left the EU.
@@ -119,7 +124,48 @@ class TwoTaxCodeResolver
             'buyer_other_eu' => in_array($buyer, self::EU_VAT_AREA, true) && $buyer !== 'ES',
             'buyer_outside_eu' => $buyer !== '' && !in_array($buyer, self::EU_VAT_AREA, true),
             'buyer_es_outside_vat_area' => $buyer === 'ES' && in_array(substr($buyerPostcode, 0, 2), self::ES_OUTSIDE_VAT_AREA_POSTCODES, true),
+            // The buyer's VAT number names an EU member state other than the merchant's country. MC is in the EU VAT
+            // area as a destination but is no VAT prefix.
+            'vat_other_eu' => in_array($vatCountry, self::EU_VAT_AREA, true) && $vatCountry !== 'MC' && $vatCountry !== $merchant,
         );
+    }
+
+    /**
+     * A buyer VAT number as the resolver and Two read it (TWO-26153): whitespace (non-breaking included), dots and
+     * hyphens stripped, upper-cased, and the address country prepended when it does not start with two letters (Greece as EL, Monaco as FR).
+     * Without an address country an unprefixed number stays unprefixed, and so names no country.
+     *
+     * @param mixed $raw
+     * @param mixed $addressCountry alpha-2
+     * @return string '' for no number
+     */
+    public static function normaliseVatNumber($raw, $addressCountry)
+    {
+        $vat = strtoupper((string) preg_replace('/[\s\x{00A0}.\-]+/u', '', (string) $raw));
+        if ($vat === '' || preg_match('/^[A-Z]{2}/', $vat) === 1) {
+            return $vat;
+        }
+        $country = self::iso($addressCountry);
+        // VAT prefixes: Greece is EL, and Monaco businesses hold French numbers.
+        $prefixes = array('GR' => 'EL', 'MC' => 'FR');
+
+        return (isset($prefixes[$country]) ? $prefixes[$country] : $country) . $vat;
+    }
+
+    /**
+     * The country a normalised VAT number's prefix names, EL read as GR; '' when it starts with no two letters.
+     *
+     * @param mixed $vat
+     * @return string
+     */
+    private static function vatCountry($vat)
+    {
+        $prefix = substr((string) $vat, 0, 2);
+        if (preg_match('/^[A-Z]{2}$/', $prefix) !== 1) {
+            return '';
+        }
+
+        return $prefix === 'EL' ? 'GR' : $prefix;
     }
 
     /**
