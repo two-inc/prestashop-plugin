@@ -13,6 +13,7 @@ final class OrderEditRefusalSpec
     public static function runAll(): void
     {
         self::testEditIsSkippedWhenTheApiWouldRefuseIt();
+        self::testMerchantOrderIdSyncIsNeverChecked();
     }
 
     private static function testEditIsSkippedWhenTheApiWouldRefuseIt(): void
@@ -25,7 +26,11 @@ final class OrderEditRefusalSpec
             [['http_status' => 200, 'state' => 'CONFIRMED', 'status' => 'APPROVED'], null, 'confirmed order sends the edit'],
             [['http_status' => 200, 'state' => 'FULFILLED', 'status' => 'APPROVED'], $invoiced, 'fully fulfilled order skips the edit'],
             [['http_status' => 200, 'state' => 'CONFIRMED', 'status' => 'PARTIAL'], $invoiced, 'partially fulfilled order skips the edit'],
+            [['http_status' => 200, 'state' => 'REFUNDED', 'status' => 'APPROVED'], $invoiced, 'refunded order skips the edit'],
             [['http_status' => 200, 'state' => 'CANCELLED', 'status' => 'APPROVED'], sprintf($closed, 'CANCELLED'), 'cancelled order skips the edit'],
+            [['http_status' => 200, 'state' => 'VERIFIED', 'status' => 'PENDING'], sprintf($closed, 'PENDING'), 'unaccepted status skips the edit'],
+            [['http_status' => 200], null, 'lookup without state or status still sends the edit'],
+            [['http_status' => 500, 'error' => 'Server error'], null, 'refused lookup still sends the edit'],
             [['http_status' => 0, 'error' => 'Connection error'], null, 'failed lookup still sends the edit'],
         ];
 
@@ -51,6 +56,14 @@ final class OrderEditRefusalSpec
             }
         }
         TinyAssert::same([], $failures, "edit refused by the API\n  " . implode("\n  ", $failures));
+    }
+
+    private static function testMerchantOrderIdSyncIsNeverChecked(): void
+    {
+        StubStore::reset();
+        $module = self::module(['http_status' => 200, 'state' => 'FULFILLED', 'status' => 'APPROVED']);
+        $module->putTwoOrderUpdate(self::order(), $module->getTwoOrderPaymentData(4201), $payload, 'merchant_order_id');
+        TinyAssert::same(['PUT /v1/order/two-order-uuid'], $module->calls, 'the merchant order id sync after confirmation reads no state and is sent');
     }
 
     private static function module(array $lookup): TwopaymentTestHarness
