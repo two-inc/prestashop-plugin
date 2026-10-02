@@ -206,7 +206,7 @@ class Twopayment extends PaymentModule
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
-    const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for render-path fetches (invoice-download state check, merchant-record and FX-rate refreshes, admin fee-rate preview)
+    const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for render-path fetches (invoice-download state check, merchant-record and FX-rate refreshes, admin fee-rate preview, the order state read before an admin edit)
     const API_TIMEOUT_PDF_FETCH = 10; // Tight timeout for synchronous invoice PDF fetches (buyer + admin download clicks)
     const API_TIMEOUT_SURCHARGE_PRICING = 30; // Ceiling for every buyer surcharge quote, gate and charge alike (ABN-546)
     const API_CONNECT_TIMEOUT = 5; // Connection-establishment timeout for all Two API calls
@@ -4705,7 +4705,7 @@ class Twopayment extends PaymentModule
      * @param array|null $paymentdata set to the payload built
      * @param string $trigger the order postprocessing hook's context trigger
      * @return array|string|null the response; null when nothing changed since the last accepted PUT;
-     *   a string, why, when Two would refuse the edit, so it was not sent and the admin was warned
+     *   a string, why, when Two would refuse the edit, so it was not sent
      */
     public function putTwoOrderUpdate($order, $orderpaymentdata, &$paymentdata = null, $trigger = 'admin_edit')
     {
