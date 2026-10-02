@@ -4649,8 +4649,9 @@ class Twopayment extends PaymentModule
             if ($placement !== null) {
                 $syncId = (int) $placement['order']->id;
                 $response = $this->putTwoOrderUpdate($placement['order'], $placement['row']);
-                if ($response === false) {
-                    // Not sent, as Two would refuse it; the admin has been told why.
+                if (is_string($response)) {
+                    // Not sent, as Two would refuse it: the order now differs from Two's, so mark it until an edit is accepted.
+                    $this->recordTwoOrderSync($syncId, $response);
                     return;
                 }
                 $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
@@ -4703,8 +4704,8 @@ class Twopayment extends PaymentModule
      * @param array $orderpaymentdata
      * @param array|null $paymentdata set to the payload built
      * @param string $trigger the order postprocessing hook's context trigger
-     * @return array|false|null the response; null when nothing changed since the last accepted PUT;
-     *   false when Two would refuse the edit, so it was not sent and the admin was told why
+     * @return array|string|null the response; null when nothing changed since the last accepted PUT;
+     *   a string, why, when Two would refuse the edit, so it was not sent and the admin was warned
      */
     public function putTwoOrderUpdate($order, $orderpaymentdata, &$paymentdata = null, $trigger = 'admin_edit')
     {
@@ -4719,13 +4720,8 @@ class Twopayment extends PaymentModule
         if ($refusal !== null) {
             // The API would refuse this edit, so say why plainly instead of sending it (TWO-26150).
             $this->addTwoBackOfficeWarning($refusal);
-            try {
-                $this->addTwoOrderPrivateNote((int) $order->id, $refusal);
-            } catch (Throwable $e) {
-                PrestaShopLogger::addLog('TwoPayment: TWO-26150 could not note on order ' . (int) $order->id . ' that an edit was not sent - ' . $e->getMessage(), 3);
-            }
 
-            return false;
+            return $refusal;
         }
         $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
         $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
@@ -4831,8 +4827,13 @@ class Twopayment extends PaymentModule
             $orderpaymentdata = $placement['row'];
 
             $response = $this->putTwoOrderUpdate($placement['order'], $orderpaymentdata, $paymentdata, 'tracking_number');
-            if ($response === false) {
-                // Not sent, as Two would refuse it; the admin has been told why.
+            if (is_string($response)) {
+                // Not sent, as Two would refuse it. The amounts are unchanged, so the order is noted, not marked as not sent.
+                try {
+                    $this->addTwoOrderPrivateNote($syncId, $response);
+                } catch (Throwable $e) {
+                    PrestaShopLogger::addLog('TwoPayment: TWO-26150 could not note on order ' . $syncId . ' that a tracking number was not sent - ' . $e->getMessage(), 3);
+                }
                 return;
             }
             if ($response === null) {

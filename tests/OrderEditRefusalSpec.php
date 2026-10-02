@@ -5,6 +5,8 @@ declare(strict_types=1);
 /**
  * TWO-26150: an admin edit is not sent when the order's live state or status is one the API's
  * edit handler refuses, such as an order invoiced in full or in part. The admin is told why instead.
+ * A refused order edit leaves the order marked as not sent, as its amounts now differ from Two's;
+ * a refused tracking number only notes the order.
  */
 final class OrderEditRefusalSpec
 {
@@ -29,7 +31,8 @@ final class OrderEditRefusalSpec
 
         $failures = [];
         foreach ($cases as [$lookup, $notice, $description]) {
-            foreach (['hookActionOrderEdited', 'hookActionAdminOrdersTrackingNumberUpdate'] as $hook) {
+            // [hook, what a refusal records beyond the warning]
+            foreach ([['hookActionOrderEdited', 'not sent: '], ['hookActionAdminOrdersTrackingNumberUpdate', 'note on 4201: ']] as [$hook, $refusalRecord]) {
                 StubStore::reset();
                 $module = self::module($lookup);
                 $module->$hook(['order' => self::order()]);
@@ -40,7 +43,7 @@ final class OrderEditRefusalSpec
                     $want[] = 'synced';
                 } else {
                     $want[] = 'warning: ' . $notice;
-                    $want[] = 'note on 4201: ' . $notice;
+                    $want[] = $refusalRecord . $notice;
                 }
                 if ($module->calls !== $want) {
                     $failures[] = "$description ($hook):\n    want " . implode(' | ', $want) . "\n    got  " . implode(' | ', $module->calls);
