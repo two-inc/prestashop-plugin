@@ -5836,6 +5836,7 @@ final class OrderBuilderSpec
 require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
 require __DIR__ . '/TwoInvoiceRetrievalSpec.php';
 require __DIR__ . '/TrackingNumberSpec.php';
+require __DIR__ . '/OrderEditRefusalSpec.php';
 require __DIR__ . '/PlacedOrderUpdateSpec.php';
 require __DIR__ . '/RefundSpec.php';
 require __DIR__ . '/SurchargeSpec.php';
@@ -5914,6 +5915,7 @@ $tests = [
     'CustomerAddressFormatterOverrideSpec::runAll' => [CustomerAddressFormatterOverrideSpec::class, 'runAll'],
     'TwoInvoiceRetrievalSpec::runAll' => [TwoInvoiceRetrievalSpec::class, 'runAll'],
     'TrackingNumberSpec::runAll' => [TrackingNumberSpec::class, 'runAll'],
+    'OrderEditRefusalSpec::runAll' => [OrderEditRefusalSpec::class, 'runAll'],
     'PlacedOrderUpdateSpec::runAll' => [PlacedOrderUpdateSpec::class, 'runAll'],
     'RefundSpec::runAll' => [RefundSpec::class, 'runAll'],
     'SurchargeSpec::runAll' => [SurchargeSpec::class, 'runAll'],
