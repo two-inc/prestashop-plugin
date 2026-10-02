@@ -353,6 +353,8 @@ When an order edit or a tracking number does not reach Two (its payload cannot b
 
 The panel stays until an edit or tracking number update is accepted by Two.
 
+An order edit or a tracking number is not sent at all once Two would refuse it. Before sending, the module reads the order's current state from Two, with a 10-second timeout, and sends the update only while that state is `UNVERIFIED`, `VERIFIED` or `CONFIRMED` and its status is `APPROVED`, `REJECTED` or `DECLINED`. Otherwise the order gets a private message giving the reason, either "Two has already invoiced all or part of this order, so this change was not sent to Two." (a full or partial fulfilment) or "Two no longer accepts changes to this order (`<state>`), so this change was not sent to Two." (for example a cancelled order). An order edit that is not sent also marks the order as not sent, as above, since its amounts in PrestaShop now differ from Two's. As Two will accept no later edit to such an order, the red panel then stays for good unless the order is edited back to what Two last accepted. A tracking number that is not sent leaves no panel, as it changes no amounts. If the state cannot be read, the update is sent as before.
+
 #### Recognising the fee row
 
 A cart or order row is the surcharge fee if and only if its product id is the current or a retired fee product id AND its reference (cart row `reference` / order_detail `product_reference`) equals `TWO_SURCHARGE_PRODUCT_REFERENCE`.
@@ -758,7 +760,7 @@ Once per outbound order request, immediately before it is sent:
 | --- | --- |
 | `order_intent` | The checkout's order-intent pre-check (`precheck`), both when it is built for the checkout and when the module sends it to Two, which it rebuilds from the cart rather than take from the browser; and the authoritative check at payment submit (`strict_intent`) |
 | `order_create` | Order creation at checkout (`checkout`), and the rebuild the confirmation step hashes to detect a cart changed during payment (`snapshot_hash`, not sent) |
-| `order_update` | An admin order edit, a tracking number, the merchant order id sync after confirmation, and the rebuild that splits a Refunded remainder by tax rate after credit slips (`refund_remainder`, not sent) |
+| `order_update` | An admin order edit, a tracking number, the merchant order id sync after confirmation, and the rebuild that splits a Refunded remainder by tax rate after credit slips (`refund_remainder`, not sent). An admin edit or tracking number Two would refuse is built, so the hook runs, but not sent |
 | `order_confirm` | The buyer's return from verification |
 | `capture` | The fulfilment status |
 | `refund` | The refunded status (a full refund with no body; after credit slips, what is left, as `{amount, currency, line_items, tax_subtotals}`) and a credit slip (a partial refund, `{amount, currency, line_items, tax_subtotals}`). Each line is `{id, quantity, unit_price, discount_amount, net_amount, tax_amount, gross_amount}`, where `id` is the Two order line it refunds; `line_items` is absent when the refund could not be matched to the order's lines |
