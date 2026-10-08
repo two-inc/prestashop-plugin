@@ -15455,22 +15455,35 @@ class Twopayment extends PaymentModule
      * typing. Mirrors validTwoGeneralFormValues()'s own live check, minus the
      * publish-on-match step, which only makes sense at actual Save time.
      *
-     * @return array{status:string,ok:bool,message:string}
+     * A verified key also carries the merchant id and short name it resolves
+     * to, so the page can show them before Save (TWO-26232). `definitive`
+     * marks a key Two rejected, which clears the merchant shown; any other
+     * failure judged nothing about the key and leaves it.
+     *
+     * @return array{status:string,ok:bool,message:string,definitive:bool,merchant_id?:string,merchant_short_name?:string}
      */
     protected function buildApiKeyLiveVerificationResult($apiKey, $environment)
     {
         $apiKey = trim((string) $apiKey);
         if ($apiKey === '' || !in_array($environment, array('production', 'staging'), true)) {
-            return array('status' => self::API_KEY_STATUS_NOT_CONFIGURED, 'ok' => false, 'message' => '');
+            return array('status' => self::API_KEY_STATUS_NOT_CONFIGURED, 'ok' => false, 'message' => '', 'definitive' => false);
         }
         $verify = $this->verifyTwoApiKey($apiKey, $environment);
         $ok = $verify['status'] === self::API_KEY_STATUS_OK;
 
-        return array(
+        $result = array(
             'status' => $verify['status'],
             'ok' => $ok,
             'message' => $ok ? '' : $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']),
+            'definitive' => self::isDefinitiveFailureStatus($verify['status']),
         );
+        if ($ok) {
+            $body = is_array($verify['body']) ? $verify['body'] : array();
+            $result['merchant_id'] = isset($body['id']) ? (string) $body['id'] : '';
+            $result['merchant_short_name'] = isset($body['short_name']) ? (string) $body['short_name'] : '';
+        }
+
+        return $result;
     }
 
     /**
