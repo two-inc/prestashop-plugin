@@ -3447,7 +3447,7 @@ class Twopayment extends PaymentModule
         foreach ($this->getTwoTaxCodeMapGroups() as $groupId => $name) {
             $options = array(array('id' => '', 'name' => $this->l('(none)')));
             foreach ($codes as $code) {
-                $options[] = array('id' => $code['code'], 'name' => $code['code'] . ' - ' . $code['display_name'] . ' (' . $this->formatTwoRatePercent($code['rate']) . ')');
+                $options[] = array('id' => $code['code'], 'name' => $this->formatTwoTaxCodeOptionLabel($code));
             }
             $saved = is_array($map) && isset($map[$groupId]) ? $map[$groupId] : '';
             if ($saved !== '' && !$this->isTwoTaxCodeListed($codes, $saved)) {
@@ -3462,6 +3462,23 @@ class Twopayment extends PaymentModule
         }
 
         return $inputs;
+    }
+
+    /**
+     * The tax code list names most rated codes with their rate, e.g. "IVA General (21%)"; the rate is added only to a name
+     * that does not already end with one.
+     *
+     * @param array $code a getTwoTaxCodeOptions() entry
+     * @return string
+     */
+    private function formatTwoTaxCodeOptionLabel(array $code)
+    {
+        $label = $code['code'] . ' - ' . $code['display_name'];
+        if (preg_match('/\([^()]*%\)$/', $code['display_name']) === 1) {
+            return $label;
+        }
+
+        return $label . ' (' . $this->formatTwoRatePercent($code['rate']) . ')';
     }
 
     /**
