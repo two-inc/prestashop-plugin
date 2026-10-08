@@ -64,6 +64,7 @@ final class ApiKeyVerificationSpec
         // Inline live check (TWO-25386).
         self::testLiveCheckReportsOkForAVerifiedKey();
         self::testLiveCheckReportsTheFailureMessageForARejectedKey();
+        self::testLiveCheckCarriesTheMerchantAndWhetherTheVerdictJudgedTheKey();
         self::testLiveCheckNeverTouchesConfigurationBeforeSave();
         self::testLiveCheckDoesNotCallOutForAnEmptyKeyOrEnvironment();
     }
@@ -165,7 +166,7 @@ final class ApiKeyVerificationSpec
                 return (int) $this->isTwoApiKeyVerified();
             }
 
-            /** @return array{status:string,ok:bool,message:string} */
+            /** @return array<string,mixed> */
             public function liveCheckForTest($apiKey, $environment): array
             {
                 return $this->buildApiKeyLiveVerificationResult($apiKey, $environment);
@@ -1759,6 +1760,32 @@ final class ApiKeyVerificationSpec
         TinyAssert::false($result['ok']);
         TinyAssert::same(Twopayment::API_KEY_STATUS_INVALID, $result['status']);
         TinyAssert::true($result['message'] !== '', 'a failed check must carry a merchant-facing message');
+    }
+
+    /** TWO-26232: the page shows the merchant before Save, and clears it only for a rejected key. */
+    private static function testLiveCheckCarriesTheMerchantAndWhetherTheVerdictJudgedTheKey(): void
+    {
+        $cases = array(
+            array(self::okOutcome(), array('definitive' => false, 'merchant_id' => 'm-123', 'merchant_short_name' => 'acme'), 'a verified key carries its merchant'),
+            array(
+                array('response' => json_encode(array('id' => 'm-123')), 'code' => 200, 'error' => ''),
+                array('definitive' => false, 'merchant_id' => 'm-123', 'merchant_short_name' => ''),
+                'a missing short name comes back empty',
+            ),
+            array(self::httpOutcome(401), array('definitive' => true), 'a rejected key clears the merchant and carries none'),
+            array(self::httpOutcome(503), array('definitive' => false), 'an outage judged nothing about the key'),
+            array(self::transportOutcome(), array('definitive' => false), 'an unreachable API judged nothing about the key'),
+        );
+        foreach ($cases as list($outcome, $expected, $description)) {
+            self::reset();
+            $result = self::module($outcome)->liveCheckForTest('a-fresh-key', 'staging');
+
+            TinyAssert::same(
+                $expected,
+                array_intersect_key($result, array_flip(array('definitive', 'merchant_id', 'merchant_short_name'))),
+                $description
+            );
+        }
     }
 
     private static function testLiveCheckNeverTouchesConfigurationBeforeSave(): void

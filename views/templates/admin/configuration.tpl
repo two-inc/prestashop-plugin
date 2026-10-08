@@ -17,8 +17,8 @@
     <div class="col-lg-10 col-md-9">
         <div class="tab-content">
             <div id="general-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 1}active{/if}">
-                {if $two_api_verified}
-                <div class="panel" style="border-left:4px solid #4CAF50;">
+                {* Always rendered, hidden until verified, so the inline key check can fill it in before Save (TWO-26232). *}
+                <div id="two-merchant-panel" class="panel" style="border-left:4px solid #4CAF50;{if !$two_api_verified}display:none;{/if}">
                     <div class="panel-heading" style="display:flex;align-items:center;gap:8px;">
                         <span class="badge" style="background:#4CAF50;">{l s='Verified' mod='twopayment'}</span>
                         <span>{l s='API key verified successfully' mod='twopayment'}</span>
@@ -27,20 +27,19 @@
                         <div style="display:flex;gap:24px;flex-wrap:wrap;">
                             <div>
                                 <div style="font-weight:600;">{l s='Merchant ID' mod='twopayment'}</div>
-                                <div>{$two_merchant_id|escape:'htmlall':'UTF-8'}</div>
+                                <div id="two-merchant-id">{$two_merchant_id|escape:'htmlall':'UTF-8'}</div>
                             </div>
                             <div>
                                 <div style="font-weight:600;">{l s='Merchant short name' mod='twopayment'}</div>
-                                <div>{$two_merchant_short_name|escape:'htmlall':'UTF-8'}</div>
+                                <div id="two-merchant-short-name">{$two_merchant_short_name|escape:'htmlall':'UTF-8'}</div>
                             </div>
                             <div>
                                 <div style="font-weight:600;">{l s='Environment' mod='twopayment'}</div>
-                                <div>{$two_env|escape:'htmlall':'UTF-8'}</div>
+                                <div id="two-merchant-env">{$two_env|escape:'htmlall':'UTF-8'}</div>
                             </div>
                         </div>
                     </div>
                 </div>
-                {/if}
                 {$renderTwoGeneralForm nofilter}
             </div>
             <div id="checkout-fields-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 2 || $twotabvalue == 3}active{/if}">
@@ -532,9 +531,21 @@
                     }
                     if (response && response.ok) {
                         $status.removeClass('text-danger').addClass('text-success').text(twoApiKeyVerifiedText);
+                        // Show the merchant this key resolves to straight
+                        // away; nothing is stored until Save (TWO-26232).
+                        $('#two-merchant-id').text(response.merchant_id || '');
+                        $('#two-merchant-short-name').text(response.merchant_short_name || '');
+                        $('#two-merchant-env').text(environment);
+                        $('#two-merchant-panel').show();
                     } else {
                         var message = (response && response.message) || twoApiKeyFailedText;
                         $status.removeClass('text-success').addClass('text-danger').text(message);
+                        // A key Two rejected must not leave another
+                        // merchant on screen; a check that judged nothing
+                        // about the key leaves it.
+                        if (response && response.definitive) {
+                            $('#two-merchant-panel').hide();
+                        }
                     }
                 }).fail(function () {
                     if (seq !== twoApiKeyRequestSeq) {
