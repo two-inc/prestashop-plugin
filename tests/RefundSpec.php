@@ -29,6 +29,78 @@ final class RefundSpec
         self::testRemainderIsSentAsLinesOfTheTwoOrder();
         self::testTheHookSeesAndCanEditTheLines();
         self::testSubtotalsThatCannotBeItemised();
+        self::testSlipShippingCheckIsTheDefaultHandlers();
+    }
+
+    /**
+     * TWO-26274: refunded shipping against the Default shipping tax code it was placed at is a shop-match check, the
+     * module's default handler. With no merchant handler the slip is not sent, as before. A merchant handler makes
+     * it stand down, and the slip is split at the declared rate with the tax as refunded, then sent as the handler
+     * returns it; a handler that opts back in gets the refusal, and the slip is not sent.
+     * Columns: handler (null: none), helper, expected tax_subtotals (null: not sent), description.
+     */
+    private static function testSlipShippingCheckIsTheDefaultHandlers(): void
+    {
+        $split = [['0.150000', '10.00', '2.50'], ['0.200000', '25.00', '5.00']];
+        $resplit = static function (array &$p): void {
+            $p['tax_subtotals'][0]['tax_rate'] = '0.250000';
+        };
+        $cases = [
+            [null, false, null, 'no merchant handler: not sent'],
+            [static function (array &$p): void {
+            }, false, $split, 'a merchant handler that changes nothing: sent at the declared rate, the tax as refunded'],
+            [$resplit, false, [['0.250000', '10.00', '2.50'], ['0.200000', '25.00', '5.00']], 'a merchant handler that re-rates the shipping: sent as returned'],
+            [$resplit, true, null, 'a merchant handler that opts back in: not sent'],
+        ];
+        foreach ($cases as $i => [$edit, $helper, $expected, $desc]) {
+            StubStore::reset();
+            StubStore::$dbExecuteSResponses = [[self::line(25.00, 30.00, '20.000')]];
+            $module = self::makeModule(self::fulfilledOrder(500.00), ['two_order_id' => 'two-order-uuid', 'two_declared_rates' => '{"shipping":[{"rate":0.15,"net_weight":10}],"shipping_rate_provided":false}']);
+            $module->readSlipLinesFromDb = true;
+            if ($edit !== null) {
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK]['refundspecsubscriber'] = static function (array $params) use ($edit, $helper, $module): void {
+                    if ($helper) {
+                        $module->runTwoShopMatchChecks($params['payload']);
+                    }
+                    $edit($params['payload']);
+                };
+            }
+            $order = self::makeOrder();
+            $order->carrier_tax_rate = 0.0;
+            $slip = self::makeSlip(650 + $i, 30.00, 12.50);
+            $slip->total_shipping_tax_excl = 10.00;
+            $slip->total_products_tax_excl = 25.00;
+            $slip->order_slip_type = 2;
+            PrestaShopLogger::reset();
+
+            $module->hookActionOrderSlipAdd(['order' => $order, 'order_slip' => $slip]);
+
+            $refunds = $module->refundCalls();
+            if ($expected === null) {
+                TinyAssert::count(0, $refunds, $desc);
+                TinyAssert::count(1, $module->notSent, $desc . ': the merchant is told the slip was not sent');
+                TinyAssert::true(self::logged('does not reconcile with the Default shipping tax code it was placed at') && self::logged('Partial refund skipped - could not build tax subtotals from the credit slip'), $desc . ': the logs it always wrote');
+                continue;
+            }
+            TinyAssert::count(1, $refunds, $desc);
+            $got = array_map(static function ($t) {
+                return [$t['tax_rate'], $t['taxable_amount'], $t['tax_amount']];
+            }, $refunds[0]['payload']['tax_subtotals']);
+            TinyAssert::same($expected, $got, $desc . ': got ' . json_encode($got));
+            TinyAssert::true(self::logged('The refund request (credit_slip) has an order postprocessing hook handler (refundspecsubscriber): the shop-match checks are delegated to it'), $desc . ': the delegation log line');
+        }
+        Hook::$subscribers = [];
+    }
+
+    private static function logged(string $needle): bool
+    {
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos((string) $entry['message'], $needle) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
