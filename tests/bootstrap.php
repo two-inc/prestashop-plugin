@@ -3263,6 +3263,22 @@ namespace {
         {
             return static::verificationSlotKey($apiKey);
         }
+
+        /**
+         * Run a pricing build's payload checks (TWO-26274) on the payload it describes, as postprocessOrderRequest()
+         * does after the hook: every check with no merchant handler, the consistency checks alone with one.
+         */
+        public function runPricingChecksForTest(array $pricing, bool $shopMatch = true): void
+        {
+            $payload = [
+                'gross_amount' => $this->getTwoRoundAmount($pricing['gross_amount']),
+                'net_amount' => $this->getTwoRoundAmount($pricing['net_amount']),
+                'tax_amount' => $this->getTwoRoundAmount($pricing['tax_amount']),
+                'line_items' => $pricing['line_items'],
+            ];
+            $method = new ReflectionMethod(Twopayment::class, 'runTwoOrderChecks');
+            $method->invoke($this, $pricing['checks'], $payload, $payload, $shopMatch);
+        }
     }
 
     /**

@@ -11,8 +11,11 @@ require_once __DIR__ . '/integration/fixtures/twoorderpostprocessingtest/twoorde
  * The fixture cart is the one the contract exists for: a 21% product at
  * 100.00 net and 29.00 of shipping the shop charged no tax on, on a "No tax"
  * carrier, so the plugin's own checks pass on what it builds. The worked
- * example re-splits that shipping to 23.97 net + 5.03 tax. The plugin sends
- * whatever a subscriber returns; Two's API validates it.
+ * example re-splits that shipping to 23.97 net + 5.03 tax.
+ *
+ * TWO-26274: the module's shop-match checks are its default handler, which
+ * stands down for a merchant handler; its consistency checks run after the
+ * hook whatever is registered.
  *
  * The golden payloads were taken from the builder before the hook existed, with
  * payloadsForGolden(); a deliberate builder change regenerates them the same way.
@@ -33,7 +36,11 @@ final class OrderPostprocessingSpec
         self::testNoSubscriberPayloadsAreByteIdentical();
         self::testHookEditsAreSentAsReturned();
         self::testSubscriberCodeBugsFailTheRequest();
-        self::testBuilderGatesRefuseBeforeTheHook();
+        self::testShopMatchChecksAreTheDefaultHandlers();
+        self::testDefaultHandlerStandsDownOnlyForARunnableMerchantHandler();
+        self::testConsistencyChecksRefuseAfterTheHook();
+        self::testConsistencyChecksRefuseWithoutAMerchantHandler();
+        self::testOptInHelperOutsideTheHookDoesNothing();
         self::testSubscriberThrowingGetsTheGenericCheckoutMessage();
         self::testDispatchKeepsCoreSemanticsButNotItsSwallow();
         self::testAdminEditSurvivesAThrowingSubscriber();
@@ -44,7 +51,7 @@ final class OrderPostprocessingSpec
         self::testNoChangeKeepsTodaysOutcomeOnEveryRequestType();
         self::testRecomputeTotalsHelper();
         self::testDebugLogCarriesARedactedDiff();
-        self::testHookRowIsCreatedOnceAndNeverSubscribed();
+        self::testHookRowIsCreatedOnceAndTheModuleRegistersItsDefaultHandler();
         self::testReadmeExampleIsTheFixturesOwnCode();
         self::testEveryOrderSendGoesThroughTheChoke();
     }
@@ -312,6 +319,15 @@ final class OrderPostprocessingSpec
                 $params['payload']['buyer']['representative']['email'] = 'someone@example.com';
 
                 return;
+            case 'shop_match':
+                // The opt-in helper on the payload as built: the module's shop-match refusal comes back.
+                Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload']);
+
+                return;
+            case 'outside_carrier_line':
+                $params['payload'] = Twoorderpostprocessingtest::addOutsideCarrierLine($params['payload'], $params['context'], 0.21);
+
+                return;
         }
 
         // Every remaining mode is the fixture's own: the README re-split, then any deliberate break.
@@ -390,10 +406,10 @@ final class OrderPostprocessingSpec
     }
 
     /**
-     * Whatever a subscriber returns is what goes out, however it leaves the
-     * arithmetic: Two's API validates the payload, not the plugin. Each row is
-     * an order create (returned to the checkout, which sends it) and an admin
-     * edit (sent here).
+     * A consistent payload a subscriber returns is what goes out, whatever it
+     * declares against the shop: a merchant handler owns the shop-match checks
+     * (TWO-26274). Each row is an order create (returned to the checkout,
+     * which sends it) and an admin edit (sent here).
      */
     private static function testHookEditsAreSentAsReturned(): void
     {
@@ -401,9 +417,6 @@ final class OrderPostprocessingSpec
         $cases = [
             ['resplit', ['123.97', '26.03', '150.00'], 'the README re-split with recomputed totals'],
             ['gross_change', ['133.97', '28.13', '162.10'], 'a changed gross'],
-            ['off_by_cent', ['123.97', '26.03', '150.00'], 'a line whose net + tax no longer equals gross'],
-            ['stale_totals', ['129.00', '21.00', '150.00'], 'lines re-split but the order totals left as they were'],
-            ['stale_subtotals', ['123.97', '26.03', '150.00'], 'totals recomputed but tax_subtotals left stale'],
         ];
         foreach ($cases as [$mode, $totals, $description]) {
             $cart = self::seed(false, true);
@@ -456,45 +469,255 @@ final class OrderPostprocessingSpec
     }
 
     /**
-     * The plugin's own checks run on what it builds, before the hook: a cart
-     * they refuse is refused as it always was, the subscriber never runs, and
-     * the discrepancy snapshot names the gate.
+     * Each shop-match check is the module's default handler (TWO-26274). With
+     * no merchant handler it refuses as it always did, with one discrepancy
+     * snapshot naming the gate. A merchant handler makes it stand down, with
+     * one log line naming the handler: what it returns is checked only for
+     * consistency, which still catches a declared rate left contradicting its
+     * own line. A handler that calls runTwoShopMatchChecks() gets the module's
+     * refusal back, exactly as the default handler makes it.
      */
-    private static function testBuilderGatesRefuseBeforeTheHook(): void
+    private static function testShopMatchChecksAreTheDefaultHandlers(): void
     {
-        // [setup, expected message fragment, snapshot gate, description]
+        // [setup, refusal fragment, snapshot gate, outcome with a merchant handler that edits nothing (null: sent), its fixing mode, description]
         $cases = [
-            ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', 'untaxed shipping on a "No tax" carrier, with the Default shipping tax code at 21%'],
-            ['product', 'Declared tax rate diverges from applied tax amounts for product', 'declared_rate', 'a product whose declared rate its amounts contradict'],
+            ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', 'Invalid line item formulas', 'resplit', 'untaxed shipping on a "No tax" carrier, with the Default shipping tax code at 21%'],
+            ['product', 'Declared tax rate diverges from applied tax amounts for product', 'declared_rate', 'Invalid line item formulas', null, 'a product whose declared rate its amounts contradict'],
+            ['wrapping', 'Declared tax rate diverges from applied tax amounts for gift wrapping', 'declared_rate', 'Invalid line item formulas', null, 'gift wrapping the shop left untaxed, at a 21% wrapping group'],
+            ['outside_carrier', 'Order totals do not reconcile with cart totals: gross cart 179.00 vs order lines 150.00 (difference 29.00); net cart 158.00 vs order lines 129.00 (difference 29.00)', 'reconciliation', null, 'outside_carrier_line', 'a cost the shop adds to the cart total outside any carrier'],
         ];
-        foreach ($cases as [$setup, $expected, $gate, $description]) {
-            $cart = self::seed($setup !== 'shipping', $setup === 'shipping');
-            if ($setup === 'shipping') {
-                // Only the Default shipping tax code's rate is checked, and only on a line no carrier provides one for (TWO-26117).
-                Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
-                Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', (string) self::CARRIER_GROUP);
+        foreach ($cases as [$setup, $refusal, $gate, $delegated, $fix, $description]) {
+            foreach ($fix === null ? [null, 'noop', 'shop_match'] : [null, 'noop', 'shop_match', $fix] as $mode) {
+                $label = $description . ', ' . ($mode === null ? 'no merchant handler' : 'merchant handler ' . $mode);
+                $cart = self::seed($setup === 'product', $setup !== 'product');
+                if ($setup === 'shipping') {
+                    // Only the Default shipping tax code's rate is checked, and only on a line no carrier provides one for (TWO-26117).
+                    Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
+                    Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', (string) self::CARRIER_GROUP);
+                }
+                if ($setup === 'product') {
+                    StubStore::$taxRuleRates[9000 + self::PRODUCT] = 10.0;
+                }
+                if ($setup === 'wrapping') {
+                    Configuration::updateValue('PS_GIFT_WRAPPING_TAX_RULES_GROUP', self::CARRIER_GROUP);
+                    StubStore::$cartTotals[self::CART][true][Cart::ONLY_WRAPPING] = 10.00;
+                    StubStore::$cartTotals[self::CART][false][Cart::ONLY_WRAPPING] = 10.00;
+                }
+                if ($setup === 'outside_carrier') {
+                    StubStore::$cartTotals[self::CART][true][Cart::BOTH] += 29.00;
+                    StubStore::$cartTotals[self::CART][false][Cart::BOTH] += 29.00;
+                }
+                $module = self::module();
+                self::harnessAsInstance($module);
+                $calls = [];
+                if ($mode !== null) {
+                    self::subscribe($mode, $calls);
+                }
+                $error = null;
+                $payload = null;
+                try {
+                    $payload = $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+                } catch (Exception $e) {
+                    $error = $e;
+                }
+                $got = $error === null ? null : get_class($error) . ': ' . $error->getMessage();
+                $snapshots = array_values(array_filter(PrestaShopLogger::$logs, static function ($l) {
+                    return $l['object_type'] === TwoDiscrepancySnapshot::LOG_OBJECT_TYPE;
+                }));
+                $delegation = 'The order_create request (checkout) has an order postprocessing hook handler (twoorderpostprocessingtest): the shop-match checks are delegated to it, and the consistency checks still run.';
+                // The helper's refusal stops the request inside the hook, before anything is delegated.
+                TinyAssert::same($mode === null || $mode === 'shop_match' ? 0 : 1, count(array_filter(PrestaShopLogger::$logs, static function ($l) use ($delegation) {
+                    return strpos($l['message'], $delegation) !== false;
+                })), $label . ': the delegation log line, once, naming the handler');
+                if ($mode === null || $mode === 'shop_match') {
+                    TinyAssert::true($error instanceof TwoCheckoutAmountException && strpos($error->getMessage(), $refusal) !== false, $label . ': the module\'s own refusal, got ' . var_export($got, true));
+                    TinyAssert::count(1, $snapshots, $label . ': one discrepancy snapshot');
+                    TinyAssert::same($gate, json_decode($snapshots[0]['message'], true)['gate']['name'] ?? null, $label . ': the snapshot names the gate');
+                    TinyAssert::count($mode === null ? 0 : 1, $calls, $label . ': the handler ran, if any');
+                    continue;
+                }
+                $expected = $mode === 'noop' ? $delegated : null;
+                TinyAssert::true($expected === null ? $error === null : ($error !== null && strpos($error->getMessage(), $expected) !== false), $label . ': ' . ($expected ?? 'sent') . ', got ' . var_export($got, true));
+                if ($error === null) {
+                    TinyAssert::same($calls[0]['payload_out'], $payload, $label . ': sent as the handler returned it');
+                }
             }
-            if ($setup === 'product') {
-                StubStore::$taxRuleRates[9000 + self::PRODUCT] = 10.0;
-            }
-            $module = self::module();
+        }
+    }
+
+    /**
+     * A merchant handler is any module other than this one that the module's
+     * dispatch would run: registered on the hook, active, and allowed by "Disable
+     * non PrestaShop modules". The module's own registration never counts, and
+     * its dispatch never calls it.
+     */
+    private static function testDefaultHandlerStandsDownOnlyForARunnableMerchantHandler(): void
+    {
+        $refusal = 'TwoCheckoutAmountException: Order totals do not reconcile with cart totals';
+        // [registered modules, setup, expected outcome prefix (null: sent), description]
+        $cases = [
+            [[], null, $refusal, 'nothing registered'],
+            [['twopayment'], null, $refusal, 'only the module itself'],
+            [['twopayment', 'twoorderpostprocessingtest'], null, null, 'the module and a merchant handler'],
+            [['twoorderpostprocessingtest'], null, null, 'a merchant handler'],
+            [['twoorderpostprocessingtest'], 'inactive', $refusal, 'a disabled merchant handler'],
+            [['twoorderpostprocessingtest'], 'non_native_off', $refusal, 'a merchant handler under "Disable non PrestaShop modules"'],
+        ];
+        foreach ($cases as [$registered, $setup, $expected, $description]) {
+            $cart = self::seed(false, true);
+            StubStore::$cartTotals[self::CART][true][Cart::BOTH] += 29.00;
+            StubStore::$cartTotals[self::CART][false][Cart::BOTH] += 29.00;
+            $module = new class extends TwopaymentTestHarness {
+                public int $ownHandlerCalls = 0;
+
+                public function hookActionTwoOrderPostprocessing($params)
+                {
+                    $this->ownHandlerCalls++;
+                    parent::hookActionTwoOrderPostprocessing($params);
+                }
+            };
             self::harnessAsInstance($module);
             $calls = [];
-            self::subscribe('resplit', $calls);
+            foreach ($registered as $name) {
+                if ($name === 'twoorderpostprocessingtest') {
+                    self::subscribe('outside_carrier_line', $calls);
+                }
+            }
+            Hook::$execLists[TwoOrderPostprocessing::HOOK] = array_map(static function ($name) {
+                return ['module' => $name];
+            }, $registered);
+            if ($setup === 'inactive') {
+                StubStore::$moduleInstances['twoorderpostprocessingtest'] = new StubHookSubscriberModule('twoorderpostprocessingtest');
+                StubStore::$moduleInstances['twoorderpostprocessingtest']->active = false;
+            }
+            if ($setup === 'non_native_off') {
+                Configuration::updateValue('PS_DISABLE_NON_NATIVE_MODULE', 1);
+            }
             $error = null;
             try {
                 $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
             } catch (Exception $e) {
-                $error = $e;
+                $error = get_class($e) . ': ' . $e->getMessage();
             }
-            TinyAssert::true($error !== null && strpos($error->getMessage(), $expected) !== false, $description . ': today\'s refusal, got ' . ($error === null ? 'none' : '"' . $error->getMessage() . '"'));
-            TinyAssert::count(0, $calls, $description . ': the subscriber never runs');
-            $snapshots = array_values(array_filter(PrestaShopLogger::$logs, static function ($l) {
-                return $l['object_type'] === TwoDiscrepancySnapshot::LOG_OBJECT_TYPE;
-            }));
-            TinyAssert::count(1, $snapshots, $description . ': one discrepancy snapshot');
-            TinyAssert::same($gate, json_decode($snapshots[0]['message'], true)['gate']['name'] ?? null, $description . ': the snapshot names the gate');
+            TinyAssert::true($expected === null ? $error === null : strpos((string) $error, $expected) === 0, $description . ': ' . ($expected ?? 'sent') . ', got ' . var_export($error, true));
+            TinyAssert::same(0, $module->ownHandlerCalls, $description . ': the dispatch never calls the module\'s own registration');
+            TinyAssert::same(array_values(array_diff($registered, ['twopayment'])), TwoOrderPostprocessing::subscribers(), $description . ': the merchant handlers the debug diff names');
         }
+    }
+
+    /**
+     * The consistency checks run after the hook on what a merchant handler
+     * returns: lines, tax subtotals and order totals that do not add up are
+     * refused locally, with the messages the builder's own checks always used,
+     * and nothing is sent.
+     */
+    private static function testConsistencyChecksRefuseAfterTheHook(): void
+    {
+        // [mode, refusal, description]
+        $cases = [
+            ['off_by_cent', 'Exception: Invalid line item formulas', 'a line whose net + tax no longer equals gross'],
+            ['stale_totals', 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items', 'lines re-split but the order totals and subtotals left as they were'],
+            ['stale_subtotals', 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items', 'totals recomputed but tax_subtotals left stale'],
+            ['no_lines', 'Exception: No valid line items in cart', 'every line removed'],
+        ];
+        foreach ($cases as [$mode, $refusal, $description]) {
+            $cart = self::seed(false, true);
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $calls = [];
+            self::subscribe($mode, $calls);
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            } catch (Exception $e) {
+                $error = get_class($e) . ': ' . $e->getMessage();
+            }
+            TinyAssert::same($refusal, $error, $description . ': order create refused');
+            TinyAssert::count(1, $calls, $description . ': after the hook ran');
+
+            $module->hookActionOrderEdited(['order' => self::order()]);
+            TinyAssert::count(0, $module->sent, $description . ': the admin edit is not sent');
+        }
+    }
+
+    /**
+     * With no merchant handler the default handler runs every check, in the
+     * order they always ran, on the payload as it leaves the hook: one that
+     * does not add up is refused by the consistency check it fails, and the
+     * same check refuses it with the shop-match checks delegated.
+     */
+    private static function testConsistencyChecksRefuseWithoutAMerchantHandler(): void
+    {
+        $setTotal = static function (string $field, string $value): callable {
+            return static function (array $payload) use ($field, $value): array {
+                $payload[$field] = $value;
+
+                return $payload;
+            };
+        };
+        // [edit to the built payload, refusal, description]
+        $cases = [
+            [static function (array $payload): array {
+                $payload['line_items'][0]['net_amount'] = '99.99';
+
+                return $payload;
+            }, 'Exception: Invalid line item formulas', 'a line whose net + tax no longer equals gross'],
+            [$setTotal('gross_amount', '151.00'), 'TwoCheckoutAmountException: Order totals do not reconcile with line items', 'an order gross the lines do not sum to'],
+            [$setTotal('net_amount', 'n/a'), 'TwoCheckoutAmountException: Order totals do not reconcile with line items', 'an order net that is no amount'],
+            [static function (array $payload): array {
+                $payload['tax_subtotals'][0]['taxable_amount'] = '30.00';
+
+                return $payload;
+            }, 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items', 'tax subtotals the lines do not sum to'],
+            [$setTotal('tax_subtotals', 'none'), 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items', 'tax subtotals that are no list'],
+            [static function (array $payload): array {
+                $payload['line_items'] = [];
+
+                return $payload;
+            }, 'Exception: No valid line items in cart', 'no lines'],
+            [static function (array $payload): array {
+                $payload['line_items'][] = 'not a line';
+
+                return $payload;
+            }, 'Exception: Invalid line item formulas', 'a line that is no line'],
+        ];
+        $build = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
+        $run = new ReflectionMethod(Twopayment::class, 'runTwoOrderChecks');
+        foreach ($cases as [$edit, $refusal, $description]) {
+            foreach ([true => 'no merchant handler', false => 'shop-match checks delegated'] as $shopMatch => $who) {
+                $cart = self::seed(false, true);
+                $module = new TwopaymentTestHarness();
+                $pricing = $build->invoke($module, $cart, 'order data (spec)', false, null, false);
+                $before = [
+                    'gross_amount' => $module->getTwoRoundAmount($pricing['gross_amount']),
+                    'net_amount' => $module->getTwoRoundAmount($pricing['net_amount']),
+                    'tax_amount' => $module->getTwoRoundAmount($pricing['tax_amount']),
+                    'line_items' => $pricing['line_items'],
+                    'tax_subtotals' => $pricing['tax_subtotals'],
+                ];
+                $run->invoke($module, $pricing['checks'], $before, $before, (bool) $shopMatch);
+                $error = null;
+                try {
+                    $run->invoke($module, $pricing['checks'], $edit($before), $before, (bool) $shopMatch);
+                } catch (Exception $e) {
+                    $error = get_class($e) . ': ' . $e->getMessage();
+                }
+                TinyAssert::same($refusal, $error, $description . ', ' . $who);
+            }
+        }
+    }
+
+    /**
+     * runTwoShopMatchChecks() checks the request the hook is running for, so
+     * called anywhere else it has nothing to check.
+     */
+    private static function testOptInHelperOutsideTheHookDoesNothing(): void
+    {
+        self::seed(true);
+        $module = new TwopaymentTestHarness();
+        $module->runTwoShopMatchChecks(['line_items' => [], 'gross_amount' => '1.00']);
+        $module->hookActionTwoOrderPostprocessing(['payload' => ['line_items' => []], 'context' => []]);
+        TinyAssert::same([], PrestaShopLogger::$logs, 'nothing checked, nothing logged');
     }
 
     /**
@@ -851,16 +1074,15 @@ final class OrderPostprocessingSpec
     }
 
     /**
-     * With no subscriber changing the payload, every request type sends the
-     * same bytes and gets the same accept or refuse outcome as with no
-     * subscriber at all, on a cart the module's own checks pass and on one
-     * they refuse. A subscriber that changes one field sends exactly that
-     * change and nothing else.
+     * On carts the module's own checks pass, a subscriber that changes nothing
+     * leaves every request type sending the same bytes, with the same outcome,
+     * as no subscriber at all. A subscriber that changes one field sends
+     * exactly that change and nothing else.
      */
     private static function testNoChangeKeepsTodaysOutcomeOnEveryRequestType(): void
     {
         foreach (self::requestDrivers() as [$type, $trigger, , $driver, $description]) {
-            foreach ([[true, 'a cart the checks pass'], [false, 'a cart the checks refuse']] as [$taxed, $cartLabel]) {
+            foreach ([[true, 'a cart with taxed shipping'], [false, 'a cart with untaxed shipping on a taxed carrier']] as [$taxed, $cartLabel]) {
                 $label = $description . ', ' . $cartLabel;
                 $none = self::outcome(null, $taxed, $driver);
                 TinyAssert::same($none, self::outcome('noop', $taxed, $driver), $label . ': a subscriber that changes nothing');
@@ -999,7 +1221,7 @@ final class OrderPostprocessingSpec
             $module->putAnswer = $answer;
             self::harnessAsInstance($module);
             $calls = [];
-            self::subscribe('stale_totals', $calls);
+            self::subscribe('gross_change', $calls);
             $module->$hook(['order' => self::order()]);
             TinyAssert::count(1, $module->sent, $description . ': sent');
             TinyAssert::true(self::logged($log) && self::logged($expected), $description . ': the API\'s words in the log');
@@ -1007,14 +1229,26 @@ final class OrderPostprocessingSpec
         }
     }
 
-    private static function testHookRowIsCreatedOnceAndNeverSubscribed(): void
+    private static function testHookRowIsCreatedOnceAndTheModuleRegistersItsDefaultHandler(): void
     {
         self::seed(true);
         $module = new TwopaymentTestHarness();
         TinyAssert::true($module->installTwoOrderPostprocessingHook(), 'install creates the row');
         TinyAssert::true($module->installTwoOrderPostprocessingHook(), 'and is idempotent');
         TinyAssert::same([TwoOrderPostprocessing::HOOK => 1], Hook::$ids, 'exactly one row');
-        TinyAssert::false(in_array(TwoOrderPostprocessing::HOOK, StubStore::$registerHookCalls, true), 'the module never subscribes to its own hook');
+        TinyAssert::false(in_array(TwoOrderPostprocessing::HOOK, StubStore::$registerHookCalls, true), 'creating the row registers nothing');
+        // TWO-26274: install() registers the default handler, and an existing shop's constructor self-heals it, once.
+        $install = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        TinyAssert::true(strpos($install, "\$this->installTwoOrderPostprocessingHook() &&\n            \$this->registerHook(TwoOrderPostprocessing::HOOK) &&") !== false, 'install() registers the default handler once the row exists');
+        Hook::$ids = [];
+        $module->id = 1;
+        $heal = new ReflectionMethod(Twopayment::class, 'ensureRequiredHooksRegistered');
+        $heal->invoke($module);
+        $heal->invoke($module);
+        TinyAssert::same([TwoOrderPostprocessing::HOOK], array_values(array_filter(StubStore::$registerHookCalls, static function ($hook) {
+            return $hook === TwoOrderPostprocessing::HOOK;
+        })), 'the self-heal registers it once');
+        TinyAssert::same([TwoOrderPostprocessing::HOOK => 1], Hook::$ids, 'with the row created first');
         require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.18.php';
         Hook::$ids = [];
         TinyAssert::true(upgrade_module_2_7_18($module), 'the upgrade script creates it on existing shops');
@@ -1026,7 +1260,7 @@ final class OrderPostprocessingSpec
      */
     private static function testReadmeExampleIsTheFixturesOwnCode(): void
     {
-        foreach (['resplitShipping', 'resplitUntaxedRefund'] as $name) {
+        foreach (['resplitShipping', 'resplitUntaxedRefund', 'addOutsideCarrierLine'] as $name) {
             $method = new ReflectionMethod(Twoorderpostprocessingtest::class, $name);
             $lines = array_slice(file((string) $method->getFileName()), $method->getStartLine() - 1, $method->getEndLine() - $method->getStartLine() + 1);
             $source = implode('', array_map(static function (string $line): string {

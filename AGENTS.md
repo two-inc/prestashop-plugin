@@ -205,6 +205,22 @@ path and nothing selects a second file, so every value in it - the payment tile'
 replace the file. Building per-brand resolution is TWO-24746 and has not been done here; do not
 improvise one for a single key.
 
+## Payload Checks: Shop-Match Or Consistency
+
+TWO-26274. Every check on an order payload is one of two kinds, and the README section
+"The module's checks" is the specification.
+
+- **Shop-match** (the payload against PrestaShop's figures: cart or placed totals, stored
+  line amounts, the cart's fee line, the Default shipping tax code) belongs to the default
+  handler: an item of kind `CHECK_SHOP_MATCH` in `buildTwoOrderChecks()` (or the credit
+  slip's), run after the hook only when no merchant handler is registered. A check on one
+  line is recorded against that line while it is built (`$twoDeferredShopMatch`) and applies
+  only while the payload still carries the line unchanged.
+- **Consistency** (the payload against itself) is a `CHECK_CONSISTENCY` item and always runs
+  after the hook. Never put either kind back in the builder before the hook: a payload the
+  module cannot build at all (empty cart, bad address, failed split) is the only refusal
+  there.
+
 ## Tax Codes On 0% Lines Are An Aid, Never A Gate
 
 TWO-24877. Two requires a `tax_code` on every 0% line of a Spanish merchant's order.

@@ -29,6 +29,7 @@ final class SurchargeCartLineSpec
         self::testCartLineNetMatchesTwoPayloadFeeLine();
         self::testOrderCreateParityGateFailsClosedOnDivergence();
         self::testOrderCreateParityGateFailsClosedOnUnavailableQuote();
+        self::testParityGateIsTheDefaultHandlers();
         self::testOrderCreateCompletesForANonChargingTermDuringAnOutage();
         self::testNonEnforcingPathStaysQuietOnAnUnavailableQuote();
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
@@ -461,6 +462,52 @@ final class SurchargeCartLineSpec
     }
 
     /**
+     * TWO-26274: the fee parity check compares the payload with the cart, so it
+     * is a shop-match check, the module's default handler. The ABN-546 case
+     * above, with a merchant handler on the hook: one that changes nothing owns
+     * the check and the order is built; one that opts back in gets the refusal.
+     * Columns: handler mode (null: none), expected refusal (null: built), description.
+     */
+    private static function testParityGateIsTheDefaultHandlers(): void
+    {
+        $cases = [
+            [null, 'Surcharge line mismatch between cart and Two payload', 'no merchant handler'],
+            ['owns', null, 'a merchant handler that changes nothing'],
+            ['opts_in', 'Surcharge line mismatch between cart and Two payload', 'a merchant handler that opts back in'],
+        ];
+        foreach ($cases as [$mode, $expected, $description]) {
+            $module = self::makeModule([30 => '0.00', 60 => '8.00']);
+            $cart = self::makeCart();
+            $module->syncTwoSurchargeCartLine($cart, true);
+            Context::getContext()->cookie->two_payment_term = 60;
+            $module->forcedFeeResponse = ['http_status' => 503];
+            Hook::$subscribers = [];
+            if ($mode !== null) {
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK]['merchanthandler'] = static function (array $params) use ($mode, $module): void {
+                    if ($mode === 'opts_in') {
+                        $module->runTwoShopMatchChecks($params['payload']);
+                    }
+                };
+            }
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-8105', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            Hook::$subscribers = [];
+            TinyAssert::same($expected, $error, $description);
+        }
+    }
+
+    /**
      * ABN-546: the gate and the line builder share one predicate, so every
      * shape that prices nothing is skipped by BOTH. Without that, the gate
      * offered Two and the builder then refused the order over a fee of zero -
@@ -539,7 +586,8 @@ final class SurchargeCartLineSpec
 
             $threw = false;
             try {
-                $method->invoke($module, $cart, 'spec context', false, 30, $enforce);
+                // The checks run after the hook (TWO-26274), so the build hands them back.
+                $module->runPricingChecksForTest($method->invoke($module, $cart, 'spec context', false, 30, $enforce));
             } catch (Exception $e) {
                 $threw = strpos($e->getMessage(), 'Surcharge line mismatch') !== false;
             }
