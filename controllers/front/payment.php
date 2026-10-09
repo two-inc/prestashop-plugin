@@ -268,17 +268,20 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
 
             if (!isset($response) || $http_status === 0) {
                 $message = $this->module->l('Connection error with payment provider. Please try again.');
-            } elseif ($http_status === 401 || $http_status === 403) {
-                $message = $this->module->l('Payment method configuration error. Please contact the store.');
-            } elseif ($http_status === 400) {
-                $two_err = $this->module->getTwoErrorMessage($response);
-                if ($two_err) {
-                    $message = $two_err;
-                } else {
-                    $message = $this->module->l('Invalid order data. Please check your details and try again.');
-                }
-            } elseif ($http_status >= Twopayment::HTTP_STATUS_SERVER_ERROR) {
-                $message = $this->module->l('Payment provider temporarily unavailable. Please try again later.');
+            } elseif ($http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST) {
+                // Two refused the order (TWO-26264), whatever the status. Its own
+                // words are for the merchant: there is no order yet to note them
+                // on, so they go to the module log, and the buyer gets the same
+                // wording the WooCommerce plugin gives.
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Two refused order creation for cart ' . (int)$cart->id . ', attempt ' . $attempt_token .
+                    ' - ' . $this->module->getTwoApiErrorDetail($response),
+                    3,
+                    null,
+                    'Cart',
+                    (int)$cart->id
+                );
+                $message = $this->module->getTwoCreateRefusalBuyerMessage($response);
             }
 
             // Surface the platform minimum when attributable (TWO-24775): a
@@ -295,7 +298,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                     $cart
                 );
                 if (!Tools::isEmpty($minimum_hint)) {
-                    $message .= ' ' . $minimum_hint;
+                    $message = $this->module->joinTwoBuyerSentences(array($message, $minimum_hint));
                 }
             }
 
