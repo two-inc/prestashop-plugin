@@ -10,7 +10,7 @@
  * Fits a postcode to a country's PrestaShop `zip_code_format` (TWO-26257).
  *
  * Company details carry the registry's postcode, which can lack the separator
- * core's format requires ("6235EB" where NL is "NNNN LL"), and core's
+ * core's format requires ("1234AB" where NL is "NNNN LL"), and core's
  * Country::checkZipCode() then refuses the address. In a format, N is a digit,
  * L is a letter and C is the country's iso code, matched case-insensitively as
  * core does; any other character is literal.
