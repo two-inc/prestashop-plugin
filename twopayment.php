@@ -19805,20 +19805,10 @@ class Twopayment extends PaymentModule
             $response_data = json_decode($response_body, true);
             
             // BACKWARD COMPATIBILITY: Merge data into root for existing code
-            $response = array_merge([
+            return array_merge([
                 'http_status' => (int)$http_status,
                 'data' => $response_data,
             ], is_array($response_data) ? $response_data : []);
-            if (!is_array($response_data) && trim((string)$response_body) !== '') {
-                // A body that is not JSON (a proxy's error page, say) is otherwise lost;
-                // getTwoApiErrorDetail() logs this much of it (TWO-26264).
-                $raw_body = self::sanitizeTwoRawResponseBody($response_body);
-                if ($raw_body !== '') {
-                    $response['raw_body'] = $raw_body;
-                }
-            }
-
-            return $response;
         } else {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
             $url .= (strpos($url, '?') === false ? '?' : '&') . http_build_query($this->getTwoClientParams());
@@ -20414,21 +20404,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The start of a response body that is not JSON, as plain text. It reaches order private
-     * notes through getTwoApiErrorDetail(), where markup such as a proxy page's script would
-     * fail the message's HTML validation and lose the note, so tags go and whitespace collapses.
-     *
-     * @param mixed $body
-     * @return string At most 500 characters.
-     */
-    public static function sanitizeTwoRawResponseBody($body)
-    {
-        $text = trim((string) preg_replace('/\s+/', ' ', strip_tags((string) $body)));
-
-        return Tools::substr($text, 0, 500);
-    }
-
-    /**
      * The API's own words for a rejected request, for the module log and the admin's order message.
      * getTwoErrorMessage() rewrites validation errors into buyer-facing advice; this keeps them as sent.
      *
@@ -20445,7 +20420,7 @@ class Twopayment extends PaymentModule
         $parts = array();
         foreach (is_array($response) ? array($response, isset($response['data']) && is_array($response['data']) ? $response['data'] : array()) : array() as $body) {
             // The trace id first: it is what a merchant quotes to support, so the length cap must not cut it.
-            foreach (array('error_trace_id', 'error_code', 'error_message', 'error_details', 'error_json', 'message', 'detail', 'error', 'raw_body') as $key) {
+            foreach (array('error_trace_id', 'error_code', 'error_message', 'error_details', 'error_json', 'message', 'detail', 'error') as $key) {
                 if (isset($body[$key]) && $body[$key] !== '' && $body[$key] !== array()) {
                     $part = is_scalar($body[$key]) ? (string) $body[$key] : json_encode($body[$key], $json_flags);
                     if ($part !== false) {
