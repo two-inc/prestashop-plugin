@@ -11,8 +11,8 @@
  *
  *   TWO_OPP_TEST_MODE - '' (unarmed), record, resplit, gross_change,
  *                       off_by_cent, stale_totals, stale_subtotals, no_lines,
- *                       outside_carrier_line, shop_match, throws, non_array,
- *                       body_on_cancel
+ *                       outside_carrier_line, outside_carrier_line_checked,
+ *                       shop_match, throws, non_array, body_on_cancel
  *   TWO_OPP_TEST_RATE - the rate resplit and outside_carrier_line use when the
  *                       context's shipping_tax_rate is empty (the probe's carrier is "No tax")
  *
@@ -115,15 +115,23 @@ class Twoorderpostprocessingtest extends Module
 
             return;
         }
+        if ($mode === 'outside_carrier_line_checked') {
+            // The cost as the shop recorded it, untaxed, then the module's shop-match checks on what it returns.
+            $params['payload'] = self::addOutsideCarrierLine($params['payload'], $params['context'], 0.0);
+            Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload']);
+
+            return;
+        }
         $before = $params['payload'];
         $params['payload'] = self::resplitShipping($params['payload'], $rate);
         self::breakOnPurpose($mode, $params['payload'], $before);
     }
 
     /**
-     * The README example of a handler that owns the shop-match checks: the shop adds a cost to the cart (or order)
-     * total outside any carrier, so the order lines fall short of it. Send that cost as a shipping line, VAT-inclusive
-     * at the merchant's rate, and keep the totals consistent.
+     * The README example of a handler that owns the shop-match checks: the shop adds a cost to the cart total outside
+     * any carrier, so the order lines fall short of it. Send that cost as a shipping line, VAT-inclusive at the
+     * merchant's rate, and keep the totals consistent. A placed order's update already carries the cost in its
+     * shipping line, at 0%, so there the line is re-split at the same rate instead.
      *
      * @param array $payload
      * @param array $context
@@ -132,13 +140,13 @@ class Twoorderpostprocessingtest extends Module
      */
     public static function addOutsideCarrierLine(array $payload, array $context, $rate)
     {
-        if (!in_array($context['request_type'], array('order_intent', 'order_create', 'order_update'), true)) {
+        if ($context['request_type'] === 'order_update') {
+            return self::resplitShipping($payload, $rate);
+        }
+        if (!in_array($context['request_type'], array('order_intent', 'order_create'), true)) {
             return $payload;
         }
-        $total = $context['order'] !== null
-            ? (float) $context['order']->total_paid_tax_incl
-            : (float) $context['cart']->getOrderTotal(true, Cart::BOTH);
-        $gross = round($total - (float) $payload['gross_amount'], 2);
+        $gross = round((float) $context['cart']->getOrderTotal(true, Cart::BOTH) - (float) $payload['gross_amount'], 2);
         if ($gross <= 0) {
             return $payload;
         }
