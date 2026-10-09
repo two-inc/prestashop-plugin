@@ -28,6 +28,7 @@ final class AjaxCheckoutFailureSpec
         self::testPluginAmountDiagnosticStillReachesTheBuyer();
         self::testASubmissionWithNoOfferedTermIsRefusedBeforeOrderCreation();
         self::testACreateRefusalTellsTheBuyerOnlyWhatTheyCanActOn();
+        self::testARawResponseBodyIsKeptAsPlainText();
     }
 
     /**
@@ -153,6 +154,7 @@ final class AjaxCheckoutFailureSpec
         $invalid = "OrderError {'order_id': 'a line item lacks a field'}";
         $hint = 'Minimum order value is EUR50.00 excluding tax.';
         $fieldJson = '"loc":["billing_address","city"]';
+        $longJson = array_fill(0, 40, ['loc' => ['line_items', 0, 'tax_rate'], 'msg' => str_repeat('x', 40)]);
 
         // [create response, buyer message, a fragment the log must carry, description, minimum hint].
         $cases = array(
@@ -184,6 +186,10 @@ final class AjaxCheckoutFailureSpec
                 self::GENERIC_REFUSAL, 'HTTP 500 Internal error', 'a server error is a refusal like any other'),
             array(['http_status' => 502, 'data' => null, 'raw_body' => '<html>Bad gateway</html>'],
                 self::GENERIC_REFUSAL, 'Bad gateway', 'a body that is not JSON is logged as received'),
+            array(['http_status' => 422, 'error_code' => 'SCHEMA_ERROR', 'error_json' => $longJson, 'error_trace_id' => 'trace-4713'],
+                self::GENERIC_REFUSAL, 'HTTP 422 trace-4713', 'the length cap never cuts the trace id, which leads the log'),
+            array(['http_status' => 400, 'error_code' => 'SCHEMA_ERROR', 'error_json' => [['loc' => ['buyer'], 'msg' => "bad \xC3\x28 byte"]]],
+                self::GENERIC_REFUSAL, 'SCHEMA_ERROR', 'field errors carrying invalid UTF-8 do not cost the rest of the reason'),
             array(['http_status' => 0],
                 'Connection error with payment provider. Please try again.', null, 'no answer at all is not a refusal'),
         );
@@ -214,6 +220,28 @@ final class AjaxCheckoutFailureSpec
             TinyAssert::same('Cart', $refusals[0]['object_type'], 'logged against the cart: ' . $description);
             TinyAssert::same(self::CART_ID, $refusals[0]['object_id'], 'logged against this cart: ' . $description);
             TinyAssert::true(strpos($refusals[0]['message'], $logged) !== false, 'the log carries Two\'s reason: ' . $description);
+        }
+    }
+
+    /**
+     * TWO-26264. A body that is not JSON reaches order private notes through
+     * getTwoApiErrorDetail(), so it is kept as plain text: markup there would fail
+     * the note's HTML validation and lose the note.
+     */
+    private static function testARawResponseBodyIsKeptAsPlainText(): void
+    {
+        // [raw body, kept text, description].
+        $cases = array(
+            array("<html><head><script>alert(1)</script></head>\n<body><h1>502</h1>\t Bad   gateway</body></html>", 'alert(1) 502 Bad gateway', 'tags go and whitespace collapses'),
+            array('  plain text  ', 'plain text', 'plain text is trimmed and otherwise kept'),
+            array('<p>   </p>', '', 'markup with no text keeps nothing'),
+            array(str_repeat('a', 600), str_repeat('a', 500), 'at most 500 characters are kept'),
+            array('<b>' . str_repeat('b', 600) . '</b>', str_repeat('b', 500), 'the cap applies after the tags are gone'),
+        );
+
+        foreach ($cases as $case) {
+            list($raw, $kept, $description) = $case;
+            TinyAssert::same($kept, Twopayment::sanitizeTwoRawResponseBody($raw), $description);
         }
     }
 
