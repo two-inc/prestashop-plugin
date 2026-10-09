@@ -29,6 +29,8 @@ final class SurchargeCartLineSpec
         self::testCartLineNetMatchesTwoPayloadFeeLine();
         self::testOrderCreateParityGateFailsClosedOnDivergence();
         self::testOrderCreateParityGateFailsClosedOnUnavailableQuote();
+        self::testParityGateIsTheDefaultHandlers();
+        self::testParityAppliesWhileTheFeeLineIsUnchanged();
         self::testOrderCreateCompletesForANonChargingTermDuringAnOutage();
         self::testNonEnforcingPathStaysQuietOnAnUnavailableQuote();
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
@@ -461,6 +463,126 @@ final class SurchargeCartLineSpec
     }
 
     /**
+     * TWO-26274: the fee parity check compares the payload with the cart, so it
+     * is a shop-match check, the module's default handler. The ABN-546 case
+     * above, with a merchant handler on the hook: one that changes nothing owns
+     * the check and the order is built; one that opts back in gets the refusal.
+     * Columns: handler mode (null: none), expected refusal (null: built), description.
+     */
+    private static function testParityGateIsTheDefaultHandlers(): void
+    {
+        $cases = [
+            [null, 'Surcharge line mismatch between cart and Two payload', 'no merchant handler'],
+            ['owns', null, 'a merchant handler that changes nothing'],
+            ['opts_in', 'Surcharge line mismatch between cart and Two payload', 'a merchant handler that opts back in'],
+        ];
+        foreach ($cases as [$mode, $expected, $description]) {
+            $module = self::makeModule([30 => '0.00', 60 => '8.00']);
+            $cart = self::makeCart();
+            $module->syncTwoSurchargeCartLine($cart, true);
+            Context::getContext()->cookie->two_payment_term = 60;
+            $module->forcedFeeResponse = ['http_status' => 503];
+            Hook::$subscribers = [];
+            if ($mode !== null) {
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK]['merchanthandler'] = static function (array $params) use ($mode, $module): void {
+                    if ($mode === 'opts_in') {
+                        $module->runTwoShopMatchChecks($params['payload']);
+                    }
+                };
+            }
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-8105', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            Hook::$subscribers = [];
+            TinyAssert::same($expected, $error, $description);
+        }
+    }
+
+    /**
+     * TWO-26274: like the checks on single lines, fee parity applies to the
+     * module's fee line while the payload carries it unchanged. On the
+     * divergence case above, a handler that opts back in on the payload it
+     * returns gets the parity refusal while it leaves the fee line, and none
+     * once it removed the line, which makes the fee its own.
+     * Columns: handler mode, expected refusal (null: built), description.
+     */
+    private static function testParityAppliesWhileTheFeeLineIsUnchanged(): void
+    {
+        $cases = [
+            ['keeps', 'Surcharge line mismatch between cart and Two payload', 'the fee line left as built'],
+            ['removes', null, 'the fee line removed'],
+            // The cart-total check leaves the fee line out only while it is the module's: changed, it counts.
+            ['changes', 'Order totals do not reconcile with cart totals: ', 'the fee line changed: parity stands down, the changed line counts against the cart'],
+        ];
+        foreach ($cases as [$mode, $expected, $description]) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $module->syncTwoSurchargeCartLine($cart, true);
+            foreach (StubStore::$cartProducts[self::CART_ID] as $i => $row) {
+                if ((int) $row['id_product'] === (int) Configuration::get('PS_TWO_SURCHARGE_PRODUCT_ID')) {
+                    StubStore::$cartTotals[self::CART_ID][false][Cart::BOTH] = round((float) StubStore::$cartTotals[self::CART_ID][false][Cart::BOTH] + 2.00 - (float) $row['total'], 2);
+                    StubStore::$cartTotals[self::CART_ID][true][Cart::BOTH] = round((float) StubStore::$cartTotals[self::CART_ID][true][Cart::BOTH] + 2.50 - (float) $row['total_wt'], 2);
+                    StubStore::$cartProducts[self::CART_ID][$i]['total'] = 2.00;
+                    StubStore::$cartProducts[self::CART_ID][$i]['total_wt'] = 2.50;
+                }
+            }
+            $gatedModule = new class extends TwopaymentTestHarness {
+                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                {
+                    return ['http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR'];
+                }
+
+                public function syncTwoSurchargeCartLine($cart, $selected, $syncSeq = null)
+                {
+                    return ['success' => false, 'changed' => false, 'present' => true];
+                }
+            };
+            Hook::$subscribers = [];
+            Hook::$subscribers[TwoOrderPostprocessing::HOOK]['merchanthandler'] = static function (array $params) use ($mode, $gatedModule): void {
+                if ($mode === 'removes') {
+                    $params['payload']['line_items'] = array_values(array_filter($params['payload']['line_items'], static function ($line) {
+                        return $line['type'] !== 'SERVICE';
+                    }));
+                    $params['payload'] = $gatedModule->recomputeTwoOrderTotals($params['payload']);
+                }
+                if ($mode === 'changes') {
+                    foreach ($params['payload']['line_items'] as $i => $line) {
+                        if ($line['type'] === 'SERVICE') {
+                            $params['payload']['line_items'][$i]['name'] = 'Invoice fee';
+                        }
+                    }
+                }
+                $gatedModule->runTwoShopMatchChecks($params['payload']);
+            };
+            $error = null;
+            try {
+                $gatedModule->getTwoNewOrderData('merchant-attempt-8106', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            Hook::$subscribers = [];
+            TinyAssert::true($expected === null ? $error === null : strpos((string) $error, $expected) === 0, $description . ', got ' . var_export($error, true));
+        }
+    }
+
+    /**
      * ABN-546: the gate and the line builder share one predicate, so every
      * shape that prices nothing is skipped by BOTH. Without that, the gate
      * offered Two and the builder then refused the order over a fee of zero -
@@ -539,7 +661,8 @@ final class SurchargeCartLineSpec
 
             $threw = false;
             try {
-                $method->invoke($module, $cart, 'spec context', false, 30, $enforce);
+                // The checks run after the hook (TWO-26274), so the build hands them back.
+                $module->runPricingChecksForTest($method->invoke($module, $cart, 'spec context', false, 30, $enforce));
             } catch (Exception $e) {
                 $threw = strpos($e->getMessage(), 'Surcharge line mismatch') !== false;
             }

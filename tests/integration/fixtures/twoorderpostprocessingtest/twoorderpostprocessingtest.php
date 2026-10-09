@@ -2,16 +2,19 @@
 /**
  * TEST FIXTURE - NOT PART OF THE SHIPPED TWO MODULE.
  *
- * A subscriber on actionTwoOrderPostprocessing (TWO-26092), and a working
+ * A merchant handler on actionTwoOrderPostprocessing (TWO-26092), and a working
  * example of one. It records every call and, once armed, applies one named
- * behaviour to the payload. Inert until TWO_OPP_TEST_MODE is set, so merely
- * installing it changes nothing.
+ * behaviour to the payload. Unarmed it edits nothing, but an enabled handler
+ * on the hook makes the module's own default handler stand down (TWO-26274),
+ * so dev/ci/install-order-postprocessing-fixture.sh leaves it disabled and the
+ * probe enables it only while it runs.
  *
- *   TWO_OPP_TEST_MODE - '' (inert), record, resplit, gross_change,
- *                       off_by_cent, stale_totals, stale_subtotals, throws,
- *                       non_array, body_on_cancel
- *   TWO_OPP_TEST_RATE - the rate resplit uses when the context's
- *                       shipping_tax_rate is empty (the probe's carrier is "No tax")
+ *   TWO_OPP_TEST_MODE - '' (unarmed), record, resplit, gross_change,
+ *                       off_by_cent, stale_totals, stale_subtotals, no_lines,
+ *                       outside_carrier_line, outside_carrier_line_checked,
+ *                       shop_match, throws, non_array, body_on_cancel
+ *   TWO_OPP_TEST_RATE - the rate resplit and outside_carrier_line use when the
+ *                       context's shipping_tax_rate is empty (the probe's carrier is "No tax")
  *
  * @see tests/integration/order-postprocessing-hook.php
  */
@@ -90,6 +93,11 @@ class Twoorderpostprocessingtest extends Module
                 }
 
                 return;
+            case 'shop_match':
+                // Opts back in to the module's shop-match checks on the payload as built, and edits nothing.
+                Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload']);
+
+                return;
         }
         $rate = (float) $params['context']['shipping_tax_rate'];
         if ($rate <= 0) {
@@ -102,9 +110,73 @@ class Twoorderpostprocessingtest extends Module
 
             return;
         }
+        if ($mode === 'outside_carrier_line') {
+            $params['payload'] = self::addOutsideCarrierLine($params['payload'], $params['context'], $rate);
+
+            return;
+        }
+        if ($mode === 'outside_carrier_line_checked') {
+            // The README opt-in: the cost at the merchant's rate, then the module's checks on the lines it left alone.
+            $params['payload'] = self::addOutsideCarrierLine($params['payload'], $params['context'], $rate);
+            Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload'], Twopayment::SHOP_MATCH_LINES);
+
+            return;
+        }
         $before = $params['payload'];
         $params['payload'] = self::resplitShipping($params['payload'], $rate);
         self::breakOnPurpose($mode, $params['payload'], $before);
+    }
+
+    /**
+     * The README example of a handler that owns the shop-match checks: the shop adds a cost to the cart total outside
+     * any carrier, so the order lines fall short of it. Send that cost as its own shipping line, VAT-inclusive at the
+     * merchant's rate, and keep the totals consistent. An update's shipping line is everything the placed order's
+     * total charged beyond its products, so it carries the cost as well: cut it back to the carrier's own shipping,
+     * and send the cost as the same line the create sent.
+     *
+     * @param array $payload
+     * @param array $context
+     * @param float $rate
+     * @return array
+     */
+    public static function addOutsideCarrierLine(array $payload, array $context, $rate)
+    {
+        if ($context['request_type'] === 'order_update') {
+            $carrier = round((float) $context['order']->total_shipping_tax_incl, 2);
+            $gross = 0.0;
+            foreach ($payload['line_items'] as $i => $line) {
+                if ($line['type'] !== 'SHIPPING_FEE') {
+                    continue;
+                }
+                $gross = round((float) $line['gross_amount'] - $carrier, 2);
+                if ($gross > 0 && $carrier > 0) {
+                    $payload['line_items'][$i]['gross_amount'] = number_format($carrier, 2, '.', '');
+                    $payload['line_items'][$i]['net_amount'] = number_format((float) $line['net_amount'] - $gross, 2, '.', '');
+                    $payload['line_items'][$i]['unit_price'] = $payload['line_items'][$i]['net_amount'];
+                } elseif ($gross > 0) {
+                    unset($payload['line_items'][$i]);
+                }
+                break;
+            }
+            $payload['line_items'] = array_values($payload['line_items']);
+        } elseif (in_array($context['request_type'], array('order_intent', 'order_create'), true)) {
+            $gross = round((float) $context['cart']->getOrderTotal(true, Cart::BOTH) - (float) $payload['gross_amount'], 2);
+        } else {
+            return $payload;
+        }
+        if ($gross <= 0) {
+            return $payload;
+        }
+        $net = round($gross / (1 + $rate), 2);
+        $payload['line_items'][] = array(
+            'name' => 'Delivery', 'description' => '', 'gross_amount' => number_format($gross, 2, '.', ''),
+            'net_amount' => number_format($net, 2, '.', ''), 'discount_amount' => '0.00',
+            'tax_amount' => number_format($gross - $net, 2, '.', ''), 'tax_class_name' => 'VAT ' . number_format($rate * 100, 2) . '%',
+            'tax_rate' => (string) $rate, 'unit_price' => number_format($net, 2, '.', ''), 'quantity' => 1, 'quantity_unit' => 'pcs',
+            'image_url' => '', 'product_page_url' => '', 'type' => 'SHIPPING_FEE',
+        );
+
+        return Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
     }
 
     /**
@@ -175,8 +247,8 @@ class Twoorderpostprocessingtest extends Module
     }
 
     /**
-     * Edits that leave the payload's arithmetic inconsistent, applied on top of the re-split.
-     * The module sends them as returned; Two's API is what judges them.
+     * Edits applied on top of the re-split. A gross change is sent as returned; the others leave the payload's
+     * arithmetic inconsistent, which the module's consistency checks refuse after the hook (TWO-26274).
      *
      * @param string $mode
      * @param array $payload
@@ -206,6 +278,10 @@ class Twoorderpostprocessingtest extends Module
                 return;
             case 'stale_subtotals':
                 $payload['tax_subtotals'] = isset($before['tax_subtotals']) ? $before['tax_subtotals'] : null;
+
+                return;
+            case 'no_lines':
+                $payload['line_items'] = array();
 
                 return;
             case 'gross_change':

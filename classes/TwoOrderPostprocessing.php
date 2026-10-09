@@ -20,6 +20,9 @@ class TwoOrderPostprocessing
     const HOOK = 'actionTwoOrderPostprocessing';
     const CONTRACT_VERSION = 1;
 
+    // The module's own registration on the hook, its default handler (TWO-26274): never a merchant handler.
+    const OWN_MODULE = 'twopayment';
+
     const REQUEST_ORDER_INTENT = 'order_intent';
     const REQUEST_ORDER_CREATE = 'order_create';
     const REQUEST_ORDER_UPDATE = 'order_update';
@@ -115,23 +118,25 @@ class TwoOrderPostprocessing
      *
      * @param array $payload edited in place by the subscribers
      * @param array $context
+     * @param Module[]|null $modules runnableSubscribers(), when the caller already has it
      * @return void
      * @throws Throwable whatever a subscriber threw
      */
-    public static function dispatch(array &$payload, array $context)
+    public static function dispatch(array &$payload, array $context, $modules = null)
     {
         $core = Context::getContext();
         $args = array('payload' => &$payload, 'context' => $context, 'cookie' => $core->cookie, 'cart' => $core->cart);
         $method = 'hook' . ucfirst(self::HOOK);
         $altern = 0;
-        foreach (self::runnableSubscribers() as $module) {
+        foreach (is_array($modules) ? $modules : self::runnableSubscribers() as $module) {
             $args['altern'] = ++$altern;
             $module->{$method}($args);
         }
     }
 
     /**
-     * The subscriber modules dispatch() would call, in hook-position order.
+     * The merchant handlers dispatch() would call, in hook-position order: every
+     * runnable module on the hook except the module's own default handler.
      *
      * @return Module[]
      */
@@ -152,6 +157,9 @@ class TwoOrderPostprocessing
         $out = array();
         foreach ($list as $row) {
             $name = isset($row['module']) ? (string) $row['module'] : '';
+            if ($name === self::OWN_MODULE) {
+                continue;
+            }
             if ($nativeOnly && is_array($native) && count($native) && !in_array($name, $native)) {
                 continue;
             }
@@ -165,7 +173,23 @@ class TwoOrderPostprocessing
     }
 
     /**
-     * Module names registered on the hook, in execution order.
+     * Names of the modules, cut for the log.
+     *
+     * @param Module[] $modules
+     * @return string[]
+     */
+    public static function names(array $modules)
+    {
+        $names = array();
+        foreach ($modules as $module) {
+            $names[] = self::cut(isset($module->name) ? (string) $module->name : get_class($module));
+        }
+
+        return $names;
+    }
+
+    /**
+     * Merchant module names registered on the hook, in execution order.
      *
      * @return string[]
      */
@@ -174,7 +198,7 @@ class TwoOrderPostprocessing
         $names = array();
         $list = class_exists('Hook') ? Hook::getHookModuleExecList(self::HOOK) : false;
         foreach (is_array($list) ? $list : array() as $row) {
-            if (isset($row['module'])) {
+            if (isset($row['module']) && (string) $row['module'] !== self::OWN_MODULE) {
                 $names[] = self::cut((string) $row['module']);
             }
         }
