@@ -820,25 +820,31 @@ still refused unless the handler changes that line.
 
 **Opting back in.** A merchant handler can run the module's shop-match checks itself on
 the payload it returns, once it has made its edits. Here it adds a cost outside any
-carrier as the shop recorded it, untaxed, and is then held to the shop's figures:
+carrier at 21%, a split the shop does not have, so it owns the comparison with the cart's
+totals and asks only for the checks on single lines:
 
 ```php
 public function hookActionTwoOrderPostprocessing($params)
 {
-    $params['payload'] = self::addOutsideCarrierLine($params['payload'], $params['context'], 0.0);
-    // The module's shop-match checks on the order as this handler returns it.
-    Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload']);
+    $params['payload'] = self::addOutsideCarrierLine($params['payload'], $params['context'], 0.21);
+    // The module's checks on the lines this handler left as built.
+    Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload'], Twopayment::SHOP_MATCH_LINES);
 }
 ```
+
+`runTwoShopMatchChecks($payload, $scope)` takes `Twopayment::SHOP_MATCH_ALL`, the
+default, for every shop-match check, or `Twopayment::SHOP_MATCH_LINES` for the checks on
+single lines only; any other value throws.
 
 A check on a single line (a declared rate, a credit slip's refunded shipping, the buyer
 fee line against the cart's) applies while the payload carries that line as the module
 built it, so a line the handler changed or removed is not held to the shop. The check on
 the whole order (the lines against the cart's or placed order's totals) compares the
-payload passed in, gross, net and tax alike: called before the edits above, it refuses
-the order the edits were there to complete, and after edits that declare a tax split the
-shop does not have (the same cost at 21%, say), it refuses that split. A handler that
-declares a different split owns the cart-total check and leaves the helper out. Its comparison leaves out the module's buyer fee line, and the cart's,
+payload passed in, gross, net and tax alike, and runs only with `SHOP_MATCH_ALL`: called
+before the edits above, it refuses the order the edits were there to complete, and after
+edits that declare a tax split the shop does not have (the same cost at 21%, say), it
+refuses that split. A handler that declares its own split uses `SHOP_MATCH_LINES`.
+Its comparison leaves out the module's buyer fee line, and the cart's,
 only while that line is unchanged, so a handler that changes the fee line owns the
 cart-total check as well. The helper throws the refusal the default handler
 would have, and a handler that lets it through has the request refused exactly as the
@@ -1015,20 +1021,38 @@ untaxed; a shop with untaxed products must tell the shares apart itself.
 Add a line for a cost the shop adds to the cart total outside any carrier. The shop's
 total carries it and the lines the module built do not, so the default handler would
 refuse the order; a handler that adds the line owns that check. On an order update the
-module's shipping line already carries the cost, at 0%, since it is whatever the placed
-order's total charged beyond its products, wrapping and discounts, so there the handler
-re-splits that line instead, to match what the create sent:
+module's shipping line is whatever the placed order's total charged beyond its products,
+wrapping and discounts, so it carries the cost on top of the carrier's shipping: there the
+handler cuts that line back to the carrier's own shipping and adds the same line the
+create sent, so create and update carry the same lines. It handles an order with one
+shipping line:
 
 ```php
 public static function addOutsideCarrierLine(array $payload, array $context, $rate)
 {
     if ($context['request_type'] === 'order_update') {
-        return self::resplitShipping($payload, $rate);
-    }
-    if (!in_array($context['request_type'], array('order_intent', 'order_create'), true)) {
+        $carrier = round((float) $context['order']->total_shipping_tax_incl, 2);
+        $gross = 0.0;
+        foreach ($payload['line_items'] as $i => $line) {
+            if ($line['type'] !== 'SHIPPING_FEE') {
+                continue;
+            }
+            $gross = round((float) $line['gross_amount'] - $carrier, 2);
+            if ($gross > 0 && $carrier > 0) {
+                $payload['line_items'][$i]['gross_amount'] = number_format($carrier, 2, '.', '');
+                $payload['line_items'][$i]['net_amount'] = number_format((float) $line['net_amount'] - $gross, 2, '.', '');
+                $payload['line_items'][$i]['unit_price'] = $payload['line_items'][$i]['net_amount'];
+            } elseif ($gross > 0) {
+                unset($payload['line_items'][$i]);
+            }
+            break;
+        }
+        $payload['line_items'] = array_values($payload['line_items']);
+    } elseif (in_array($context['request_type'], array('order_intent', 'order_create'), true)) {
+        $gross = round((float) $context['cart']->getOrderTotal(true, Cart::BOTH) - (float) $payload['gross_amount'], 2);
+    } else {
         return $payload;
     }
-    $gross = round((float) $context['cart']->getOrderTotal(true, Cart::BOTH) - (float) $payload['gross_amount'], 2);
     if ($gross <= 0) {
         return $payload;
     }
@@ -1046,7 +1070,8 @@ public static function addOutsideCarrierLine(array $payload, array $context, $ra
 ```
 
 A 29.00 cost becomes a 23.97 + 5.03 shipping line at 21%, on the create and on later
-updates alike, and the order gross becomes the cart's. The `recomputeTwoOrderTotals()` call is what keeps the order totals and
+updates alike, beside the carrier's shipping as the module built it, and the order gross
+becomes the cart's. The `recomputeTwoOrderTotals()` call is what keeps the order totals and
 `tax_subtotals` consistent with the new line; without it the consistency checks refuse
 the order.
 
