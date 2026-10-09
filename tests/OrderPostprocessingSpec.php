@@ -41,6 +41,8 @@ final class OrderPostprocessingSpec
         self::testConsistencyChecksRefuseAfterTheHook();
         self::testConsistencyChecksRefuseWithoutAMerchantHandler();
         self::testOptInHelperOutsideTheHookDoesNothing();
+        self::testLineChecksApplyWhileTheirLineIsUnchanged();
+        self::testHandlerDetectionFailureFailsTheRequestWithTheHookCode();
         self::testSubscriberThrowingGetsTheGenericCheckoutMessage();
         self::testDispatchKeepsCoreSemanticsButNotItsSwallow();
         self::testAdminEditSurvivesAThrowingSubscriber();
@@ -328,6 +330,13 @@ final class OrderPostprocessingSpec
                 $params['payload'] = Twoorderpostprocessingtest::addOutsideCarrierLine($params['payload'], $params['context'], 0.21);
 
                 return;
+            case 'outside_carrier_line_checked':
+            case 'outside_carrier_line_checked_21':
+                // The README pattern: opt back in on what the handler returns, which holds it to the shop's net and tax.
+                $params['payload'] = Twoorderpostprocessingtest::addOutsideCarrierLine($params['payload'], $params['context'], $mode === 'outside_carrier_line_checked' ? 0.0 : 0.21);
+                Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload']);
+
+                return;
         }
 
         // Every remaining mode is the fixture's own: the README re-split, then any deliberate break.
@@ -479,15 +488,15 @@ final class OrderPostprocessingSpec
      */
     private static function testShopMatchChecksAreTheDefaultHandlers(): void
     {
-        // [setup, refusal fragment, snapshot gate, outcome with a merchant handler that edits nothing (null: sent), its fixing mode, description]
+        // [setup, refusal fragment, snapshot gate, outcome with a merchant handler that edits nothing (null: sent), fixing modes, description]
         $cases = [
-            ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', 'Invalid line item formulas', 'resplit', 'untaxed shipping on a "No tax" carrier, with the Default shipping tax code at 21%'],
-            ['product', 'Declared tax rate diverges from applied tax amounts for product', 'declared_rate', 'Invalid line item formulas', null, 'a product whose declared rate its amounts contradict'],
-            ['wrapping', 'Declared tax rate diverges from applied tax amounts for gift wrapping', 'declared_rate', 'Invalid line item formulas', null, 'gift wrapping the shop left untaxed, at a 21% wrapping group'],
-            ['outside_carrier', 'Order totals do not reconcile with cart totals: gross cart 179.00 vs order lines 150.00 (difference 29.00); net cart 158.00 vs order lines 129.00 (difference 29.00)', 'reconciliation', null, 'outside_carrier_line', 'a cost the shop adds to the cart total outside any carrier'],
+            ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', 'Invalid line item formulas', ['resplit'], 'untaxed shipping on a "No tax" carrier, with the Default shipping tax code at 21%'],
+            ['product', 'Declared tax rate diverges from applied tax amounts for product', 'declared_rate', 'Invalid line item formulas', [], 'a product whose declared rate its amounts contradict'],
+            ['wrapping', 'Declared tax rate diverges from applied tax amounts for gift wrapping', 'declared_rate', 'Invalid line item formulas', [], 'gift wrapping the shop left untaxed, at a 21% wrapping group'],
+            ['outside_carrier', 'Order totals do not reconcile with cart totals: gross cart 179.00 vs order lines 150.00 (difference 29.00); net cart 158.00 vs order lines 129.00 (difference 29.00)', 'reconciliation', null, ['outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_line_checked_21'], 'a cost the shop adds to the cart total outside any carrier'],
         ];
-        foreach ($cases as [$setup, $refusal, $gate, $delegated, $fix, $description]) {
-            foreach ($fix === null ? [null, 'noop', 'shop_match'] : [null, 'noop', 'shop_match', $fix] as $mode) {
+        foreach ($cases as [$setup, $refusal, $gate, $delegated, $fixes, $description]) {
+            foreach (array_merge([null, 'noop', 'shop_match'], $fixes) as $mode) {
                 $label = $description . ', ' . ($mode === null ? 'no merchant handler' : 'merchant handler ' . $mode);
                 $cart = self::seed($setup === 'product', $setup !== 'product');
                 if ($setup === 'shipping') {
@@ -524,11 +533,11 @@ final class OrderPostprocessingSpec
                 $snapshots = array_values(array_filter(PrestaShopLogger::$logs, static function ($l) {
                     return $l['object_type'] === TwoDiscrepancySnapshot::LOG_OBJECT_TYPE;
                 }));
-                $delegation = 'The order_create request (checkout) has an order postprocessing hook handler (twoorderpostprocessingtest): the shop-match checks are delegated to it, and the consistency checks still run.';
+                $delegation = 'The order_create request (checkout, cart 9701) has an order postprocessing hook handler (twoorderpostprocessingtest): the shop-match checks are delegated to it, and the consistency checks still run.';
                 // The helper's refusal stops the request inside the hook, before anything is delegated.
-                TinyAssert::same($mode === null || $mode === 'shop_match' ? 0 : 1, count(array_filter(PrestaShopLogger::$logs, static function ($l) use ($delegation) {
+                TinyAssert::same(in_array($mode, [null, 'shop_match', 'outside_carrier_line_checked_21'], true) ? 0 : 1, count(array_filter(PrestaShopLogger::$logs, static function ($l) use ($delegation) {
                     return strpos($l['message'], $delegation) !== false;
-                })), $label . ': the delegation log line, once, naming the handler');
+                })), $label . ': the delegation log line, once, naming the handler; got ' . var_export($got, true));
                 if ($mode === null || $mode === 'shop_match') {
                     TinyAssert::true($error instanceof TwoCheckoutAmountException && strpos($error->getMessage(), $refusal) !== false, $label . ': the module\'s own refusal, got ' . var_export($got, true));
                     TinyAssert::count(1, $snapshots, $label . ': one discrepancy snapshot');
@@ -536,7 +545,8 @@ final class OrderPostprocessingSpec
                     TinyAssert::count($mode === null ? 0 : 1, $calls, $label . ': the handler ran, if any');
                     continue;
                 }
-                $expected = $mode === 'noop' ? $delegated : null;
+                // At 21% the handler declares a tax split the shop does not have, so opting back in refuses it.
+                $expected = $mode === 'noop' ? $delegated : ($mode === 'outside_carrier_line_checked_21' ? 'Order totals do not reconcile with cart totals: net cart 158.00 vs order lines 152.97' : null);
                 TinyAssert::true($expected === null ? $error === null : ($error !== null && strpos($error->getMessage(), $expected) !== false), $label . ': ' . ($expected ?? 'sent') . ', got ' . var_export($got, true));
                 if ($error === null) {
                     TinyAssert::same($calls[0]['payload_out'], $payload, $label . ': sent as the handler returned it');
@@ -705,6 +715,93 @@ final class OrderPostprocessingSpec
                 TinyAssert::same($refusal, $error, $description . ', ' . $who);
             }
         }
+    }
+
+    /**
+     * A shop-match check on a single line applies while the payload carries
+     * that line as the module built it. On a cart whose product, shipping and
+     * wrapping lines each declare a rate their amounts contradict, a handler
+     * that corrects some of them and opts back in on what it returns gets the
+     * refusal of the first line it left alone, and none once it corrected all.
+     */
+    private static function testLineChecksApplyWhileTheirLineIsUnchanged(): void
+    {
+        $refusal = 'TwoCheckoutAmountException: Declared tax rate diverges from applied tax amounts for ';
+        // [line types the handler re-rates to what their amounts carry, expected refusal (null: sent), description]
+        $cases = [
+            [[], $refusal . 'product ' . self::PRODUCT, 'none corrected: the first line\'s refusal'],
+            [['PHYSICAL'], $refusal . 'shipping (Courier)', 'the product corrected: the shipping line\'s refusal remains'],
+            [['SHIPPING_FEE'], $refusal . 'product ' . self::PRODUCT, 'the shipping corrected: the product line\'s refusal remains'],
+            [['PHYSICAL', 'SHIPPING_FEE'], $refusal . 'gift wrapping', 'product and shipping corrected: the wrapping line\'s refusal remains'],
+            [['PHYSICAL', 'SHIPPING_FEE', 'DIGITAL'], null, 'every line corrected: sent'],
+        ];
+        $carried = ['PHYSICAL' => '0.21', 'SHIPPING_FEE' => '0', 'DIGITAL' => '0'];
+        foreach ($cases as [$types, $expected, $description]) {
+            $cart = self::seed(false, true);
+            StubStore::$taxRuleRates[9000 + self::PRODUCT] = 10.0;
+            Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
+            Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', (string) self::CARRIER_GROUP);
+            Configuration::updateValue('PS_GIFT_WRAPPING_TAX_RULES_GROUP', self::CARRIER_GROUP);
+            StubStore::$cartTotals[self::CART][true][Cart::ONLY_WRAPPING] = 10.00;
+            StubStore::$cartTotals[self::CART][false][Cart::ONLY_WRAPPING] = 10.00;
+            StubStore::$cartTotals[self::CART][true][Cart::BOTH] += 10.00;
+            StubStore::$cartTotals[self::CART][false][Cart::BOTH] += 10.00;
+            $module = self::module();
+            self::harnessAsInstance($module);
+            Hook::$subscribers[TwoOrderPostprocessing::HOOK]['twoorderpostprocessingtest'] = static function (array $params) use ($types, $carried): void {
+                foreach ($params['payload']['line_items'] as $i => $line) {
+                    if (in_array($line['type'], $types, true)) {
+                        $params['payload']['line_items'][$i]['tax_rate'] = $carried[$line['type']];
+                    }
+                }
+                Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload']);
+            };
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            } catch (Exception $e) {
+                $error = get_class($e) . ': ' . $e->getMessage();
+            }
+            TinyAssert::same($expected, $error, $description);
+        }
+    }
+
+    /**
+     * Finding the merchant handlers is part of running the hook: a module on it
+     * that fails to load fails the request with the hook's code, never raw.
+     */
+    private static function testHandlerDetectionFailureFailsTheRequestWithTheHookCode(): void
+    {
+        $broken = static function (): void {
+            StubStore::$moduleInstances['brokenhandler'] = new class {
+                public $name = 'brokenhandler';
+
+                public function __get($property)
+                {
+                    throw new RuntimeException('the module failed to load');
+                }
+            };
+            Hook::$execLists[TwoOrderPostprocessing::HOOK] = [['module' => 'brokenhandler']];
+        };
+        $cart = self::seed(false, true);
+        $module = self::module();
+        self::harnessAsInstance($module);
+        $broken();
+        $error = null;
+        try {
+            $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+        } catch (Throwable $e) {
+            $error = $e;
+        }
+        TinyAssert::same(TwoOrderPostprocessing::CODE_HOOK_FAILED, $error instanceof TwoOrderPostprocessingException ? $error->getTwoCode() : ($error === null ? null : get_class($error)), 'an order create fails with the code');
+
+        self::seed(false, true);
+        $module = self::module();
+        self::harnessAsInstance($module);
+        $broken();
+        $response = $module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/x/cancel', [], 'POST');
+        TinyAssert::same([0, TwoOrderPostprocessing::CODE_HOOK_FAILED], [$response['http_status'], $response['error_code']], 'a cancel is refused unsent with the code');
+        TinyAssert::same([], $module->sent, 'nothing is sent');
     }
 
     /**

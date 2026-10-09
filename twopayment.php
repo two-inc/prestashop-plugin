@@ -8235,13 +8235,16 @@ class Twopayment extends PaymentModule
         // whose PrestaShop total diverges from the Two invoice. The
         // non-strict intent precheck logs a warning only; the update path
         // replays the order's own fee row, so it has no cart side to compare.
-        // The payload's fee is the module's fee line, while the payload carries it unchanged.
+        // Like the checks on single lines, it applies to the module's fee line while the payload carries it unchanged:
+        // a handler that changed or removed that line owns the fee. With no fee line built, it always applies.
         $items[] = array('kind' => self::CHECK_SHOP_MATCH, 'run' => function (array $payload, array $before) use ($contextLabel, $placed, $feeIndex, $fee) {
             if ($placed !== null) {
                 return;
             }
             $line = $feeIndex !== null && isset($before['line_items'][$feeIndex]) ? $before['line_items'][$feeIndex] : null;
-            $line = $line !== null && $this->findTwoPayloadLine($payload, $line) !== null ? $line : null;
+            if ($line !== null && $this->findTwoPayloadLine($payload, $line) === null) {
+                return;
+            }
             $payloadFeeGrossCents = $line !== null ? $this->convertAmountToCents($line['gross_amount']) : 0;
             $payloadFeeNetCents = $line !== null ? $this->convertAmountToCents($line['net_amount']) : 0;
             $diffCents = max(abs($payloadFeeGrossCents - $fee['gross_cents']), abs($payloadFeeNetCents - $fee['net_cents']));
@@ -8568,12 +8571,14 @@ class Twopayment extends PaymentModule
     public function postprocessOrderRequest($requestType, array $payload, array $context, $checks = null)
     {
         $before = $payload;
-        $handlers = TwoOrderPostprocessing::runnableSubscribers();
+        $handlers = array();
         $outerChecks = self::$twoActiveOrderChecks;
         $outerRefusal = self::$twoShopMatchRefusal;
         self::$twoActiveOrderChecks = $checks === null ? null : array('checks' => $checks, 'before' => $before, 'owner' => $this);
         self::$twoShopMatchRefusal = null;
         try {
+            // Inside the try: a merchant module that fails to load fails the request with the hook's code, as dispatch always did.
+            $handlers = TwoOrderPostprocessing::runnableSubscribers();
             TwoOrderPostprocessing::dispatch($payload, $context, $handlers);
         } catch (Throwable $e) {
             if ($checks !== null && $e === self::$twoShopMatchRefusal) {
@@ -8605,14 +8610,17 @@ class Twopayment extends PaymentModule
         }
         if ($checks !== null) {
             if ($handlers !== array()) {
+                $subject = isset($context['order']) && is_object($context['order']) ? 'order ' . (int) $context['order']->id
+                    : (isset($context['cart']) && is_object($context['cart']) ? 'cart ' . (int) $context['cart']->id : 'no cart');
                 PrestaShopLogger::addLog(
-                    'TwoPayment: The ' . $requestType . ' request (' . $context['trigger'] . ') has an order postprocessing hook handler ('
+                    'TwoPayment: The ' . $requestType . ' request (' . $context['trigger'] . ', ' . $subject . ') has an order postprocessing hook handler ('
                     . implode(', ', TwoOrderPostprocessing::names($handlers)) . '): the shop-match checks are delegated to it, and the consistency checks still run.',
                     1,
                     null,
                     null,
                     null,
-                    // One per request: PrestaShop 1.7 otherwise keeps only the first of identical lines.
+                    // One per request: PrestaShop 1.7 otherwise keeps only the first of identical lines, and a cart's
+                    // order intent pre-checks repeat the same one.
                     true
                 );
             }

@@ -30,6 +30,7 @@ final class SurchargeCartLineSpec
         self::testOrderCreateParityGateFailsClosedOnDivergence();
         self::testOrderCreateParityGateFailsClosedOnUnavailableQuote();
         self::testParityGateIsTheDefaultHandlers();
+        self::testParityAppliesWhileTheFeeLineIsUnchanged();
         self::testOrderCreateCompletesForANonChargingTermDuringAnOutage();
         self::testNonEnforcingPathStaysQuietOnAnUnavailableQuote();
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
@@ -492,6 +493,71 @@ final class SurchargeCartLineSpec
             $error = null;
             try {
                 $module->getTwoNewOrderData('merchant-attempt-8105', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            Hook::$subscribers = [];
+            TinyAssert::same($expected, $error, $description);
+        }
+    }
+
+    /**
+     * TWO-26274: like the checks on single lines, fee parity applies to the
+     * module's fee line while the payload carries it unchanged. On the
+     * divergence case above, a handler that opts back in on the payload it
+     * returns gets the parity refusal while it leaves the fee line, and none
+     * once it removed the line, which makes the fee its own.
+     * Columns: handler mode, expected refusal (null: built), description.
+     */
+    private static function testParityAppliesWhileTheFeeLineIsUnchanged(): void
+    {
+        $cases = [
+            ['keeps', 'Surcharge line mismatch between cart and Two payload', 'the fee line left as built'],
+            ['removes', null, 'the fee line removed'],
+        ];
+        foreach ($cases as [$mode, $expected, $description]) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $module->syncTwoSurchargeCartLine($cart, true);
+            foreach (StubStore::$cartProducts[self::CART_ID] as $i => $row) {
+                if ((int) $row['id_product'] === (int) Configuration::get('PS_TWO_SURCHARGE_PRODUCT_ID')) {
+                    StubStore::$cartTotals[self::CART_ID][false][Cart::BOTH] = round((float) StubStore::$cartTotals[self::CART_ID][false][Cart::BOTH] + 2.00 - (float) $row['total'], 2);
+                    StubStore::$cartTotals[self::CART_ID][true][Cart::BOTH] = round((float) StubStore::$cartTotals[self::CART_ID][true][Cart::BOTH] + 2.50 - (float) $row['total_wt'], 2);
+                    StubStore::$cartProducts[self::CART_ID][$i]['total'] = 2.00;
+                    StubStore::$cartProducts[self::CART_ID][$i]['total_wt'] = 2.50;
+                }
+            }
+            $gatedModule = new class extends TwopaymentTestHarness {
+                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                {
+                    return ['http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR'];
+                }
+
+                public function syncTwoSurchargeCartLine($cart, $selected, $syncSeq = null)
+                {
+                    return ['success' => false, 'changed' => false, 'present' => true];
+                }
+            };
+            Hook::$subscribers = [];
+            Hook::$subscribers[TwoOrderPostprocessing::HOOK]['merchanthandler'] = static function (array $params) use ($mode, $gatedModule): void {
+                if ($mode === 'removes') {
+                    $params['payload']['line_items'] = array_values(array_filter($params['payload']['line_items'], static function ($line) {
+                        return $line['type'] !== 'SERVICE';
+                    }));
+                    $params['payload'] = $gatedModule->recomputeTwoOrderTotals($params['payload']);
+                }
+                $gatedModule->runTwoShopMatchChecks($params['payload']);
+            };
+            $error = null;
+            try {
+                $gatedModule->getTwoNewOrderData('merchant-attempt-8106', $cart, [
                     'merchant_confirmation_url' => 'https://shop.local/confirm',
                     'merchant_cancel_order_url' => 'https://shop.local/cancel',
                     'merchant_edit_order_url' => '',
