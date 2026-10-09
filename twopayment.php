@@ -430,6 +430,10 @@ class Twopayment extends PaymentModule
     /** @var string|null where the last built shipping line's rate came from, a SHIPPING_RATE_* value; null with none */
     private $twoShippingRateSource = null;
 
+    /** @var string runTwoShopMatchChecks() scopes (stable contract, TWO-26274): every shop-match check, or only those on single lines */
+    const SHOP_MATCH_ALL = 'all';
+    const SHOP_MATCH_LINES = 'lines';
+
     /** @var string check kinds (TWO-26274): a shop-match check compares the payload with the shop; a consistency check, the payload with itself */
     const CHECK_SHOP_MATCH = 'shop_match';
     const CHECK_CONSISTENCY = 'consistency';
@@ -8139,7 +8143,7 @@ class Twopayment extends PaymentModule
         });
 
         // Shop-match: the lines, the buyer fee line aside, against the cart's (or the placed order's) totals.
-        $items[] = array('kind' => self::CHECK_SHOP_MATCH, 'run' => function (array $payload, array $before) use ($cart, $contextLabel, $strict, $placedTotals, $feeIndex) {
+        $items[] = array('kind' => self::CHECK_SHOP_MATCH, 'whole_order' => true, 'run' => function (array $payload, array $before) use ($cart, $contextLabel, $strict, $placedTotals, $feeIndex) {
             $lines = $this->getTwoPayloadLines($payload);
             $at = $feeIndex !== null && isset($before['line_items'][$feeIndex]) ? $this->findTwoPayloadLine($payload, $before['line_items'][$feeIndex]) : null;
             if ($at !== null) {
@@ -8318,12 +8322,21 @@ class Twopayment extends PaymentModule
      * A refusal it throws, and the handler lets through, refuses the request exactly as the module's own handler
      * would have: the same exception, message and log.
      *
+     * With SHOP_MATCH_LINES only the checks on single lines run (declared rates, the buyer fee line, a credit slip's
+     * shipping), not the lines against the cart's or placed order's totals: for a handler that declares a split of
+     * the order the shop does not have, and owns that comparison.
+     *
      * @param array $payload the payload the handler returns, or the one it was given
+     * @param string $scope SHOP_MATCH_ALL or SHOP_MATCH_LINES
      * @return void
+     * @throws InvalidArgumentException for any other scope
      * @throws Exception the module's refusal
      */
-    public function runTwoShopMatchChecks(array $payload)
+    public function runTwoShopMatchChecks(array $payload, $scope = self::SHOP_MATCH_ALL)
     {
+        if ($scope !== self::SHOP_MATCH_ALL && $scope !== self::SHOP_MATCH_LINES) {
+            throw new InvalidArgumentException('runTwoShopMatchChecks() scope must be Twopayment::SHOP_MATCH_ALL or Twopayment::SHOP_MATCH_LINES');
+        }
         $active = self::$twoActiveOrderChecks;
         if ($active === null) {
             return;
@@ -8331,7 +8344,7 @@ class Twopayment extends PaymentModule
         $active['owner']->twoDiscrepancyGate = null;
         try {
             foreach ($active['checks']['items'] as $check) {
-                if ($check['kind'] === self::CHECK_SHOP_MATCH) {
+                if ($check['kind'] === self::CHECK_SHOP_MATCH && ($scope === self::SHOP_MATCH_ALL || empty($check['whole_order']))) {
                     call_user_func($check['run'], $payload, $active['before']);
                 }
             }

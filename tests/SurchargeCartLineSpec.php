@@ -521,6 +521,8 @@ final class SurchargeCartLineSpec
         $cases = [
             ['keeps', 'Surcharge line mismatch between cart and Two payload', 'the fee line left as built'],
             ['removes', null, 'the fee line removed'],
+            // The cart-total check leaves the fee line out only while it is the module's: changed, it counts.
+            ['changes', 'Order totals do not reconcile with cart totals: ', 'the fee line changed: parity stands down, the changed line counts against the cart'],
         ];
         foreach ($cases as [$mode, $expected, $description]) {
             $module = self::makeModule();
@@ -553,6 +555,13 @@ final class SurchargeCartLineSpec
                     }));
                     $params['payload'] = $gatedModule->recomputeTwoOrderTotals($params['payload']);
                 }
+                if ($mode === 'changes') {
+                    foreach ($params['payload']['line_items'] as $i => $line) {
+                        if ($line['type'] === 'SERVICE') {
+                            $params['payload']['line_items'][$i]['name'] = 'Invoice fee';
+                        }
+                    }
+                }
                 $gatedModule->runTwoShopMatchChecks($params['payload']);
             };
             $error = null;
@@ -569,7 +578,7 @@ final class SurchargeCartLineSpec
                 $error = $e->getMessage();
             }
             Hook::$subscribers = [];
-            TinyAssert::same($expected, $error, $description);
+            TinyAssert::true($expected === null ? $error === null : strpos((string) $error, $expected) === 0, $description . ', got ' . var_export($error, true));
         }
     }
 
