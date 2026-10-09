@@ -20427,6 +20427,87 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * What the buyer is told when Two refuses order creation (TWO-26264), worded as the
+     * WooCommerce plugin words it: the fields Two named as invalid, else the same-company
+     * refusal, else the generic sentence. Two's own text never reaches the storefront; the
+     * caller logs it with getTwoApiErrorDetail().
+     *
+     * @param mixed $response setTwoPaymentRequest()
+     * @return string
+     */
+    public function getTwoCreateRefusalBuyerMessage($response)
+    {
+        $body = is_array($response) ? $response : array();
+        if (isset($body['error_json']) && is_array($body['error_json'])) {
+            $fields = array();
+            foreach ($body['error_json'] as $error) {
+                $field = is_array($error) ? $this->getTwoRefusedFieldMessage($error) : null;
+                if ($field !== null) {
+                    $fields[] = $field;
+                }
+            }
+            if ($fields !== array()) {
+                return implode(' ', $fields);
+            }
+        }
+        if (isset($body['error_code']) && $body['error_code'] === 'SAME_BUYER_SELLER_ERROR') {
+            return $this->l('Buyer and merchant may not be the same company');
+        }
+
+        return sprintf($this->l('Invoice purchase with %s is not available for this order.'), $this->getTwoBrandConfig('product_name'));
+    }
+
+    /**
+     * One whole sentence per field rather than a translated noun dropped into a template,
+     * so each locale can phrase it naturally.
+     *
+     * @param array $error One error_json entry: loc, the path to the field, and msg.
+     * @return string|null Null for a field the buyer is not asked to correct.
+     */
+    private function getTwoRefusedFieldMessage(array $error)
+    {
+        if (!isset($error['loc'], $error['msg']) || !is_array($error['loc'])) {
+            return null;
+        }
+        foreach ($error['loc'] as $segment) {
+            if (!is_scalar($segment)) {
+                return null;
+            }
+        }
+        $loc = implode('.', $error['loc']);
+        if ($loc === 'invoice_details.invoice_emails' || strpos($loc, 'invoice_details.invoice_emails.') === 0) {
+            return $this->l('Please enter a valid Invoice email address to pay on invoice');
+        }
+        if ($loc === 'buyer' && strpos((string) $error['msg'], 'Invalid phone number') !== false) {
+            $loc = 'buyer.representative.phone_number';
+        }
+        switch ($loc) {
+            case 'buyer.representative.phone_number':
+                return $this->l('Please enter a valid Phone number to pay on invoice');
+            case 'buyer.company.organization_number':
+                return $this->l('Please enter a valid Organization number to pay on invoice');
+            case 'buyer.company.company_name':
+                return $this->l('Please enter a valid Company name to pay on invoice');
+            case 'buyer.representative.first_name':
+                return $this->l('Please enter a valid First name to pay on invoice');
+            case 'buyer.representative.last_name':
+                return $this->l('Please enter a valid Last name to pay on invoice');
+            case 'buyer.representative.email':
+                return $this->l('Please enter a valid Email to pay on invoice');
+            case 'billing_address.street_address':
+                return $this->l('Please enter a valid Address to pay on invoice');
+            case 'billing_address.city':
+                return $this->l('Please enter a valid City to pay on invoice');
+            case 'billing_address.country':
+                return $this->l('Please enter a valid Country to pay on invoice');
+            case 'billing_address.postal_code':
+                return $this->l('Please enter a valid Postal code to pay on invoice');
+        }
+
+        return null;
+    }
+
+    /**
      * Build a redacted API response summary safe for production logs.
      *
      * @param mixed $response

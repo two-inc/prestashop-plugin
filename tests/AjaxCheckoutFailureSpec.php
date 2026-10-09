@@ -14,6 +14,7 @@ final class AjaxCheckoutFailureSpec
     private const CART_ID = 9601;
     private const CUSTOMER_ID = 9001;
     private const ADDRESS_ID = 9201;
+    private const GENERIC_REFUSAL = 'Invoice purchase with Two is not available for this order.';
 
     public static function runAll(): void
     {
@@ -26,6 +27,7 @@ final class AjaxCheckoutFailureSpec
         self::testNonPluginExceptionIsNotRelayedToTheBuyer();
         self::testPluginAmountDiagnosticStillReachesTheBuyer();
         self::testASubmissionWithNoOfferedTermIsRefusedBeforeOrderCreation();
+        self::testACreateRefusalTellsTheBuyerOnlyWhatTheyCanActOn();
     }
 
     /**
@@ -138,6 +140,71 @@ final class AjaxCheckoutFailureSpec
         }
     }
 
+    /**
+     * TWO-26264. When Two refuses order creation, whatever the status, the buyer
+     * is told only what they can act on, worded as the WooCommerce plugin words
+     * it, and Two's own reason goes to the module log at error severity against
+     * the cart, since there is no order yet to note it on.
+     */
+    private static function testACreateRefusalTellsTheBuyerOnlyWhatTheyCanActOn(): void
+    {
+        $phone = 'Please enter a valid Phone number to pay on invoice';
+        $sameCompany = 'Buyer and merchant may not be the same company';
+        $invalid = "OrderInvalidError {'order_id': 'Line item tax_code is required'}";
+
+        // [create response, buyer message, a fragment the log must carry, description].
+        $cases = array(
+            array(['http_status' => 400, 'error_code' => 'ORDER_INVALID', 'error_message' => 'Order is invalid', 'error_details' => $invalid],
+                self::GENERIC_REFUSAL, $invalid, 'raw error details stay off the storefront'),
+            array(['http_status' => 400, 'error_code' => 'SCHEMA_ERROR', 'error_json' => [['loc' => ['buyer', 'representative', 'phone_number'], 'msg' => 'value is not a valid phone number']]],
+                $phone, 'SCHEMA_ERROR', 'a field Two names is one the buyer can correct'),
+            array(['http_status' => 400, 'error_json' => [['loc' => ['buyer'], 'msg' => 'Invalid phone number']]],
+                $phone, 'HTTP 400', 'a buyer-level phone error names the phone number'),
+            array(['http_status' => 422, 'error_json' => [['loc' => ['billing_address', 'city'], 'msg' => 'required'], ['loc' => ['invoice_details', 'invoice_emails', 0], 'msg' => 'bad']]],
+                'Please enter a valid City to pay on invoice Please enter a valid Invoice email address to pay on invoice', 'HTTP 422', 'every named field is listed, in order'),
+            array(['http_status' => 400, 'error_code' => 'SCHEMA_ERROR', 'error_json' => [['loc' => ['line_items', 0, 'tax_rate'], 'msg' => 'bad']]],
+                self::GENERIC_REFUSAL, 'SCHEMA_ERROR', 'a field the buyer cannot correct falls back to the generic sentence'),
+            array(['http_status' => 400, 'error_code' => 'SAME_BUYER_SELLER_ERROR', 'error_message' => 'same company'],
+                $sameCompany, 'SAME_BUYER_SELLER_ERROR', 'buying from yourself is named'),
+            array(['http_status' => 400, 'error_code' => 'SAME_BUYER_SELLER_ERROR', 'error_json' => [['loc' => ['buyer', 'representative', 'phone_number'], 'msg' => 'x']]],
+                $phone, 'SAME_BUYER_SELLER_ERROR', 'a named field outranks the same-company refusal'),
+            array(['http_status' => 401, 'error_code' => 'UNAUTHORIZED', 'error_message' => 'Invalid API key'],
+                self::GENERIC_REFUSAL, 'Invalid API key', 'a rejected key is a refusal like any other'),
+            array(['http_status' => 500, 'error_message' => 'Internal error'],
+                self::GENERIC_REFUSAL, 'HTTP 500 Internal error', 'a server error is a refusal like any other'),
+            array(['http_status' => 0],
+                'Connection error with payment provider. Please try again.', null, 'no answer at all is not a refusal'),
+        );
+
+        foreach ($cases as $case) {
+            list($response, $buyerMessage, $logged, $description) = $case;
+            $controller = self::makeController(null, $response);
+            $_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';
+
+            try {
+                self::runPostProcess($controller);
+            } finally {
+                unset($_SERVER['HTTP_X_REQUESTED_WITH']);
+            }
+
+            TinyAssert::count(1, $controller->emitted, 'one failure reaches the caller: ' . $description);
+            TinyAssert::same($buyerMessage, $controller->emitted[0]['message'], 'buyer message: ' . $description);
+
+            $refusals = array_values(array_filter(PrestaShopLogger::$logs, function ($entry) {
+                return strpos((string) $entry['message'], 'Two refused order creation for cart ' . self::CART_ID) !== false;
+            }));
+            if ($logged === null) {
+                TinyAssert::count(0, $refusals, 'no refusal logged: ' . $description);
+                continue;
+            }
+            TinyAssert::count(1, $refusals, 'one refusal logged: ' . $description);
+            TinyAssert::same(3, $refusals[0]['severity'], 'logged at error severity: ' . $description);
+            TinyAssert::same('Cart', $refusals[0]['object_type'], 'logged against the cart: ' . $description);
+            TinyAssert::same(self::CART_ID, $refusals[0]['object_id'], 'logged against this cart: ' . $description);
+            TinyAssert::true(strpos($refusals[0]['message'], $logged) !== false, 'the log carries Two\'s reason: ' . $description);
+        }
+    }
+
     private static function loggedContains(string $needle): bool
     {
         foreach (PrestaShopLogger::$logs as $entry) {
@@ -226,9 +293,9 @@ final class AjaxCheckoutFailureSpec
         $payload = $controller->emitted[0];
         TinyAssert::true($payload['error'], 'AJAX caller must receive an explicit error flag');
         TinyAssert::same(
-            'Payment method configuration error. Please contact the store.',
+            self::GENERIC_REFUSAL,
             $payload['message'],
-            'the 401 message must survive to the caller instead of being flashed into a session nobody reads'
+            'the refusal message must survive to the caller instead of being flashed into a session nobody reads'
         );
         TinyAssert::same('index.php?controller=order', $payload['redirect_url']);
         TinyAssert::count(0, $controller->errors);
@@ -251,10 +318,7 @@ final class AjaxCheckoutFailureSpec
             'browser navigation must still be redirected back to checkout'
         );
         TinyAssert::count(1, $controller->errors);
-        TinyAssert::same(
-            'Payment method configuration error. Please contact the store.',
-            $controller->errors[0]
-        );
+        TinyAssert::same(self::GENERIC_REFUSAL, $controller->errors[0]);
     }
 
     private static function runPostProcess($controller): ?StubRedirect
@@ -273,7 +337,7 @@ final class AjaxCheckoutFailureSpec
     /**
      * @param Exception|null $payloadException Thrown by getTwoNewOrderData() when set
      */
-    private static function makeController($payloadException = null)
+    private static function makeController($payloadException = null, array $createResponse = ['http_status' => 401])
     {
         StubStore::reset();
         PrestaShopLogger::reset();
@@ -326,27 +390,36 @@ final class AjaxCheckoutFailureSpec
                 throw new StubJsonFailureEmitted('json failure emitted');
             }
         };
-        $controller->module = self::makeModule($payloadException);
+        $controller->module = self::makeModule($payloadException, $createResponse);
 
         return $controller;
     }
 
     /**
-     * Module double: /v1/order answers 401. Passing an exception makes the
-     * payload build fail instead.
+     * Module double: /v1/order answers $createResponse, a 401 by default.
+     * Passing an exception makes the payload build fail instead.
      *
      * @param Exception|null $payloadException
      */
-    private static function makeModule($payloadException = null): Twopayment
+    private static function makeModule($payloadException, array $createResponse): Twopayment
     {
-        return new class($payloadException) extends TwopaymentTestHarness {
+        return new class($payloadException, $createResponse) extends TwopaymentTestHarness {
             /** @var Exception|null */
             private $payloadException;
 
-            public function __construct($payloadException = null)
+            /** @var array */
+            private $createResponse;
+
+            public function __construct($payloadException, array $createResponse)
             {
                 parent::__construct();
                 $this->payloadException = $payloadException;
+                $this->createResponse = $createResponse;
+            }
+
+            public function getTwoMinimumOrderDeclineHint($response, $cart)
+            {
+                return '';
             }
 
             public function isCartCurrencySupportedByTwo($cart)
@@ -405,7 +478,7 @@ final class AjaxCheckoutFailureSpec
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
-                return ['http_status' => 401];
+                return $this->createResponse;
             }
         };
     }
