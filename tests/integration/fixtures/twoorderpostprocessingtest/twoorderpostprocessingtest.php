@@ -116,9 +116,9 @@ class Twoorderpostprocessingtest extends Module
             return;
         }
         if ($mode === 'outside_carrier_line_checked') {
-            // The cost as the shop recorded it, untaxed, then the module's shop-match checks on what it returns.
-            $params['payload'] = self::addOutsideCarrierLine($params['payload'], $params['context'], 0.0);
-            Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload']);
+            // The README opt-in: the cost at the merchant's rate, then the module's checks on the lines it left alone.
+            $params['payload'] = self::addOutsideCarrierLine($params['payload'], $params['context'], $rate);
+            Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload'], Twopayment::SHOP_MATCH_LINES);
 
             return;
         }
@@ -129,9 +129,10 @@ class Twoorderpostprocessingtest extends Module
 
     /**
      * The README example of a handler that owns the shop-match checks: the shop adds a cost to the cart total outside
-     * any carrier, so the order lines fall short of it. Send that cost as a shipping line, VAT-inclusive at the
-     * merchant's rate, and keep the totals consistent. A placed order's update already carries the cost in its
-     * shipping line, at 0%, so there the line is re-split at the same rate instead.
+     * any carrier, so the order lines fall short of it. Send that cost as its own shipping line, VAT-inclusive at the
+     * merchant's rate, and keep the totals consistent. An update's shipping line is everything the placed order's
+     * total charged beyond its products, so it carries the cost as well: cut it back to the carrier's own shipping,
+     * and send the cost as the same line the create sent.
      *
      * @param array $payload
      * @param array $context
@@ -141,12 +142,28 @@ class Twoorderpostprocessingtest extends Module
     public static function addOutsideCarrierLine(array $payload, array $context, $rate)
     {
         if ($context['request_type'] === 'order_update') {
-            return self::resplitShipping($payload, $rate);
-        }
-        if (!in_array($context['request_type'], array('order_intent', 'order_create'), true)) {
+            $carrier = round((float) $context['order']->total_shipping_tax_incl, 2);
+            $gross = 0.0;
+            foreach ($payload['line_items'] as $i => $line) {
+                if ($line['type'] !== 'SHIPPING_FEE') {
+                    continue;
+                }
+                $gross = round((float) $line['gross_amount'] - $carrier, 2);
+                if ($gross > 0 && $carrier > 0) {
+                    $payload['line_items'][$i]['gross_amount'] = number_format($carrier, 2, '.', '');
+                    $payload['line_items'][$i]['net_amount'] = number_format((float) $line['net_amount'] - $gross, 2, '.', '');
+                    $payload['line_items'][$i]['unit_price'] = $payload['line_items'][$i]['net_amount'];
+                } elseif ($gross > 0) {
+                    unset($payload['line_items'][$i]);
+                }
+                break;
+            }
+            $payload['line_items'] = array_values($payload['line_items']);
+        } elseif (in_array($context['request_type'], array('order_intent', 'order_create'), true)) {
+            $gross = round((float) $context['cart']->getOrderTotal(true, Cart::BOTH) - (float) $payload['gross_amount'], 2);
+        } else {
             return $payload;
         }
-        $gross = round((float) $context['cart']->getOrderTotal(true, Cart::BOTH) - (float) $payload['gross_amount'], 2);
         if ($gross <= 0) {
             return $payload;
         }

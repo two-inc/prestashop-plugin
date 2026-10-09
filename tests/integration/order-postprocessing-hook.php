@@ -563,6 +563,9 @@ function oppRunScenario($name, &$detail)
         return $checks;
     }
 
+    if (strpos($name, 'outside_carrier_parity_') === 0) {
+        return oppOutsideCarrierParityChecks($module, substr($name, strlen('outside_carrier_parity_')), $cart, $order);
+    }
     if (in_array($name, array('unhandled', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match'), true)) {
         return oppOutsideCarrierChecks($module, $name, $cart, $order);
     }
@@ -643,10 +646,10 @@ function oppLoggedNow($needle)
  * shape: 29.00 in Cart::BOTH and none in ONLY_SHIPPING. With no merchant handler the module's default handler
  * refuses it, as it always did: the order intent pre-check only warns, the strict intent and the create are
  * refused. A handler that adds the cost as a 21% shipping line owns the shop-match checks, and each request is
- * sent as it returns it. One that adds it as the shop recorded it, untaxed, and opts back in on what it returns
- * passes them. One that opts back in on the payload it was given gets the module's refusal. A placed order's update
- * carries the cost in its shipping line already (TWO-26085), at 0%, and is built either way; the handler re-splits
- * that line at the rate its create used.
+ * sent as it returns it, also when it opts back in to the checks on single lines. One that opts back in on the
+ * payload it was given gets the module's refusal. A placed order's update carries the cost in its shipping line
+ * already (TWO-26085) and is built either way; the handler cuts that line back to the carrier's shipping and adds
+ * the cost as its own line, as on the create.
  *
  * @return array<int,array{0:mixed,1:mixed,2:string}>
  */
@@ -699,7 +702,7 @@ function oppOutsideCarrierChecks(OppProbeTwopayment $module, $name, Cart $oppCar
 
         return null;
     };
-    $line = $name === 'outside_carrier_line_checked' ? array('SHIPPING_FEE', '0', '29.00', '0.00', '29.00') : array('SHIPPING_FEE', '0.21', '23.97', '5.03', '29.00');
+    $line = array('SHIPPING_FEE', '0.21', '23.97', '5.03', '29.00');
     try {
         $checks[] = array((float) $cart->getOrderTotal(true, Cart::BOTH) - (float) $cart->getOrderTotal(true, Cart::BOTH_WITHOUT_SHIPPING), 29.0, 'the cart total carries 29.00 beyond its products');
         $checks[] = array((float) $cart->getOrderTotal(true, Cart::ONLY_SHIPPING), 0.0, 'none of it is carrier shipping');
@@ -741,14 +744,9 @@ function oppOutsideCarrierChecks(OppProbeTwopayment $module, $name, Cart $oppCar
             list($error, $payload) = $run(function () use ($module, $placed) {
                 return $module->getTwoUpdateOrderData($placed, $module->getTwoOrderPaymentData((int) $placed->id), 'admin_edit');
             });
-            // The opp order's own 29.00 of untaxed carrier shipping and the 29.00 beyond it, in one 0% line.
-            $shipping = is_array($payload) ? oppLine($payload, 'SHIPPING_FEE') : null;
-            $rate = null;
-            foreach (is_array($payload) ? $payload['line_items'] : array() as $updated) {
-                $rate = $updated['type'] === 'SHIPPING_FEE' ? (string) $updated['tax_rate'] : $rate;
-            }
-            $resplit = $name === 'outside_carrier_line' ? array('0.21', array('47.93', '10.07', '58.00')) : array('0', array('58.00', '0.00', '58.00'));
-            $checks[] = array(array($error, $added($payload), is_array($payload) ? $payload['gross_amount'] : null, $rate, $shipping), array(null, null, number_format($paid[0] + 29.0, 2, '.', ''), $resplit[0], $resplit[1]), 'update: built, the shipping line carrying the cost at the rate the create used');
+            // The module's update line holds the opp order's own 29.00 of untaxed carrier shipping and the 29.00 beyond
+            // it; a handler cuts it back to the carrier's and adds the cost as on the create.
+            $checks[] = array(array($error, $added($payload), is_array($payload) ? $payload['gross_amount'] : null, is_array($payload) ? oppLine($payload, 'SHIPPING_FEE') : null), array(null, $handled ? $line : null, number_format($paid[0] + 29.0, 2, '.', ''), $handled ? array('29.00', '0.00', '29.00') : array('58.00', '0.00', '58.00')), 'update: built, the cost as its own line beside the carrier\'s shipping, as on the create');
         }
     } finally {
         Db::getInstance()->update('orders', array('total_paid_tax_incl' => $paid[0], 'total_paid_tax_excl' => $paid[1]), 'id_order = ' . (int) $order->id);
@@ -757,6 +755,85 @@ function oppOutsideCarrierChecks(OppProbeTwopayment $module, $name, Cart $oppCar
         }
     }
     $checks[] = array(oppLoggedNow('the shop-match checks are delegated to it'), $name !== 'unhandled', 'the delegation line, only with a handler');
+
+    return $checks;
+}
+
+/**
+ * TWO-26274: the README's outside-carrier handler sends the same lines on an order create and on the update of the
+ * order placed from that cart. The probe's own cart gets 29.00 outside any carrier on top of its carrier shipping,
+ * which is untaxed (the "No tax" carrier), taxed (the carrier at the 21% group) or none (free shipping), and its
+ * placed order is set to the totals the cart charges. Create and update must carry the same lines, amounts, rates
+ * and tax.
+ *
+ * @param string $shape untaxed, taxed or none
+ * @return array<int,array{0:mixed,1:mixed,2:string}>
+ */
+function oppOutsideCarrierParityChecks(OppProbeTwopayment $module, $shape, Cart $cart, Order $order)
+{
+    $carrier = new Carrier((int) $cart->id_carrier);
+    $fields = array('total_paid', 'total_paid_tax_incl', 'total_paid_tax_excl', 'total_shipping', 'total_shipping_tax_incl', 'total_shipping_tax_excl', 'carrier_tax_rate');
+    $savedOrder = Db::getInstance()->getRow('SELECT `' . implode('`, `', $fields) . '` FROM `' . _DB_PREFIX_ . 'orders` WHERE id_order = ' . (int) $order->id);
+    $savedConfig = array();
+    foreach (array('TWO_CARRIERLESS_TEST_MODE', 'PS_SHIPPING_FREE_PRICE') as $key) {
+        $savedConfig[$key] = Configuration::get($key);
+    }
+    $project = function (array $payload) {
+        return array_map(function ($line) {
+            return array($line['type'], $line['name'], $line['net_amount'], $line['tax_amount'], $line['gross_amount'], (string) $line['tax_rate'], (int) $line['quantity']);
+        }, $payload['line_items']);
+    };
+    $checks = array();
+    // Armed, the carrier-less fixture replaces every cart's delivery options (PS 8+); here only its Cart override's
+    // cost outside any carrier is wanted, on this cart's own carrier.
+    $carrierless = Module::getInstanceByName('twocarrierlesstest');
+    $rehook = $carrierless && $carrierless->isRegisteredInHook('actionFilterDeliveryOptionList') && $carrierless->unregisterHook('actionFilterDeliveryOptionList');
+    try {
+        Db::getInstance()->execute('INSERT IGNORE INTO `' . _DB_PREFIX_ . 'two_test_external_shipping` (id_cart, id_product, id_carrier_reference) VALUES (' . (int) $cart->id . ', 0, ' . (int) $carrier->id_reference . ')');
+        Configuration::updateValue('TWO_CARRIERLESS_TEST_GROSS', '29.00');
+        Configuration::updateValue('TWO_CARRIERLESS_TEST_MODE', 'external_only');
+        Configuration::updateValue('TWO_OPP_TEST_MODE', 'outside_carrier_line');
+        if ($shape === 'taxed') {
+            $carrier->setTaxRulesGroup((int) Configuration::get('TWO_OPP_TEST_TRG'));
+        }
+        if ($shape === 'none') {
+            Configuration::updateValue('PS_SHIPPING_FREE_PRICE', '1');
+        }
+        Cache::clean('*');
+        $cart = new Cart((int) $cart->id);
+        $ship = array(round((float) $cart->getOrderTotal(true, Cart::ONLY_SHIPPING), 2), round((float) $cart->getOrderTotal(false, Cart::ONLY_SHIPPING), 2));
+        $both = array(round((float) $cart->getOrderTotal(true, Cart::BOTH), 2), round((float) $cart->getOrderTotal(false, Cart::BOTH), 2));
+        $checks[] = array(array($ship[0] > 0, $ship[0] > $ship[1]), array($shape !== 'none', $shape === 'taxed'), 'the cart\'s carrier shipping is ' . $shape);
+        $checks[] = array(round($both[0] - $ship[0], 2), 150.0, 'the cart total carries 29.00 beyond its products and carrier shipping');
+        // The order as placed from this cart.
+        Db::getInstance()->update('orders', array(
+            'total_paid' => $both[0], 'total_paid_tax_incl' => $both[0], 'total_paid_tax_excl' => $both[1],
+            'total_shipping' => $ship[0], 'total_shipping_tax_incl' => $ship[0], 'total_shipping_tax_excl' => $ship[1],
+            'carrier_tax_rate' => $shape === 'taxed' ? 21 : 0,
+        ), 'id_order = ' . (int) $order->id);
+
+        $created = $module->getTwoNewOrderData('opp-parity', $cart, oppMerchantUrls());
+        Cache::clean('*');
+        $placed = new Order((int) $order->id);
+        $updated = $module->getTwoUpdateOrderData($placed, $module->getTwoOrderPaymentData((int) $placed->id), 'admin_edit');
+        $checks[] = array($project($updated), $project($created), 'update: the same lines as the create');
+        $checks[] = array(array($updated['net_amount'], $updated['tax_amount'], $updated['gross_amount']), array($created['net_amount'], $created['tax_amount'], $created['gross_amount']), 'update: the same totals as the create');
+        $lines = $project($created);
+        $checks[] = array(end($lines), array('SHIPPING_FEE', 'Delivery', '23.97', '5.03', '29.00', '0.21', 1), 'create: the cost as its own 21% line');
+        $checks[] = array(count($lines), $shape === 'none' ? 2 : 3, 'create: the product, the carrier shipping if any, and the cost');
+    } finally {
+        Db::getInstance()->update('orders', $savedOrder, 'id_order = ' . (int) $order->id);
+        Db::getInstance()->delete('two_test_external_shipping', 'id_cart = ' . (int) $cart->id);
+        if ($shape === 'taxed') {
+            $carrier->setTaxRulesGroup(0);
+        }
+        if ($rehook) {
+            $carrierless->registerHook('actionFilterDeliveryOptionList');
+        }
+        foreach ($savedConfig as $key => $value) {
+            Configuration::updateValue($key, $value === false ? '' : (string) $value);
+        }
+    }
 
     return $checks;
 }
@@ -931,7 +1008,7 @@ if (!Module::isInstalled('twoorderpostprocessingtest')) {
 oppBootKernel();
 oppSeed();
 $exit = 0;
-$scenario_names = array('unhandled', 'unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'no_lines', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit');
+$scenario_names = array('unhandled', 'unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'no_lines', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match', 'outside_carrier_parity_untaxed', 'outside_carrier_parity_taxed', 'outside_carrier_parity_none', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit');
 // The carrier-less fixture injects through actionFilterDeliveryOptionList, which core only fires from 8.0.
 if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
     $scenario_names[] = 'carrierless';
