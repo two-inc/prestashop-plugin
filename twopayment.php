@@ -21,6 +21,7 @@ require_once dirname(__FILE__) . '/classes/TwoStoredTerm.php';
 require_once dirname(__FILE__) . '/classes/TwoAnchorOnlyHtml.php';
 require_once dirname(__FILE__) . '/classes/TwoShippingTaxFallbackGate.php';
 require_once dirname(__FILE__) . '/classes/TwoDiscrepancySnapshot.php';
+require_once dirname(__FILE__) . '/classes/TwoPostcodeFormat.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessing.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessingException.php';
 require_once dirname(__FILE__) . '/classes/TwoTaxCodeResolver.php';
