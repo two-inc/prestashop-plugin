@@ -43,6 +43,8 @@ final class OrderPostprocessingSpec
         self::testOptInHelperOutsideTheHookDoesNothing();
         self::testLineChecksApplyWhileTheirLineIsUnchanged();
         self::testHandlerDetectionFailureFailsTheRequestWithTheHookCode();
+        self::testOptInScopes();
+        self::testOutsideCarrierLineIsTheSameOnCreateAndUpdate();
         self::testSubscriberThrowingGetsTheGenericCheckoutMessage();
         self::testDispatchKeepsCoreSemanticsButNotItsSwallow();
         self::testAdminEditSurvivesAThrowingSubscriber();
@@ -331,10 +333,13 @@ final class OrderPostprocessingSpec
 
                 return;
             case 'outside_carrier_line_checked':
-            case 'outside_carrier_line_checked_21':
-                // The README pattern: opt back in on what the handler returns, which holds it to the shop's net and tax.
-                $params['payload'] = Twoorderpostprocessingtest::addOutsideCarrierLine($params['payload'], $params['context'], $mode === 'outside_carrier_line_checked' ? 0.0 : 0.21);
-                Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload']);
+            case 'outside_carrier_line_checked_all':
+            case 'outside_carrier_line_untaxed_all':
+            case 'outside_carrier_line_bad_scope':
+                // The README pattern: opt back in on what the handler returns, in the scope its edit allows.
+                $params['payload'] = Twoorderpostprocessingtest::addOutsideCarrierLine($params['payload'], $params['context'], $mode === 'outside_carrier_line_untaxed_all' ? 0.0 : 0.21);
+                $scopes = ['outside_carrier_line_checked' => Twopayment::SHOP_MATCH_LINES, 'outside_carrier_line_bad_scope' => 'whole'];
+                Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload'], $scopes[$mode] ?? Twopayment::SHOP_MATCH_ALL);
 
                 return;
         }
@@ -493,7 +498,7 @@ final class OrderPostprocessingSpec
             ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', 'Invalid line item formulas', ['resplit'], 'untaxed shipping on a "No tax" carrier, with the Default shipping tax code at 21%'],
             ['product', 'Declared tax rate diverges from applied tax amounts for product', 'declared_rate', 'Invalid line item formulas', [], 'a product whose declared rate its amounts contradict'],
             ['wrapping', 'Declared tax rate diverges from applied tax amounts for gift wrapping', 'declared_rate', 'Invalid line item formulas', [], 'gift wrapping the shop left untaxed, at a 21% wrapping group'],
-            ['outside_carrier', 'Order totals do not reconcile with cart totals: gross cart 179.00 vs order lines 150.00 (difference 29.00); net cart 158.00 vs order lines 129.00 (difference 29.00)', 'reconciliation', null, ['outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_line_checked_21'], 'a cost the shop adds to the cart total outside any carrier'],
+            ['outside_carrier', 'Order totals do not reconcile with cart totals: gross cart 179.00 vs order lines 150.00 (difference 29.00); net cart 158.00 vs order lines 129.00 (difference 29.00)', 'reconciliation', null, ['outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_line_untaxed_all', 'outside_carrier_line_checked_all'], 'a cost the shop adds to the cart total outside any carrier'],
         ];
         foreach ($cases as [$setup, $refusal, $gate, $delegated, $fixes, $description]) {
             foreach (array_merge([null, 'noop', 'shop_match'], $fixes) as $mode) {
@@ -535,7 +540,7 @@ final class OrderPostprocessingSpec
                 }));
                 $delegation = 'The order_create request (checkout, cart 9701) has an order postprocessing hook handler (twoorderpostprocessingtest): the shop-match checks are delegated to it, and the consistency checks still run.';
                 // The helper's refusal stops the request inside the hook, before anything is delegated.
-                TinyAssert::same(in_array($mode, [null, 'shop_match', 'outside_carrier_line_checked_21'], true) ? 0 : 1, count(array_filter(PrestaShopLogger::$logs, static function ($l) use ($delegation) {
+                TinyAssert::same(in_array($mode, [null, 'shop_match', 'outside_carrier_line_checked_all'], true) ? 0 : 1, count(array_filter(PrestaShopLogger::$logs, static function ($l) use ($delegation) {
                     return strpos($l['message'], $delegation) !== false;
                 })), $label . ': the delegation log line, once, naming the handler; got ' . var_export($got, true));
                 if ($mode === null || $mode === 'shop_match') {
@@ -545,8 +550,8 @@ final class OrderPostprocessingSpec
                     TinyAssert::count($mode === null ? 0 : 1, $calls, $label . ': the handler ran, if any');
                     continue;
                 }
-                // At 21% the handler declares a tax split the shop does not have, so opting back in refuses it.
-                $expected = $mode === 'noop' ? $delegated : ($mode === 'outside_carrier_line_checked_21' ? 'Order totals do not reconcile with cart totals: net cart 158.00 vs order lines 152.97' : null);
+                // At 21% the handler declares a tax split the shop does not have, so opting back in to every check refuses it.
+                $expected = $mode === 'noop' ? $delegated : ($mode === 'outside_carrier_line_checked_all' ? 'Order totals do not reconcile with cart totals: net cart 158.00 vs order lines 152.97' : null);
                 TinyAssert::true($expected === null ? $error === null : ($error !== null && strpos($error->getMessage(), $expected) !== false), $label . ': ' . ($expected ?? 'sent') . ', got ' . var_export($got, true));
                 if ($error === null) {
                     TinyAssert::same($calls[0]['payload_out'], $payload, $label . ': sent as the handler returned it');
@@ -763,6 +768,91 @@ final class OrderPostprocessingSpec
                 $error = get_class($e) . ': ' . $e->getMessage();
             }
             TinyAssert::same($expected, $error, $description);
+        }
+    }
+
+    /**
+     * runTwoShopMatchChecks() scopes: SHOP_MATCH_LINES leaves out the lines
+     * against the cart's totals, for a handler that declares its own split, and
+     * still refuses a line it left as built; SHOP_MATCH_ALL holds the payload
+     * to the cart; any other scope is a code bug in the handler.
+     */
+    private static function testOptInScopes(): void
+    {
+        // [handler mode, product declares a rate its amounts contradict, expected outcome (null: sent), description]
+        $cases = [
+            ['outside_carrier_line_checked', false, null, 'the cost at 21%, single-line checks: sent'],
+            ['outside_carrier_line_checked_all', false, 'TwoCheckoutAmountException: Order totals do not reconcile with cart totals: net cart 158.00 vs order lines 152.97 (difference 5.03); tax cart 21.00 vs order lines 26.03 (difference 5.03)', 'the cost at 21%, every check: the cart refuses the split'],
+            ['outside_carrier_line_untaxed_all', false, null, 'the cost as the shop recorded it, every check: sent'],
+            ['outside_carrier_line_checked', true, 'TwoCheckoutAmountException: Declared tax rate diverges from applied tax amounts for product ' . self::PRODUCT, 'the cost at 21%, single-line checks, a product line left as built: refused'],
+            ['outside_carrier_line_bad_scope', false, TwoOrderPostprocessing::CODE_HOOK_FAILED, 'an unknown scope: the hook failure code'],
+        ];
+        foreach ($cases as [$mode, $productMismatch, $expected, $description]) {
+            $cart = self::seed(false, true);
+            StubStore::$cartTotals[self::CART][true][Cart::BOTH] += 29.00;
+            StubStore::$cartTotals[self::CART][false][Cart::BOTH] += 29.00;
+            if ($productMismatch) {
+                StubStore::$taxRuleRates[9000 + self::PRODUCT] = 10.0;
+            }
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $calls = [];
+            self::subscribe($mode, $calls);
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            } catch (TwoOrderPostprocessingException $e) {
+                $error = $e->getTwoCode();
+            } catch (Exception $e) {
+                $error = get_class($e) . ': ' . $e->getMessage();
+            }
+            TinyAssert::same($expected, $error, $description);
+        }
+    }
+
+    /**
+     * The README's outside-carrier handler sends the same lines on the create
+     * and on a later update of the order placed from that cart: the update's
+     * shipping line, which carries the cost on top of the carrier's shipping,
+     * is cut back to the carrier's, beside the same added line.
+     */
+    private static function testOutsideCarrierLineIsTheSameOnCreateAndUpdate(): void
+    {
+        $project = static function (array $payload): array {
+            return array_map(static function (array $line): array {
+                return [$line['type'], $line['name'], $line['net_amount'], $line['tax_amount'], $line['gross_amount'], (string) $line['tax_rate'], (int) $line['quantity']];
+            }, $payload['line_items']);
+        };
+        // [shipping taxed, carrier shipping, description]
+        $cases = [
+            [false, true, 'untaxed carrier shipping'],
+            [true, true, 'taxed carrier shipping'],
+            [false, false, 'no carrier shipping'],
+        ];
+        foreach ($cases as [$taxed, $shipping, $description]) {
+            $cart = self::seed($taxed, !$taxed);
+            if (!$shipping) {
+                foreach ([true, false] as $incl) {
+                    StubStore::$cartTotals[self::CART][$incl][Cart::BOTH] -= StubStore::$cartTotals[self::CART][$incl][Cart::ONLY_SHIPPING];
+                    StubStore::$cartTotals[self::CART][$incl][Cart::ONLY_SHIPPING] = 0.00;
+                }
+                StubStore::$cartDeliveryOptionLists[self::CART] = [];
+            }
+            StubStore::$cartTotals[self::CART][true][Cart::BOTH] += 29.00;
+            StubStore::$cartTotals[self::CART][false][Cart::BOTH] += 29.00;
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $calls = [];
+            self::subscribe('outside_carrier_line', $calls);
+            $created = $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            $module->hookActionOrderEdited(['order' => self::order()]);
+            TinyAssert::count(1, $module->sent, $description . ': the update is sent');
+            $updated = $module->sent[0]['payload'];
+            TinyAssert::same($project($created), $project($updated), $description . ': the same lines');
+            TinyAssert::same([$created['net_amount'], $created['tax_amount'], $created['gross_amount']], [$updated['net_amount'], $updated['tax_amount'], $updated['gross_amount']], $description . ': the same totals');
+            $lines = $project($created);
+            TinyAssert::same(['SHIPPING_FEE', 'Delivery', '23.97', '5.03', '29.00', '0.21', 1], end($lines), $description . ': the cost as its own 21% line');
+            TinyAssert::count($shipping ? 3 : 2, $lines, $description . ': the product, the carrier\'s shipping if any, and the cost');
         }
     }
 
