@@ -5907,6 +5907,7 @@ require __DIR__ . '/PaymentTileAboutControlSpec.php';
 require __DIR__ . '/ReconciliationDriftMessageSpec.php';
 require __DIR__ . '/OrderPostprocessingSpec.php';
 require __DIR__ . '/ShippingRateControlSpec.php';
+require __DIR__ . '/PostcodeFormatSpec.php';
 require __DIR__ . '/DiscrepancySnapshotSpec.php';
 require __DIR__ . '/TaxCodeSpec.php';
 
@@ -5987,6 +5988,7 @@ $tests = [
     'ReconciliationDriftMessageSpec::runAll' => [ReconciliationDriftMessageSpec::class, 'runAll'],
     'OrderPostprocessingSpec::runAll' => [OrderPostprocessingSpec::class, 'runAll'],
     'ShippingRateControlSpec::runAll' => [ShippingRateControlSpec::class, 'runAll'],
+    'PostcodeFormatSpec::runAll' => [PostcodeFormatSpec::class, 'runAll'],
 ];
 
 $failed = 0;
