@@ -20414,17 +20414,132 @@ class Twopayment extends PaymentModule
     public function getTwoApiErrorDetail($response)
     {
         $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        // Invalid UTF-8 from the API is substituted where PHP can (7.2+); before that, a part
+        // that will not encode is left out rather than logged as nothing.
+        $json_flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            | (defined('JSON_INVALID_UTF8_SUBSTITUTE') ? constant('JSON_INVALID_UTF8_SUBSTITUTE') : 0);
         $parts = array();
         foreach (is_array($response) ? array($response, isset($response['data']) && is_array($response['data']) ? $response['data'] : array()) : array() as $body) {
-            foreach (array('error_code', 'error_message', 'error_details', 'message', 'detail', 'error') as $key) {
+            // The trace id first: it is what a merchant quotes to support, so the length cap must not cut it.
+            foreach (array('error_trace_id', 'error_code', 'error_message', 'error_details', 'error_json', 'message', 'detail', 'error') as $key) {
                 if (isset($body[$key]) && $body[$key] !== '' && $body[$key] !== array()) {
-                    $parts[] = is_scalar($body[$key]) ? (string) $body[$key] : json_encode($body[$key], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    $part = is_scalar($body[$key]) ? (string) $body[$key] : json_encode($body[$key], $json_flags);
+                    if ($part !== false) {
+                        $parts[] = $part;
+                    }
                 }
             }
         }
         $detail = 'HTTP ' . $status . ($parts === array() ? '' : ' ' . implode(' | ', array_unique($parts)));
 
         return Tools::strlen($detail) > 1000 ? Tools::substr($detail, 0, 1000) . '...' : $detail;
+    }
+
+    /**
+     * What the buyer is told when Two refuses order creation (TWO-26264), worded as the
+     * WooCommerce plugin words it: the fields Two named as invalid, else the same-company
+     * refusal, else the generic sentence. Two's own text never reaches the storefront; the
+     * caller logs it with getTwoApiErrorDetail().
+     *
+     * @param mixed $response setTwoPaymentRequest()
+     * @return string
+     */
+    public function getTwoCreateRefusalBuyerMessage($response)
+    {
+        $body = is_array($response) ? $response : array();
+        if (isset($body['error_json']) && is_array($body['error_json'])) {
+            $fields = array();
+            foreach ($body['error_json'] as $error) {
+                $field = is_array($error) ? $this->getTwoRefusedFieldMessage($error) : null;
+                if ($field !== null) {
+                    $fields[] = $field;
+                }
+            }
+            if ($fields !== array()) {
+                return $this->joinTwoBuyerSentences($fields);
+            }
+        }
+        if (isset($body['error_code']) && $body['error_code'] === 'SAME_BUYER_SELLER_ERROR') {
+            return $this->joinTwoBuyerSentences(array($this->l('Buyer and merchant may not be the same company')));
+        }
+
+        return sprintf($this->l('Invoice purchase with %s is not available for this order.'), $this->getTwoBrandConfig('product_name'));
+    }
+
+    /**
+     * Buyer-facing sentences as one notice: each closed with a full stop where it has no
+     * sentence punctuation of its own (several messages share their wording with the
+     * WooCommerce plugin, which shows each as a separate notice and so has none), and a
+     * sentence repeated by two errors shown once.
+     *
+     * @param string[] $sentences
+     * @return string
+     */
+    public function joinTwoBuyerSentences(array $sentences)
+    {
+        $closed = array();
+        foreach ($sentences as $sentence) {
+            $sentence = trim((string) $sentence);
+            if ($sentence === '') {
+                continue;
+            }
+            if (!preg_match('/[.!?]\z/u', $sentence)) {
+                $sentence .= '.';
+            }
+            $closed[$sentence] = true;
+        }
+
+        return implode(' ', array_keys($closed));
+    }
+
+    /**
+     * One whole sentence per field rather than a translated noun dropped into a template,
+     * so each locale can phrase it naturally.
+     *
+     * @param array $error One error_json entry: loc, the path to the field, and msg.
+     * @return string|null Null for a field the buyer is not asked to correct.
+     */
+    private function getTwoRefusedFieldMessage(array $error)
+    {
+        if (!isset($error['loc'], $error['msg']) || !is_array($error['loc']) || !is_string($error['msg'])) {
+            return null;
+        }
+        foreach ($error['loc'] as $segment) {
+            if (!is_scalar($segment)) {
+                return null;
+            }
+        }
+        $loc = implode('.', $error['loc']);
+        if ($loc === 'invoice_details.invoice_emails' || strpos($loc, 'invoice_details.invoice_emails.') === 0) {
+            return $this->l('Please enter a valid Invoice email address to pay on invoice');
+        }
+        if ($loc === 'buyer' && strpos($error['msg'], 'Invalid phone number') !== false) {
+            $loc = 'buyer.representative.phone_number';
+        }
+        switch ($loc) {
+            case 'buyer.representative.phone_number':
+                return $this->l('Please enter a valid Phone number to pay on invoice');
+            case 'buyer.company.organization_number':
+                return $this->l('Please enter a valid Organization number to pay on invoice');
+            case 'buyer.company.company_name':
+                return $this->l('Please enter a valid Company name to pay on invoice');
+            case 'buyer.representative.first_name':
+                return $this->l('Please enter a valid First name to pay on invoice');
+            case 'buyer.representative.last_name':
+                return $this->l('Please enter a valid Last name to pay on invoice');
+            case 'buyer.representative.email':
+                return $this->l('Please enter a valid Email to pay on invoice');
+            case 'billing_address.street_address':
+                return $this->l('Please enter a valid Address to pay on invoice');
+            case 'billing_address.city':
+                return $this->l('Please enter a valid City to pay on invoice');
+            case 'billing_address.country':
+                return $this->l('Please enter a valid Country to pay on invoice');
+            case 'billing_address.postal_code':
+                return $this->l('Please enter a valid Postal code to pay on invoice');
+        }
+
+        return null;
     }
 
     /**
