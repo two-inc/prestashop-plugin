@@ -430,6 +430,30 @@ class Twopayment extends PaymentModule
     /** @var string|null where the last built shipping line's rate came from, a SHIPPING_RATE_* value; null with none */
     private $twoShippingRateSource = null;
 
+    /** @var string runTwoShopMatchChecks() scopes (stable contract, TWO-26274): every shop-match check, or only those on single lines */
+    const SHOP_MATCH_ALL = 'all';
+    const SHOP_MATCH_LINES = 'lines';
+
+    /** @var string check kinds (TWO-26274): a shop-match check compares the payload with the shop; a consistency check, the payload with itself */
+    const CHECK_SHOP_MATCH = 'shop_match';
+    const CHECK_CONSISTENCY = 'consistency';
+
+    /**
+     * @var array|null while an order request is built: the shop-match refusals found on single lines, each
+     *                 {index, raise}, enforced after the hook by the default handler (TWO-26274); null otherwise, when
+     *                 such a check refuses at once
+     */
+    private $twoDeferredShopMatch = null;
+
+    /** @var callable|null the placed gift wrapping's rate refusal, deferred until its line exists (TWO-26274) */
+    private $twoDeferredPlacedWrapping = null;
+
+    /** @var array|null {checks, before} of the order request whose hook is running, for runTwoShopMatchChecks() */
+    private static $twoActiveOrderChecks = null;
+
+    /** @var Throwable|null the refusal runTwoShopMatchChecks() threw inside the hook, relayed as it is */
+    private static $twoShopMatchRefusal = null;
+
     // Module metadata fields ModuleCore does not declare on all supported
     // PrestaShop versions ($bootstrap was only added to ModuleCore in PS 8;
     // $author_address and $languages are never declared by core), plus this
@@ -579,6 +603,10 @@ class Twopayment extends PaymentModule
                 $this->registerHook($hook_name);
             }
         }
+        // TWO-26274: the default handler on the module's own hook, once the hook's row exists with its title.
+        if (!$this->isRegisteredInHook(TwoOrderPostprocessing::HOOK) && $this->installTwoOrderPostprocessingHook()) {
+            $this->registerHook(TwoOrderPostprocessing::HOOK);
+        }
     }
 
     /**
@@ -710,6 +738,7 @@ class Twopayment extends PaymentModule
             $this->registerHook('actionPresentCart') &&
             $this->registerHook('displayProductAdditionalInfo') &&
             $this->installTwoOrderPostprocessingHook() &&
+            $this->registerHook(TwoOrderPostprocessing::HOOK) &&
             $this->installTwoInvoiceAdminTab() &&
             $this->installTwoErrorLogAdminTab() &&
             $this->installTwoSettings() &&
@@ -719,7 +748,8 @@ class Twopayment extends PaymentModule
 
     /**
      * Create the order postprocessing hook's row, so it is listed under Design > Positions
-     * before any subscriber registers on it (TWO-26092). The module never registers on it itself.
+     * before any subscriber registers on it (TWO-26092). The module registers its own default
+     * handler on it (TWO-26274).
      *
      * @return bool
      */
@@ -1032,6 +1062,7 @@ class Twopayment extends PaymentModule
             $this->unregisterHook('actionObjectCartUpdateAfter') &&
             $this->unregisterHook('actionObjectOrderDetailAddBefore') &&
             $this->unregisterHook('actionPresentCart') &&
+            $this->unregisterHook(TwoOrderPostprocessing::HOOK) &&
             $this->uninstallTwoInvoiceAdminTab() &&
             $this->uninstallTwoErrorLogAdminTab() &&
             ($clearSettings ? $this->uninstallTwoSettings() : true) &&
@@ -5478,7 +5509,13 @@ class Twopayment extends PaymentModule
 
         // Two's partial-refund contract requires tax_subtotals.
         $kind_gross = array();
-        $tax_subtotals = $this->buildTwoCreditSlipTaxSubtotals($slip, $order, $slip_amount, $kind_gross);
+        $this->twoDeferredShopMatch = array();
+        try {
+            $tax_subtotals = $this->buildTwoCreditSlipTaxSubtotals($slip, $order, $slip_amount, $kind_gross);
+            $slipRefusals = $this->twoDeferredShopMatch;
+        } finally {
+            $this->twoDeferredShopMatch = null;
+        }
         if (empty($tax_subtotals)) {
             PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not build tax subtotals from the credit slip. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
             return $this->l('its refunded amount could not be split across the order\'s tax rates');
@@ -5492,7 +5529,28 @@ class Twopayment extends PaymentModule
         // the Two order ID so two shops minting the same slip ID cannot either.
         $idempotency_key = 'partial_refund_' . $two_order_id . '_slip_' . $slip_id;
         $sent_payload = null;
-        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload);
+        // The shop-match check on the refunded shipping, the default handler's (TWO-26274): it applies while the
+        // payload carries the tax_subtotals the module split, and refuses as the split's own failure did.
+        $checks = array('cart' => null, 'lines' => null, 'items' => array(array(
+            'kind' => self::CHECK_SHOP_MATCH,
+            'run' => function (array $payload, array $before) use ($slipRefusals) {
+                $split = function (array $p) {
+                    return TwoOrderPostprocessing::canonical(isset($p['tax_subtotals']) ? $p['tax_subtotals'] : null);
+                };
+                if ($split($payload) !== $split($before)) {
+                    return;
+                }
+                foreach ($slipRefusals as $refusal) {
+                    call_user_func($refusal['raise']);
+                }
+            },
+        )));
+        try {
+            $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, $checks);
+        } catch (TwoCheckoutAmountException $e) {
+            PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not build tax subtotals from the credit slip. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
+            return $this->l('its refunded amount could not be split across the order\'s tax rates');
+        }
 
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         if (!($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'])) {
@@ -6406,7 +6464,8 @@ class Twopayment extends PaymentModule
      * @param Order $order
      * @param float $net refunded shipping, tax excluded
      * @param float $tax refunded shipping tax
-     * @return array|null classes of rate (decimal) and net_weight; null when the Default shipping tax code's do not reconcile
+     * @return array|null classes of rate (decimal) and net_weight; null when the Default shipping tax code's do not
+     *                    reconcile, except while a credit slip refund is built, which refuses after the hook (TWO-26274)
      */
     protected function resolveTwoSlipShippingClasses($order, $net, $tax)
     {
@@ -6419,9 +6478,20 @@ class Twopayment extends PaymentModule
             if ($this->doTwoRateClassesReconcile($declared['shipping'], $net, $tax)) {
                 return $declared['shipping'];
             }
-            PrestaShopLogger::addLog('TwoPayment: Credit slip shipping ' . $net . ' net, ' . $tax . ' tax on order ' . (int)$order->id . ' does not reconcile with the Default shipping tax code it was placed at', 3);
+            $message = 'TwoPayment: Credit slip shipping ' . $net . ' net, ' . $tax . ' tax on order ' . (int)$order->id . ' does not reconcile with the Default shipping tax code it was placed at';
+            if ($this->twoDeferredShopMatch === null) {
+                PrestaShopLogger::addLog($message, 3);
 
-            return null;
+                return null;
+            }
+            // A shop-match check (TWO-26274): the refund is split at the declared classes, and refused after the hook
+            // by the default handler, while the payload carries that split unchanged.
+            $this->twoDeferredShopMatch[] = array('index' => null, 'raise' => function () use ($message) {
+                PrestaShopLogger::addLog($message, 3);
+                throw new TwoCheckoutAmountException('Credit slip shipping does not reconcile with the Default shipping tax code it was placed at');
+            });
+
+            return $declared['shipping'];
         }
         // Rounded as placement rounds the shipping line's rate, so the refund's rate matches that line (TWO-26143).
         $carrier = array(array('rate' => $this->normalizeTwoTaxRateToPercentPrecision((float)(isset($order->carrier_tax_rate) ? $order->carrier_tax_rate : 0) / 100), 'net_weight' => 1.0));
@@ -7783,6 +7853,9 @@ class Twopayment extends PaymentModule
     /**
      * Build shared pricing data for Two payloads from a single line-item source.
      *
+     * The payload checks do not run here: they come back as `checks`, which the builder hands to
+     * postprocessOrderRequest() to run after the hook (TWO-26274). What refuses here is a payload that cannot be built.
+     *
      * @param Cart $cart
      * @param string $contextLabel
      * @param Order|null $placedOrder set on the update path: every line is replayed from that order, never the cart (TWO-26085)
@@ -7797,30 +7870,37 @@ class Twopayment extends PaymentModule
             return $this->computeTwoOrderPricingData($cart, $contextLabel, $strictReconciliation, $paymentTermDays, $syncSurchargeCartLine, $placedOrder);
         }
         try {
-            $pricing = $this->computeTwoOrderPricingData($cart, $contextLabel, $strictReconciliation, $paymentTermDays, $syncSurchargeCartLine, $placedOrder);
+            return $this->computeTwoOrderPricingData($cart, $contextLabel, $strictReconciliation, $paymentTermDays, $syncSurchargeCartLine, $placedOrder);
         } catch (Throwable $e) {
-            $gate = $this->twoDiscrepancyGate;
-            $cause = $gate !== null && $gate['exception'] === null ? $e : null;
-            // A gate exception a fallback caught (Default shipping tax code) is not the one that refused the order; a wrapped one is.
-            for ($link = $e; $cause === null && $gate !== null && $link !== null; $link = $link->getPrevious()) {
-                $cause = $link === $gate['exception'] ? $link : null;
-            }
-            if ($cause === null) {
-                $gate = array('name' => get_class($e), 'label' => 'unrecorded refusal', 'numbers' => array(
-                    'site' => TwoDiscrepancySnapshot::throwSite($e),
-                    'code' => $e->getCode(),
-                ), 'line_items' => null);
-            }
-            if ($gate['name'] !== null) {
-                $this->logTwoDiscrepancySnapshot($cart, $gate);
-            }
+            $this->logTwoRefusalSnapshot($cart, $e);
             throw $e;
         }
-        if (Configuration::get('PS_TWO_DEBUG_MODE')) {
-            $this->logTwoDiscrepancySnapshot($cart, null, $pricing['line_items']);
-        }
+    }
 
-        return $pricing;
+    /**
+     * Write the discrepancy snapshot for a refused pricing build or payload check, naming the gate that refused.
+     *
+     * @param Cart $cart
+     * @param Throwable $e the refusal
+     * @return void
+     */
+    private function logTwoRefusalSnapshot($cart, $e)
+    {
+        $gate = $this->twoDiscrepancyGate;
+        $cause = $gate !== null && $gate['exception'] === null ? $e : null;
+        // A gate exception a fallback caught (Default shipping tax code) is not the one that refused the order; a wrapped one is.
+        for ($link = $e; $cause === null && $gate !== null && $link !== null; $link = $link->getPrevious()) {
+            $cause = $link === $gate['exception'] ? $link : null;
+        }
+        if ($cause === null) {
+            $gate = array('name' => get_class($e), 'label' => 'unrecorded refusal', 'numbers' => array(
+                'site' => TwoDiscrepancySnapshot::throwSite($e),
+                'code' => $e->getCode(),
+            ), 'line_items' => null);
+        }
+        if ($gate['name'] !== null) {
+            $this->logTwoDiscrepancySnapshot($cart, $gate);
+        }
     }
 
     /**
@@ -7908,89 +7988,43 @@ class Twopayment extends PaymentModule
             $this->syncTwoSurchargeCartLine($cart, $this->isTwoSurchargeAdmissibleForCart($cart));
         }
 
-        $placed = $placedOrder !== null ? $this->getTwoPlacedOrderSnapshot($placedOrder) : null;
-        $this->twoLineTaxKeys = array();
-        $line_items = $placed !== null ? $this->buildTwoLineItems($cart, $placed) : $this->getTwoProductItems($cart);
+        // The shop-match checks on single lines are recorded against their line while it is built, and run after the
+        // hook (TWO-26274). Only here: getTwoProductItems() called on its own, as the fee basis above, refuses at once.
+        $this->twoDeferredShopMatch = array();
+        $this->twoDeferredPlacedWrapping = null;
+        try {
+            $placed = $placedOrder !== null ? $this->getTwoPlacedOrderSnapshot($placedOrder) : null;
+            $this->twoLineTaxKeys = array();
+            $line_items = $placed !== null ? $this->buildTwoLineItems($cart, $placed) : $this->getTwoProductItems($cart);
+            $lineRefusals = $this->twoDeferredShopMatch;
+            if ($this->twoDeferredPlacedWrapping !== null) {
+                // Never left over by the builder, which binds it to the wrapping line; unbound, it applies to the whole payload.
+                $lineRefusals[] = array('index' => null, 'raise' => $this->twoDeferredPlacedWrapping);
+            }
+        } finally {
+            $this->twoDeferredShopMatch = null;
+            $this->twoDeferredPlacedWrapping = null;
+        }
         // A line the builder did not describe (an override of getTwoProductItems()) is resolved as an order-level charge.
         $this->tagTwoLineTaxKeys(is_array($line_items) ? $line_items : array(), null, 0, null);
         if (empty($line_items)) {
+            // Nothing to send, so not a payload check: refused here, before the hook, as ever.
             PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - no valid line items', 3);
             $this->recordTwoDiscrepancyGate(null, $contextLabel, array());
             throw new Exception('No valid line items in cart');
         }
 
-        if (!$this->validateTwoLineItems($line_items)) {
-            PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - invalid line item formulas', 3);
-            $this->recordTwoDiscrepancyGate('line_formulas', $contextLabel, array(), null, $line_items);
-            throw new Exception('Invalid line item formulas');
-        }
-
-        $lineTotals = $this->calculateTwoLineItemTotals($line_items);
-        $max_reconciliation_diff_cents = 0;
-        $reconciliation_drift = '';
-        if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, $max_reconciliation_diff_cents, $reconciliation_drift, $placed !== null ? $placed['totals'] : null)) {
-            if ($this->shouldBlockOnReconciliationDrift($contextLabel, $max_reconciliation_diff_cents, (bool)$strictReconciliation)) {
-                if ($this->twoDiscrepancyGate !== null) {
-                    $this->twoDiscrepancyGate['line_items'] = $line_items;
-                }
-                PrestaShopLogger::addLog(
-                    'TwoPayment: ' . $contextLabel . ' blocked by reconciliation policy. ' .
-                    'Max drift=' . $this->getTwoRoundAmount($max_reconciliation_diff_cents / 100) .
-                    ', Tolerance=' . $this->getTwoRoundAmount(self::ORDER_RECONCILIATION_TOLERANCE),
-                    3
-                );
-                // Carry the numbers in the exception, not just the log: this
-                // message is what the buyer-facing decline path renders, and an
-                // opaque rejection here is what made TWO-25161 take two weeks
-                // of email to diagnose. TwoCheckoutAmountException is what
-                // authorises that relay — see the class docblock.
-                // PHP_INT_MAX is the validator's marker for order lines failing gross = net + tax, before any cart comparison.
-                $reconciliation_prefix = $max_reconciliation_diff_cents === PHP_INT_MAX
-                    ? 'Order line totals are internally inconsistent: '
-                    : 'Order totals do not reconcile with cart totals: ';
-                throw new TwoCheckoutAmountException($reconciliation_prefix . $reconciliation_drift);
-            }
-
-            PrestaShopLogger::addLog(
-                'TwoPayment: ' . $contextLabel . ' reconciliation drift logged as warning-only (intent precheck path).',
-                2
-            );
-            // Tolerated here, so a later refusal must not be reported as this gate.
-            $this->twoDiscrepancyGate = null;
-        }
-
         $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
         $subtotalsTotals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
-        if (
-            !$this->isTwoAmountWithinTolerance($lineTotals['net'], $subtotalsTotals['net']) ||
-            !$this->isTwoAmountWithinTolerance($lineTotals['tax'], $subtotalsTotals['tax']) ||
-            !$this->isTwoAmountWithinTolerance($lineTotals['gross'], $subtotalsTotals['gross'])
-        ) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Cannot build ' . $contextLabel . ' - tax subtotals mismatch line totals. ' .
-                'Line(net/tax/gross)=(' . $this->getTwoRoundAmount($lineTotals['net']) . '/' .
-                $this->getTwoRoundAmount($lineTotals['tax']) . '/' .
-                $this->getTwoRoundAmount($lineTotals['gross']) . ') vs Subtotals=(' .
-                $this->getTwoRoundAmount($subtotalsTotals['net']) . '/' .
-                $this->getTwoRoundAmount($subtotalsTotals['tax']) . '/' .
-                $this->getTwoRoundAmount($subtotalsTotals['gross']) . ')',
-                3
-            );
-            $this->recordTwoDiscrepancyGate('tax_subtotals', $contextLabel, array(
-                'line' => $lineTotals,
-                'subtotals' => $subtotalsTotals,
-            ), null, $line_items);
-            throw new TwoCheckoutAmountException('Tax subtotals do not reconcile with line items');
-        }
 
-        // Offset pricing fee (buyer surcharge) — appended AFTER product-line
-        // reconciliation so it never perturbs the cart-vs-lines gate. The fee
+        // Offset pricing fee (buyer surcharge), appended AFTER the product
+        // lines, so the cart-vs-lines check below compares it separately. The fee
         // is quoted from POST /v1/pricing/order/fee. A missing quote omits the
         // line HERE, but that is no longer a silent undercharge: TWO-25269
         // withholds the payment option entirely when the surcharge cannot be
         // quoted in the cart currency, so a buyer never reaches this builder
         // in that state, and a quote that fails only at this point leaves the
-        // hidden cart line in place for the parity gate to catch. Applying it in the
+        // hidden cart line in place for the parity check to catch. Applying it in the
         // shared pricing builder keeps the intent, create and update payloads
         // consistent, so the order-intent approval reconciles against the same
         // gross the create call sends. TWO-24752 / TWO-24893.
@@ -8004,54 +8038,15 @@ class Twopayment extends PaymentModule
                 $paymentTermDays,
                 $surchargeQuoteUnavailable
             );
+        $feeIndex = null;
         if ($surchargeLine !== null && $this->validateTwoLineItems(array($surchargeLine))) {
+            $feeIndex = count($line_items);
             $line_items[] = $surchargeLine;
             $this->tagTwoLineTaxKeys($line_items, 'fee', $this->getTwoSurchargeTaxRulesGroupId(), null);
             $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
             $subtotalsTotals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
-        } else {
-            $surchargeLine = null;
         }
-
-        // PARITY GATE (the single most important correctness edge of the
-        // surcharge-as-cart-line feature): the fee PrestaShop charges the
-        // buyer (hidden virtual product line) and the fee the Two payload
-        // carries must be the same money. On the create/strict paths a
-        // mismatch beyond ORDER_RECONCILIATION_TOLERANCE throws - checkout
-        // fails with a retryable error instead of ever creating an order
-        // whose PrestaShop total diverges from the Two invoice. The
-        // non-strict intent precheck logs a warning only; the update path
-        // replays the order's own fee row, so it has no cart side to compare.
         $cartSurchargeLine = $this->getTwoSurchargeCartLine($cart);
-        $payloadFeeGrossCents = $surchargeLine !== null ? $this->convertAmountToCents($surchargeLine['gross_amount']) : 0;
-        $payloadFeeNetCents = $surchargeLine !== null ? $this->convertAmountToCents($surchargeLine['net_amount']) : 0;
-        $cartFeeGrossCents = $cartSurchargeLine !== null ? $this->convertAmountToCents($cartSurchargeLine['gross']) : 0;
-        $cartFeeNetCents = $cartSurchargeLine !== null ? $this->convertAmountToCents($cartSurchargeLine['net']) : 0;
-        $surchargeParityDiffCents = max(
-            abs($payloadFeeGrossCents - $cartFeeGrossCents),
-            abs($payloadFeeNetCents - $cartFeeNetCents)
-        );
-        $enforceSurchargeParity = (bool) $syncSurchargeCartLine;
-        // An unavailable quote is a parity failure in its own right (ABN-546):
-        // the buyer can switch term after the payment-options gate ran, and a
-        // pre-switch term that quoted zero leaves zero on both sides, which the
-        // cents comparison reads as agreement.
-        $surchargeParityFailed = $placed === null && (($surchargeQuoteUnavailable && $enforceSurchargeParity)
-            || $surchargeParityDiffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE));
-        if ($surchargeParityFailed) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: ' . $contextLabel . ' surcharge parity mismatch - '
-                . ($surchargeQuoteUnavailable ? 'the fee quote for the ordered term did not resolve; ' : '')
-                . 'cart line (net/gross)=(' .
-                $this->getTwoRoundAmount($cartFeeNetCents / 100) . '/' . $this->getTwoRoundAmount($cartFeeGrossCents / 100) .
-                ') vs payload fee line (net/gross)=(' .
-                $this->getTwoRoundAmount($payloadFeeNetCents / 100) . '/' . $this->getTwoRoundAmount($payloadFeeGrossCents / 100) . ')',
-                $enforceSurchargeParity ? 3 : 2
-            );
-            if ($enforceSurchargeParity) {
-                throw new Exception('Surcharge line mismatch between cart and Two payload');
-            }
-        }
 
         return [
             'line_items' => $line_items,
@@ -8062,7 +8057,344 @@ class Twopayment extends PaymentModule
             'tax_amount' => $subtotalsTotals['tax'],
             'gross_amount' => $subtotalsTotals['gross'],
             'discount_amount' => $placed !== null ? $placed['discount_gross'] : abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS)),
+            // Not a payload field: what postprocessOrderRequest() runs after the hook (TWO-26274).
+            'checks' => $this->buildTwoOrderChecks($cart, $contextLabel, (bool) $strictReconciliation, $placed, $lineRefusals, $line_items, $feeIndex, array(
+                'gross_cents' => $cartSurchargeLine !== null ? $this->convertAmountToCents($cartSurchargeLine['gross']) : 0,
+                'net_cents' => $cartSurchargeLine !== null ? $this->convertAmountToCents($cartSurchargeLine['net']) : 0,
+                'quote_unavailable' => $surchargeQuoteUnavailable,
+                'enforce' => (bool) $syncSurchargeCartLine,
+            )),
         ];
+    }
+
+    /**
+     * The payload checks of an order request (TWO-26274), in the order they have always run, each {kind, run}, where
+     * run(payload, before) throws the refusal. A shop-match check compares the payload with what the shop worked out;
+     * the default handler runs it, and stands down for a merchant handler. A consistency check compares the payload
+     * with itself, and always runs after the hook on the payload as the hook returned it. Tolerances, messages,
+     * exceptions and logs are the ones these checks had when they ran in the builder.
+     *
+     * @param Cart $cart
+     * @param string $contextLabel
+     * @param bool $strict
+     * @param array|null $placed getTwoPlacedOrderSnapshot() on the update path
+     * @param array $lineRefusals the shop-match refusals recorded on single lines, each {index, raise}
+     * @param array $lines the lines the module built
+     * @param int|null $feeIndex where the buyer fee line is in them; null with none
+     * @param array $fee the cart's fee line and the parity policy: {gross_cents, net_cents, quote_unavailable, enforce}
+     * @return array{cart:Cart|null,lines:array,items:array}
+     */
+    private function buildTwoOrderChecks($cart, $contextLabel, $strict, $placed, array $lineRefusals, array $lines, $feeIndex, array $fee)
+    {
+        $shippingRateSource = $this->twoShippingRateSource;
+        $placedTotals = $placed !== null ? $placed['totals'] : null;
+        $items = array();
+
+        // Shop-match: each line's declared rate against the amounts the shop stored, on the line it was made for, while
+        // the payload still carries that line unchanged.
+        $items[] = array('kind' => self::CHECK_SHOP_MATCH, 'run' => function (array $payload, array $before) use ($lineRefusals) {
+            foreach ($lineRefusals as $refusal) {
+                $line = $refusal['index'] !== null && isset($before['line_items'][$refusal['index']]) ? $before['line_items'][$refusal['index']] : null;
+                if ($line === null || $this->findTwoPayloadLine($payload, $line) !== null) {
+                    call_user_func($refusal['raise']);
+                }
+            }
+        });
+
+        // Consistency: at least one line. The builder refuses an empty build itself, so this is a handler that removed them.
+        $items[] = array('kind' => self::CHECK_CONSISTENCY, 'run' => function (array $payload) use ($contextLabel) {
+            if ($this->getTwoPayloadLines($payload) === array()) {
+                PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - no valid line items', 3);
+                $this->recordTwoDiscrepancyGate(null, $contextLabel, array());
+                throw new Exception('No valid line items in cart');
+            }
+        });
+
+        // Consistency: each line's formulas (gross = net + tax, tax at the declared rate, net from quantity and price).
+        $items[] = array('kind' => self::CHECK_CONSISTENCY, 'run' => function (array $payload) use ($contextLabel, $shippingRateSource) {
+            $lines = $this->getTwoPayloadLines($payload);
+            $valid = true;
+            foreach ($lines as $line) {
+                $valid = $valid && is_array($line);
+            }
+            // The shipping exemption follows the rate source of the build these lines came from.
+            $source = $this->twoShippingRateSource;
+            $this->twoShippingRateSource = $shippingRateSource;
+            try {
+                $valid = $valid && $this->validateTwoLineItems($lines);
+            } finally {
+                $this->twoShippingRateSource = $source;
+            }
+            if (!$valid) {
+                PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - invalid line item formulas', 3);
+                $this->recordTwoDiscrepancyGate('line_formulas', $contextLabel, array(), null, $lines);
+                throw new Exception('Invalid line item formulas');
+            }
+        });
+
+        // Consistency: the lines' totals satisfy gross = net + tax, with the order intent pre-check's tolerance.
+        $items[] = array('kind' => self::CHECK_CONSISTENCY, 'run' => function (array $payload) use ($contextLabel, $strict) {
+            $lines = $this->getTwoPayloadLines($payload);
+            $maxDiffCents = 0;
+            $drift = '';
+            if (!$this->validateTwoLineTotalsEquation($this->calculateTwoLineItemTotals($lines), $contextLabel, $maxDiffCents, $drift)) {
+                $this->enforceTwoReconciliation($contextLabel, $maxDiffCents, $drift, $strict, $lines);
+            }
+        });
+
+        // Shop-match: the lines, the buyer fee line aside, against the cart's (or the placed order's) totals.
+        $items[] = array('kind' => self::CHECK_SHOP_MATCH, 'whole_order' => true, 'run' => function (array $payload, array $before) use ($cart, $contextLabel, $strict, $placedTotals, $feeIndex) {
+            $lines = $this->getTwoPayloadLines($payload);
+            $at = $feeIndex !== null && isset($before['line_items'][$feeIndex]) ? $this->findTwoPayloadLine($payload, $before['line_items'][$feeIndex]) : null;
+            if ($at !== null) {
+                unset($lines[$at]);
+            }
+            $totals = $this->calculateTwoLineItemTotals($lines);
+            if (!$this->isTwoAmountWithinTolerance($totals['gross'], $totals['net'] + $totals['tax'])) {
+                // Lines that fail gross = net + tax are the consistency check's to report, as they always were.
+                return;
+            }
+            $maxDiffCents = 0;
+            $drift = '';
+            if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $totals, $contextLabel, $maxDiffCents, $drift, $placedTotals)) {
+                $this->enforceTwoReconciliation($contextLabel, $maxDiffCents, $drift, $strict, $lines);
+            }
+        });
+
+        // Consistency: the tax subtotals the payload carries, or else the ones its lines give, against the lines.
+        $items[] = array('kind' => self::CHECK_CONSISTENCY, 'run' => function (array $payload) use ($contextLabel) {
+            $lines = $this->getTwoPayloadLines($payload);
+            $lineTotals = $this->calculateTwoLineItemTotals($lines);
+            $subtotals = isset($payload['tax_subtotals']) ? $payload['tax_subtotals'] : $this->getTwoTaxSubtotals($lines);
+            $valid = is_array($subtotals);
+            foreach ($valid ? $subtotals : array() as $subtotal) {
+                $valid = $valid && is_array($subtotal) && isset($subtotal['taxable_amount'], $subtotal['tax_amount']);
+            }
+            $subtotalsTotals = $valid ? $this->calculateOrderTotalsFromTaxSubtotals($subtotals) : array('net' => null, 'tax' => null, 'gross' => null);
+            if (
+                $valid &&
+                $this->isTwoAmountWithinTolerance($lineTotals['net'], $subtotalsTotals['net']) &&
+                $this->isTwoAmountWithinTolerance($lineTotals['tax'], $subtotalsTotals['tax']) &&
+                $this->isTwoAmountWithinTolerance($lineTotals['gross'], $subtotalsTotals['gross'])
+            ) {
+                return;
+            }
+            PrestaShopLogger::addLog(
+                'TwoPayment: Cannot build ' . $contextLabel . ' - tax subtotals mismatch line totals. ' .
+                'Line(net/tax/gross)=(' . $this->getTwoRoundAmount($lineTotals['net']) . '/' .
+                $this->getTwoRoundAmount($lineTotals['tax']) . '/' .
+                $this->getTwoRoundAmount($lineTotals['gross']) . ') vs Subtotals=(' .
+                $this->getTwoRoundAmount($subtotalsTotals['net']) . '/' .
+                $this->getTwoRoundAmount($subtotalsTotals['tax']) . '/' .
+                $this->getTwoRoundAmount($subtotalsTotals['gross']) . ')',
+                3
+            );
+            $this->recordTwoDiscrepancyGate('tax_subtotals', $contextLabel, array(
+                'line' => $lineTotals,
+                'subtotals' => $subtotalsTotals,
+            ), null, $lines);
+            throw new TwoCheckoutAmountException('Tax subtotals do not reconcile with line items');
+        });
+
+        // Consistency: the order's net, tax and gross against its lines. The builder derives them from the lines.
+        $items[] = array('kind' => self::CHECK_CONSISTENCY, 'run' => function (array $payload) use ($contextLabel) {
+            $lines = $this->getTwoPayloadLines($payload);
+            $lineTotals = $this->calculateTwoLineItemTotals($lines);
+            $order = array();
+            $valid = true;
+            foreach (array('net' => 'net_amount', 'tax' => 'tax_amount', 'gross' => 'gross_amount') as $figure => $field) {
+                if (!array_key_exists($field, $payload)) {
+                    continue;
+                }
+                $order[$figure] = is_numeric($payload[$field]) ? (float) $payload[$field] : null;
+                $valid = $valid && $order[$figure] !== null && $this->isTwoAmountWithinTolerance($lineTotals[$figure], $order[$figure]);
+            }
+            if ($valid) {
+                return;
+            }
+            $show = function ($figure) use ($order) {
+                return !array_key_exists($figure, $order) ? '-' : ($order[$figure] === null ? 'invalid' : $this->getTwoRoundAmount($order[$figure]));
+            };
+            PrestaShopLogger::addLog(
+                'TwoPayment: Cannot build ' . $contextLabel . ' - order totals mismatch line totals. ' .
+                'Line(net/tax/gross)=(' . $this->getTwoRoundAmount($lineTotals['net']) . '/' .
+                $this->getTwoRoundAmount($lineTotals['tax']) . '/' .
+                $this->getTwoRoundAmount($lineTotals['gross']) . ') vs Order=(' .
+                $show('net') . '/' . $show('tax') . '/' . $show('gross') . ')',
+                3
+            );
+            $this->recordTwoDiscrepancyGate('order_totals', $contextLabel, array(
+                'line' => $lineTotals,
+                'order' => $order,
+            ), null, $lines);
+            throw new TwoCheckoutAmountException('Order totals do not reconcile with line items');
+        });
+
+        // Shop-match: PARITY (the single most important correctness edge of the
+        // surcharge-as-cart-line feature): the fee PrestaShop charges the
+        // buyer (hidden virtual product line) and the fee the Two payload
+        // carries must be the same money. On the create/strict paths a
+        // mismatch beyond ORDER_RECONCILIATION_TOLERANCE throws - checkout
+        // fails with a retryable error instead of ever creating an order
+        // whose PrestaShop total diverges from the Two invoice. The
+        // non-strict intent precheck logs a warning only; the update path
+        // replays the order's own fee row, so it has no cart side to compare.
+        // Like the checks on single lines, it applies to the module's fee line while the payload carries it unchanged:
+        // a handler that changed or removed that line owns the fee. With no fee line built, it always applies.
+        $items[] = array('kind' => self::CHECK_SHOP_MATCH, 'run' => function (array $payload, array $before) use ($contextLabel, $placed, $feeIndex, $fee) {
+            if ($placed !== null) {
+                return;
+            }
+            $line = $feeIndex !== null && isset($before['line_items'][$feeIndex]) ? $before['line_items'][$feeIndex] : null;
+            if ($line !== null && $this->findTwoPayloadLine($payload, $line) === null) {
+                return;
+            }
+            $payloadFeeGrossCents = $line !== null ? $this->convertAmountToCents($line['gross_amount']) : 0;
+            $payloadFeeNetCents = $line !== null ? $this->convertAmountToCents($line['net_amount']) : 0;
+            $diffCents = max(abs($payloadFeeGrossCents - $fee['gross_cents']), abs($payloadFeeNetCents - $fee['net_cents']));
+            // An unavailable quote is a parity failure in its own right (ABN-546):
+            // the buyer can switch term after the payment-options gate ran, and a
+            // pre-switch term that quoted zero leaves zero on both sides, which the
+            // cents comparison reads as agreement.
+            if (!(($fee['quote_unavailable'] && $fee['enforce']) || $diffCents > $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE))) {
+                return;
+            }
+            PrestaShopLogger::addLog(
+                'TwoPayment: ' . $contextLabel . ' surcharge parity mismatch - '
+                . ($fee['quote_unavailable'] ? 'the fee quote for the ordered term did not resolve; ' : '')
+                . 'cart line (net/gross)=(' .
+                $this->getTwoRoundAmount($fee['net_cents'] / 100) . '/' . $this->getTwoRoundAmount($fee['gross_cents'] / 100) .
+                ') vs payload fee line (net/gross)=(' .
+                $this->getTwoRoundAmount($payloadFeeNetCents / 100) . '/' . $this->getTwoRoundAmount($payloadFeeGrossCents / 100) . ')',
+                $fee['enforce'] ? 3 : 2
+            );
+            if ($fee['enforce']) {
+                throw new Exception('Surcharge line mismatch between cart and Two payload');
+            }
+        });
+
+        return array(
+            // The cart a refusal's discrepancy snapshot is written for; none on the update path, as before.
+            'cart' => $placed === null ? $cart : null,
+            'lines' => $lines,
+            'items' => $items,
+        );
+    }
+
+    /**
+     * Run an order request's payload checks on the payload the hook returned (TWO-26274). With $shopMatch, every check
+     * in the order they have always run: the default handler's shop-match checks with the consistency checks. Without,
+     * the consistency checks alone.
+     *
+     * @param array $checks buildTwoOrderChecks()
+     * @param array $payload as the hook returned it
+     * @param array $before as the module built it
+     * @param bool $shopMatch
+     * @return void
+     * @throws Exception the refusal
+     */
+    private function runTwoOrderChecks(array $checks, array $payload, array $before, $shopMatch)
+    {
+        $this->twoDiscrepancyGate = null;
+        try {
+            foreach ($checks['items'] as $check) {
+                if ($shopMatch || $check['kind'] !== self::CHECK_SHOP_MATCH) {
+                    call_user_func($check['run'], $payload, $before);
+                }
+            }
+        } catch (Throwable $e) {
+            if ($checks['cart'] !== null) {
+                $this->logTwoRefusalSnapshot($checks['cart'], $e);
+            }
+            throw $e;
+        }
+        if ($checks['cart'] !== null && Configuration::get('PS_TWO_DEBUG_MODE')) {
+            $this->logTwoDiscrepancySnapshot($checks['cart'], null, $checks['lines']);
+        }
+    }
+
+    /**
+     * Opt-in helper for a merchant handler (stable contract, TWO-26274): run the module's shop-match checks, which
+     * stand down when a merchant handler is on the hook, on a payload of the request the hook is running for. A check
+     * on a single line applies while the payload carries that line as the module built it; the others compare the
+     * whole payload with the shop. Outside the hook, or on a request with no such checks, it does nothing.
+     *
+     * A refusal it throws, and the handler lets through, refuses the request exactly as the module's own handler
+     * would have: the same exception, message and log.
+     *
+     * With SHOP_MATCH_LINES only the checks on single lines run (declared rates, the buyer fee line, a credit slip's
+     * shipping), not the lines against the cart's or placed order's totals: for a handler that declares a split of
+     * the order the shop does not have, and owns that comparison.
+     *
+     * @param array $payload the payload the handler returns, or the one it was given
+     * @param string $scope SHOP_MATCH_ALL or SHOP_MATCH_LINES
+     * @return void
+     * @throws InvalidArgumentException for any other scope
+     * @throws Exception the module's refusal
+     */
+    public function runTwoShopMatchChecks(array $payload, $scope = self::SHOP_MATCH_ALL)
+    {
+        if ($scope !== self::SHOP_MATCH_ALL && $scope !== self::SHOP_MATCH_LINES) {
+            throw new InvalidArgumentException('runTwoShopMatchChecks() scope must be Twopayment::SHOP_MATCH_ALL or Twopayment::SHOP_MATCH_LINES');
+        }
+        $active = self::$twoActiveOrderChecks;
+        if ($active === null) {
+            return;
+        }
+        $active['owner']->twoDiscrepancyGate = null;
+        try {
+            foreach ($active['checks']['items'] as $check) {
+                if ($check['kind'] === self::CHECK_SHOP_MATCH && ($scope === self::SHOP_MATCH_ALL || empty($check['whole_order']))) {
+                    call_user_func($check['run'], $payload, $active['before']);
+                }
+            }
+        } catch (Throwable $e) {
+            self::$twoShopMatchRefusal = $e;
+            throw $e;
+        }
+    }
+
+    /**
+     * The module's own handler on its order postprocessing hook (TWO-26274), registered so the hook lists it. The
+     * module runs the shop-match checks itself after the hook whenever no merchant handler is registered, so its
+     * dispatch never calls this; reached through core's Hook::exec(), it runs them on the payload given, on the same
+     * condition.
+     *
+     * @param array $params
+     * @return void
+     * @throws Exception the module's refusal
+     */
+    public function hookActionTwoOrderPostprocessing($params)
+    {
+        if (isset($params['payload']) && is_array($params['payload']) && TwoOrderPostprocessing::runnableSubscribers() === array()) {
+            $this->runTwoShopMatchChecks($params['payload']);
+        }
+    }
+
+    /**
+     * @param array $payload
+     * @return array the payload's line_items; none when it has no list of them
+     */
+    private function getTwoPayloadLines(array $payload)
+    {
+        return isset($payload['line_items']) && is_array($payload['line_items']) ? $payload['line_items'] : array();
+    }
+
+    /**
+     * @param array $payload
+     * @param mixed $line
+     * @return int|string|null the key of the payload's first line equal to $line, null with none
+     */
+    private function findTwoPayloadLine(array $payload, $line)
+    {
+        $wanted = TwoOrderPostprocessing::canonical($line);
+        foreach ($this->getTwoPayloadLines($payload) as $key => $candidate) {
+            if (TwoOrderPostprocessing::canonical($candidate) === $wanted) {
+                return $key;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -8234,39 +8566,78 @@ class Twopayment extends PaymentModule
     /**
      * The one choke point every order request passes through before it is sent
      * (TWO-26092): fires actionTwoOrderPostprocessing with the payload by
-     * reference and returns the payload as the subscribers left it. The
-     * plugin's own gates have already run on what it built; Two's API
-     * validates what is sent.
+     * reference and returns the payload as the merchant handlers left it.
+     *
+     * Then the payload checks run on that payload (TWO-26274). The shop-match
+     * checks are the module's default handler: they run only when no merchant
+     * handler is registered, which owns them otherwise and can call
+     * runTwoShopMatchChecks(). The consistency checks always run.
      *
      * @param string $requestType a TwoOrderPostprocessing::REQUEST_* value
      * @param array $payload the complete request body; empty for a request with none
      * @param array $context buildTwoOrderPostprocessingContext()
+     * @param array|null $checks the request's payload checks (buildTwoOrderChecks()); null for a request with none
      * @return array
      * @throws TwoOrderPostprocessingException when a subscriber throws, or leaves something that is not a JSON-encodable array
+     * @throws Exception when a payload check refuses
      */
-    public function postprocessOrderRequest($requestType, array $payload, array $context)
+    public function postprocessOrderRequest($requestType, array $payload, array $context, $checks = null)
     {
         $before = $payload;
+        $handlers = array();
+        $outerChecks = self::$twoActiveOrderChecks;
+        $outerRefusal = self::$twoShopMatchRefusal;
+        self::$twoActiveOrderChecks = $checks === null ? null : array('checks' => $checks, 'before' => $before, 'owner' => $this);
+        self::$twoShopMatchRefusal = null;
         try {
-            TwoOrderPostprocessing::dispatch($payload, $context);
+            // Inside the try: a merchant module that fails to load fails the request with the hook's code, as dispatch always did.
+            $handlers = TwoOrderPostprocessing::runnableSubscribers();
+            TwoOrderPostprocessing::dispatch($payload, $context, $handlers);
         } catch (Throwable $e) {
+            if ($checks !== null && $e === self::$twoShopMatchRefusal) {
+                // A handler let the module's own refusal from runTwoShopMatchChecks() through: refused as the default handler refuses.
+                if ($checks['cart'] !== null) {
+                    $this->logTwoRefusalSnapshot($checks['cart'], $e);
+                }
+                throw $e;
+            }
             $this->failTwoOrderPostprocessing($requestType, $context, 'a subscriber threw ' . get_class($e) . ' at ' . TwoDiscrepancySnapshot::throwSite($e), $e);
+        } finally {
+            self::$twoActiveOrderChecks = $outerChecks;
+            self::$twoShopMatchRefusal = $outerRefusal;
         }
         if (!is_array($payload)) {
             $this->failTwoOrderPostprocessing($requestType, $context, 'a subscriber left ' . gettype($payload) . ' where the payload array belongs');
         }
-        if (TwoOrderPostprocessing::canonical($payload) === TwoOrderPostprocessing::canonical($before)) {
-            return $payload;
+        if (TwoOrderPostprocessing::canonical($payload) !== TwoOrderPostprocessing::canonical($before)) {
+            if (json_encode($payload) === false) {
+                $this->failTwoOrderPostprocessing($requestType, $context, 'a subscriber left a payload that cannot be JSON-encoded (' . json_last_error_msg() . ')');
+            }
+            if (Configuration::get('PS_TWO_DEBUG_MODE')) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: The order postprocessing hook changed the ' . $requestType . ' request (' . $context['trigger'] . '). Diff: ' .
+                    json_encode(TwoOrderPostprocessing::compactDiff($before, $payload), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                    1
+                );
+            }
         }
-        if (json_encode($payload) === false) {
-            $this->failTwoOrderPostprocessing($requestType, $context, 'a subscriber left a payload that cannot be JSON-encoded (' . json_last_error_msg() . ')');
-        }
-        if (Configuration::get('PS_TWO_DEBUG_MODE')) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: The order postprocessing hook changed the ' . $requestType . ' request (' . $context['trigger'] . '). Diff: ' .
-                json_encode(TwoOrderPostprocessing::compactDiff($before, $payload), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                1
-            );
+        if ($checks !== null) {
+            if ($handlers !== array()) {
+                $subject = isset($context['order']) && is_object($context['order']) ? 'order ' . (int) $context['order']->id
+                    : (isset($context['cart']) && is_object($context['cart']) ? 'cart ' . (int) $context['cart']->id : 'no cart');
+                PrestaShopLogger::addLog(
+                    'TwoPayment: The ' . $requestType . ' request (' . $context['trigger'] . ', ' . $subject . ') has an order postprocessing hook handler ('
+                    . implode(', ', TwoOrderPostprocessing::names($handlers)) . '): the shop-match checks are delegated to it, and the consistency checks still run.',
+                    1,
+                    null,
+                    null,
+                    null,
+                    // One per request: PrestaShop 1.7 otherwise keeps only the first of identical lines, and a cart's
+                    // order intent pre-checks repeat the same one.
+                    true
+                );
+            }
+            $this->runTwoOrderChecks($checks, $payload, $before, $handlers === array());
         }
 
         return $payload;
@@ -8394,16 +8765,19 @@ class Twopayment extends PaymentModule
      * @param Order|null $order
      * @param array $headers
      * @param array|null $sentPayload set to the payload as the subscribers returned it, which is what is sent; null when refused
+     * @param array|null $checks the request's payload checks, see postprocessOrderRequest()
      * @return array the API response; a refusal returns http_status 0 and the code, unsent
+     * @throws Exception when a payload check refuses
      */
-    public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null)
+    public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null)
     {
         $sentPayload = null;
         try {
             $payload = $this->postprocessOrderRequest(
                 $requestType,
                 $payload,
-                $this->buildTwoOrderPostprocessingContext($requestType, $trigger, $endpoint, $cart, $order)
+                $this->buildTwoOrderPostprocessingContext($requestType, $trigger, $endpoint, $cart, $order),
+                $checks
             );
         } catch (TwoOrderPostprocessingException $e) {
             // Each caller's own failure branch already logs an unsent request.
@@ -8482,26 +8856,12 @@ class Twopayment extends PaymentModule
      */
     private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, &$maxDiffCents = 0, &$driftDetail = '', $placedTotals = null)
     {
-        $maxDiffCents = 0;
-        $driftDetail = '';
+        if (!$this->validateTwoLineTotalsEquation($lineTotals, $contextLabel, $maxDiffCents, $driftDetail)) {
+            return false;
+        }
         $lineNet = round((float)$lineTotals['net'], 2);
         $lineTax = round((float)$lineTotals['tax'], 2);
         $lineGross = round((float)$lineTotals['gross'], 2);
-
-        if (!$this->isTwoAmountWithinTolerance($lineGross, $lineNet + $lineTax)) {
-            $maxDiffCents = PHP_INT_MAX;
-            $driftDetail = 'order lines gross ' . $this->getTwoRoundAmount($lineGross) .
-                ' vs order lines net+tax ' . $this->getTwoRoundAmount($lineNet + $lineTax);
-            $this->recordTwoDiscrepancyGate('reconciliation', $contextLabel, array(
-                'check' => 'line gross equation',
-                'line' => array('net' => $lineNet, 'tax' => $lineTax, 'gross' => $lineGross),
-            ));
-            PrestaShopLogger::addLog(
-                'TwoPayment: ' . $contextLabel . ' reconciliation mismatch - line totals fail gross equation: ' . $driftDetail,
-                3
-            );
-            return false;
-        }
 
         $cartGross = $placedTotals !== null ? $placedTotals['gross'] : round((float)$cart->getOrderTotal(true, Cart::BOTH), 2);
         $cartNet = $placedTotals !== null ? $placedTotals['net'] : round((float)$cart->getOrderTotal(false, Cart::BOTH), 2);
@@ -8562,6 +8922,83 @@ class Twopayment extends PaymentModule
         }
 
         return true;
+    }
+
+    /**
+     * Whether line totals satisfy gross = net + tax, which the payload's own figures must (a consistency check, TWO-26274).
+     *
+     * @param array $lineTotals
+     * @param string $contextLabel
+     * @param int $maxDiffCents set to PHP_INT_MAX, the marker for this failure, or 0
+     * @param string $driftDetail set to the figures that disagree
+     * @return bool
+     */
+    private function validateTwoLineTotalsEquation($lineTotals, $contextLabel, &$maxDiffCents = 0, &$driftDetail = '')
+    {
+        $maxDiffCents = 0;
+        $driftDetail = '';
+        $lineNet = round((float)$lineTotals['net'], 2);
+        $lineTax = round((float)$lineTotals['tax'], 2);
+        $lineGross = round((float)$lineTotals['gross'], 2);
+        if ($this->isTwoAmountWithinTolerance($lineGross, $lineNet + $lineTax)) {
+            return true;
+        }
+        $maxDiffCents = PHP_INT_MAX;
+        $driftDetail = 'order lines gross ' . $this->getTwoRoundAmount($lineGross) .
+            ' vs order lines net+tax ' . $this->getTwoRoundAmount($lineNet + $lineTax);
+        $this->recordTwoDiscrepancyGate('reconciliation', $contextLabel, array(
+            'check' => 'line gross equation',
+            'line' => array('net' => $lineNet, 'tax' => $lineTax, 'gross' => $lineGross),
+        ));
+        PrestaShopLogger::addLog(
+            'TwoPayment: ' . $contextLabel . ' reconciliation mismatch - line totals fail gross equation: ' . $driftDetail,
+            3
+        );
+
+        return false;
+    }
+
+    /**
+     * Refuse, or on the order intent pre-check only log, a reconciliation failure, as the reconciliation policy says.
+     *
+     * @param string $contextLabel
+     * @param int $maxDiffCents PHP_INT_MAX for lines failing gross = net + tax
+     * @param string $driftDetail
+     * @param bool $strictReconciliation
+     * @param array $lineItems the lines checked, for the discrepancy snapshot
+     * @return void
+     * @throws TwoCheckoutAmountException
+     */
+    private function enforceTwoReconciliation($contextLabel, $maxDiffCents, $driftDetail, $strictReconciliation, array $lineItems)
+    {
+        if ($this->shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, (bool)$strictReconciliation)) {
+            if ($this->twoDiscrepancyGate !== null) {
+                $this->twoDiscrepancyGate['line_items'] = $lineItems;
+            }
+            PrestaShopLogger::addLog(
+                'TwoPayment: ' . $contextLabel . ' blocked by reconciliation policy. ' .
+                'Max drift=' . $this->getTwoRoundAmount($maxDiffCents / 100) .
+                ', Tolerance=' . $this->getTwoRoundAmount(self::ORDER_RECONCILIATION_TOLERANCE),
+                3
+            );
+            // Carry the numbers in the exception, not just the log: this
+            // message is what the buyer-facing decline path renders, and an
+            // opaque rejection here is what made TWO-25161 take two weeks
+            // of email to diagnose. TwoCheckoutAmountException is what
+            // authorises that relay: see the class docblock.
+            // PHP_INT_MAX is the validator's marker for order lines failing gross = net + tax, before any cart comparison.
+            $reconciliation_prefix = $maxDiffCents === PHP_INT_MAX
+                ? 'Order line totals are internally inconsistent: '
+                : 'Order totals do not reconcile with cart totals: ';
+            throw new TwoCheckoutAmountException($reconciliation_prefix . $driftDetail);
+        }
+
+        PrestaShopLogger::addLog(
+            'TwoPayment: ' . $contextLabel . ' reconciliation drift logged as warning-only (intent precheck path).',
+            2
+        );
+        // Tolerated here, so a later refusal must not be reported as this gate.
+        $this->twoDiscrepancyGate = null;
     }
 
     /**
@@ -8720,7 +9157,8 @@ class Twopayment extends PaymentModule
                 (bool) $strictReconciliation ? 'strict_intent' : 'precheck',
                 '/v1/order_intent',
                 $cart
-            )
+            ),
+            $pricingData['checks']
         );
     }
 
@@ -9148,7 +9586,8 @@ class Twopayment extends PaymentModule
         return $this->postprocessOrderRequest(
             TwoOrderPostprocessing::REQUEST_ORDER_CREATE,
             $request_data,
-            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_CREATE, $trigger, '/v1/order', $cart)
+            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_CREATE, $trigger, '/v1/order', $cart),
+            $pricingData['checks']
         );
     }
 
@@ -9350,8 +9789,11 @@ class Twopayment extends PaymentModule
      * @param float $net
      * @param float $tax
      * @param float|null $declared
+     * A shop-match check (TWO-26274): while an order request is built, a rate no candidate reconciles with is recorded
+     * for the wrapping line and enforced after the hook, and the line meanwhile carries the first candidate there is.
+     *
      * @return float a decimal rate
-     * @throws Exception when the invoices disagree or no candidate reconciles
+     * @throws Exception when the invoices disagree or, outside an order build, no candidate reconciles
      */
     private function resolveTwoPlacedWrappingRate($order, $orderIds, $net, $tax, $declared)
     {
@@ -9375,8 +9817,24 @@ class Twopayment extends PaymentModule
             $describe($declared),
             $describe($configured)
         );
-        PrestaShopLogger::addLog('TwoPayment: ' . $message, 3);
-        throw new Exception($message);
+        $refuse = function () use ($message) {
+            PrestaShopLogger::addLog('TwoPayment: ' . $message, 3);
+
+            return new Exception($message);
+        };
+        if ($this->twoDeferredShopMatch === null) {
+            throw $refuse();
+        }
+        $this->twoDeferredPlacedWrapping = function () use ($refuse) {
+            throw $refuse();
+        };
+        foreach (array($invoiced, $declared) as $rate) {
+            if ($rate !== null) {
+                return $rate;
+            }
+        }
+
+        return $configured;
     }
 
     /**
@@ -9681,7 +10139,8 @@ class Twopayment extends PaymentModule
         return $this->postprocessOrderRequest(
             TwoOrderPostprocessing::REQUEST_ORDER_UPDATE,
             $request_data,
-            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_UPDATE, $trigger, $endpoint, $cart, $order)
+            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_UPDATE, $trigger, $endpoint, $cart, $order),
+            $pricingData['checks']
         );
     }
 
@@ -9846,7 +10305,8 @@ class Twopayment extends PaymentModule
                 'product ' . $line_item['id_product'],
                 $net_amount_prestashop,
                 $tax_amount_prestashop,
-                $tax_rate
+                $tax_rate,
+                count($items)
             );
 
             // Use PrestaShop unit price when available; otherwise derive from net total.
@@ -10120,7 +10580,8 @@ class Twopayment extends PaymentModule
                             'shipping (' . $shipping_name . ')',
                             $shipping_net,
                             $shipping_tax_amount,
-                            $shipping_tax_rate_decimal
+                            $shipping_tax_rate_decimal,
+                            count($items)
                         );
                     }
                     $items[] = $this->buildTwoChargeLineFromSegment($shipping_line_template, [
@@ -10167,11 +10628,17 @@ class Twopayment extends PaymentModule
                 if ($placed === null) {
                     $this->twoDeclaredChargeRates['wrapping'] = $wrapping_rate_decimal;
                 }
+                if ($this->twoDeferredPlacedWrapping !== null && $this->twoDeferredShopMatch !== null) {
+                    // The placed wrapping's rate refusal, now bound to its line and ahead of the check below, as it ran before.
+                    $this->twoDeferredShopMatch[] = array('index' => count($items), 'raise' => $this->twoDeferredPlacedWrapping);
+                    $this->twoDeferredPlacedWrapping = null;
+                }
                 $this->assertTwoDeclaredRateReconcilesWithAmounts(
                     'gift wrapping',
                     $wrapping_totals['net'],
                     $wrapping_totals['tax'],
-                    $wrapping_rate_decimal
+                    $wrapping_rate_decimal,
+                    count($items)
                 );
                 $items[] = $this->buildTwoChargeLineFromSegment($wrapping_line_template, [
                     'net' => $wrapping_totals['net'],
@@ -10487,14 +10954,19 @@ class Twopayment extends PaymentModule
      * design: we never derive, snap or substitute a rate — an internally
      * contradictory line is surfaced to the merchant instead.
      *
+     * A shop-match check (TWO-26274): while an order request is built it is recorded against the line it was made for
+     * and enforced after the hook, by the default handler or runTwoShopMatchChecks(); called any other way, as from
+     * getTwoProductItems() outside the order build, it refuses at once.
+     *
      * @param string $label Line description for logs/errors
      * @param float $net_amount Emitted 2dp net amount
      * @param float $tax_amount Emitted 2dp tax amount
      * @param float $rate_decimal Declared decimal rate (e.g. 0.21)
+     * @param int|null $lineIndex the index the line will have in the built lines
      * @return void
      * @throws TwoCheckoutAmountException
      */
-    private function assertTwoDeclaredRateReconcilesWithAmounts($label, $net_amount, $tax_amount, $rate_decimal)
+    private function assertTwoDeclaredRateReconcilesWithAmounts($label, $net_amount, $tax_amount, $rate_decimal, $lineIndex = null)
     {
         $net_amount = round((float) $net_amount, 2);
         $tax_amount = round((float) $tax_amount, 2);
@@ -10502,7 +10974,28 @@ class Twopayment extends PaymentModule
         if (abs($tax_amount - $expected_tax) <= self::TAX_FORMULA_TOLERANCE) {
             return;
         }
+        $raise = function () use ($label, $net_amount, $tax_amount, $rate_decimal, $expected_tax) {
+            $this->refuseTwoDeclaredRate($label, $net_amount, $tax_amount, $rate_decimal, $expected_tax);
+        };
+        if ($this->twoDeferredShopMatch !== null && $lineIndex !== null) {
+            $this->twoDeferredShopMatch[] = array('index' => (int) $lineIndex, 'raise' => $raise);
 
+            return;
+        }
+        $raise();
+    }
+
+    /**
+     * @param string $label
+     * @param float $net_amount
+     * @param float $tax_amount
+     * @param float $rate_decimal
+     * @param float $expected_tax
+     * @return void
+     * @throws TwoCheckoutAmountException
+     */
+    private function refuseTwoDeclaredRate($label, $net_amount, $tax_amount, $rate_decimal, $expected_tax)
+    {
         PrestaShopLogger::addLog(
             'TwoPayment: Declared tax rate does not reconcile with applied amounts for ' . $label .
             '. Declared rate=' . round(max(0, (float) $rate_decimal) * 100, 2) . '%' .

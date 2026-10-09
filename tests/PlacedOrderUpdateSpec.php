@@ -78,6 +78,36 @@ final class PlacedOrderUpdateSpec
             StubStore::$taxRuleRates[511] = 15.0;
             self::addLine($o, 9502, 1, 40.00, 15.0, 511);
         };
+        // TWO-26274: a merchant handler on the order postprocessing hook, editing each payload with $edit; with
+        // $helper it first opts back in to the module's shop-match checks on the payload as built.
+        $handler = function (callable $edit, ?TwopaymentTestHarness $helper = null): void {
+            Hook::$subscribers[TwoOrderPostprocessing::HOOK]['merchanthandler'] = static function (array $params) use ($edit, $helper): void {
+                if ($helper !== null) {
+                    $helper->runTwoShopMatchChecks($params['payload']);
+                }
+                $params['payload'] = $edit($params['payload']);
+            };
+        };
+        $atRate = function (string $type, string $rate): callable {
+            return function (array $payload) use ($type, $rate): array {
+                foreach ($payload['line_items'] as &$line) {
+                    if ($line['type'] === $type) {
+                        $line['tax_rate'] = $rate;
+                    }
+                }
+                unset($line);
+
+                return $payload;
+            };
+        };
+        $unchanged = function (array $payload): array {
+            return $payload;
+        };
+        $placedAtUnreconciledDefault = function (PlacedOrderStub $o): void {
+            $o->carrier_tax_rate = 0.0;
+            self::declare([[0.15, 8.00]], null, false);
+            StubStore::$taxRuleRates[520] = 15.0;
+        };
         $wrapping = function (PlacedOrderStub $o): void {
             Configuration::updateValue('PS_GIFT_WRAPPING_TAX_RULES_GROUP', 510);
             $o->total_wrapping_tax_excl = 2.00;
@@ -157,6 +187,17 @@ final class PlacedOrderUpdateSpec
                 ];
             }, $track, 'edit', 'no PUT, paid 37.50, logged TwoPayment: Order 9601 invoices record gift wrapping at different rates (25%, 12%): the order holds no single wrapping rate, marked not sent',
                 'invoices disagreeing on the wrapping rate fail loud'],
+            [$wrapping, function ($o) use ($track) {
+                Configuration::updateValue('PS_GIFT_WRAPPING_TAX_RULES_GROUP', 511);
+                StubStore::$taxRuleRates[511] = 15.0;
+                $track($o);
+            }, 'edit', 'no PUT, paid 37.50, logged TwoPayment: Order 9601 records gift wrapping 2.00 net, 0.50 tax, which no stored or configured rate reconciles with (invoiced none, declared at placement none, configured 15%), marked not sent', 'gift wrapping no stored or configured rate reconciles with: refused'],
+            [$wrapping, function ($o) use ($track, $handler, $atRate) {
+                Configuration::updateValue('PS_GIFT_WRAPPING_TAX_RULES_GROUP', 511);
+                StubStore::$taxRuleRates[511] = 15.0;
+                $handler($atRate('DIGITAL', '0.25'));
+                $track($o);
+            }, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25; DIGITAL 2.00/0.50/2.50@0.25 = 37.50 NOK, paid 37.50', 'the same, with a merchant handler that declares the rate the amounts carry: sent as returned'],
             [function ($o) {
                 // PaymentModule writes carrier_tax_rate only when a Carrier loads, so a carrier-less order records 0.000.
                 $o->id_carrier = 0;
@@ -199,6 +240,16 @@ final class PlacedOrderUpdateSpec
                 self::declare([[0.15, 8.00]], null, true);
                 self::enableDefaultShippingTaxCode(520);
             }, $track, 'tracking', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.15 = 35.00 NOK', 'a rate the carrier provided that does not reconcile goes out as is, never swapped for the config'],
+            [$placedAtUnreconciledDefault, function ($o) use ($handler, $unchanged) {
+                $handler($unchanged);
+            }, 'edit', 'no PUT, paid 35.00, logged TwoPayment CRITICAL Tax Formula Error - Item: Placed Carrier, Got: 2, Expected: 1.2 (diff: 0.8), marked not sent', 'the same, with a merchant handler that leaves the line: the shop-match check stands down, the line\'s own formula still refuses it'],
+            [$placedAtUnreconciledDefault, function ($o) use ($handler, $atRate) {
+                $handler($atRate('SHIPPING_FEE', '0.25'));
+            }, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 35.00 NOK, paid 35.00', 'the same, with a merchant handler that declares the rate the amounts carry: sent as returned'],
+            [$placedAtUnreconciledDefault, function ($o, $module) use ($handler, $atRate) {
+                $handler($atRate('SHIPPING_FEE', '0.25'), $module);
+            }, 'edit', 'no PUT, paid 35.00, logged TwoPayment: Declared tax rate does not reconcile with applied amounts for shipping (Placed Carrier).'
+                . ' Declared rate=15%, net=8.00, applied tax=2.00, expected tax at declared rate=1.20. Check the tax rules configured for this line (tax rules group, address-specific rules)., marked not sent', 'the same, with a merchant handler that opts back in to the shop-match checks: refused as the module refuses it'],
             [function ($o) {
                 $o->carrier_tax_rate = 0.0;
                 $o->total_paid_tax_incl -= 0.40;

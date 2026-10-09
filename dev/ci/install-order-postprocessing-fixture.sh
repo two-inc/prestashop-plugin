@@ -2,8 +2,9 @@
 # Install the actionTwoOrderPostprocessing subscriber fixture (TWO-26092) into a
 # running PrestaShop, for tests/integration/order-postprocessing-hook.php.
 #
-# The fixture ships inert (TWO_OPP_TEST_MODE unset), so installing it changes
-# nothing for any other probe.
+# The fixture ships unarmed (TWO_OPP_TEST_MODE unset), but an enabled handler on
+# the hook makes the module's own default handler stand down (TWO-26274), so it is
+# left disabled: order-postprocessing-hook.php enables it only while it runs.
 #
 # Idempotent. Required env, one of:
 #   SFX          - namespacing suffix used by boot-prestashop.sh (container ps-$SFX).
@@ -30,5 +31,12 @@ exit(Module::isInstalled("twoorderpostprocessingtest") ? 0 : 1);
 '; then
   docker exec -u www-data "$PS_CONTAINER" bash -c \
     "cd /var/www/html && php -d memory_limit=512M bin/console prestashop:module install twoorderpostprocessingtest"
+fi
+if docker exec -u www-data "$PS_CONTAINER" php -d memory_limit=512M -r '
+require "/var/www/html/config/config.inc.php";
+exit(Module::isEnabled("twoorderpostprocessingtest") ? 0 : 1);
+'; then
+  docker exec -u www-data "$PS_CONTAINER" bash -c \
+    "cd /var/www/html && php -d memory_limit=512M bin/console prestashop:module disable twoorderpostprocessingtest"
 fi
 docker exec "$PS_CONTAINER" bash -c "rm -rf /var/www/html/var/cache/*"

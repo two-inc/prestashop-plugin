@@ -99,7 +99,8 @@ final class ReconciliationDriftMessageSpec
 
             $message = null;
             try {
-                $method->invoke($module, $cart, 'order create payload', true);
+                // The checks run after the hook (TWO-26274), so the build hands them back.
+                $module->runPricingChecksForTest($method->invoke($module, $cart, 'order create payload', true));
             } catch (TwoCheckoutAmountException $e) {
                 $message = $e->getMessage();
             }
