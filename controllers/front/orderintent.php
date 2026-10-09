@@ -884,11 +884,24 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest(
+        $result = $this->module->setTwoPaymentRequest(
             '/companies/v2/company/' . rawurlencode($lookupId),
             array(),
             'GET'
-        ));
+        );
+        // The checkout copies these postcodes into the address form, which
+        // core refuses unless they match the country's zip_code_format (TWO-26257).
+        if (is_array($result) && isset($result['data']) && is_array($result['data'])) {
+            $result['data'] = TwoPostcodeFormat::formatCompanyAddresses($result['data'], function ($iso) {
+                // getByIso() dies on anything but a 2-3 letter code.
+                if (!preg_match('/^[A-Z]{2,3}\z/', $iso)) {
+                    return '';
+                }
+
+                return (string) Country::getZipCodeFormat((int) Country::getByIso($iso));
+            });
+        }
+        $this->relayTwoApiResponse($result);
     }
 
     /**
