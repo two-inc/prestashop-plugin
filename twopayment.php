@@ -19805,10 +19805,17 @@ class Twopayment extends PaymentModule
             $response_data = json_decode($response_body, true);
             
             // BACKWARD COMPATIBILITY: Merge data into root for existing code
-            return array_merge([
+            $response = array_merge([
                 'http_status' => (int)$http_status,
                 'data' => $response_data,
             ], is_array($response_data) ? $response_data : []);
+            if (!is_array($response_data) && trim((string)$response_body) !== '') {
+                // A body that is not JSON (a proxy's error page, say) is otherwise lost;
+                // getTwoApiErrorDetail() logs this much of it (TWO-26264).
+                $response['raw_body'] = Tools::substr((string)$response_body, 0, 500);
+            }
+
+            return $response;
         } else {
             $url = sprintf('%s%s', $this->getTwoCheckoutHostUrl(), $endpoint);
             $url .= (strpos($url, '?') === false ? '?' : '&') . http_build_query($this->getTwoClientParams());
@@ -20415,7 +20422,7 @@ class Twopayment extends PaymentModule
         $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
         $parts = array();
         foreach (is_array($response) ? array($response, isset($response['data']) && is_array($response['data']) ? $response['data'] : array()) : array() as $body) {
-            foreach (array('error_code', 'error_message', 'error_details', 'message', 'detail', 'error') as $key) {
+            foreach (array('error_code', 'error_message', 'error_details', 'error_json', 'error_trace_id', 'message', 'detail', 'error', 'raw_body') as $key) {
                 if (isset($body[$key]) && $body[$key] !== '' && $body[$key] !== array()) {
                     $parts[] = is_scalar($body[$key]) ? (string) $body[$key] : json_encode($body[$key], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 }
@@ -20447,14 +20454,40 @@ class Twopayment extends PaymentModule
                 }
             }
             if ($fields !== array()) {
-                return implode(' ', $fields);
+                return $this->joinTwoBuyerSentences($fields);
             }
         }
         if (isset($body['error_code']) && $body['error_code'] === 'SAME_BUYER_SELLER_ERROR') {
-            return $this->l('Buyer and merchant may not be the same company');
+            return $this->joinTwoBuyerSentences(array($this->l('Buyer and merchant may not be the same company')));
         }
 
         return sprintf($this->l('Invoice purchase with %s is not available for this order.'), $this->getTwoBrandConfig('product_name'));
+    }
+
+    /**
+     * Buyer-facing sentences as one notice: each closed with a full stop where it has no
+     * sentence punctuation of its own (several messages share their wording with the
+     * WooCommerce plugin, which shows each as a separate notice and so has none), and a
+     * sentence repeated by two errors shown once.
+     *
+     * @param string[] $sentences
+     * @return string
+     */
+    public function joinTwoBuyerSentences(array $sentences)
+    {
+        $closed = array();
+        foreach ($sentences as $sentence) {
+            $sentence = trim((string) $sentence);
+            if ($sentence === '') {
+                continue;
+            }
+            if (!preg_match('/[.!?]\z/u', $sentence)) {
+                $sentence .= '.';
+            }
+            $closed[$sentence] = true;
+        }
+
+        return implode(' ', array_keys($closed));
     }
 
     /**
@@ -20466,7 +20499,7 @@ class Twopayment extends PaymentModule
      */
     private function getTwoRefusedFieldMessage(array $error)
     {
-        if (!isset($error['loc'], $error['msg']) || !is_array($error['loc'])) {
+        if (!isset($error['loc'], $error['msg']) || !is_array($error['loc']) || !is_string($error['msg'])) {
             return null;
         }
         foreach ($error['loc'] as $segment) {
@@ -20478,7 +20511,7 @@ class Twopayment extends PaymentModule
         if ($loc === 'invoice_details.invoice_emails' || strpos($loc, 'invoice_details.invoice_emails.') === 0) {
             return $this->l('Please enter a valid Invoice email address to pay on invoice');
         }
-        if ($loc === 'buyer' && strpos((string) $error['msg'], 'Invalid phone number') !== false) {
+        if ($loc === 'buyer' && strpos($error['msg'], 'Invalid phone number') !== false) {
             $loc = 'buyer.representative.phone_number';
         }
         switch ($loc) {

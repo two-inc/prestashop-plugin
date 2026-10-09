@@ -148,37 +148,49 @@ final class AjaxCheckoutFailureSpec
      */
     private static function testACreateRefusalTellsTheBuyerOnlyWhatTheyCanActOn(): void
     {
-        $phone = 'Please enter a valid Phone number to pay on invoice';
-        $sameCompany = 'Buyer and merchant may not be the same company';
-        $invalid = "OrderInvalidError {'order_id': 'Line item tax_code is required'}";
+        $phone = 'Please enter a valid Phone number to pay on invoice.';
+        $sameCompany = 'Buyer and merchant may not be the same company.';
+        $invalid = "OrderError {'order_id': 'a line item lacks a field'}";
+        $hint = 'Minimum order value is EUR50.00 excluding tax.';
+        $fieldJson = '"loc":["billing_address","city"]';
 
-        // [create response, buyer message, a fragment the log must carry, description].
+        // [create response, buyer message, a fragment the log must carry, description, minimum hint].
         $cases = array(
             array(['http_status' => 400, 'error_code' => 'ORDER_INVALID', 'error_message' => 'Order is invalid', 'error_details' => $invalid],
                 self::GENERIC_REFUSAL, $invalid, 'raw error details stay off the storefront'),
             array(['http_status' => 400, 'error_code' => 'SCHEMA_ERROR', 'error_json' => [['loc' => ['buyer', 'representative', 'phone_number'], 'msg' => 'value is not a valid phone number']]],
                 $phone, 'SCHEMA_ERROR', 'a field Two names is one the buyer can correct'),
-            array(['http_status' => 400, 'error_json' => [['loc' => ['buyer'], 'msg' => 'Invalid phone number']]],
-                $phone, 'HTTP 400', 'a buyer-level phone error names the phone number'),
-            array(['http_status' => 422, 'error_json' => [['loc' => ['billing_address', 'city'], 'msg' => 'required'], ['loc' => ['invoice_details', 'invoice_emails', 0], 'msg' => 'bad']]],
-                'Please enter a valid City to pay on invoice Please enter a valid Invoice email address to pay on invoice', 'HTTP 422', 'every named field is listed, in order'),
+            array(['http_status' => 400, 'error_trace_id' => 'trace-4711', 'error_json' => [['loc' => ['buyer'], 'msg' => 'Invalid phone number']]],
+                $phone, 'trace-4711', 'a buyer-level phone error names the phone number, and the trace id is logged'),
+            array(['http_status' => 422, 'error_trace_id' => 'trace-4712', 'error_json' => [['loc' => ['billing_address', 'city'], 'msg' => 'required'], ['loc' => ['invoice_details', 'invoice_emails', 0], 'msg' => 'bad']]],
+                'Please enter a valid City to pay on invoice. Please enter a valid Invoice email address to pay on invoice.', $fieldJson, 'every named field is its own sentence, in order, and the field errors are logged'),
+            array(['http_status' => 422, 'error_trace_id' => 'trace-4712', 'error_json' => [['loc' => ['billing_address', 'city'], 'msg' => 'required']]],
+                'Please enter a valid City to pay on invoice.', 'trace-4712', 'a 422 with only field errors logs its trace id'),
+            array(['http_status' => 400, 'error_json' => [['loc' => ['buyer', 'representative', 'phone_number'], 'msg' => 'x'], ['loc' => ['buyer'], 'msg' => 'Invalid phone number']]],
+                $phone, 'HTTP 400', 'two errors naming the same field read as one sentence'),
+            array(['http_status' => 400, 'error_json' => [['loc' => ['buyer'], 'msg' => ['Invalid phone number']]]],
+                self::GENERIC_REFUSAL, 'HTTP 400', 'a msg that is not text is skipped, not cast'),
+            array(['http_status' => 400, 'error_json' => [['loc' => ['billing_address', 'city'], 'msg' => 'required']]],
+                'Please enter a valid City to pay on invoice. ' . $hint, 'HTTP 400', 'the minimum hint follows a field sentence as its own sentence', $hint),
             array(['http_status' => 400, 'error_code' => 'SCHEMA_ERROR', 'error_json' => [['loc' => ['line_items', 0, 'tax_rate'], 'msg' => 'bad']]],
                 self::GENERIC_REFUSAL, 'SCHEMA_ERROR', 'a field the buyer cannot correct falls back to the generic sentence'),
             array(['http_status' => 400, 'error_code' => 'SAME_BUYER_SELLER_ERROR', 'error_message' => 'same company'],
-                $sameCompany, 'SAME_BUYER_SELLER_ERROR', 'buying from yourself is named'),
+                $sameCompany . ' ' . $hint, 'SAME_BUYER_SELLER_ERROR', 'buying from yourself is named, closed before the hint', $hint),
             array(['http_status' => 400, 'error_code' => 'SAME_BUYER_SELLER_ERROR', 'error_json' => [['loc' => ['buyer', 'representative', 'phone_number'], 'msg' => 'x']]],
                 $phone, 'SAME_BUYER_SELLER_ERROR', 'a named field outranks the same-company refusal'),
             array(['http_status' => 401, 'error_code' => 'UNAUTHORIZED', 'error_message' => 'Invalid API key'],
                 self::GENERIC_REFUSAL, 'Invalid API key', 'a rejected key is a refusal like any other'),
             array(['http_status' => 500, 'error_message' => 'Internal error'],
                 self::GENERIC_REFUSAL, 'HTTP 500 Internal error', 'a server error is a refusal like any other'),
+            array(['http_status' => 502, 'data' => null, 'raw_body' => '<html>Bad gateway</html>'],
+                self::GENERIC_REFUSAL, 'Bad gateway', 'a body that is not JSON is logged as received'),
             array(['http_status' => 0],
                 'Connection error with payment provider. Please try again.', null, 'no answer at all is not a refusal'),
         );
 
         foreach ($cases as $case) {
             list($response, $buyerMessage, $logged, $description) = $case;
-            $controller = self::makeController(null, $response);
+            $controller = self::makeController(null, $response, isset($case[4]) ? $case[4] : '');
             $_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';
 
             try {
@@ -337,7 +349,7 @@ final class AjaxCheckoutFailureSpec
     /**
      * @param Exception|null $payloadException Thrown by getTwoNewOrderData() when set
      */
-    private static function makeController($payloadException = null, array $createResponse = ['http_status' => 401])
+    private static function makeController($payloadException = null, array $createResponse = ['http_status' => 401], string $minimumHint = '')
     {
         StubStore::reset();
         PrestaShopLogger::reset();
@@ -390,36 +402,41 @@ final class AjaxCheckoutFailureSpec
                 throw new StubJsonFailureEmitted('json failure emitted');
             }
         };
-        $controller->module = self::makeModule($payloadException, $createResponse);
+        $controller->module = self::makeModule($payloadException, $createResponse, $minimumHint);
 
         return $controller;
     }
 
     /**
-     * Module double: /v1/order answers $createResponse, a 401 by default.
+     * Module double: /v1/order answers $createResponse, a 401 by default, and
+     * any minimum-order hint is $minimumHint.
      * Passing an exception makes the payload build fail instead.
      *
      * @param Exception|null $payloadException
      */
-    private static function makeModule($payloadException, array $createResponse): Twopayment
+    private static function makeModule($payloadException, array $createResponse, string $minimumHint): Twopayment
     {
-        return new class($payloadException, $createResponse) extends TwopaymentTestHarness {
+        return new class($payloadException, $createResponse, $minimumHint) extends TwopaymentTestHarness {
             /** @var Exception|null */
             private $payloadException;
 
             /** @var array */
             private $createResponse;
 
-            public function __construct($payloadException, array $createResponse)
+            /** @var string */
+            private $minimumHint;
+
+            public function __construct($payloadException, array $createResponse, string $minimumHint)
             {
                 parent::__construct();
                 $this->payloadException = $payloadException;
                 $this->createResponse = $createResponse;
+                $this->minimumHint = $minimumHint;
             }
 
             public function getTwoMinimumOrderDeclineHint($response, $cart)
             {
-                return '';
+                return $this->minimumHint;
             }
 
             public function isCartCurrencySupportedByTwo($cart)

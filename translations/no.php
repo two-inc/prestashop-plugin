@@ -619,4 +619,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_907e9fc09da040c29fec760edde12cae'] 
 $_MODULE['<{twopayment}prestashop>twopayment_0f1f391386a7a4d7a106afd441e8e938'] = 'Skriv inn et gyldig poststed for å betale med faktura.';
 $_MODULE['<{twopayment}prestashop>twopayment_3fb07d3aa273bb1427cb6ef3fae8d8c4'] = 'Skriv inn et gyldig land for å betale med faktura.';
 $_MODULE['<{twopayment}prestashop>twopayment_c3dddbdae3958040f1596b34a12be806'] = 'Skriv inn et gyldig postnummer for å betale med faktura.';
-$_MODULE['<{twopayment}prestashop>twopayment_99ac00654b563e69a36cb2a90ea7cead'] = 'Skriv inn en gyldig e-postadresse for faktura for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_99ac00654b563e69a36cb2a90ea7cead'] = 'Skriv inn en gyldig fakturaadresse (e-post) for å betale med faktura.';

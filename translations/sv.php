@@ -619,4 +619,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_907e9fc09da040c29fec760edde12cae'] 
 $_MODULE['<{twopayment}prestashop>twopayment_0f1f391386a7a4d7a106afd441e8e938'] = 'Ange en giltig ort för att betala mot faktura.';
 $_MODULE['<{twopayment}prestashop>twopayment_3fb07d3aa273bb1427cb6ef3fae8d8c4'] = 'Ange ett giltigt land för att betala mot faktura.';
 $_MODULE['<{twopayment}prestashop>twopayment_c3dddbdae3958040f1596b34a12be806'] = 'Ange ett giltigt postnummer för att betala mot faktura.';
-$_MODULE['<{twopayment}prestashop>twopayment_99ac00654b563e69a36cb2a90ea7cead'] = 'Ange en giltig e-postadress för faktura för att betala mot faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_99ac00654b563e69a36cb2a90ea7cead'] = 'Ange en giltig fakturaadress (e-post) för att betala mot faktura.';

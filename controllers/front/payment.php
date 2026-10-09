@@ -298,7 +298,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                     $cart
                 );
                 if (!Tools::isEmpty($minimum_hint)) {
-                    $message .= ' ' . $minimum_hint;
+                    $message = $this->module->joinTwoBuyerSentences(array($message, $minimum_hint));
                 }
             }
 
