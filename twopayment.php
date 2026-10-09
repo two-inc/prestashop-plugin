@@ -19812,7 +19812,10 @@ class Twopayment extends PaymentModule
             if (!is_array($response_data) && trim((string)$response_body) !== '') {
                 // A body that is not JSON (a proxy's error page, say) is otherwise lost;
                 // getTwoApiErrorDetail() logs this much of it (TWO-26264).
-                $response['raw_body'] = Tools::substr((string)$response_body, 0, 500);
+                $raw_body = self::sanitizeTwoRawResponseBody($response_body);
+                if ($raw_body !== '') {
+                    $response['raw_body'] = $raw_body;
+                }
             }
 
             return $response;
@@ -20411,6 +20414,21 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The start of a response body that is not JSON, as plain text. It reaches order private
+     * notes through getTwoApiErrorDetail(), where markup such as a proxy page's script would
+     * fail the message's HTML validation and lose the note, so tags go and whitespace collapses.
+     *
+     * @param mixed $body
+     * @return string At most 500 characters.
+     */
+    public static function sanitizeTwoRawResponseBody($body)
+    {
+        $text = trim((string) preg_replace('/\s+/', ' ', strip_tags((string) $body)));
+
+        return Tools::substr($text, 0, 500);
+    }
+
+    /**
      * The API's own words for a rejected request, for the module log and the admin's order message.
      * getTwoErrorMessage() rewrites validation errors into buyer-facing advice; this keeps them as sent.
      *
@@ -20420,11 +20438,19 @@ class Twopayment extends PaymentModule
     public function getTwoApiErrorDetail($response)
     {
         $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        // Invalid UTF-8 from the API is substituted where PHP can (7.2+); before that, a part
+        // that will not encode is left out rather than logged as nothing.
+        $json_flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            | (defined('JSON_INVALID_UTF8_SUBSTITUTE') ? constant('JSON_INVALID_UTF8_SUBSTITUTE') : 0);
         $parts = array();
         foreach (is_array($response) ? array($response, isset($response['data']) && is_array($response['data']) ? $response['data'] : array()) : array() as $body) {
-            foreach (array('error_code', 'error_message', 'error_details', 'error_json', 'error_trace_id', 'message', 'detail', 'error', 'raw_body') as $key) {
+            // The trace id first: it is what a merchant quotes to support, so the length cap must not cut it.
+            foreach (array('error_trace_id', 'error_code', 'error_message', 'error_details', 'error_json', 'message', 'detail', 'error', 'raw_body') as $key) {
                 if (isset($body[$key]) && $body[$key] !== '' && $body[$key] !== array()) {
-                    $parts[] = is_scalar($body[$key]) ? (string) $body[$key] : json_encode($body[$key], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                    $part = is_scalar($body[$key]) ? (string) $body[$key] : json_encode($body[$key], $json_flags);
+                    if ($part !== false) {
+                        $parts[] = $part;
+                    }
                 }
             }
         }
