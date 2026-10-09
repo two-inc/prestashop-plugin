@@ -10,7 +10,7 @@ declare(strict_types=1);
 final class PostcodeFormatSpec
 {
     /** zip_code_format values as core ships them. */
-    private const FORMATS = ['NL' => 'NNNN LL', 'PL' => 'NN-NNN', 'PT' => 'NNNN-NNN', 'LV' => 'C-NNNN', 'IE' => ''];
+    private const FORMATS = ['NL' => 'NNNN LL', 'PL' => 'NN-NNN', 'PT' => 'NNNN-NNN', 'LV' => 'C-NNNN', 'MC' => '980NN', 'IE' => ''];
 
     public static function runAll(): void
     {
@@ -42,7 +42,12 @@ final class PostcodeFormatSpec
             ['NL', '12345AB', '12345AB', 'too many characters is left untouched'],
             ['NL', '1234A', '1234A', 'too few characters is left untouched'],
             ['NL', 'AB1234', 'AB1234', 'letters in digit slots is left untouched'],
-            ['IE', 'D02X285', 'D02X285', 'a country with no format is untouched'],
+            ['LV', 'L1050', 'L1050', 'a C slot shorter than the iso code is left untouched'],
+            ['LV', 'LVV1050', 'LVV1050', 'a C slot longer than the iso code is left untouched'],
+            ['MC', '98000', '98000', 'a literal digit in the format is matched and kept'],
+            ['MC', '98 000', '98000', 'a separator the format does not have is dropped around a literal'],
+            ['MC', '97000', '97000', 'a postcode lacking the literal is left untouched'],
+            ['IE', 'A65F4E2', 'A65F4E2', 'a country with no format is untouched'],
             ['NL', '', '', 'an empty postcode stays empty'],
         ];
     }
