@@ -36,8 +36,8 @@ final class RefundSpec
      * TWO-26274: refunded shipping against the Default shipping tax code it was placed at is a shop-match check, the
      * module's default handler. With no merchant handler the slip is not sent, as before. A merchant handler makes
      * it stand down, and the slip is split at the declared rate with the tax as refunded, then sent as the handler
-     * returns it; a handler that opts back in gets the refusal, and the slip is not sent.
-     * Columns: handler (null: none), helper, expected tax_subtotals (null: not sent), description.
+     * returns it; a handler that opts back in gets the refusal while the split is the module's, and the slip is not
+     * sent. Columns: handler (null: none), when it opts back in, expected tax_subtotals (null: not sent), description.
      */
     private static function testSlipShippingCheckIsTheDefaultHandlers(): void
     {
@@ -46,11 +46,14 @@ final class RefundSpec
             $p['tax_subtotals'][0]['tax_rate'] = '0.250000';
         };
         $cases = [
-            [null, false, null, 'no merchant handler: not sent'],
+            [null, null, null, 'no merchant handler: not sent'],
             [static function (array &$p): void {
-            }, false, $split, 'a merchant handler that changes nothing: sent at the declared rate, the tax as refunded'],
-            [$resplit, false, [['0.250000', '10.00', '2.50'], ['0.200000', '25.00', '5.00']], 'a merchant handler that re-rates the shipping: sent as returned'],
-            [$resplit, true, null, 'a merchant handler that opts back in: not sent'],
+            }, null, $split, 'a merchant handler that changes nothing: sent at the declared rate, the tax as refunded'],
+            [$resplit, null, [['0.250000', '10.00', '2.50'], ['0.200000', '25.00', '5.00']], 'a merchant handler that re-rates the shipping: sent as returned'],
+            [$resplit, 'before', null, 'a merchant handler that opts back in before its edit: not sent'],
+            [static function (array &$p): void {
+            }, 'after', null, 'a merchant handler that opts back in on the split unchanged: not sent'],
+            [$resplit, 'after', [['0.250000', '10.00', '2.50'], ['0.200000', '25.00', '5.00']], 'a merchant handler that opts back in on its re-rated split: the check stands down, sent as returned'],
         ];
         foreach ($cases as $i => [$edit, $helper, $expected, $desc]) {
             StubStore::reset();
@@ -59,10 +62,13 @@ final class RefundSpec
             $module->readSlipLinesFromDb = true;
             if ($edit !== null) {
                 Hook::$subscribers[TwoOrderPostprocessing::HOOK]['refundspecsubscriber'] = static function (array $params) use ($edit, $helper, $module): void {
-                    if ($helper) {
+                    if ($helper === 'before') {
                         $module->runTwoShopMatchChecks($params['payload']);
                     }
                     $edit($params['payload']);
+                    if ($helper === 'after') {
+                        $module->runTwoShopMatchChecks($params['payload']);
+                    }
                 };
             }
             $order = self::makeOrder();
@@ -87,7 +93,7 @@ final class RefundSpec
                 return [$t['tax_rate'], $t['taxable_amount'], $t['tax_amount']];
             }, $refunds[0]['payload']['tax_subtotals']);
             TinyAssert::same($expected, $got, $desc . ': got ' . json_encode($got));
-            TinyAssert::true(self::logged('The refund request (credit_slip) has an order postprocessing hook handler (refundspecsubscriber): the shop-match checks are delegated to it'), $desc . ': the delegation log line');
+            TinyAssert::true(self::logged('The refund request (credit_slip, order 5100) has an order postprocessing hook handler (refundspecsubscriber): the shop-match checks are delegated to it'), $desc . ': the delegation log line');
         }
         Hook::$subscribers = [];
     }
