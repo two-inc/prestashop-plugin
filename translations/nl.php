@@ -384,7 +384,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_b534a3105100197bc84b8caa00926340'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d74f5295cfbc83c79a5737ed01bc13d3'] = 'Toeslag per termijn';
 $_MODULE['<{twopayment}prestashop>twopayment_92d4b91a708bab69303a5a356426ed4d'] = 'Standaardtermijnen:';
 $_MODULE['<{twopayment}prestashop>twopayment_d801910356f73cbb407fe5d320c581d7'] = 'Betaling vervalt X dagen na de uitleverdatum. Voorbeeld: lever je een bestelling uit op 15 januari met een termijn van 30 dagen, dan vervalt de betaling op 14 februari.';
-$_MODULE['<{twopayment}prestashop>twopayment_d83e9ff3f8fd11e651a6f27f40dcf82b'] = 'Configuratiefout in de betaalmethode. Neem contact op met de winkel.';
 $_MODULE['<{twopayment}prestashop>twopayment_7af191b62135c0adab07f2c26940a68a'] = '%s wordt verborgen in de checkout totdat de sleutel is geverifieerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_da26328af93752b0b89478bfd90627ce'] = 'Bestelling terugbetaald → Terugbetaald';
 $_MODULE['<{twopayment}prestashop>twopayment_da26aecbab950874dc37e7b30d82b40d'] = 'De minimale orderwaarde is %1$s%2$s %3$s btw.';
@@ -414,7 +413,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_f12477236933ae49e5c643aecf75f74a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_f65e05deb9e54ed090b8450b4a4fbeb4'] = 'Veiligheidswaarschuwing:';
 $_MODULE['<{twopayment}prestashop>twopayment_f7ef5c179f658172e8b6788a6ff4e5fc'] = 'De kredietbeslissing of koperslimieten van %s overrulen';
 $_MODULE['<{twopayment}prestashop>twopayment_f71fecea4e95aedc66e77754d9cecda4'] = 'Ondersteuning voor meerdere btw-tarieven en btw-vrijgestelde klanten';
-$_MODULE['<{twopayment}prestashop>twopayment_f962210107c086dcb022c580cdd04c72'] = 'Ongeldige bestelgegevens. Controleer je gegevens en probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_adc5d048be9b3dee0f30fc0001a9cd1f'] = 'De bestelling is bij %s geannuleerd. Dit voorkomt uitlevering en stopt het betaalproces. Standaard: Geannuleerd';
 $_MODULE['<{twopayment}prestashop>twopayment_fa2ec5f818605595f78e7fc164a772be'] = 'We hebben je bedrijfsnaam gevonden, maar je moet deze verifiëren. Ga terug naar je factuuradres en selecteer je bedrijf uit de zoekresultaten.';
 $_MODULE['<{twopayment}prestashop>twopayment_fa8a347b2b0ab6e45116e184b464fe5c'] = 'De bedrijfsgegevens konden niet worden geverifieerd. Ga terug naar je factuuradres en selecteer je bedrijf uit de zoekresultaten.';
@@ -609,3 +607,16 @@ $_MODULE['<{twopayment}prestashop>twopayment_b6dd1a9c89709b3b2e3750f24560c7e5'] 
 $_MODULE['<{twopayment}prestashop>twopayment_39e26661e69ccad178937f28d643dabe'] = 'Deze terugbetaling is zonder orderregels verzonden, dus de creditnota is mogelijk niet gespecificeerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_479a96dde61b01e9598837045234d7f5'] = '%1$s heeft deze bestelling al geheel of gedeeltelijk gefactureerd, dus deze wijziging is niet naar %1$s verzonden.';
 $_MODULE['<{twopayment}prestashop>twopayment_ac31926e928b7bcc427d03cde2a2e45e'] = '%1$s accepteert geen wijzigingen meer voor deze bestelling (%2$s), dus deze wijziging is niet naar %1$s verzonden.';
+$_MODULE['<{twopayment}prestashop>twopayment_de882afabcf69ec71e9c5ba3aee71668'] = 'Kopen op factuur met %s is niet beschikbaar voor deze bestelling.';
+$_MODULE['<{twopayment}prestashop>twopayment_9865a2c6a4559649cf30a9ff3a6477ac'] = 'Koper en verkoper mogen niet hetzelfde bedrijf zijn';
+$_MODULE['<{twopayment}prestashop>twopayment_755a06845b00622f9bcb2908af33b857'] = 'Vul een geldig telefoonnummer in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_6164c8b54918087068654609dacc6e6d'] = 'Vul een geldig organisatienummer in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_1dc9f221ba2762e6fc56c2f75cd38926'] = 'Vul een geldige bedrijfsnaam in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_cc8a2f909e60aad23a589b2c3df12dc2'] = 'Vul een geldige voornaam in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_436ad486c513c48f7f8a23357a62770a'] = 'Vul een geldige achternaam in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_da7e8dad04ec17e70c4ce3b99203b277'] = 'Vul een geldig e-mailadres in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_907e9fc09da040c29fec760edde12cae'] = 'Vul een geldig adres in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_0f1f391386a7a4d7a106afd441e8e938'] = 'Vul een geldige plaats in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_3fb07d3aa273bb1427cb6ef3fae8d8c4'] = 'Vul een geldig land in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_c3dddbdae3958040f1596b34a12be806'] = 'Vul een geldige postcode in om op factuur te betalen.';
+$_MODULE['<{twopayment}prestashop>twopayment_99ac00654b563e69a36cb2a90ea7cead'] = 'Vul een geldig factuur-e-mailadres in om op factuur te betalen.';

@@ -384,7 +384,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_b534a3105100197bc84b8caa00926340'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d74f5295cfbc83c79a5737ed01bc13d3'] = 'Tillegg per vilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_92d4b91a708bab69303a5a356426ed4d'] = 'Standardvilkår:';
 $_MODULE['<{twopayment}prestashop>twopayment_d801910356f73cbb407fe5d320c581d7'] = 'Betalingsfristen er X dager fra datoen ordren blir oppfylt. Eksempel: Hvis du oppfyller en ordre 15. januar med 30 dagers vilkår, er betalingsfristen 14. februar.';
-$_MODULE['<{twopayment}prestashop>twopayment_d83e9ff3f8fd11e651a6f27f40dcf82b'] = 'Feil i konfigurasjonen av betalingsmåten. Kontakt butikken.';
 $_MODULE['<{twopayment}prestashop>twopayment_7af191b62135c0adab07f2c26940a68a'] = '%s skjules i kassen til nøkkelen er verifisert.';
 $_MODULE['<{twopayment}prestashop>twopayment_da26328af93752b0b89478bfd90627ce'] = 'Ordre refundert → Refundert';
 $_MODULE['<{twopayment}prestashop>twopayment_da26aecbab950874dc37e7b30d82b40d'] = 'Minste ordreverdi er %1$s%2$s %3$s avgift.';
@@ -414,7 +413,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_f12477236933ae49e5c643aecf75f74a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_f65e05deb9e54ed090b8450b4a4fbeb4'] = 'Sikkerhetsadvarsel:';
 $_MODULE['<{twopayment}prestashop>twopayment_f7ef5c179f658172e8b6788a6ff4e5fc'] = 'Overstyre %ss kredittbeslutning eller kjøperens grenser';
 $_MODULE['<{twopayment}prestashop>twopayment_f71fecea4e95aedc66e77754d9cecda4'] = 'Støtte for flere avgiftssatser og avgiftsfrie kunder';
-$_MODULE['<{twopayment}prestashop>twopayment_f962210107c086dcb022c580cdd04c72'] = 'Ugyldige ordreopplysninger. Kontroller opplysningene dine og prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_adc5d048be9b3dee0f30fc0001a9cd1f'] = 'Ordren er kansellert hos %s. Dette hindrer oppfyllelse og stopper betalingsprosessen. Standard: Kansellert';
 $_MODULE['<{twopayment}prestashop>twopayment_fa2ec5f818605595f78e7fc164a772be'] = 'Vi fant firmanavnet ditt, men du må bekrefte det. Gå tilbake til fakturaadressen og velg firmaet ditt fra søkeresultatene.';
 $_MODULE['<{twopayment}prestashop>twopayment_fa8a347b2b0ab6e45116e184b464fe5c'] = 'Firmaopplysningene kunne ikke verifiseres. Gå tilbake til fakturaadressen og velg firmaet ditt fra søkeresultatene.';
@@ -609,3 +607,16 @@ $_MODULE['<{twopayment}prestashop>twopayment_b6dd1a9c89709b3b2e3750f24560c7e5'] 
 $_MODULE['<{twopayment}prestashop>twopayment_39e26661e69ccad178937f28d643dabe'] = 'Denne refusjonen ble sendt uten varelinjer, så kreditnotaen er kanskje ikke spesifisert.';
 $_MODULE['<{twopayment}prestashop>twopayment_479a96dde61b01e9598837045234d7f5'] = '%1$s har allerede fakturert hele eller deler av denne bestillingen, så endringen ble ikke sendt til %1$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_ac31926e928b7bcc427d03cde2a2e45e'] = '%1$s godtar ikke lenger endringer i denne bestillingen (%2$s), så endringen ble ikke sendt til %1$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_de882afabcf69ec71e9c5ba3aee71668'] = 'Fakturakjøp med %s er ikke tilgjengelig for denne bestillingen.';
+$_MODULE['<{twopayment}prestashop>twopayment_9865a2c6a4559649cf30a9ff3a6477ac'] = 'Kjøper og selger kan ikke være samme selskap';
+$_MODULE['<{twopayment}prestashop>twopayment_755a06845b00622f9bcb2908af33b857'] = 'Skriv inn et gyldig telefonnummer for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_6164c8b54918087068654609dacc6e6d'] = 'Skriv inn et gyldig organisasjonsnummer for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_1dc9f221ba2762e6fc56c2f75cd38926'] = 'Skriv inn et gyldig selskapsnavn for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_cc8a2f909e60aad23a589b2c3df12dc2'] = 'Skriv inn et gyldig fornavn for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_436ad486c513c48f7f8a23357a62770a'] = 'Skriv inn et gyldig etternavn for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_da7e8dad04ec17e70c4ce3b99203b277'] = 'Skriv inn en gyldig e-postadresse for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_907e9fc09da040c29fec760edde12cae'] = 'Skriv inn en gyldig adresse for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_0f1f391386a7a4d7a106afd441e8e938'] = 'Skriv inn et gyldig poststed for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_3fb07d3aa273bb1427cb6ef3fae8d8c4'] = 'Skriv inn et gyldig land for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_c3dddbdae3958040f1596b34a12be806'] = 'Skriv inn et gyldig postnummer for å betale med faktura.';
+$_MODULE['<{twopayment}prestashop>twopayment_99ac00654b563e69a36cb2a90ea7cead'] = 'Skriv inn en gyldig e-postadresse for faktura for å betale med faktura.';
