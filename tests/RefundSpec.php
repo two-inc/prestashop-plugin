@@ -27,6 +27,7 @@ final class RefundSpec
         self::testFailureAfterClaimTellsTheMerchant();
         self::testWhatTheHookSentIsWhatIsRecorded();
         self::testSlipsAreSentAsLinesOfTheTwoOrder();
+        self::testSlipCreditsTheProductsItRefunds();
         self::testRemainderIsSentAsLinesOfTheTwoOrder();
         self::testRemainderCreditsOnlyWhatIsLeftOnEachLine();
         self::testTheHookSeesAndCanEditTheLines();
@@ -328,6 +329,66 @@ final class RefundSpec
                     TinyAssert::true((float)$t['taxable_amount'] + (float)$t['tax_amount'] != 0.0, $desc . ': no subtotal for a rate with no line');
                 }
             }
+        }
+    }
+
+    /**
+     * TWO-26293: a credit slip credits the Two lines of the products it refunds, matched by name, and its shipping the
+     * shipping line. A product with no line at Two, or more than its line has left, is spread over the rate's lines by
+     * what each has left, as before. Columns: slip lines; slip shipping tax incl / excl; slip amount and
+     * order_slip_type (null: the slip's own total); the Two order's lines and refunds (null: the order below); expected
+     * [id, net, tax, gross] lines; description.
+     */
+    private static function testSlipCreditsTheProductsItRefunds(): void
+    {
+        $two = static function (string $id, string $type, string $name, string $net, string $gross): array {
+            return ['id' => $id, 'type' => $type, 'name' => $name, 'tax_rate' => '0.200000', 'tax_code' => null, 'net_amount' => $net, 'gross_amount' => $gross];
+        };
+        $order = [
+            $two('shipping', 'SHIPPING_FEE', 'My carrier', '2.00', '2.40'),
+            $two('sweater', 'PHYSICAL', 'Sweater (Size: S)', '28.72', '34.46'),
+            $two('mug', 'PHYSICAL', 'Mug', '59.50', '71.40'),
+            $two('notebook', 'PHYSICAL', 'Notebook (Paper: Ruled)', '25.80', '30.96'),
+        ];
+        $mugs = self::line(23.80, 28.56, '20.000', '0', 'Mug');
+        $sweater = self::line(28.72, 34.46, '20.000', '0', 'Sweater (Size: S)');
+        $giftWrap = self::line(10.00, 12.00, '20.000', '0', 'Gift wrap');
+        $cases = [
+            [[$mugs], 0.0, 0.0, null, null, [['mug', '23.80', '4.76', '28.56']], 'two mugs: the mug line alone, not every line at the rate'],
+            [[$mugs], 2.40, 2.00, null, null, [['shipping', '2.00', '0.40', '2.40'], ['mug', '23.80', '4.76', '28.56']], 'two mugs and the shipping: each to its own line'],
+            [[$mugs], 0.0, 0.0, [20.00, 2], null, [['mug', '16.67', '3.33', '20.00']], 'a specific amount for two mugs: the mug line alone'],
+            [[$sweater], 0.0, 0.0, null, [$order[0], $two('sweater', 'PHYSICAL', 'Sweater', '28.72', '34.46'), $order[2]], [['sweater', '28.72', '5.74', '34.46']], 'a line placed under the product name alone matches the product with its attributes'],
+            [[$sweater], 0.0, 0.0, null, [$two('plain', 'PHYSICAL', 'Sweater', '28.72', '34.46'), $order[1]], [['sweater', '28.72', '5.74', '34.46']], 'the line named exactly as the product wins over one named after the product alone'],
+            [[$giftWrap], 0.0, 0.0, null, null, [['sweater', '2.52', '0.50', '3.02'], ['mug', '5.22', '1.04', '6.26'], ['notebook', '2.27', '0.45', '2.72']], 'a product with no line at Two: spread over the rate\'s product lines by what each has left'],
+            [[$mugs, $giftWrap], 0.0, 0.0, null, null, [['sweater', '3.18', '0.64', '3.82'], ['mug', '27.76', '5.55', '33.31'], ['notebook', '2.86', '0.57', '3.43']], 'two mugs and a product with no line: the mugs to the mug line, the rest spread over what is left'],
+            [[$mugs], 0.0, 0.0, null, ['lines' => $order, 'refunds' => [self::twoRefund('-60.00', ['mug' => '-60.00'])]], [['sweater', '7.53', '1.51', '9.04'], ['mug', '9.50', '1.90', '11.40'], ['notebook', '6.77', '1.35', '8.12']], 'more than the mug line has left: it takes what is left, the excess spread over the other product lines'],
+        ];
+        foreach ($cases as $i => [$lines, $shipIncl, $shipExcl, $specific, $twoLines, $expected, $desc]) {
+            StubStore::reset();
+            PrestaShopLogger::$logs = [];
+            StubStore::$dbExecuteSResponses = [$lines];
+            $twoLines = $twoLines ?? $order;
+            $twoOrder = self::fulfilledOrder(1000.00, $twoLines['refunds'] ?? []);
+            $twoLines = $twoLines['lines'] ?? $twoLines;
+            $twoOrder['line_items'] = $twoLines;
+            $module = self::makeModule($twoOrder);
+            $module->merchantCountry = 'GB';
+            $module->readSlipLinesFromDb = true;
+            $order5100 = self::makeOrder();
+            $order5100->carrier_tax_rate = 20.0;
+            $slip = self::makeSlip(700 + $i, (float)array_sum(array_column($lines, 'amount_tax_incl')), $shipIncl);
+            $slip->total_shipping_tax_excl = $shipExcl;
+            $slip->total_products_tax_excl = (float)array_sum(array_column($lines, 'amount_tax_excl'));
+            $slip->amount = $specific[0] ?? null;
+            $slip->order_slip_type = $specific[1] ?? 0;
+
+            $module->hookActionOrderSlipAdd(['order' => $order5100, 'order_slip' => $slip]);
+
+            $refunds = $module->refundCalls();
+            TinyAssert::count(1, $refunds, $desc . ': sent');
+            $got = self::sentLines($refunds[0]['payload'], $twoLines);
+            TinyAssert::same($expected, $got, $desc . ': got ' . json_encode($got));
+            TinyAssert::same($refunds[0]['payload']['amount'], number_format(array_sum(array_column($got ?? [], 3)), 2, '.', ''), $desc . ': lines sum to the amount');
         }
     }
 
@@ -885,11 +946,12 @@ final class RefundSpec
      * `rate` is the plain sum the query used to return, so a row that fails
      * on the old code fails on its behaviour rather than on a missing key.
      */
-    private static function line(float $excl, float $incl, string $rates, string $method = '0'): array
+    private static function line(float $excl, float $incl, string $rates, string $method = '0', ?string $name = null): array
     {
         $sum = array_sum(array_map('floatval', explode(',', $rates)));
+        $row = ['amount_tax_excl' => (string)$excl, 'amount_tax_incl' => (string)$incl, 'placed_rates' => $rates, 'tax_computation_method' => $method, 'rate' => (string)$sum];
 
-        return ['amount_tax_excl' => (string)$excl, 'amount_tax_incl' => (string)$incl, 'placed_rates' => $rates, 'tax_computation_method' => $method, 'rate' => (string)$sum];
+        return $name === null ? $row : $row + ['product_name' => $name];
     }
 
     /**
