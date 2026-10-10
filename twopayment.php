@@ -5093,6 +5093,17 @@ class Twopayment extends PaymentModule
                 $two_order_id = $orderpaymentdata['two_order_id'];
 
                 if ($new_order_status->id == Configuration::get('PS_TWO_OS_CANCELLED_MAP')) {
+                    // Already cancelled at Two (the plugin moving a Two-cancelled order to the mapped status lands
+                    // here too): a second cancel would only fail, so skip it, log it and show no notice.
+                    $stored_two_state = isset($orderpaymentdata['two_order_state']) ? strtoupper(trim((string)$orderpaymentdata['two_order_state'])) : '';
+                    if ($stored_two_state === 'CANCELLED') {
+                        PrestaShopLogger::addLog(
+                            'TwoPayment: Cancel not sent for Two order ' . $two_order_id . ', order ' . (int)$id_order .
+                            ': it is already cancelled at Two (stored state=CANCELLED)',
+                            1
+                        );
+                        return;
+                    }
                     $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
                     $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                     if (isset($response['id']) && $response['id']) {
