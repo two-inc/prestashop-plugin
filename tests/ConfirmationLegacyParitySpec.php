@@ -224,7 +224,7 @@ final class ConfirmationLegacyParitySpec
                 return true;
             }
 
-            public function getTwoUpdateOrderData($order, $payment_data = null, $trigger = 'admin_edit')
+            public function getTwoUpdateOrderData($order, $payment_data = null, $trigger = 'admin_edit', $twoOrder = null)
             {
                 return [];
             }

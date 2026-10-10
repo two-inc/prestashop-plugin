@@ -434,7 +434,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         $this->module->setTwoOrderPaymentData($order->id, $payment_data);
 
         // Best effort: replace provisional merchant_order_id with real PrestaShop id_order in Two.
-        $sync_ok = $this->syncTwoMerchantOrderId($order, $payment_data);
+        $sync_ok = $this->syncTwoMerchantOrderId($order, $payment_data, $response);
         if ($sync_ok) {
             $this->module->setTwoCheckoutAttemptMerchantOrderId($attempt_token, (string)$order->id);
         }
@@ -468,8 +468,13 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
     /**
      * Best effort sync of merchant_order_id in Two to the real PrestaShop order ID.
      * Never blocks customer confirmation if provider update fails.
+     *
+     * @param Order $order
+     * @param array $payment_data
+     * @param array|null $two_order the order as Two's GET returned it earlier in this callback, for the
+     *   order postprocessing hook's placed_lines (TWO-26282); null when this callback did not read it
      */
-    private function syncTwoMerchantOrderId($order, $payment_data)
+    private function syncTwoMerchantOrderId($order, $payment_data, $two_order = null)
     {
         if (!Validate::isLoadedObject($order) || !is_array($payment_data) || empty($payment_data['two_order_id'])) {
             return false;
@@ -478,7 +483,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         try {
             // Also records the hash that lets later unchanged saves skip their PUT (TWO-26085).
             $update_payload = null;
-            $update_response = $this->module->putTwoOrderUpdate($order, $payment_data, $update_payload, 'merchant_order_id');
+            $update_response = $this->module->putTwoOrderUpdate($order, $payment_data, $update_payload, 'merchant_order_id', $two_order);
             if ($update_response === null) {
                 // A repeated callback: Two already holds exactly this order, merchant_order_id included.
                 return true;
