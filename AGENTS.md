@@ -205,21 +205,23 @@ path and nothing selects a second file, so every value in it - the payment tile'
 replace the file. Building per-brand resolution is TWO-24746 and has not been done here; do not
 improvise one for a single key.
 
-## Payload Checks: Shop-Match Or Consistency
+## Payload Checks: Shop-Match Only; Arithmetic Is Two's API's
 
-TWO-26274. Every check on an order payload is one of two kinds, and the README section
-"The module's checks" is the specification.
+TWO-26274, TWO-26283. The README section "The module's checks" is the specification.
 
 - **Shop-match** (the payload against PrestaShop's figures: cart or placed totals, stored
   line amounts, the cart's fee line, the Default shipping tax code) belongs to the default
-  handler: an item of kind `CHECK_SHOP_MATCH` in `buildTwoOrderChecks()` (or the credit
-  slip's), run after the hook only when no merchant handler is registered. A check on one
-  line is recorded against that line while it is built (`$twoDeferredShopMatch`) and applies
-  only while the payload still carries the line unchanged.
-- **Consistency** (the payload against itself) is a `CHECK_CONSISTENCY` item and always runs
-  after the hook. Never put either kind back in the builder before the hook: a payload the
-  module cannot build at all (empty cart, bad address, failed split) is the only refusal
-  there.
+  handler: an item in `buildTwoOrderChecks()` (or the credit slip's), run after the hook
+  only when no merchant handler is registered. A check on one line is recorded against that
+  line while it is built (`$twoDeferredShopMatch`) and applies only while the payload still
+  carries the line unchanged.
+- **Never check the payload against itself** (line arithmetic, at least one line, tax
+  subtotals or order totals against the lines). Two's API validates order data, and a
+  module check cannot be relaxed or fixed without every merchant upgrading, so one stricter
+  than the API refuses orders Two would accept. Gaps in the API's validation are fixed in
+  the API, not here.
+- Never put a check back in the builder before the hook: a payload the module cannot build
+  at all (empty cart, bad address, failed split) is the only refusal there.
 
 ## Tax Codes On 0% Lines Are An Aid, Never A Gate
 

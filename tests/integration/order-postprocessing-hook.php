@@ -22,7 +22,8 @@
  * `outside_carrier_*` scenarios use the carrier-less cart's "external_only"
  * shape, a cost the shop adds to the cart total outside any carrier (29.00, on
  * every leg): refused with no handler, and sent as a handler that adds the line
- * returns it. A handler that leaves the payload inconsistent is refused locally.
+ * returns it. A handler that leaves the payload inconsistent is sent as it
+ * returns it too: Two's API judges that (TWO-26283).
  * The `surcharge_*` scenarios put the Default shipping tax code at 21% under the
  * "No tax" carrier's shipping with the buyer fee on: the fee's cart line is
  * written, and create and update send that fee, only when a handler owns the
@@ -600,15 +601,15 @@ function oppRunScenario($name, &$detail)
         return oppSurchargeChecks($module, $name === 'surcharge_resplit', $cart, $order);
     }
 
-    // Order create under one fixture behaviour: sent as returned, unless the subscriber has a code bug, or leaves a
-    // payload that does not add up, which the consistency checks refuse after the hook (TWO-26274).
+    // Order create under one fixture behaviour: sent as returned, unless the subscriber has a code bug. A payload that
+    // does not add up is sent as returned too: Two's API judges it (TWO-26283).
     $expected = array(
         'resplit' => null,
         'gross_change' => null,
-        'off_by_cent' => 'Exception: Invalid line item formulas',
-        'stale_totals' => 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items',
-        'stale_subtotals' => 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items',
-        'no_lines' => 'Exception: No valid line items in cart',
+        'off_by_cent' => null,
+        'stale_totals' => null,
+        'stale_subtotals' => null,
+        'no_lines' => null,
         'throws' => 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED',
         'throws_prod' => 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED',
         'non_array' => 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED',
@@ -648,7 +649,11 @@ function oppRunScenario($name, &$detail)
     }
     $calls = Twoorderpostprocessingtest::$calls;
     $checks[] = array(count($calls) === 1 ? $calls[0]['payload_out'] : count($calls), $payload, 'returned exactly what the subscriber left');
-    $checks[] = array(oppLine($payload, 'SHIPPING_FEE')[1], '5.03', 'shipping tax re-split');
+    if ($name !== 'no_lines') {
+        $checks[] = array(oppLine($payload, 'SHIPPING_FEE')[1], '5.03', 'shipping tax re-split');
+    } else {
+        $checks[] = array($payload['line_items'], array(), 'sent with no lines');
+    }
     if (in_array($name, array('resplit', 'gross_change'), true)) {
         $totals = $name === 'gross_change' ? array('133.97', '28.13', '162.10') : array('123.97', '26.03', '150.00');
         $checks[] = array(array($payload['net_amount'], $payload['tax_amount'], $payload['gross_amount']), $totals, 'order totals');

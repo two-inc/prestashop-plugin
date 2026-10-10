@@ -315,8 +315,9 @@ final class DiscrepancySnapshotSpec
             ['4210', '0', 131.00, 160.00, null, 'declared_rate', 3, false, 'product tax contradicts its declared rate'],
             ['4210', '0', 131.00, 160.00, 'wrapped', 'declared_rate', 3, false, 'a wrapped gate exception keeps its gate'],
             ['4210', '0', 121.00, 170.00, null, 'reconciliation', 3, true, 'order lines do not reconcile with the cart total'],
-            ['4210', '0', 121.00, 150.00, 'badFormulas', 'line_formulas', 3, true, 'line item formulas do not hold'],
-            ['4210', '0', 121.00, 150.00, 'badSubtotals', 'tax_subtotals', 3, true, 'tax subtotals do not reconcile with the lines'],
+            // TWO-26283: whether the payload adds up by itself is Two's API's to judge, so neither is a gate.
+            ['4210', '0', 121.00, 150.00, 'badFormulas', null, 0, false, 'line item formulas that do not hold are sent'],
+            ['4210', '0', 121.00, 150.00, 'badSubtotals', null, 0, false, 'tax subtotals that do not reconcile with the lines are sent'],
             ['4210', '0', 121.00, 150.00, 'wrapping', 'Exception', 3, false, 'gift wrapping gross below net, after a fallback-caught shipping gate'],
             ['4210', '0', 121.00, 150.00, new Exception('Discount amounts diverge from all declared cart tax rates'), 'Exception', 3, false, 'discount diverges from every declared rate'],
             ['4210', '0', 121.00, 150.00, new Exception('Cannot attribute shipping tax under PS_ATCP_SHIPWRAP: no product rate classes'), 'Exception', 3, false, 'PS_ATCP_SHIPWRAP shipping with no product rate class'],

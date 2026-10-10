@@ -247,8 +247,8 @@ class Twoorderpostprocessingtest extends Module
     }
 
     /**
-     * Edits applied on top of the re-split. A gross change is sent as returned; the others leave the payload's
-     * arithmetic inconsistent, which the module's consistency checks refuse after the hook (TWO-26274).
+     * Edits applied on top of the re-split. Each is sent as returned: a gross change, and the others, which leave the
+     * payload's arithmetic inconsistent for Two's API to judge (TWO-26283).
      *
      * @param string $mode
      * @param array $payload
