@@ -116,6 +116,28 @@ final class PlacedOrderUpdateSpec
             StubStore::$cartTotals[self::CART][false][Cart::ONLY_WRAPPING] = 2.00;
             StubStore::$cartTotals[self::CART][true][Cart::ONLY_WRAPPING] = 2.50;
         };
+        // Placed at a 10% declared wrapping rate, invoiced at 12%, configured at 15%: none reconciles with 2.00 + 0.50.
+        $wrappingUnreconciled = function (PlacedOrderStub $o) use ($wrapping): void {
+            $wrapping($o);
+            self::declare([], 0.10);
+            StubStore::$orderInvoiceTaxes[self::ORDER] = [['type' => 'wrapping', 'id_tax' => 33, 'rate' => '12.000']];
+            Configuration::updateValue('PS_GIFT_WRAPPING_TAX_RULES_GROUP', 511);
+            StubStore::$taxRuleRates[511] = 15.0;
+        };
+        // Keeps a line's rate as built and fits its tax and gross to it.
+        $fitTax = function (string $type): callable {
+            return function (array $payload) use ($type): array {
+                foreach ($payload['line_items'] as &$line) {
+                    if ($line['type'] === $type) {
+                        $line['tax_amount'] = number_format(round((float) $line['net_amount'] * (float) $line['tax_rate'], 2), 2, '.', '');
+                        $line['gross_amount'] = number_format((float) $line['net_amount'] + (float) $line['tax_amount'], 2, '.', '');
+                    }
+                }
+                unset($line);
+
+                return (new TwopaymentTestHarness())->recomputeTwoOrderTotals($payload);
+            };
+        };
         $cases = [
             // [placement beyond the base order, change after the first save (returns the order the hook fires for, if not the base one), hook, want from the second save, description]
             [$none, $track, 'tracking', 'PUT ' . self::PLACED . ' = 35.00 NOK', 'catalogue price changed after placement'],
@@ -198,6 +220,15 @@ final class PlacedOrderUpdateSpec
                 $handler($atRate('DIGITAL', '0.25'));
                 $track($o);
             }, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25; DIGITAL 2.00/0.50/2.50@0.25 = 37.50 NOK, paid 37.50', 'the same, with a merchant handler that declares the rate the amounts carry: sent as returned'],
+            // No candidate reconciles, and the invoice's rate differs from the one declared at placement: a merchant handler
+            // is shown the declared rate the create sent (here it keeps that rate and fits the tax to it).
+            [$wrappingUnreconciled, function ($o) use ($track) {
+                $track($o);
+            }, 'edit', 'no PUT, paid 37.50, logged TwoPayment: Order 9601 records gift wrapping 2.00 net, 0.50 tax, which no stored or configured rate reconciles with (invoiced 12%, declared at placement 10%, configured 15%), marked not sent', 'gift wrapping at an invoiced rate other than the declared one, neither reconciling, no merchant handler: refused'],
+            [$wrappingUnreconciled, function ($o) use ($track, $handler, $fitTax) {
+                $handler($fitTax('DIGITAL'));
+                $track($o);
+            }, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25; DIGITAL 2.00/0.20/2.20@0.1 = 37.20 NOK, paid 37.50', 'the same, with a merchant handler: the wrapping line at the declared rate'],
             [function ($o) {
                 // PaymentModule writes carrier_tax_rate only when a Carrier loads, so a carrier-less order records 0.000.
                 $o->id_carrier = 0;

@@ -44,6 +44,7 @@ final class OrderPostprocessingSpec
         self::testLineChecksApplyWhileTheirLineIsUnchanged();
         self::testHandlerDetectionFailureFailsTheRequestWithTheHookCode();
         self::testOptInScopes();
+        self::testSurchargeCartLineIsWrittenWhenALineCheckIsDelegated();
         self::testOutsideCarrierLineIsTheSameOnCreateAndUpdate();
         self::testSubscriberThrowingGetsTheGenericCheckoutMessage();
         self::testDispatchKeepsCoreSemanticsButNotItsSwallow();
@@ -150,6 +151,18 @@ final class OrderPostprocessingSpec
         ];
     }
 
+    /** The buyer fee on: 5% on 30 days, at the carrier group's 21%, quoted 5.00 by module()'s harness. */
+    private static function enableBuyerFee(Cart $cart): void
+    {
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, (string) self::CARRIER_GROUP);
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30]');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', '1');
+        Context::getContext()->cart = $cart;
+        Context::getContext()->cookie->two_payment_term = 30;
+    }
+
     private static function order(): PlacedOrderStub
     {
         $order = PlacedOrderStub::fromCart(self::ORDER, self::CART);
@@ -175,6 +188,10 @@ final class OrderPostprocessingSpec
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
+                if ($endpoint === '/v1/pricing/order/fee') {
+                    // The buyer fee quote, when a case enables the surcharge: not an order request.
+                    return ['http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR'];
+                }
                 if ($method !== 'GET') {
                     $this->sent[] = ['endpoint' => $endpoint, 'payload' => $payload, 'method' => $method];
                 }
@@ -811,6 +828,108 @@ final class OrderPostprocessingSpec
     }
 
     /**
+     * The buyer fee's cart line is synced from the same lines the order build
+     * makes, before it. With a merchant handler the checks on single lines are
+     * its own, so a line one of them would refuse no longer stops the sync: the
+     * fee row is written, the create sends the fee the cart carries, and the
+     * update replays the same fee from the placed order. With none, the sync
+     * still fails and the create is refused, as before.
+     * Columns: mismatch, line type the handler re-rates, merchant handler, expected create refusal (null: sent), description.
+     */
+    private static function testSurchargeCartLineIsWrittenWhenALineCheckIsDelegated(): void
+    {
+        $refusal = 'TwoCheckoutAmountException: Declared tax rate diverges from applied tax amounts for ';
+        $cases = [
+            ['product', 'PHYSICAL', false, $refusal . 'product ' . self::PRODUCT, 'a product rate mismatch, no merchant handler'],
+            ['product', 'PHYSICAL', true, null, 'a product rate mismatch, a merchant handler'],
+            ['shipping', 'SHIPPING_FEE', false, $refusal . 'shipping (Courier)', 'shipping at the Default shipping tax code, no merchant handler'],
+            ['shipping', 'SHIPPING_FEE', true, null, 'shipping at the Default shipping tax code, a merchant handler'],
+            ['wrapping', 'DIGITAL', false, $refusal . 'gift wrapping', 'untaxed gift wrapping at a 21% group, no merchant handler'],
+            ['wrapping', 'DIGITAL', true, null, 'untaxed gift wrapping at a 21% group, a merchant handler'],
+        ];
+        $carried = ['PHYSICAL' => '0.21', 'SHIPPING_FEE' => '0', 'DIGITAL' => '0'];
+        foreach ($cases as [$mismatch, $type, $handler, $expected, $description]) {
+            $cart = self::seed(false, true);
+            self::enableBuyerFee($cart);
+            if ($mismatch === 'product') {
+                StubStore::$taxRuleRates[9000 + self::PRODUCT] = 10.0;
+            }
+            if ($mismatch === 'shipping') {
+                Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
+                Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', (string) self::CARRIER_GROUP);
+            }
+            if ($mismatch === 'wrapping') {
+                Configuration::updateValue('PS_GIFT_WRAPPING_TAX_RULES_GROUP', self::CARRIER_GROUP);
+                foreach ([true, false] as $incl) {
+                    StubStore::$cartTotals[self::CART][$incl][Cart::ONLY_WRAPPING] = 10.00;
+                    StubStore::$cartTotals[self::CART][$incl][Cart::BOTH] += 10.00;
+                }
+            }
+            $module = self::module();
+            self::harnessAsInstance($module);
+            if ($handler) {
+                // A handler that corrects the line's rate to what its amounts carry, and opts back in to nothing.
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK]['twoorderpostprocessingtest'] = static function (array $params) use ($type, $carried): void {
+                    foreach ($params['payload']['line_items'] as $i => $line) {
+                        if ($line['type'] === $type) {
+                            $params['payload']['line_items'][$i]['tax_rate'] = $carried[$type];
+                        }
+                    }
+                };
+            }
+            $error = null;
+            $created = null;
+            try {
+                $created = $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            } catch (Exception $e) {
+                $error = get_class($e) . ': ' . $e->getMessage();
+            }
+            $feeId = (int) Configuration::get('PS_TWO_SURCHARGE_PRODUCT_ID');
+            $feeRows = array_values(array_filter(StubStore::$cartProducts[self::CART], static function (array $row) use ($feeId): bool {
+                return (int) $row['id_product'] === $feeId;
+            }));
+            $fee = static function (array $payload): array {
+                $lines = array_values(array_filter($payload['line_items'], static function (array $line): bool {
+                    return $line['type'] === 'SERVICE';
+                }));
+
+                return array_map(static function (array $line): array {
+                    return [$line['net_amount'], $line['tax_amount'], $line['gross_amount'], (string) $line['tax_rate']];
+                }, $lines);
+            };
+            TinyAssert::same($expected, $error, $description . ': the create');
+            // The buyer's own sync, as the checkout's AJAX call makes it.
+            TinyAssert::same($handler, $module->syncTwoSurchargeCartLine($cart, true)['success'], $description . ': the buyer sync succeeds only with a merchant handler');
+            if (!$handler) {
+                TinyAssert::count(0, $feeRows, $description . ': the sync fails on the line check, as before');
+                TinyAssert::true(self::logged('Surcharge cart line sync failed for cart ' . self::CART), $description . ': the sync failure is logged, as before');
+                Hook::$subscribers = [];
+                continue;
+            }
+            TinyAssert::count(1, $feeRows, $description . ': the fee row is written to the cart');
+            TinyAssert::same([['5.00', '1.05', '6.05', '0.21']], $fee($created), $description . ': the create sends one fee line');
+            TinyAssert::same([[round((float) $feeRows[0]['total'], 2), round((float) $feeRows[0]['total_wt'], 2)]], array_map(static function (array $line): array {
+                return [(float) $line[0], (float) $line[2]];
+            }, $fee($created)), $description . ': the fee the cart carries');
+            $order = self::order();
+            foreach (StubStore::$orderDetails as $i => $row) {
+                if ((int) $row['product_id'] === $feeId) {
+                    // Core copies the product's reference onto its order row; the stub's cart row has none.
+                    StubStore::$orderDetails[$i]['product_reference'] = Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE;
+                }
+            }
+            if ($mismatch === 'wrapping') {
+                $order->total_wrapping_tax_incl = 10.00;
+                $order->total_wrapping_tax_excl = 10.00;
+            }
+            $module->hookActionOrderEdited(['order' => $order]);
+            TinyAssert::count(1, $module->sent, $description . ': the update is sent');
+            TinyAssert::same($fee($created), $fee($module->sent[0]['payload']), $description . ': the update sends the same fee');
+            Hook::$subscribers = [];
+        }
+    }
+
+    /**
      * The README's outside-carrier handler sends the same lines on the create
      * and on a later update of the order placed from that cart: the update's
      * shipping line, which carries the cost on top of the carrier's shipping,
@@ -862,28 +981,56 @@ final class OrderPostprocessingSpec
      */
     private static function testHandlerDetectionFailureFailsTheRequestWithTheHookCode(): void
     {
-        $broken = static function (): void {
-            StubStore::$moduleInstances['brokenhandler'] = new class {
+        $broken = static function (bool $asError = false): void {
+            StubStore::$moduleInstances['brokenhandler'] = new class ($asError) {
                 public $name = 'brokenhandler';
+                private bool $asError;
+
+                public function __construct(bool $asError)
+                {
+                    $this->asError = $asError;
+                }
 
                 public function __get($property)
                 {
-                    throw new RuntimeException('the module failed to load');
+                    throw $this->asError ? new Error('the module failed to load') : new RuntimeException('the module failed to load');
                 }
             };
             Hook::$execLists[TwoOrderPostprocessing::HOOK] = [['module' => 'brokenhandler']];
         };
-        $cart = self::seed(false, true);
-        $module = self::module();
-        self::harnessAsInstance($module);
-        $broken();
-        $error = null;
-        try {
-            $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
-        } catch (Throwable $e) {
-            $error = $e;
+        // Columns: the module throws an Error (not an Exception), buyer fee on, description.
+        $cases = [
+            [false, false, 'an exception, no buyer fee'],
+            [true, false, 'an error, no buyer fee'],
+            [false, true, 'an exception, the buyer fee on'],
+            [true, true, 'an error, the buyer fee on'],
+        ];
+        foreach ($cases as [$asError, $fee, $description]) {
+            $cart = self::seed(false, true);
+            if ($fee) {
+                self::enableBuyerFee($cart);
+            }
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $broken($asError);
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            } catch (Throwable $e) {
+                $error = $e;
+            }
+            TinyAssert::same(TwoOrderPostprocessing::CODE_HOOK_FAILED, $error instanceof TwoOrderPostprocessingException ? $error->getTwoCode() : ($error === null ? null : get_class($error)), $description . ': an order create fails with the code');
+            if ($fee) {
+                // The buyer's own sync, as the checkout's AJAX call makes it: the basis it always had, so it succeeds.
+                $synced = null;
+                try {
+                    $synced = $module->syncTwoSurchargeCartLine($cart, true)['success'];
+                } catch (Throwable $e) {
+                    $synced = get_class($e);
+                }
+                TinyAssert::same(true, $synced, $description . ': the buyer sync succeeds');
+            }
         }
-        TinyAssert::same(TwoOrderPostprocessing::CODE_HOOK_FAILED, $error instanceof TwoOrderPostprocessingException ? $error->getTwoCode() : ($error === null ? null : get_class($error)), 'an order create fails with the code');
 
         self::seed(false, true);
         $module = self::module();
@@ -1510,7 +1657,7 @@ final class OrderPostprocessingSpec
         foreach ($builders as $builder) {
             TinyAssert::true(isset($postprocessingFunctions[$builder]), $builder . ' must fire the hook through postprocessOrderRequest()');
         }
-        TinyAssert::same(['twopayment.php::computeTwoOrderPricingData', 'twopayment.php::reconcileTwoSurchargeCartLine'], array_keys($productItemCallers), 'getTwoProductItems() is called only by the pricing builder and the surcharge fee basis');
+        TinyAssert::same(['twopayment.php::computeTwoOrderPricingData', 'twopayment.php::getTwoSurchargeFeeBasisItems'], array_keys($productItemCallers), 'getTwoProductItems() is called only by the pricing builder and the surcharge fee basis');
     }
 
     /**
