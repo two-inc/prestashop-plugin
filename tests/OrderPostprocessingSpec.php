@@ -1517,7 +1517,7 @@ final class OrderPostprocessingSpec
     private static function testEachRequestTypeFiresExactlyOnce(): void
     {
         $cases = self::requestDrivers();
-        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines', 'order_refunds'];
+        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'fallback_shipping_tax_code', 'contract_version', 'order_lines', 'order_refunds'];
         foreach ($cases as [$type, $trigger, $sends, $driver, $description]) {
             $cart = self::seed(true);
             $module = self::module();
