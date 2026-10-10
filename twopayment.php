@@ -5273,7 +5273,7 @@ class Twopayment extends PaymentModule
                             PrestaShopLogger::addLog('TwoPayment: Order not in refundable state. Current state: ' . $order_state . '. Two only allows refunds for FULFILLED orders. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 2);
                             // A cancelled order has nothing to refund, so there is nothing for the merchant to do.
                             if (!$this->shouldBlockTwoFulfillmentByTwoState((string) $order_state)) {
-                                $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->l('the order is not fulfilled yet'));
+                                $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $order_state === null ? $this->l('the order could not be read from the provider') : $this->l('the order is not fulfilled yet'));
                             }
                             return;
                         }
@@ -5285,7 +5285,17 @@ class Twopayment extends PaymentModule
                         // Partial refunds already made, from credit slips or in the portal: refund only what is left (TWO-26093).
                         $sent = $this->getTwoSentRefunds((int)$order->id);
                         if (!empty($sent) || $this->getTwoOrderRefundedTotal($current_two_order) > 0) {
-                            $this->refundTwoRemainder($order, $orderpaymentdata, $current_two_order, $sent);
+                            // The remainder owns its notices: never flag the full refund for it, and never say
+                            // a remainder Two accepted was not sent.
+                            $remainder_accepted = false;
+                            try {
+                                $this->refundTwoRemainder($order, $orderpaymentdata, $current_two_order, $sent, $remainder_accepted);
+                            } catch (Throwable $e) {
+                                PrestaShopLogger::addLog('TwoPayment: Exception during refund remainder for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ($remainder_accepted ? ', after Two accepted it' : '') . ', Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+                                if (!$remainder_accepted) {
+                                    $this->flagTwoRefundRemainderNotSent((int) $order->id, $this->l('an unexpected error stopped it'));
+                                }
+                            }
                             return;
                         }
 
@@ -5917,7 +5927,10 @@ class Twopayment extends PaymentModule
      * @param array $two_order the Two order as just read
      * @param array $sent getTwoSentRefunds()
      */
-    protected function refundTwoRemainder($order, $orderpaymentdata, $two_order, array $sent)
+    /**
+     * @param bool $accepted set true as soon as Two has accepted the remainder, for the caller's error handling
+     */
+    protected function refundTwoRemainder($order, $orderpaymentdata, $two_order, array $sent, &$accepted = false)
     {
         $id_order = (int)$order->id;
         $two_order_id = $orderpaymentdata['two_order_id'];
@@ -5964,9 +5977,10 @@ class Twopayment extends PaymentModule
         $idempotency_key = 'refund_remainder_' . $two_order_id . '_' . md5(implode(',', $slip_ids) . '|' . $payload['amount']);
         $sent_payload = null;
         $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $two_order);
-        $this->logTwoRefundSentUnitemised($sent_payload, $unitemised);
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
-        if (!($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'])) {
+        $accepted = $http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'];
+        $this->logTwoRefundSentUnitemised($sent_payload, $unitemised);
+        if (!$accepted) {
             $this->logTwoRefundFailure('Full refund remainder', $two_order_id, $id_order, $response, $idempotency_key);
             $this->flagTwoRefundRemainderNotSent($id_order, $this->getTwoRefundNotSentReason($response));
             return;
