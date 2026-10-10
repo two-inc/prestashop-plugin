@@ -477,6 +477,8 @@ final class RefundSpec
             public bool $throwOnRead = false;
             /** Throw from the order read that follows an accepted refund. */
             public bool $throwOnReadAfterRefund = false;
+            /** What Two answers a refund POST. */
+            public array $refundResponse = ['http_status' => 201, 'id' => 'refund-uuid'];
             /** Throw from recording a refund outcome. */
             public bool $throwOnRecord = false;
             /** What getTwoUpdateOrderData() reports as the order's tax_subtotals. */
@@ -602,7 +604,7 @@ final class RefundSpec
                     throw new Error('refresh failed');
                 }
                 if ($method === 'POST' && strpos($endpoint, '/refund') !== false) {
-                    return ['http_status' => 201, 'id' => 'refund-uuid'];
+                    return $this->refundResponse;
                 }
 
                 // GET order snapshot (initial check + post-refund refresh).
@@ -986,25 +988,46 @@ final class RefundSpec
     }
 
     /**
-     * TWO-26290: a Refunded status while Two cannot refund the order yet tells the merchant on the order page and in
-     * its private notes, as a skipped credit slip does, instead of only logging. Columns: Two state, expected refund
-     * calls, whether the merchant is told, description.
+     * TWO-26290: a Refunded status whose refund does not reach Two tells the merchant on the order page and in its
+     * private notes, as a skipped credit slip does, instead of only logging. A cancelled order, or one Two refunded
+     * already, has nothing left for the merchant to do, and a refund Two accepted is never reported as not sent.
+     * Columns: Two state (null: none given; false: the order cannot be read), harness switches, refund response,
+     * expected refund calls, the reason the merchant is told (null: not told), description.
      */
     private static function testRefundedStatusBeforeFulfilmentTellsTheMerchant(): void
     {
-        $notice = 'The order was set to Refunded in PrestaShop but the refund was not sent to Two, because the order is not fulfilled yet. Refund it in the Two Merchant Portal.';
+        $created = ['http_status' => 201, 'id' => 'refund-uuid'];
+        $refused = ['http_status' => 400, 'error' => 'Bad request'];
         $cases = [
-            ['FULFILLING', 0, true, 'still fulfilling at Two: not sent, merchant told'],
-            ['CONFIRMED', 0, true, 'not fulfilled at Two: not sent, merchant told'],
-            ['FULFILLED', 1, false, 'fulfilled at Two: refund sent, no notice'],
+            ['FULFILLING', [], $created, 0, 'the order is not fulfilled yet', 'still fulfilling at Two: not sent, merchant told'],
+            ['CONFIRMED', [], $created, 0, 'the order is not fulfilled yet', 'not fulfilled at Two: not sent, merchant told'],
+            ['SOMETHING_NEW', [], $created, 0, 'the order is not fulfilled yet', 'unknown state at Two: not sent, merchant told'],
+            [null, [], $created, 0, 'the order is not fulfilled yet', 'no state from Two: not sent, merchant told'],
+            ['CANCELLED', [], $created, 0, null, 'cancelled at Two: nothing to refund, no notice'],
+            ['REFUNDED', [], $created, 0, null, 'already refunded at Two: no call, no notice'],
+            [false, [], $created, 0, 'the order could not be read from the provider', 'order read fails: merchant told'],
+            ['FULFILLED', [], $refused, 1, 'the provider did not accept it (HTTP 400)', 'Two refuses the refund: merchant told'],
+            ['FULFILLED', ['throwOnRead'], $created, 0, 'an unexpected error stopped it', 'exception before the refund: merchant told'],
+            ['FULFILLED', ['throwOnReadAfterRefund'], $created, 1, null, 'exception after Two accepted it: no notice'],
+            ['FULFILLED', [], $created, 1, null, 'fulfilled at Two: refund sent, no notice'],
         ];
-        foreach ($cases as [$state, $calls, $told, $desc]) {
+        foreach ($cases as [$state, $switches, $response, $calls, $reason, $desc]) {
             StubStore::reset();
             StubStore::$orders[5100] = ['module' => 'twopayment'];
             StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
             $twoOrder = self::fulfilledOrder(148.00);
-            $twoOrder['state'] = $state;
+            if ($state === false) {
+                $twoOrder = [];
+            } elseif ($state === null) {
+                unset($twoOrder['state']);
+            } else {
+                $twoOrder['state'] = $state;
+            }
             $module = self::makeModule($twoOrder);
+            $module->refundResponse = $response;
+            foreach ($switches as $switch) {
+                $module->{$switch} = true;
+            }
             $module->context->controller = new stdClass();
             $status = new OrderState();
             $status->id = 7;
@@ -1012,9 +1035,10 @@ final class RefundSpec
 
             $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
 
+            $notice = $reason === null ? [] : ['The order was set to Refunded in PrestaShop but the refund was not sent to Two, because ' . $reason . '. Refund it in the Two Merchant Portal.'];
             TinyAssert::count($calls, $module->refundCalls(), $desc . ': refund calls');
-            TinyAssert::same($told ? [$notice] : [], $module->privateNotes, $desc . ': private notes');
-            TinyAssert::same($told ? [$notice] : [], $module->context->controller->warnings ?? [], $desc . ': order page warning');
+            TinyAssert::same($notice, $module->privateNotes, $desc . ': private notes');
+            TinyAssert::same($notice, $module->context->controller->warnings ?? [], $desc . ': order page warning');
         }
     }
 

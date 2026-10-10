@@ -5254,6 +5254,8 @@ class Twopayment extends PaymentModule
                     }
                 } else if ($new_order_status->id == Configuration::get('PS_TWO_OS_REFUNDED_MAP')) {
                     // Full refund: issue refund call with no request body - wrapped in try-catch for safety
+                    // Once Two has accepted the refund the merchant is never told to refund it in the portal.
+                    $full_refund_accepted = false;
                     try {
                         PrestaShopLogger::addLog('TwoPayment: Initiating full refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Triggered by status: ' . $new_order_status->name . ' (ID: ' . $new_order_status->id . ')', 1);
                         
@@ -5261,6 +5263,7 @@ class Twopayment extends PaymentModule
                         $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                         if (!$current_two_order || !isset($current_two_order['id'])) {
                             PrestaShopLogger::addLog('TwoPayment: Cannot retrieve Two order for refund check. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
+                            $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->l('the order could not be read from the provider'));
                             return;
                         }
                         
@@ -5268,7 +5271,10 @@ class Twopayment extends PaymentModule
                         $order_state = isset($current_two_order['state']) ? $current_two_order['state'] : null;
                         if ($order_state !== 'FULFILLED' && $order_state !== 'REFUNDED') {
                             PrestaShopLogger::addLog('TwoPayment: Order not in refundable state. Current state: ' . $order_state . '. Two only allows refunds for FULFILLED orders. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 2);
-                            $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->l('the order is not fulfilled yet'));
+                            // A cancelled order has nothing to refund, so there is nothing for the merchant to do.
+                            if (!$this->shouldBlockTwoFulfillmentByTwoState((string) $order_state)) {
+                                $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->l('the order is not fulfilled yet'));
+                            }
                             return;
                         }
                         
@@ -5330,6 +5336,7 @@ class Twopayment extends PaymentModule
                         
                         // Only treat as success if HTTP status is 201 (Created)
                         if ($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id']) {
+                            $full_refund_accepted = true;
                             // Fetch latest order snapshot to update local state/status
                             $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                             if (isset($order_after['id']) && $order_after['id']) {
@@ -5380,11 +5387,15 @@ class Twopayment extends PaymentModule
                                 PrestaShopLogger::addLog('TwoPayment: Refund failed - No HTTP response (connection error). Check network connectivity. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
                             }
                             
+                            $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->getTwoRefundNotSentReason($response));
                             // Don't interfere with PrestaShop's status change process
                         }
-                    } catch (Exception $e) {
+                    } catch (Throwable $e) {
                         // Catch any exceptions to prevent breaking the order status change
-                        PrestaShopLogger::addLog('TwoPayment: Exception during refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ', Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+                        PrestaShopLogger::addLog('TwoPayment: Exception during refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ($full_refund_accepted ? ', after Two accepted it' : '') . ', Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+                        if (!$full_refund_accepted) {
+                            $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->l('an unexpected error stopped it'));
+                        }
                     }
                 }
             }
