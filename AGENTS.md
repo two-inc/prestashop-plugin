@@ -241,8 +241,9 @@ builders, before the postprocessing hook, so a subscriber can change it. The REA
   (TWO-26151).
 - **Both intra-community codes need the buyer's VAT number** (TWO-26153): the invoice address
   `vat_number` as entered (PrestaShop keeps no VIES result on the address, so there is no refused
-  number to drop), normalised by `TwoTaxCodeResolver::normaliseVatNumber()` (only A-Z and 0-9 kept, no
-  digit means no number, GR written as EL), whose prefix names an EU
+  number to drop), trimmed of leading and trailing whitespace by `TwoTaxCodeResolver::trimVatNumber()` and
+  otherwise sent as entered (never upper-cased, stripped or prefixed), whose prefix, read as entered
+  in `vatCountry()` (upper-case letters only, EL as Greece), names an EU
   member state other than the merchant's country. Without one the line gets no code; never fall
   through to another code. A Spanish merchant's create alone sends it as `buyer_vat_number`, never
   for a Spanish buyer company and never as an empty key. It is never an organisation number (TWO-40).

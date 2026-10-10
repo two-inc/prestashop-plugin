@@ -8532,8 +8532,8 @@ class Twopayment extends PaymentModule
 
     /**
      * The buyer's VAT number (TWO-26153): the invoice address `vat_number`, the field the `vatnumber` module validates
-     * and stores, normalised against the invoice address country by TwoTaxCodeResolver::normaliseVatNumber(). It is
-     * never a source for the organisation number (TWO-40).
+     * and stores, sent as entered with only leading and trailing whitespace trimmed (TwoTaxCodeResolver::trimVatNumber()).
+     * It is never a source for the organisation number (TWO-40).
      *
      * @param Address $invoiceAddress
      * @return string '' when the buyer gave none
@@ -8544,10 +8544,7 @@ class Twopayment extends PaymentModule
             return '';
         }
 
-        return TwoTaxCodeResolver::normaliseVatNumber(
-            $invoiceAddress->vat_number,
-            (int) $invoiceAddress->id_country > 0 ? (string) Country::getIsoById((int) $invoiceAddress->id_country) : ''
-        );
+        return TwoTaxCodeResolver::trimVatNumber($invoiceAddress->vat_number);
     }
 
     /**
