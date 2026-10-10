@@ -3454,7 +3454,7 @@ class Twopayment extends PaymentModule
             'name' => 'PS_TWO_TAX_CODE_MAP_INTRO',
             'html_content' => '',
             'desc' => sprintf(
-                $this->l('%s requires a tax code on every line at a 0%% rate for a Spanish merchant. For a Spanish merchant the module derives one where the order decides it: goods delivered outside the EU, or to the Canary Islands, Ceuta or Melilla, are exports; goods delivered to another EU country for a buyer company in another EU country are intra-community supplies; services for a buyer company in another EU country are reverse charge. Map a tax rules group to send its code on every 0%% line taxed by that group instead. Leave (none) to rely on the derivation. The module never refuses an order over a tax code; %s validates it.'),
+                $this->l('%s requires a tax code on every line at a 0%% rate for a Spanish merchant. For a Spanish merchant the module derives one where the order decides it: goods delivered outside the EU, or to the Canary Islands, Ceuta or Melilla, are exports; goods delivered to another EU country for a buyer company in another EU country are intra-community supplies, and services for a buyer company in another EU country are intra-community services, both only when the invoice address carries a VAT number from an EU country other than the merchant\'s; services for a buyer company outside the EU, or for a Spanish buyer invoiced in the Canary Islands, Ceuta or Melilla, are non-EU services. Map a tax rules group to send its code on every 0%% line taxed by that group instead. Leave (none) to rely on the derivation. The module never refuses an order over a tax code; %s validates it.'),
                 $this->getTwoBrandConfig('product_name'),
                 $this->getTwoBrandConfig('product_name')
             ),
@@ -5021,11 +5021,39 @@ class Twopayment extends PaymentModule
             $this->getTwoBrandConfig('product_name'),
             $reason
         );
+        $this->flagTwoRefundNotSent($idOrder, $text, 'credit slip ' . (int) $slipId);
+    }
+
+    /**
+     * Tell the merchant, as for a credit slip, that the full refund a status change asked for did not reach Two (TWO-26290).
+     *
+     * @param int $idOrder
+     * @param string $statusName
+     * @param string $reason
+     */
+    protected function flagTwoFullRefundNotSent($idOrder, $statusName, $reason)
+    {
+        $text = sprintf(
+            $this->l('The order was set to %1$s in PrestaShop but the refund was not sent to %2$s, because %3$s. Refund it in the %2$s Merchant Portal.'),
+            $statusName,
+            $this->getTwoBrandConfig('product_name'),
+            $reason
+        );
+        $this->flagTwoRefundNotSent($idOrder, $text, 'the full refund');
+    }
+
+    /**
+     * @param int $idOrder
+     * @param string $text
+     * @param string $what what was not sent, for the log
+     */
+    private function flagTwoRefundNotSent($idOrder, $text, $what)
+    {
         $this->addTwoBackOfficeWarning($text);
         try {
             $this->addTwoOrderPrivateNote((int) $idOrder, $text);
         } catch (Throwable $e) {
-            PrestaShopLogger::addLog('TwoPayment: could not note on order ' . (int) $idOrder . ' that credit slip ' . (int) $slipId . ' was not sent - ' . $e->getMessage(), 3);
+            PrestaShopLogger::addLog('TwoPayment: could not note on order ' . (int) $idOrder . ' that ' . $what . ' was not sent - ' . $e->getMessage(), 3);
         }
     }
 
@@ -5226,6 +5254,8 @@ class Twopayment extends PaymentModule
                     }
                 } else if ($new_order_status->id == Configuration::get('PS_TWO_OS_REFUNDED_MAP')) {
                     // Full refund: issue refund call with no request body - wrapped in try-catch for safety
+                    // Once Two has accepted the refund the merchant is never told to refund it in the portal.
+                    $full_refund_accepted = false;
                     try {
                         PrestaShopLogger::addLog('TwoPayment: Initiating full refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Triggered by status: ' . $new_order_status->name . ' (ID: ' . $new_order_status->id . ')', 1);
                         
@@ -5233,6 +5263,7 @@ class Twopayment extends PaymentModule
                         $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                         if (!$current_two_order || !isset($current_two_order['id'])) {
                             PrestaShopLogger::addLog('TwoPayment: Cannot retrieve Two order for refund check. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
+                            $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->l('the order could not be read from the provider'));
                             return;
                         }
                         
@@ -5240,6 +5271,10 @@ class Twopayment extends PaymentModule
                         $order_state = isset($current_two_order['state']) ? $current_two_order['state'] : null;
                         if ($order_state !== 'FULFILLED' && $order_state !== 'REFUNDED') {
                             PrestaShopLogger::addLog('TwoPayment: Order not in refundable state. Current state: ' . $order_state . '. Two only allows refunds for FULFILLED orders. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 2);
+                            // A cancelled order has nothing to refund, so there is nothing for the merchant to do.
+                            if (!$this->shouldBlockTwoFulfillmentByTwoState((string) $order_state)) {
+                                $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $order_state === null ? $this->l('the order could not be read from the provider') : $this->l('the order is not fulfilled yet'));
+                            }
                             return;
                         }
                         
@@ -5250,7 +5285,17 @@ class Twopayment extends PaymentModule
                         // Partial refunds already made, from credit slips or in the portal: refund only what is left (TWO-26093).
                         $sent = $this->getTwoSentRefunds((int)$order->id);
                         if (!empty($sent) || $this->getTwoOrderRefundedTotal($current_two_order) > 0) {
-                            $this->refundTwoRemainder($order, $orderpaymentdata, $current_two_order, $sent);
+                            // The remainder owns its notices: never flag the full refund for it, and never say
+                            // a remainder Two accepted was not sent.
+                            $remainder_accepted = false;
+                            try {
+                                $this->refundTwoRemainder($order, $orderpaymentdata, $current_two_order, $sent, $remainder_accepted);
+                            } catch (Throwable $e) {
+                                PrestaShopLogger::addLog('TwoPayment: Exception during refund remainder for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ($remainder_accepted ? ', after Two accepted it' : '') . ', Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+                                if (!$remainder_accepted) {
+                                    $this->flagTwoRefundRemainderNotSent((int) $order->id, $this->l('an unexpected error stopped it'));
+                                }
+                            }
                             return;
                         }
 
@@ -5301,6 +5346,7 @@ class Twopayment extends PaymentModule
                         
                         // Only treat as success if HTTP status is 201 (Created)
                         if ($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id']) {
+                            $full_refund_accepted = true;
                             // Fetch latest order snapshot to update local state/status
                             $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                             if (isset($order_after['id']) && $order_after['id']) {
@@ -5351,11 +5397,15 @@ class Twopayment extends PaymentModule
                                 PrestaShopLogger::addLog('TwoPayment: Refund failed - No HTTP response (connection error). Check network connectivity. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 3);
                             }
                             
+                            $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->getTwoRefundNotSentReason($response));
                             // Don't interfere with PrestaShop's status change process
                         }
-                    } catch (Exception $e) {
+                    } catch (Throwable $e) {
                         // Catch any exceptions to prevent breaking the order status change
-                        PrestaShopLogger::addLog('TwoPayment: Exception during refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ', Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+                        PrestaShopLogger::addLog('TwoPayment: Exception during refund for Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id . ($full_refund_accepted ? ', after Two accepted it' : '') . ', Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+                        if (!$full_refund_accepted) {
+                            $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->l('an unexpected error stopped it'));
+                        }
                     }
                 }
             }
@@ -5876,8 +5926,9 @@ class Twopayment extends PaymentModule
      * @param array $orderpaymentdata
      * @param array $two_order the Two order as just read
      * @param array $sent getTwoSentRefunds()
+     * @param bool $accepted set true as soon as Two has accepted the remainder, for the caller's error handling
      */
-    protected function refundTwoRemainder($order, $orderpaymentdata, $two_order, array $sent)
+    protected function refundTwoRemainder($order, $orderpaymentdata, $two_order, array $sent, &$accepted = false)
     {
         $id_order = (int)$order->id;
         $two_order_id = $orderpaymentdata['two_order_id'];
@@ -5924,9 +5975,10 @@ class Twopayment extends PaymentModule
         $idempotency_key = 'refund_remainder_' . $two_order_id . '_' . md5(implode(',', $slip_ids) . '|' . $payload['amount']);
         $sent_payload = null;
         $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $two_order);
-        $this->logTwoRefundSentUnitemised($sent_payload, $unitemised);
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
-        if (!($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'])) {
+        $accepted = $http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'];
+        $this->logTwoRefundSentUnitemised($sent_payload, $unitemised);
+        if (!$accepted) {
             $this->logTwoRefundFailure('Full refund remainder', $two_order_id, $id_order, $response, $idempotency_key);
             $this->flagTwoRefundRemainderNotSent($id_order, $this->getTwoRefundNotSentReason($response));
             return;
@@ -6248,7 +6300,7 @@ class Twopayment extends PaymentModule
     private function getTwoRefundedPerLine($two_order)
     {
         $refunded = array();
-        foreach (isset($two_order['refunds']) && is_array($two_order['refunds']) ? $two_order['refunds'] : array() as $refund) {
+        foreach ($this->getTwoRefundsWithParentLines($two_order) as $refund) {
             foreach (isset($refund['line_items']) && is_array($refund['line_items']) ? $refund['line_items'] : array() as $line) {
                 if (!empty($line['prototype_id'])) {
                     $id = (string)$line['prototype_id'];
@@ -6258,6 +6310,86 @@ class Twopayment extends PaymentModule
         }
 
         return $refunded;
+    }
+
+    /**
+     * Two's refunds on the order, each refund line's prototype_id naming the order line it credited (TWO-26288).
+     * A refund line made from an order line gets its own id and that line's name, description, type, rate and tax
+     * code, and Two's responses leave its prototype_id empty, so an empty one is filled with the order line that
+     * matches on those fields. Within one refund each order line is credited by at most one line (the module sends
+     * one line per order line, and Two copies each), so where several order lines match, a refund's matching lines
+     * go to distinct order lines, the largest to the one with the most left to refund; only when a refund has more
+     * matching lines than there are order lines does one take a second, again the one with the most left. This is
+     * a best match, not Two's record. A refund line that matches no order line keeps its empty prototype_id.
+     *
+     * @param array|null $two_order Two order API response
+     * @return array the refunds, as Two returned them apart from the prototype_ids filled in
+     */
+    private function getTwoRefundsWithParentLines($two_order)
+    {
+        $refunds = isset($two_order['refunds']) && is_array($two_order['refunds']) ? array_values($two_order['refunds']) : array();
+        $left = array();
+        $by_look = array();
+        foreach (isset($two_order['line_items']) && is_array($two_order['line_items']) ? $two_order['line_items'] : array() as $line) {
+            if (is_array($line) && !empty($line['id'])) {
+                $left[(string)$line['id']] = isset($line['gross_amount']) ? (float)$line['gross_amount'] : 0.0;
+                $by_look[$this->getTwoLineLook($line)][] = (string)$line['id'];
+            }
+        }
+        // Lines Two already names come off first, so a matched line is judged on what is really left on its candidates.
+        foreach ($refunds as $refund) {
+            foreach (isset($refund['line_items']) && is_array($refund['line_items']) ? $refund['line_items'] : array() as $line) {
+                if (is_array($line) && !empty($line['prototype_id']) && isset($left[(string)$line['prototype_id']])) {
+                    $left[(string)$line['prototype_id']] -= abs((float)(isset($line['gross_amount']) ? $line['gross_amount'] : 0));
+                }
+            }
+        }
+        foreach ($refunds as $r => $refund) {
+            if (!isset($refund['line_items']) || !is_array($refund['line_items'])) {
+                continue;
+            }
+            $unnamed = array();
+            foreach ($refund['line_items'] as $l => $line) {
+                if (is_array($line) && empty($line['prototype_id']) && isset($by_look[$this->getTwoLineLook($line)])) {
+                    $unnamed[$l] = abs((float)(isset($line['gross_amount']) ? $line['gross_amount'] : 0));
+                }
+            }
+            // Largest first, each to the matching order line with the most left that this refund has not credited yet.
+            arsort($unnamed);
+            $used = array();
+            foreach ($unnamed as $l => $gross) {
+                $candidates = $by_look[$this->getTwoLineLook($refund['line_items'][$l])];
+                $fresh = array_values(array_diff($candidates, $used));
+                $parent = null;
+                foreach ($fresh === array() ? $candidates : $fresh as $id) {
+                    if ($parent === null || $left[$id] > $left[$parent] + 0.0001) {
+                        $parent = $id;
+                    }
+                }
+                $left[$parent] -= $gross;
+                $used[] = $parent;
+                $refunds[$r]['line_items'][$l]['prototype_id'] = $parent;
+            }
+        }
+
+        return $refunds;
+    }
+
+    /**
+     * The fields a refund line copies from the order line it was made from, as one key.
+     *
+     * @param array $line
+     * @return string
+     */
+    private function getTwoLineLook(array $line)
+    {
+        $look = array();
+        foreach (array('name', 'description', 'type', 'tax_code') as $field) {
+            $look[] = isset($line[$field]) ? (string)$line[$field] : '';
+        }
+        $look[] = isset($line['tax_rate']) ? number_format((float)$line['tax_rate'], 6, '.', '') : '';
+
+        return implode("\0", $look);
     }
 
     /**
@@ -8327,11 +8459,13 @@ class Twopayment extends PaymentModule
      * @param Address $deliveryAddress
      * @param Address $invoiceAddress
      * @param string $buyerCountry the payload's buyer.company.country_prefix
+     * @param Address $buyerAddress the address that country_prefix came from, whose postcode tells a buyer in the
+     *                              Canaries, Ceuta or Melilla
      * @param array|null $stored the codes placement resolved, by line key; null on a create, which records them
      * @return array
      * @throws Exception when a 0% line needs the stored mapping and it is unreadable
      */
-    private function applyTwoTaxCodes(array $lineItems, array $keys, $deliveryAddress, $invoiceAddress, $buyerCountry, $stored = null)
+    private function applyTwoTaxCodes(array $lineItems, array $keys, $deliveryAddress, $invoiceAddress, $buyerCountry, $buyerAddress, $stored = null)
     {
         if (count($keys) !== count($lineItems) || array_keys($keys) !== array_keys($lineItems)) {
             // Never a refusal: the lines go out uncoded and the API decides.
@@ -8348,6 +8482,8 @@ class Twopayment extends PaymentModule
             'dest_country' => Validate::isLoadedObject($destination) ? (string) Country::getIsoById((int) $destination->id_country) : '',
             'dest_postcode' => Validate::isLoadedObject($destination) ? (string) $destination->postcode : '',
             'buyer_country' => trim((string) $buyerCountry) !== '' ? (string) $buyerCountry : $invoiceCountry,
+            'buyer_postcode' => Validate::isLoadedObject($buyerAddress) ? (string) $buyerAddress->postcode : '',
+            'buyer_vat_number' => $this->getTwoBuyerVatNumber($invoiceAddress),
         );
         $hasGoods = false;
         foreach ($keys as $key) {
@@ -8392,6 +8528,26 @@ class Twopayment extends PaymentModule
         }
 
         return $lineItems;
+    }
+
+    /**
+     * The buyer's VAT number (TWO-26153): the invoice address `vat_number`, the field the `vatnumber` module validates
+     * and stores, normalised against the invoice address country by TwoTaxCodeResolver::normaliseVatNumber(). It is
+     * never a source for the organisation number (TWO-40).
+     *
+     * @param Address $invoiceAddress
+     * @return string '' when the buyer gave none
+     */
+    private function getTwoBuyerVatNumber($invoiceAddress)
+    {
+        if (!Validate::isLoadedObject($invoiceAddress)) {
+            return '';
+        }
+
+        return TwoTaxCodeResolver::normaliseVatNumber(
+            $invoiceAddress->vat_number,
+            (int) $invoiceAddress->id_country > 0 ? (string) Country::getIsoById((int) $invoiceAddress->id_country) : ''
+        );
     }
 
     /**
@@ -8639,15 +8795,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The context's order_refunds (TWO-26287): the refunds Two holds for the order, verbatim from the same GET
-     * response, each with the lines it credited. Null when there is no successful response with a list of refunds.
+     * The context's order_refunds (TWO-26287): the refunds Two holds for the order, from the same GET response, each
+     * with the lines it credited, every refund line naming its order line in prototype_id where one matches
+     * (TWO-26288). Null when there is no successful response with a list of refunds.
      *
      * @param array|null $twoOrder
      * @return array|null
      */
     public function getTwoOrderRefundsAtTwo($twoOrder)
     {
-        return $this->getTwoOrderListAtTwo($twoOrder, 'refunds');
+        return $this->getTwoOrderListAtTwo($twoOrder, 'refunds') === null ? null : $this->getTwoRefundsWithParentLines($twoOrder);
     }
 
     /**
@@ -9506,7 +9663,22 @@ class Twopayment extends PaymentModule
             'terms' => $this->buildTermsPayload(),
         ];
 
-        $request_data['line_items'] = $this->applyTwoTaxCodes($line_items, $pricingData['line_tax_keys'], $delivery_address, $invoice_address, $buyerCompany['country_iso']);
+        $request_data['line_items'] = $this->applyTwoTaxCodes(
+            $line_items,
+            $pricingData['line_tax_keys'],
+            $delivery_address,
+            $invoice_address,
+            $buyerCompany['country_iso'],
+            $this->resolveBuyerCompanyAddress($buyerData, $invoice_address, $delivery_address)
+        );
+
+        // A Spanish merchant's order tells Two the buyer's VAT number (TWO-26153), on create only: an edit that omits
+        // it keeps the stored one, and a refund reads that. Never for a Spanish buyer, whose VAT number Two requires to
+        // equal its organisation number; absent rather than empty when there is none, so other payloads are unchanged.
+        $buyerVatNumber = $this->getTwoBuyerVatNumber($invoice_address);
+        if ($buyerVatNumber !== '' && strtoupper(trim((string) $buyerCompany['country_iso'])) !== 'ES' && $this->getTwoMerchantCountry() === 'ES') {
+            $request_data['buyer_vat_number'] = $buyerVatNumber;
+        }
 
         if ($this->shouldIncludeTaxSubtotals()) {
             $request_data['tax_subtotals'] = $tax_subtotals;
@@ -10003,13 +10175,17 @@ class Twopayment extends PaymentModule
         // A pair: completing a half-stored company from an address would name a
         // buyer the order was never placed with. No country is stored beside it,
         // so the prefix alone still follows the invoice address.
-        $buyerCompany = ($storedOrgNumber !== '' || $storedCompanyName !== '')
+        $hasStoredCompany = $storedOrgNumber !== '' || $storedCompanyName !== '';
+        $buyerCompany = $hasStoredCompany
             ? array(
                 'company_name' => $storedCompanyName,
                 'organization_number' => $storedOrgNumber,
                 'country_iso' => $buyerData['country_iso'],
             )
             : $this->resolveBuyerCompanyData($buyerData, $shippingData);
+        $buyerCompanyAddress = $hasStoredCompany
+            ? $invoice_address
+            : $this->resolveBuyerCompanyAddress($buyerData, $invoice_address, $delivery_address);
         $buyerOrgNumber = $buyerCompany['organization_number'];
         $buyerCompanyName = $buyerCompany['company_name'];
         $buyerCountryIso = $buyerCompany['country_iso'];
@@ -10072,6 +10248,7 @@ class Twopayment extends PaymentModule
             $delivery_address,
             $invoice_address,
             $buyerCountryIso,
+            $buyerCompanyAddress,
             $this->decodeTwoDeclaredChargeRates($orderpaymentdata)['tax_codes']
         );
 
@@ -13420,10 +13597,30 @@ class Twopayment extends PaymentModule
      */
     private function resolveBuyerCompanyData($invoice_company, $shipping_company)
     {
-        $has_invoice_company = trim((string) $invoice_company['company_name']) !== ''
-            || trim((string) $invoice_company['organization_number']) !== '';
+        return $this->hasTwoInvoiceCompany($invoice_company) ? $invoice_company : $shipping_company;
+    }
 
-        return $has_invoice_company ? $invoice_company : $shipping_company;
+    /**
+     * The address resolveBuyerCompanyData() took the buyer company, and so `country_prefix`, from (TWO-26151).
+     *
+     * @param array $invoice_company getCompanyDataWithFallbacks() output for the invoice address
+     * @param Address $invoice_address
+     * @param Address $delivery_address
+     * @return Address
+     */
+    private function resolveBuyerCompanyAddress($invoice_company, $invoice_address, $delivery_address)
+    {
+        return $this->hasTwoInvoiceCompany($invoice_company) ? $invoice_address : $delivery_address;
+    }
+
+    /**
+     * @param array $invoice_company getCompanyDataWithFallbacks() output for the invoice address
+     * @return bool
+     */
+    private function hasTwoInvoiceCompany($invoice_company)
+    {
+        return trim((string) $invoice_company['company_name']) !== ''
+            || trim((string) $invoice_company['organization_number']) !== '';
     }
 
     /**

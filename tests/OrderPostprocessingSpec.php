@@ -53,6 +53,7 @@ final class OrderPostprocessingSpec
         self::testOrderIntentRelayBuildsThePayloadItself();
         self::testEachRequestTypeFiresExactlyOnce();
         self::testPlacedLinesAreTwosLinesWhereTheRequestHasThem();
+        self::testOrderRefundsNameTheLineEachRefundLineCredited();
         self::testRefundedRemainderRebuildsTheOrderThenSendsTheRefund();
         self::testNoChangeKeepsTodaysOutcomeOnEveryRequestType();
         self::testRecomputeTotalsHelper();
@@ -1409,6 +1410,33 @@ final class OrderPostprocessingSpec
             }, $expected), array_map(static function ($c) {
                 return $c['context']['order_refunds'];
             }, $calls), $description . ': order_refunds');
+        }
+    }
+
+    /**
+     * TWO-26288: Two's refund lines carry their own ids and the name, description, type, rate and tax code of the
+     * order line they were made from, and its responses leave prototype_id empty, so order_refunds fills it in from
+     * the order line that matches, and the README's left to refund holds. Columns: the refund line as Two returns it,
+     * expected prototype_id, expected left to refund on line-1, description.
+     */
+    private static function testOrderRefundsNameTheLineEachRefundLineCredited(): void
+    {
+        $widget = ['type' => 'PHYSICAL', 'name' => 'Widget', 'description' => 'A widget', 'tax_rate' => '0.210000', 'tax_code' => null];
+        $lines = [
+            ['id' => 'line-1', 'gross_amount' => '121.00'] + $widget,
+            ['id' => 'line-2', 'type' => 'SHIPPING_FEE', 'name' => 'Carrier', 'description' => 'Next day', 'gross_amount' => '29.00', 'tax_rate' => '0.210000', 'tax_code' => null],
+        ];
+        $cases = [
+            [['id' => 'r-line', 'prototype_id' => null, 'gross_amount' => '-12.10'] + $widget, 'line-1', 108.9, 'empty, as Two returns it: the matching order line'],
+            [['id' => 'r-line', 'prototype_id' => 'line-2', 'gross_amount' => '-12.10'] + $widget, 'line-2', 121.0, 'given: kept as Two gave it'],
+            [['id' => 'r-line', 'prototype_id' => null, 'gross_amount' => '-12.10', 'name' => 'Goodwill'] + $widget, null, 121.0, 'matching no order line: left empty'],
+            [['id' => 'r-line', 'prototype_id' => null, 'gross_amount' => '-12.10', 'tax_rate' => '0.1'] + $widget, null, 121.0, 'at another rate: left empty'],
+        ];
+        foreach ($cases as [$refundLine, $parent, $left, $description]) {
+            $module = self::module();
+            $refunds = $module->getTwoOrderRefundsAtTwo(['http_status' => 200, 'line_items' => $lines, 'refunds' => [['id' => 'refund-0', 'total_amount' => '-12.10', 'line_items' => [$refundLine]]]]);
+            TinyAssert::same(array_replace($refundLine, ['prototype_id' => $parent]), $refunds[0]['line_items'][0], $description . ': ' . json_encode($refunds));
+            TinyAssert::same($left, Twoorderpostprocessingtest::leftToRefund(['order_lines' => $lines, 'order_refunds' => $refunds], 'line-1'), $description . ': left to refund on line-1');
         }
     }
 
