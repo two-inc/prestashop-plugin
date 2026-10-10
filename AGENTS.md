@@ -239,9 +239,9 @@ lines" is the specification.
   never falls through. Do not add goods-versus-services logic: the merchant's groups carry it.
 - **Step 4 never guesses.** A line with no group takes the one code the order's lines coded by
   steps 1 to 3 share, else none.
-- **The derivation is transitional.** `TwoTaxCodeResolver` still codes a line whose group has no
-  row mapped at all, and a keyless line when nothing was coded by steps 1 to 3, so shops that have
-  mapped nothing keep working until it is deleted. It never overrides a mapped group.
+- **The module picks no code itself** (TWO-26153). There is no derivation and no fallback: a 0% line
+  no step codes goes out without one, and Two's API refuses it for a Spanish merchant. Do not add
+  country, postcode, VAT-prefix or goods-versus-services logic back; the merchant's rows carry it.
 - **A mapping still stored per group** (an unmoved shop tier, a failed upgrade) is read as the
   rows the 2.7.20 upgrade would write (`readTwoTaxCodeMap()`), never treated as unreadable.
 - **The hook context's `fallback_shipping_tax_code`** is steps 1 to 3 for the Default shipping
@@ -249,20 +249,12 @@ lines" is the specification.
 - **Never refuse and never coerce.** An uncodable line goes out without a code and Two's API
   decides. Do not add a module-side refusal, a fallback code or a rate change: the Spanish
   canonical-rate fallback this module once had was exactly that failure mode, and it is gone.
-- **The merchant's rows win, then (transitionally) the derivation, then nothing.** Never derive
-  `ES_IVA_EXEMPT_OTHER`, `ES_IGIC_ZERO` or `ES_IPSI_ZERO`, nor `ES_IVA_REVERSE_CHARGE`, which is
-  Spanish domestic reverse charge only. Services to a buyer outside the EU derive
-  `ES_IVA_NON_EU_SERVICES`, and a Spanish buyer counts as outside when the postcode of the buyer
-  company's address (the address `country_prefix` comes from) is in the Canaries, Ceuta or Melilla
-  (TWO-26151).
-- **Both derived intra-community codes need the buyer's VAT number** (TWO-26153): the invoice address
-  `vat_number` as entered (PrestaShop keeps no VIES result on the address, so there is no refused
-  number to drop), trimmed of leading and trailing whitespace by `TwoTaxCodeResolver::trimVatNumber()` and
-  otherwise sent as entered (never upper-cased, stripped or prefixed), whose prefix, read as entered
-  in `vatCountry()` (upper-case letters only, EL as Greece), names an EU
-  member state other than the merchant's country. Without one the line gets no code; never fall
-  through to another code. A Spanish merchant's create alone sends it as `buyer_vat_number`, never
-  for a Spanish buyer company and never as an empty key. It is never an organisation number (TWO-40).
+- **The buyer's VAT number** (TWO-26153) is the invoice address `vat_number` as entered
+  (PrestaShop keeps no VIES result on the address), trimmed of leading and trailing whitespace by
+  `getTwoBuyerVatNumber()` and otherwise sent as entered (never upper-cased, stripped or
+  prefixed). Step 1 needs it non-empty. A Spanish merchant's create alone sends it as
+  `buyer_vat_number`, never for a Spanish buyer company and never as an empty key. It is never an
+  organisation number (TWO-40).
 - **Only 0% lines are touched.** Every other payload, and every payload of an unmapped
   non-Spanish merchant, stays byte-identical; `TaxCodeSpec` holds goldens for that, and runs the
   shared case table of the design one row per case.
@@ -272,7 +264,7 @@ lines" is the specification.
   written only when a code resolved, so an order with none keeps its row byte-identical.
   `tax_codes_mapped` lists the keys whose codes came from steps 1 to 3: only those join step 4's
   pool on update, as at placement. A record without it (written before TWO-26153) keeps
-  the old rule: the one code every other 0% line carries, else the derivation.
+  the old rule's shared part: the one code every other 0% line carries, else none.
 - The line builder tags every line it appends (`tagTwoLineTaxKeys()`); a new kind of line needs
   a descriptor of its own, or it is resolved as an order-level charge.
 
