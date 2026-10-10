@@ -191,23 +191,11 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         }
 
         $this->module->restoreDuplicateCart($order->id, $order->id_customer);
-        $this->module->changeOrderStatus($order->id, $this->getCancelledStatus());
+        $this->module->changeOrderStatus($order->id, $this->module->getTwoCancelledOrderStatusId());
 
         $message = $this->module->l('Your order is cancelled.');
         $this->errors[] = $message;
         $this->redirectWithNotifications('index.php?controller=order');
-    }
-
-    private function getCancelledStatus()
-    {
-        $cancelled_status = Configuration::get('PS_TWO_OS_CANCELLED');
-        if (!$cancelled_status) {
-            $cancelled_status = Configuration::get('PS_TWO_OS_CANCELLED_MAP');
-            if (!$cancelled_status) {
-                $cancelled_status = Configuration::get('PS_OS_CANCELED');
-            }
-        }
-        return (int)$cancelled_status;
     }
 
     /**
