@@ -382,7 +382,10 @@ final class PlacedOrderUpdateSpec
 
                 public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
                 {
-                    $this->puts[] = $payload;
+                    // The order's state lookup is not a PUT; with a merchant handler it is read before the build (TWO-26282).
+                    if ($method !== 'GET') {
+                        $this->puts[] = $payload;
+                    }
                     return ['http_status' => 200];
                 }
             };
