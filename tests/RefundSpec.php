@@ -383,7 +383,7 @@ final class RefundSpec
         $cases = [
             [false, false, [['sweater', '20.63', '4.12', '24.75'], ['mug', '42.73', '8.54', '51.27'], ['notebook', '18.53', '3.71', '22.24']], 'prototype_id empty, as Two returns it: each line takes what is left on it'],
             [true, false, [['sweater', '20.63', '4.12', '24.75'], ['mug', '42.73', '8.54', '51.27'], ['notebook', '18.53', '3.71', '22.24']], 'prototype_id given: the same'],
-            [false, true, [['sweater', '20.63', '4.12', '24.75'], ['mug', '35.46', '7.09', '42.55'], ['notebook', '25.80', '5.16', '30.96']], 'two lines that look identical share what was credited to either, so neither takes more than is left on both'],
+            [false, true, [['sweater', '20.63', '4.12', '24.75'], ['mug', '42.73', '8.54', '51.27'], ['notebook', '18.53', '3.71', '22.24']], 'two lines that look identical: each refund\'s two matching lines go to different order lines, the larger to the one with more left, so each line takes what is left on it'],
         ];
         foreach ($cases as [$prototype, $twins, $expected, $desc]) {
             $line = static function (string $id, string $type, string $name, string $net, string $tax, string $gross) use ($twins): array {
