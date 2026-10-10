@@ -267,7 +267,8 @@ final class TaxCodeSpec
         $rows = [
             [[], 'US', 'ES', '', false, self::EXPORT, 'an unmapped shop\'s export with goods, a service and a 0% discount: the edit derives the discount\'s code as placement did'],
             [[$lamp . '|exempt' => self::INTRA], 'DE', 'DE', 'DE123', false, self::INTRA, 'a mapped goods group and an unmapped services group: the edit shares only the mapped code'],
-            [[], 'US', 'ES', '', true, self::EXPORT, 'a record from before provenance was kept shares nothing and derives as before'],
+            [[], 'US', 'ES', '', true, self::EXPORT, 'a record from before provenance was kept whose lines disagree derives as before'],
+            [[$lamp . '|none' => self::ART20, ($lamp + 1) . '|none' => self::ART20], 'ES', 'ES', '', true, self::ART20, 'a record from before provenance was kept whose lines agree shares their code, as staging did, where derivation finds none'],
         ];
         foreach ($rows as [$map, $dest, $buyer, $vat, $legacy, $expected, $description]) {
             self::seed('ES', 'mixed', $dest, '10001', $buyer, [], '0');
@@ -344,6 +345,14 @@ final class TaxCodeSpec
         $payload = $module->getTwoNewOrderData('merchant-attempt-' . self::CART, new Cart(self::CART), self::merchantUrls());
         TinyAssert::same(self::ART20, $payload['line_items'][0]['tax_code'] ?? null, 'the group\'s code still reaches its line');
         TinyAssert::true(self::logged('is still stored per tax rules group'), 'and the unmoved mapping is logged');
+        $count = static function () {
+            return count(array_filter(PrestaShopLogger::$logs, static function ($log) {
+                return strpos(is_array($log) ? (string) reset($log) : (string) $log, 'is still stored per tax rules group') !== false;
+            }));
+        };
+        $before = $count();
+        (new TwopaymentTestHarness())->getTwoTaxCodeMap();
+        TinyAssert::same($before, $count(), 'and not again on the next request the same day');
     }
 
     /** A post PHP cut short at max_input_vars is refused, never reported as saved. */
@@ -355,6 +364,13 @@ final class TaxCodeSpec
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 return ['http_status' => 200, 'data' => TaxCodeSpec::codeList()];
+            }
+
+            public int $limit = 0;
+
+            protected function getTwoMaxInputVars()
+            {
+                return $this->limit;
             }
 
             public function validate(): array
@@ -371,6 +387,7 @@ final class TaxCodeSpec
             [[], 0, 'a form without the mapping is not truncated'],
         ];
         foreach ($rows as [$posted, $errors, $description]) {
+            $module->limit = 0;
             Tools::resetTestValues();
             foreach ($posted as $field => $code) {
                 Tools::setTestValue('PS_TWO_TAX_CODE_MAP_' . $field, $code);
@@ -381,6 +398,17 @@ final class TaxCodeSpec
                 TinyAssert::true(strpos($got[0], 'max_input_vars') !== false, $description . ': the error names max_input_vars');
             }
         }
+        // PHP drops only what is past max_input_vars: a post of exactly the limit is whole.
+        Tools::resetTestValues();
+        $saved = $_POST;
+        foreach ([[3, 3, 0, 'a post of exactly max_input_vars values is whole'], [3, 4, 1, 'a post past max_input_vars is refused']] as [$limit, $count, $errors, $description]) {
+            $module->limit = $limit;
+            $_POST = array_fill_keys(array_map(static function ($n) {
+                return 'field' . $n;
+            }, range(1, $count)), 'x');
+            TinyAssert::same($errors, count($module->validate()), $description);
+        }
+        $_POST = $saved;
         Tools::resetTestValues();
     }
 

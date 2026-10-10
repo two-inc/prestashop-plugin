@@ -271,7 +271,8 @@ lines" is the specification.
 - **Placement's codes win on update.** They live in `two_declared_rates` under `tax_codes`,
   written only when a code resolved, so an order with none keeps its row byte-identical.
   `tax_codes_mapped` lists the keys whose codes came from steps 1 to 3: only those join step 4's
-  pool on update, as at placement. A record without it (written before TWO-26153) shares none.
+  pool on update, as at placement. A record without it (written before TWO-26153) keeps
+  the old rule: the one code every other 0% line carries, else the derivation.
 - The line builder tags every line it appends (`tagTwoLineTaxKeys()`); a new kind of line needs
   a descriptor of its own, or it is resolved as an order-level charge.
 
