@@ -5887,6 +5887,7 @@ require __DIR__ . '/MerchantFeeRatesSpec.php';
 require __DIR__ . '/TermSurchargeAmountsSpec.php';
 require __DIR__ . '/SurchargeCartLineSpec.php';
 require __DIR__ . '/ConfirmationLegacyParitySpec.php';
+require __DIR__ . '/CancelMirrorSpec.php';
 require __DIR__ . '/MinimumOrderGateSpec.php';
 require __DIR__ . '/InvoiceUploadGateSpec.php';
 require __DIR__ . '/FxRatesSpec.php';
@@ -5967,6 +5968,7 @@ $tests = [
     'TermSurchargeAmountsSpec::runAll' => [TermSurchargeAmountsSpec::class, 'runAll'],
     'SurchargeCartLineSpec::runAll' => [SurchargeCartLineSpec::class, 'runAll'],
     'ConfirmationLegacyParitySpec::runAll' => [ConfirmationLegacyParitySpec::class, 'runAll'],
+    'CancelMirrorSpec::runAll' => [CancelMirrorSpec::class, 'runAll'],
     'MinimumOrderGateSpec::runAll' => [MinimumOrderGateSpec::class, 'runAll'],
     'InvoiceUploadGateSpec::runAll' => [InvoiceUploadGateSpec::class, 'runAll'],
     'FxRatesSpec::runAll' => [FxRatesSpec::class, 'runAll'],
