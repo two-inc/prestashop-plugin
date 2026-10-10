@@ -689,6 +689,8 @@ final class DefaultShippingTaxCodeHarness extends TwopaymentTestHarness
     public function exposeValidOrderManagementFormValues(): array
     {
         $this->errors = array();
+        // As the rendered form posts it: a post without its end field was cut at max_input_vars (TWO-26153).
+        Tools::setTestValue(self::ORDER_MANAGEMENT_FORM_END_FIELD, '1');
         $this->validTwoOrderManagementFormValues();
 
         return $this->errors;
