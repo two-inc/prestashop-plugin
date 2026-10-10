@@ -7989,7 +7989,8 @@ class Twopayment extends PaymentModule
         }
 
         // The shop-match checks on single lines are recorded against their line while it is built, and run after the
-        // hook (TWO-26274). Only here: getTwoProductItems() called on its own, as the fee basis above, refuses at once.
+        // hook (TWO-26274). Only here and in the fee basis above with a merchant handler: getTwoProductItems() called on
+        // its own refuses at once.
         $this->twoDeferredShopMatch = array();
         $this->twoDeferredPlacedWrapping = null;
         try {
@@ -10955,7 +10956,8 @@ class Twopayment extends PaymentModule
      * contradictory line is surfaced to the merchant instead.
      *
      * A shop-match check (TWO-26274): while an order request is built it is recorded against the line it was made for
-     * and enforced after the hook, by the default handler or runTwoShopMatchChecks(); called any other way, as from
+     * and enforced after the hook, by the default handler or runTwoShopMatchChecks(); the buyer fee's basis records and
+     * drops it for a merchant handler (getTwoSurchargeFeeBasisItems()); called any other way, as from
      * getTwoProductItems() outside the order build, it refuses at once.
      *
      * @param string $label Line description for logs/errors
@@ -18652,6 +18654,31 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The lines the buyer fee is quoted on, as the order build makes them. With a merchant handler on the postprocessing
+     * hook, the shop-match checks on single lines are its own (TWO-26274): a line one of them would refuse is still a
+     * basis, and the request the fee is synced for records the refusal itself. With none, getTwoProductItems() refuses
+     * at once, as before.
+     *
+     * @param Cart $cart
+     * @return array
+     * @throws Exception
+     */
+    private function getTwoSurchargeFeeBasisItems($cart)
+    {
+        if ($this->twoDeferredShopMatch !== null || TwoOrderPostprocessing::runnableSubscribers() === array()) {
+            return $this->getTwoProductItems($cart);
+        }
+        $this->twoDeferredShopMatch = array();
+        try {
+            return $this->getTwoProductItems($cart);
+        } finally {
+            // The refusals recorded here are dropped: they belong to no payload.
+            $this->twoDeferredShopMatch = null;
+            $this->twoDeferredPlacedWrapping = null;
+        }
+    }
+
+    /**
      * The money side of the surcharge sync: add, update or remove the fee
      * line. Knows nothing of the checkout-state re-stamp wrapped around it.
      *
@@ -18698,7 +18725,7 @@ class Twopayment extends PaymentModule
                 if (!empty($settings['enabled'])) {
                     // Same basis derivation as buildTwoOrderPricingData:
                     // product+shipping line items, surcharge product excluded.
-                    $basisTotals = $this->calculateTwoLineItemTotals($this->getTwoProductItems($cart));
+                    $basisTotals = $this->calculateTwoLineItemTotals($this->getTwoSurchargeFeeBasisItems($cart));
                     $basis = round((float) $basisTotals['gross'], 2);
                     if ($basis > 0) {
                         $quoteUnavailable = false;
