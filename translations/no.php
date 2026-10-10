@@ -578,6 +578,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_d9e8fd0ca4e27bc560c15e7ac3e5c1ff'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] = 'Denne endringen ble lagret i PrestaShop, men ble ikke sendt til fakturaleverandøren: %s';
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Endringer i denne bestillingen siden %s ble lagret i PrestaShop, men har ikke nådd %s, så fakturaen stemmer kanskje ikke med denne bestillingen. Ikke gjenta en endring for å prøve på nytt; kontakt kundestøtte.';
 $_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'Kreditnota #%1$s ble lagret i PrestaShop, men ble ikke sendt til %2$s fordi %3$s. Refunder den i %2$s Selgerportal.';
+$_MODULE['<{twopayment}prestashop>twopayment_ebc864b3509e036ad2c3e83a074e22b4'] = 'Ordren ble satt til %1$s i PrestaShop, men refusjonen ble ikke sendt til %2$s fordi %3$s. Refunder den i %2$s Selgerportal.';
 $_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'det refunderte beløpet ikke kunne fordeles på ordrens avgiftssatser';
 $_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] = 'ordren ikke kunne leses fra leverandøren';
 $_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'ordren ikke er levert ennå';
