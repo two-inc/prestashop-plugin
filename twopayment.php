@@ -4753,19 +4753,27 @@ class Twopayment extends PaymentModule
      * @param array $orderpaymentdata
      * @param array|null $paymentdata set to the payload built
      * @param string $trigger the order postprocessing hook's context trigger
+     * @param array|null $twoOrder the order as Two's GET returned it, when the caller already has it (TWO-26282)
      * @return array|string|null the response; null when nothing changed since the last accepted PUT;
      *   a string, why, when Two would refuse the edit, so it was not sent
      */
-    public function putTwoOrderUpdate($order, $orderpaymentdata, &$paymentdata = null, $trigger = 'admin_edit')
+    public function putTwoOrderUpdate($order, $orderpaymentdata, &$paymentdata = null, $trigger = 'admin_edit', $twoOrder = null)
     {
-        $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata, $trigger);
+        // Only an admin's edit is checked: the buyer's confirmation sync runs on an order Two has just confirmed.
+        $adminEdit = in_array($trigger, array('admin_edit', 'tracking_number'), true);
+        // A merchant handler is given the order's lines at Two (TWO-26282), so its state lookup is read before the
+        // build rather than after it. Without one, the calls are what they were: no lookup unless the order changed.
+        $lookup = null;
+        if ($adminEdit && $twoOrder === null && $this->hasTwoOrderPostprocessingSubscribers()) {
+            $lookup = $this->getTwoOrderStateLookup($orderpaymentdata['two_order_id']);
+            $twoOrder = $lookup;
+        }
+        $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata, $trigger, $twoOrder);
         $hash = md5(json_encode($this->getTwoUpdateHashBasis($paymentdata)));
         if (isset($orderpaymentdata['two_update_hash']) && $orderpaymentdata['two_update_hash'] === $hash) {
             return null;
         }
-        // Only an admin's edit is checked: the buyer's confirmation sync runs on an order Two has just confirmed.
-        $adminEdit = in_array($trigger, array('admin_edit', 'tracking_number'), true);
-        $refusal = $adminEdit ? $this->getTwoOrderEditRefusal($orderpaymentdata['two_order_id']) : null;
+        $refusal = $adminEdit ? $this->getTwoOrderEditRefusal($orderpaymentdata['two_order_id'], $lookup) : null;
         if ($refusal !== null) {
             // The API would refuse this edit, so say why plainly instead of sending it (TWO-26150).
             $this->addTwoBackOfficeWarning($refusal);
@@ -4791,11 +4799,12 @@ class Twopayment extends PaymentModule
      * becomes FULFILLED. A failed lookup returns null, so the edit is sent and any refusal is reported as before.
      *
      * @param string $two_order_id
+     * @param array|null $lookup getTwoOrderStateLookup(), when it was already read for this edit; null reads it now
      * @return string|null
      */
-    protected function getTwoOrderEditRefusal($two_order_id)
+    protected function getTwoOrderEditRefusal($two_order_id, $lookup = null)
     {
-        $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, array(), 'GET', array(), self::API_TIMEOUT_STATE_CHECK);
+        $response = $lookup !== null ? $lookup : $this->getTwoOrderStateLookup($two_order_id);
         $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
         if ($http_status < 200 || $http_status >= 300) {
             return null;
@@ -4817,6 +4826,17 @@ class Twopayment extends PaymentModule
             $productName,
             $refusedState ? $state : $status
         );
+    }
+
+    /**
+     * The order's live record at Two, read with the state check's short timeout.
+     *
+     * @param string $two_order_id
+     * @return array|mixed the API response
+     */
+    protected function getTwoOrderStateLookup($two_order_id)
+    {
+        return $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, array(), 'GET', array(), self::API_TIMEOUT_STATE_CHECK);
     }
 
     /**
@@ -5278,7 +5298,7 @@ class Twopayment extends PaymentModule
                         $idempotency_key = 'refund_' . $two_order_id . '_' . md5($order->id . '_' . microtime(true) . '_' . uniqid('', true));
                         
                         // Issue refund call with no request body (full refund) and idempotency key
-                        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', [], 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key]);
+                        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', [], 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $current_two_order);
                         
                         // Extract HTTP status code from response
                         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
@@ -5546,7 +5566,7 @@ class Twopayment extends PaymentModule
             },
         )));
         try {
-            $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, $checks);
+            $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, $checks, $current_two_order);
         } catch (TwoCheckoutAmountException $e) {
             PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not build tax subtotals from the credit slip. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
             return $this->l('its refunded amount could not be split across the order\'s tax rates');
@@ -5888,7 +5908,7 @@ class Twopayment extends PaymentModule
 
         $currency = !empty($two_order['currency']) ? $two_order['currency'] : $this->getTwoOrderCurrencyIso($order);
         try {
-            $tax_subtotals = $this->buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, $sent, $remainder);
+            $tax_subtotals = $this->buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, $sent, $remainder, $two_order);
         } catch (TwoOrderPostprocessingException $e) {
             $this->flagTwoRefundRemainderNotSent($id_order, $this->getTwoRefundNotSentReason(array('error_code' => $e->getTwoCode())));
             return;
@@ -5907,7 +5927,7 @@ class Twopayment extends PaymentModule
         // Same remainder after the same refunds: same key, so a repeated status change cannot refund it twice.
         $idempotency_key = 'refund_remainder_' . $two_order_id . '_' . md5(implode(',', $slip_ids) . '|' . $payload['amount']);
         $sent_payload = null;
-        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload);
+        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $two_order);
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         if (!($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'])) {
             $this->logTwoRefundFailure('Full refund remainder', $two_order_id, $id_order, $response, $idempotency_key);
@@ -5927,13 +5947,14 @@ class Twopayment extends PaymentModule
      * @param array $orderpaymentdata
      * @param array $sent getTwoSentRefunds()
      * @param float $remainder
+     * @param array|null $two_order the Two order as just read, for the rebuild's order_lines
      * @return array TaxSubtotalSchema entries; empty when none can be derived
      */
-    protected function buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, array $sent, $remainder)
+    protected function buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, array $sent, $remainder, $two_order = null)
     {
         try {
             // Rebuilt, never sent: what Two holds is the order as the hook last returned it.
-            $placed = $this->getTwoUpdateOrderData($order, $orderpaymentdata, self::TRIGGER_REFUND_REMAINDER);
+            $placed = $this->getTwoUpdateOrderData($order, $orderpaymentdata, self::TRIGGER_REFUND_REMAINDER, $two_order);
         } catch (TwoOrderPostprocessingException $e) {
             throw $e;
         } catch (Exception $e) {
@@ -8683,9 +8704,10 @@ class Twopayment extends PaymentModule
      * @param string $endpoint
      * @param Cart|null $cart
      * @param Order|null $order
+     * @param array|null $twoOrder the order as Two's GET /v1/order/{id} returned it, when the caller has it (TWO-26282)
      * @return array
      */
-    public function buildTwoOrderPostprocessingContext($requestType, $trigger, $endpoint, $cart = null, $order = null)
+    public function buildTwoOrderPostprocessingContext($requestType, $trigger, $endpoint, $cart = null, $order = null, $twoOrder = null)
     {
         $order = $order !== null && Validate::isLoadedObject($order) ? $order : null;
         if (($cart === null || !Validate::isLoadedObject($cart)) && $order !== null && isset($order->id_cart)) {
@@ -8702,7 +8724,42 @@ class Twopayment extends PaymentModule
             'shipping_tax_rate' => $this->resolveTwoContextShippingTaxRate($cart, $order),
             'fallback_shipping_tax_rate' => $this->resolveTwoContextFallbackShippingTaxRate($cart),
             'contract_version' => TwoOrderPostprocessing::CONTRACT_VERSION,
+            'order_lines' => $this->getTwoOrderLinesAtTwo($twoOrder),
         );
+    }
+
+    /**
+     * The context's order_lines (TWO-26282): the order's line items as Two holds them, verbatim from its GET
+     * response, so with Two's line ids. Null when there is no successful response with a list of lines.
+     *
+     * @param array|null $twoOrder
+     * @return array|null
+     */
+    public function getTwoOrderLinesAtTwo($twoOrder)
+    {
+        if (!is_array($twoOrder) || !isset($twoOrder['line_items']) || !is_array($twoOrder['line_items'])) {
+            return null;
+        }
+        if (isset($twoOrder['http_status']) && ((int) $twoOrder['http_status'] < 200 || (int) $twoOrder['http_status'] >= 300)) {
+            return null;
+        }
+
+        return array_values($twoOrder['line_items']);
+    }
+
+    /**
+     * Whether a merchant handler is on the order postprocessing hook; false when that cannot be told, which the
+     * hook's own dispatch then reports as its failure.
+     *
+     * @return bool
+     */
+    protected function hasTwoOrderPostprocessingSubscribers()
+    {
+        try {
+            return TwoOrderPostprocessing::runnableSubscribers() !== array();
+        } catch (Throwable $e) {
+            return false;
+        }
     }
 
     /**
@@ -8767,17 +8824,18 @@ class Twopayment extends PaymentModule
      * @param array $headers
      * @param array|null $sentPayload set to the payload as the subscribers returned it, which is what is sent; null when refused
      * @param array|null $checks the request's payload checks, see postprocessOrderRequest()
+     * @param array|null $twoOrder the order as Two's GET returned it, for the context's order_lines
      * @return array the API response; a refusal returns http_status 0 and the code, unsent
      * @throws Exception when a payload check refuses
      */
-    public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null)
+    public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null, $twoOrder = null)
     {
         $sentPayload = null;
         try {
             $payload = $this->postprocessOrderRequest(
                 $requestType,
                 $payload,
-                $this->buildTwoOrderPostprocessingContext($requestType, $trigger, $endpoint, $cart, $order),
+                $this->buildTwoOrderPostprocessingContext($requestType, $trigger, $endpoint, $cart, $order, $twoOrder),
                 $checks
             );
         } catch (TwoOrderPostprocessingException $e) {
@@ -9989,10 +10047,11 @@ class Twopayment extends PaymentModule
      * @param Order $order
      * @param array $orderpaymentdata
      * @param string $trigger the order postprocessing hook's context trigger
+     * @param array|null $twoOrder the order as Two's GET returned it, for the context's order_lines
      * @return array
      * @throws Exception
      */
-    public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
+    public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
     {
         // The cart supplies only the language, the tax address and the buyer's order note: every amount is the order's (TWO-26085).
         $cart = new Cart($order->id_cart);
@@ -10142,7 +10201,7 @@ class Twopayment extends PaymentModule
         return $this->postprocessOrderRequest(
             TwoOrderPostprocessing::REQUEST_ORDER_UPDATE,
             $request_data,
-            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_UPDATE, $trigger, $endpoint, $cart, $order),
+            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_UPDATE, $trigger, $endpoint, $cart, $order, $twoOrder),
             $pricingData['checks']
         );
     }

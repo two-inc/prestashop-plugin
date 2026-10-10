@@ -748,10 +748,17 @@ totals and fields the module does not itself send.
 | `shipping_tax_rate` | float or null | The rate the carrier's tax rules group applies at the cart's tax address, whether or not the shipping line was actually taxed. `0.21` means 21%. `0.0` for a "No tax" group, null with no carrier or no such group |
 | `fallback_shipping_tax_rate` | float or null | The rate of the module's Default shipping tax code, null when it is not set |
 | `contract_version` | int | `1` |
+| `order_lines` | array or null | Two's lines for the order, not PrestaShop's `order_detail` rows (those are on `order`): the order's line items as Two holds them, with Two's line ids. They are the lines of the last create or update Two accepted, after the subscribers' edits, as Two's `GET /v1/order/{id}` returns them. Each carries its `id`, `type`, `gross_amount`, `net_amount`, `tax_amount`, `tax_rate`, `tax_code` and the other line fields. Given on `refund` and `order_update`. Null on the other request types, when the module could not read the order from Two, and on the merchant order id sync of a repeated confirmation callback, which reads no order. Read-only: changing it changes nothing |
 
 As on every hook, `$params` also carries core's `cookie`, `cart` and `altern`.
 `$params['cart']` is the visitor's cart from `Context`, which on an admin edit, a
 status change or a refund is not the order's cart: use `$params['context']['cart']`.
+
+`order_lines` comes from the read of the order from Two that a refund and the merchant
+order id sync already make. An admin edit or a tracking number reads the order only when
+it changed something, so with a subscriber registered the module reads it before
+building the update: a save that changes nothing then makes that one read, and a shop
+with no subscriber makes the same calls as without `order_lines`.
 
 ### When it fires
 
@@ -1034,7 +1041,11 @@ shipping tax code table, so a subscriber that re-splits shipping on the order mu
 re-split the refund's `tax_subtotals` the same way, as `resplitUntaxedRefund()` does: a
 credit slip refunding the 29.00 of shipping goes out as 23.97 + 5.03 at 21%, the amount
 unchanged. It moves every untaxed share, so it suits a shop where only shipping is
-untaxed; a shop with untaxed products must tell the shares apart itself.
+untaxed. A shop with untaxed products can tell the shares apart from
+`$params['context']['order_lines']`: each refund line's `id` is the Two order line it
+refunds, and that line's `type` there says whether it is shipping or a product. The same
+lines tell a subscriber that added its own line at create which share of a refund is
+that line's.
 
 Add a line for a cost the shop adds to the cart total outside any carrier. The shop's
 total carries it and the lines the module built do not, so the default handler would

@@ -48,6 +48,19 @@ const OPP_LABEL = 'Two hook probe';
 const OPP_TWO_ORDER = 'two-order-opp';
 
 /**
+ * The order's lines as Two's GET answers them (TWO-26282).
+ *
+ * @return array
+ */
+function oppTwoLines()
+{
+    return array(
+        array('id' => 'line-1', 'type' => 'PHYSICAL', 'gross_amount' => '121.00', 'net_amount' => '100.00', 'tax_amount' => '21.00', 'tax_rate' => '0.21', 'tax_code' => null),
+        array('id' => 'line-2', 'type' => 'SHIPPING_FEE', 'gross_amount' => '29.00', 'net_amount' => '29.00', 'tax_amount' => '0.00', 'tax_rate' => '0', 'tax_code' => null),
+    );
+}
+
+/**
  * Records sends instead of making them, and answers as a CONFIRMED Two order.
  */
 class OppProbeTwopayment extends Twopayment
@@ -75,7 +88,10 @@ class OppProbeTwopayment extends Twopayment
             return array('http_status' => 200, 'approved' => true);
         }
 
-        return array(
+        // The order's lines at Two, on a read only: the context's order_lines (TWO-26282).
+        $lines = $method === 'GET' ? array('line_items' => oppTwoLines()) : array();
+
+        return $lines + array(
             'http_status' => 200, 'id' => OPP_TWO_ORDER, 'state' => $this->twoState, 'status' => 'APPROVED',
             'merchant_reference' => 'ref', 'gross_amount' => '150.00', 'currency' => 'EUR', 'invoice_url' => '', 'refunds' => array(),
         );
@@ -528,7 +544,7 @@ function oppRunScenario($name, &$detail)
                 $module->cancelTwoOrderBestEffort(OPP_TWO_ORDER, 'attempt_persist_failed');
             }),
         );
-        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version');
+        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines');
         // Loads the fixture's class, whose static records the calls.
         Module::getInstanceByName('twoorderpostprocessingtest');
         foreach ($drivers as $driver) {
@@ -547,6 +563,9 @@ function oppRunScenario($name, &$detail)
             // A best-effort cancel knows only the Two order id.
             $cartClass = $trigger === 'attempt_persist_failed' ? null : 'Cart';
             $checks[] = array(array($context['request_type'], $context['trigger'], $context['contract_version'], $context['cart']), array($type, $trigger, 1, $cartClass), $label . ': context');
+            // The refunds and the updates are given the order's lines at Two; the others read no order from Two, or are not given it.
+            $placed = in_array($type, array('refund', 'order_update'), true) ? oppTwoLines() : null;
+            $checks[] = array($context['order_lines'], $placed, $label . ': order_lines');
             $checks[] = array($calls[0]['payload_out'], $calls[0]['payload_in'], $label . ': a recording subscriber changes nothing');
             $sent = array_values(array_filter($module->sent, function ($r) {
                 return strpos($r['endpoint'], '/v1/order') === 0;
