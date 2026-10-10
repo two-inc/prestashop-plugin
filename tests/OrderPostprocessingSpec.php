@@ -52,6 +52,7 @@ final class OrderPostprocessingSpec
         self::testApiRejectionReachesTheLogAndTheOrder();
         self::testOrderIntentRelayBuildsThePayloadItself();
         self::testEachRequestTypeFiresExactlyOnce();
+        self::testCancelStatusSkipsAnOrderAlreadyCancelledAtTwo();
         self::testPlacedLinesAreTwosLinesWhereTheRequestHasThem();
         self::testOrderRefundsNameTheLineEachRefundLineCredited();
         self::testRefundedRemainderRebuildsTheOrderThenSendsTheRefund();
@@ -1483,6 +1484,33 @@ final class OrderPostprocessingSpec
             TinyAssert::true(strpos($told, 'the order postprocessing hook stopped it') !== false, $description . ': the note and notice name the hook, got ' . $told);
             TinyAssert::count(1, $module->notes, $description . ': one order note');
             TinyAssert::false(strpos($told, 'order_update') !== false || strpos($told, 'tax rates') !== false, $description . ': neither the rebuild nor a split failure is blamed');
+        }
+    }
+
+    /**
+     * TWO-26289: moving an order to the mapped Order Cancelled status sends the cancel to Two, unless the stored
+     * two_order_state is already CANCELLED (the plugin itself moves a Two-cancelled order there): then no POST and
+     * no notice. Columns: stored state, expected cancel POSTs, description.
+     */
+    private static function testCancelStatusSkipsAnOrderAlreadyCancelledAtTwo(): void
+    {
+        $rows = [
+            ['CANCELLED', 0, 'already cancelled at Two: no cancel POST'],
+            ['CONFIRMED', 1, 'not cancelled at Two: the cancel is POSTed'],
+        ];
+        foreach ($rows as [$state, $posts, $description]) {
+            self::seed(true);
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $module->twoState = $state;
+            Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 43);
+            $module->hookActionOrderStatusUpdate(['id_order' => self::ORDER, 'newOrderStatus' => new OrderState(43)]);
+
+            $cancels = array_filter($module->sent, static function ($r) {
+                return substr($r['endpoint'], -7) === '/cancel' && $r['method'] === 'POST';
+            });
+            TinyAssert::count($posts, $cancels, $description . ': cancel POSTs');
+            TinyAssert::same([], $module->warnings, $description . ': no notice');
         }
     }
 
