@@ -110,9 +110,11 @@ submit (`payment.php`), post-payment confirmation (`confirmation.php`) — catch
 to a controlled decline; the actionable detail is a merchant/log artefact, the buyer sees a
 generic notice.
 
-`validateTwoLineItems()` then checks the **emitted 2dp** payload: `tax ≈ rate · net`
+`validateTwoLineItems()` checks **emitted 2dp** line amounts: `tax ≈ rate · net`
 (`TAX_FORMULA_TOLERANCE`, skipped on a shipping line whose rate is relayed unchecked), exact `gross == net + tax` in cents, and
-`net == qty · unit_price − discount` (`NET_FORMULA_TOLERANCE`).
+`net == qty · unit_price − discount` (`NET_FORMULA_TOLERANCE`). Since TWO-26283 it guards only the module's own
+buyer fee line while it is built (a quoted fee line that fails is left out; a placed fee that fails to replay
+refuses the build). The payload as a whole is not checked for its own arithmetic: Two's API validates it.
 
 ## Rate precision
 

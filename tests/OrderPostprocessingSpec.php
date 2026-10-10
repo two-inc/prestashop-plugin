@@ -14,8 +14,8 @@ require_once __DIR__ . '/integration/fixtures/twoorderpostprocessingtest/twoorde
  * example re-splits that shipping to 23.97 net + 5.03 tax.
  *
  * TWO-26274: the module's shop-match checks are its default handler, which
- * stands down for a merchant handler; its consistency checks run after the
- * hook whatever is registered.
+ * stands down for a merchant handler. TWO-26283: whether a payload adds up by
+ * itself is Two's API's to judge, so one that does not is sent as it is.
  *
  * The golden payloads were taken from the builder before the hook existed, with
  * payloadsForGolden(); a deliberate builder change regenerates them the same way.
@@ -38,8 +38,8 @@ final class OrderPostprocessingSpec
         self::testSubscriberCodeBugsFailTheRequest();
         self::testShopMatchChecksAreTheDefaultHandlers();
         self::testDefaultHandlerStandsDownOnlyForARunnableMerchantHandler();
-        self::testConsistencyChecksRefuseAfterTheHook();
-        self::testConsistencyChecksRefuseWithoutAMerchantHandler();
+        self::testInconsistentHandlerPayloadsAreSentUnchanged();
+        self::testOnlyTheShopMatchChecksJudgeAPayloadThatDoesNotAddUp();
         self::testOptInHelperOutsideTheHookDoesNothing();
         self::testLineChecksApplyWhileTheirLineIsUnchanged();
         self::testHandlerDetectionFailureFailsTheRequestWithTheHookCode();
@@ -514,18 +514,18 @@ final class OrderPostprocessingSpec
      * Each shop-match check is the module's default handler (TWO-26274). With
      * no merchant handler it refuses as it always did, with one discrepancy
      * snapshot naming the gate. A merchant handler makes it stand down, with
-     * one log line naming the handler: what it returns is checked only for
-     * consistency, which still catches a declared rate left contradicting its
-     * own line. A handler that calls runTwoShopMatchChecks() gets the module's
-     * refusal back, exactly as the default handler makes it.
+     * one log line naming the handler, and what it returns is sent, a declared
+     * rate its own line contradicts included: Two's API judges that
+     * (TWO-26283). A handler that calls runTwoShopMatchChecks() gets the
+     * module's refusal back, exactly as the default handler makes it.
      */
     private static function testShopMatchChecksAreTheDefaultHandlers(): void
     {
         // [setup, refusal fragment, snapshot gate, outcome with a merchant handler that edits nothing (null: sent), fixing modes, description]
         $cases = [
-            ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', 'Invalid line item formulas', ['resplit'], 'untaxed shipping on a "No tax" carrier, with the Default shipping tax code at 21%'],
-            ['product', 'Declared tax rate diverges from applied tax amounts for product', 'declared_rate', 'Invalid line item formulas', [], 'a product whose declared rate its amounts contradict'],
-            ['wrapping', 'Declared tax rate diverges from applied tax amounts for gift wrapping', 'declared_rate', 'Invalid line item formulas', [], 'gift wrapping the shop left untaxed, at a 21% wrapping group'],
+            ['shipping', 'Declared tax rate diverges from applied tax amounts for shipping', 'declared_rate', null, ['resplit'], 'untaxed shipping on a "No tax" carrier, with the Default shipping tax code at 21%'],
+            ['product', 'Declared tax rate diverges from applied tax amounts for product', 'declared_rate', null, [], 'a product whose declared rate its amounts contradict'],
+            ['wrapping', 'Declared tax rate diverges from applied tax amounts for gift wrapping', 'declared_rate', null, [], 'gift wrapping the shop left untaxed, at a 21% wrapping group'],
             ['outside_carrier', 'Order totals do not reconcile with cart totals: gross cart 179.00 vs order lines 150.00 (difference 29.00); net cart 158.00 vs order lines 129.00 (difference 29.00)', 'reconciliation', null, ['outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_line_untaxed_all', 'outside_carrier_line_checked_all'], 'a cost the shop adds to the cart total outside any carrier'],
         ];
         foreach ($cases as [$setup, $refusal, $gate, $delegated, $fixes, $description]) {
@@ -566,7 +566,7 @@ final class OrderPostprocessingSpec
                 $snapshots = array_values(array_filter(PrestaShopLogger::$logs, static function ($l) {
                     return $l['object_type'] === TwoDiscrepancySnapshot::LOG_OBJECT_TYPE;
                 }));
-                $delegation = 'The order_create request (checkout, cart 9701) has an order postprocessing hook handler (twoorderpostprocessingtest): the shop-match checks are delegated to it, and the consistency checks still run.';
+                $delegation = 'The order_create request (checkout, cart 9701) has an order postprocessing hook handler (twoorderpostprocessingtest): the shop-match checks are delegated to it.';
                 // The helper's refusal stops the request inside the hook, before anything is delegated.
                 TinyAssert::same(in_array($mode, [null, 'shop_match', 'outside_carrier_line_checked_all'], true) ? 0 : 1, count(array_filter(PrestaShopLogger::$logs, static function ($l) use ($delegation) {
                     return strpos($l['message'], $delegation) !== false;
@@ -649,47 +649,45 @@ final class OrderPostprocessingSpec
     }
 
     /**
-     * The consistency checks run after the hook on what a merchant handler
-     * returns: lines, tax subtotals and order totals that do not add up are
-     * refused locally, with the messages the builder's own checks always used,
-     * and nothing is sent.
+     * TWO-26283: a merchant handler's payload that does not add up by itself
+     * (a line whose net + tax no longer equals gross, stale totals or tax
+     * subtotals, no lines at all) is sent exactly as the handler returned it,
+     * on the order create and on the admin edit: Two's API judges it.
      */
-    private static function testConsistencyChecksRefuseAfterTheHook(): void
+    private static function testInconsistentHandlerPayloadsAreSentUnchanged(): void
     {
-        // [mode, refusal, description]
+        // [mode, description]
         $cases = [
-            ['off_by_cent', 'Exception: Invalid line item formulas', 'a line whose net + tax no longer equals gross'],
-            ['stale_totals', 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items', 'lines re-split but the order totals and subtotals left as they were'],
-            ['stale_subtotals', 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items', 'totals recomputed but tax_subtotals left stale'],
-            ['no_lines', 'Exception: No valid line items in cart', 'every line removed'],
+            ['off_by_cent', 'a line whose net + tax no longer equals gross'],
+            ['stale_totals', 'lines re-split but the order totals and subtotals left as they were'],
+            ['stale_subtotals', 'totals recomputed but tax_subtotals left stale'],
+            ['no_lines', 'every line removed'],
         ];
-        foreach ($cases as [$mode, $refusal, $description]) {
+        foreach ($cases as [$mode, $description]) {
             $cart = self::seed(false, true);
             $module = self::module();
             self::harnessAsInstance($module);
             $calls = [];
             self::subscribe($mode, $calls);
-            $error = null;
-            try {
-                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
-            } catch (Exception $e) {
-                $error = get_class($e) . ': ' . $e->getMessage();
-            }
-            TinyAssert::same($refusal, $error, $description . ': order create refused');
-            TinyAssert::count(1, $calls, $description . ': after the hook ran');
+
+            $payload = $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            TinyAssert::count(1, $calls, $description . ': the hook ran once');
+            TinyAssert::true($calls[0]['payload_out'] !== $calls[0]['payload_in'], $description . ': the handler changed the payload');
+            TinyAssert::same($calls[0]['payload_out'], $payload, $description . ': order create returns what the handler left');
 
             $module->hookActionOrderEdited(['order' => self::order()]);
-            TinyAssert::count(0, $module->sent, $description . ': the admin edit is not sent');
+            TinyAssert::count(1, $module->sent, $description . ': the admin edit is sent');
+            TinyAssert::same($calls[1]['payload_out'], $module->sent[0]['payload'], $description . ': the admin edit sends what the handler left');
         }
     }
 
     /**
-     * With no merchant handler the default handler runs every check, in the
-     * order they always ran, on the payload as it leaves the hook: one that
-     * does not add up is refused by the consistency check it fails, and the
-     * same check refuses it with the shop-match checks delegated.
+     * After the hook only the shop-match checks judge the payload, and only
+     * with no merchant handler. A payload that does not add up by itself is
+     * not refused for that (TWO-26283); with the checks delegated nothing
+     * refuses it, and with none delegated only a shop-match check can.
      */
-    private static function testConsistencyChecksRefuseWithoutAMerchantHandler(): void
+    private static function testOnlyTheShopMatchChecksJudgeAPayloadThatDoesNotAddUp(): void
     {
         $setTotal = static function (string $field, string $value): callable {
             return static function (array $payload) use ($field, $value): array {
@@ -698,31 +696,42 @@ final class OrderPostprocessingSpec
                 return $payload;
             };
         };
-        // [edit to the built payload, refusal, description]
+        $cartRefusal = 'TwoCheckoutAmountException: Order totals do not reconcile with cart totals: gross cart 150.00 vs order lines 0.00 (difference 150.00); net cart 129.00 vs order lines 0.00 (difference 129.00); tax cart 21.00 vs order lines 0.00 (difference 21.00)';
+        // [edit to the built payload, refusal with no merchant handler (null: none), description]
         $cases = [
             [static function (array $payload): array {
                 $payload['line_items'][0]['net_amount'] = '99.99';
 
                 return $payload;
-            }, 'Exception: Invalid line item formulas', 'a line whose net + tax no longer equals gross'],
-            [$setTotal('gross_amount', '151.00'), 'TwoCheckoutAmountException: Order totals do not reconcile with line items', 'an order gross the lines do not sum to'],
-            [$setTotal('net_amount', 'n/a'), 'TwoCheckoutAmountException: Order totals do not reconcile with line items', 'an order net that is no amount'],
+            }, null, 'a line whose net + tax no longer equals gross'],
+            [static function (array $payload): array {
+                $payload['line_items'][0]['tax_rate'] = '0.10';
+
+                return $payload;
+            }, null, 'a line whose tax contradicts its declared rate'],
+            [static function (array $payload): array {
+                $payload['line_items'][0]['quantity'] = 3;
+
+                return $payload;
+            }, null, 'a line whose net is not quantity x unit price - discount'],
+            [$setTotal('gross_amount', '151.00'), null, 'an order gross the lines do not sum to'],
+            [$setTotal('net_amount', 'n/a'), null, 'an order net that is no amount'],
             [static function (array $payload): array {
                 $payload['tax_subtotals'][0]['taxable_amount'] = '30.00';
 
                 return $payload;
-            }, 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items', 'tax subtotals the lines do not sum to'],
-            [$setTotal('tax_subtotals', 'none'), 'TwoCheckoutAmountException: Tax subtotals do not reconcile with line items', 'tax subtotals that are no list'],
+            }, null, 'tax subtotals the lines do not sum to'],
+            [$setTotal('tax_subtotals', 'none'), null, 'tax subtotals that are no list'],
             [static function (array $payload): array {
                 $payload['line_items'] = [];
 
                 return $payload;
-            }, 'Exception: No valid line items in cart', 'no lines'],
+            }, $cartRefusal, 'no lines: the lines no longer match the cart'],
             [static function (array $payload): array {
                 $payload['line_items'][] = 'not a line';
 
                 return $payload;
-            }, 'Exception: Invalid line item formulas', 'a line that is no line'],
+            }, null, 'a line that is no line'],
         ];
         $build = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
         $run = new ReflectionMethod(Twopayment::class, 'runTwoOrderChecks');
@@ -745,7 +754,7 @@ final class OrderPostprocessingSpec
                 } catch (Exception $e) {
                     $error = get_class($e) . ': ' . $e->getMessage();
                 }
-                TinyAssert::same($refusal, $error, $description . ', ' . $who);
+                TinyAssert::same($shopMatch ? $refusal : null, $error, $description . ', ' . $who);
             }
         }
     }
