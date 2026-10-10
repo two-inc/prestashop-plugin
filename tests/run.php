@@ -4389,15 +4389,25 @@ final class OrderBuilderSpec
 
     private static function testShouldBlockTwoStatusTransitionByCancelledStateCoversVerifiedAndFulfillment(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-        Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', 901);
-        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
-        Configuration::updateValue('PS_OS_SHIPPING', 4);
-
-        TinyAssert::true($module->shouldBlockTwoStatusTransitionByCancelledState(901));
-        TinyAssert::true($module->shouldBlockTwoStatusTransitionByCancelledState(4));
-        TinyAssert::false($module->shouldBlockTwoStatusTransitionByCancelledState(99));
+        // TWO-26289: a cancelled order may not move to the mapped Verified status, the branded one, or a fulfilment status.
+        // [PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP, PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT, target status, blocked, description]
+        $cases = [
+            [902, 0, 902, true, 'mapping only: the mapped Verified status is blocked'],
+            [0, 901, 901, true, 'branded only: the branded Verified state is blocked'],
+            [902, 901, 902, true, 'both set: the mapped Verified status is blocked'],
+            [902, 901, 901, true, 'both set: the branded Verified state is blocked too'],
+            [902, 901, 4, true, 'a fulfilment status is blocked'],
+            [902, 901, 99, false, 'any other status is allowed'],
+            [902, 901, 0, false, 'no status is allowed'],
+        ];
+        foreach ($cases as [$map, $branded, $target, $blocked, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $branded);
+            Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
+            Configuration::updateValue('PS_OS_SHIPPING', 4);
+            TinyAssert::same($blocked, (new TwopaymentTestHarness())->shouldBlockTwoStatusTransitionByCancelledState($target), $description);
+        }
     }
 
     private static function testIsTwoOrderFulfillableStateRequiresConfirmed(): void
