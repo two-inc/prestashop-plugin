@@ -356,34 +356,34 @@ final class TaxCodeSpec
                 return $this->errors;
             }
         };
+        // PHP keeps a post's first max_input_vars values and drops the rest, so a cut post is a prefix of the form's fields,
+        // whose last is the end field. Rows: fields posted in form order (END is the end field), errors, description.
+        $all = ['PS_TWO_ENABLE_TAX_SUBTOTALS', '8101_EXEMPT', '8101_NONE', '8102_EXEMPT', '8102_NONE'];
         $rows = [
-            [['8101_EXEMPT' => '', '8101_NONE' => '', '8102_EXEMPT' => '', '8102_NONE' => 'ES_IVA_EXPORT'], 0, 'a complete post saves'],
-            [['8101_EXEMPT' => '', '8101_NONE' => 'ES_IVA_EXPORT'], 1, 'a post whose last rows are missing is refused'],
-            [[], 0, 'a form without the mapping is not truncated'],
+            [array_merge($all, ['END']), 0, 'a whole post saves'],
+            [$all, 1, 'a post with every row but no end field is refused'],
+            [['PS_TWO_ENABLE_TAX_SUBTOTALS'], 1, 'a post cut before the first row is refused'],
+            [['PS_TWO_ENABLE_TAX_SUBTOTALS', '8101_EXEMPT', '8101_NONE'], 1, 'a post cut mid-rows is refused'],
+            [['PS_TWO_ENABLE_TAX_SUBTOTALS', 'END'], 0, 'a whole post of a form without the mapping saves'],
         ];
         foreach ($rows as [$posted, $errors, $description]) {
-            $module->limit = 0;
+            $module->limit = 1000;
             Tools::resetTestValues();
-            foreach ($posted as $field => $code) {
-                Tools::setTestValue('PS_TWO_TAX_CODE_MAP_' . $field, $code);
+            foreach ($posted as $field) {
+                if ($field === 'END') {
+                    Tools::setTestValue(Twopayment::ORDER_MANAGEMENT_FORM_END_FIELD, '1');
+                } elseif ($field === 'PS_TWO_ENABLE_TAX_SUBTOTALS') {
+                    Tools::setTestValue($field, '1');
+                } else {
+                    Tools::setTestValue('PS_TWO_TAX_CODE_MAP_' . $field, $field === '8102_NONE' ? 'ES_IVA_EXPORT' : '');
+                }
             }
             $got = $module->validate();
             TinyAssert::same($errors, count($got), $description . ' (got: ' . json_encode($got) . ')');
             if ($errors > 0) {
-                TinyAssert::true(strpos($got[0], 'max_input_vars') !== false, $description . ': the error names max_input_vars');
+                TinyAssert::true(strpos($got[0], 'at most 1000 per request, its max_input_vars setting') !== false, $description . ': the error names max_input_vars and its value');
             }
         }
-        // PHP drops only what is past max_input_vars: a post of exactly the limit is whole.
-        Tools::resetTestValues();
-        $saved = $_POST;
-        foreach ([[3, 3, 0, 'a post of exactly max_input_vars values is whole'], [3, 4, 1, 'a post past max_input_vars is refused']] as [$limit, $count, $errors, $description]) {
-            $module->limit = $limit;
-            $_POST = array_fill_keys(array_map(static function ($n) {
-                return 'field' . $n;
-            }, range(1, $count)), 'x');
-            TinyAssert::same($errors, count($module->validate()), $description);
-        }
-        $_POST = $saved;
         Tools::resetTestValues();
     }
 

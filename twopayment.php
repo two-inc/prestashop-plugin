@@ -354,6 +354,9 @@ class Twopayment extends PaymentModule
     const TAX_CODES_TTL = 86400;
     // One select per mapping row on the Order management form: <group>_EXEMPT, RULE_<id_tax_rule>, <group>_NONE.
     const TAX_CODE_MAP_FIELD_PREFIX = 'PS_TWO_TAX_CODE_MAP_';
+    // A hidden field rendered after every other control of the Order management form, the save button included, so
+    // it is the last value of the post: PHP drops the end of a post past max_input_vars, so a post without it was cut.
+    const ORDER_MANAGEMENT_FORM_END_FIELD = 'twoOrderManagementFormEnd';
 
     // JSON array of {name, value, send_from_browser}.
     const CONFIG_CUSTOM_HEADERS = 'PS_TWO_CUSTOM_HEADERS';
@@ -2854,6 +2857,8 @@ class Twopayment extends PaymentModule
             'fields_value' => $this->getTwoOrderManagementFormValues(),
             'languages' => $this->context->controller->getLanguages(),
             'id_language' => $this->context->language->id,
+            // Rendered by views/templates/admin/_configure/helpers/form/form.tpl just before </form>.
+            'two_form_end_field' => self::ORDER_MANAGEMENT_FORM_END_FIELD,
         );
         return $helper->generateForm(array($this->getTwoOrderManagementForm()));
     }
@@ -3427,30 +3432,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether PHP dropped the end of the Order management post (TWO-26153): the request went past max_input_vars, or the
-     * tax code mapping's first row arrived and its last did not. PHP truncates silently, so saving would report
-     * success while ignoring every row past the limit.
+     * Whether PHP dropped the end of the Order management post (TWO-26153): the form's last field,
+     * ORDER_MANAGEMENT_FORM_END_FIELD, did not arrive. PHP keeps the first max_input_vars values of a post and drops
+     * the rest silently (on the form's multipart post it does not even keep one past the limit to count), so saving
+     * would report success while ignoring every field past the limit, wherever the cut falls.
      *
      * @return bool
      */
     protected function isTwoOrderManagementPostTruncated()
     {
-        $limit = $this->getTwoMaxInputVars();
-        $received = 0;
-        array_walk_recursive($_POST, static function () use (&$received) {
-            $received++;
-        });
-        if ($limit > 0 && $received > $limit) {
-            return true;
-        }
-        $rows = $this->getTwoTaxCodeMapRows();
-        if ($rows === array()) {
-            return false;
-        }
-        $first = reset($rows);
-        $last = end($rows);
-
-        return Tools::getValue($first['field'], false) !== false && Tools::getValue($last['field'], false) === false;
+        return Tools::getValue(self::ORDER_MANAGEMENT_FORM_END_FIELD, false) === false;
     }
 
     /**
