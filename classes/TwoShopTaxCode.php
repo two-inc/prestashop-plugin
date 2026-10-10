@@ -112,28 +112,6 @@ class TwoShopTaxCode
     }
 
     /**
-     * Whether the merchant mapped any row of a tax rules group.
-     *
-     * @param array<string,string> $map
-     * @param int $group
-     * @param int[] $ruleIds the group's tax rule ids
-     * @return bool
-     */
-    public static function isGroupMapped(array $map, $group, array $ruleIds)
-    {
-        if (isset($map[self::exemptKey($group)]) || isset($map[self::noRuleKey($group)])) {
-            return true;
-        }
-        foreach ($ruleIds as $id) {
-            if (isset($map[self::ruleKey($id)])) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * The one-time migration of a mapping by tax rules group (`{"<group>": "<code>"}`) to the rows: each group's code
      * goes to its exempt row, its no-rule row and every 0% rule it has now. A row already held keeps its code.
      *
