@@ -1025,6 +1025,7 @@ final class RefundSpec
             ['FULFILLED', [], [], $created, 1, null, 'fulfilled at Two: refund sent, no notice'],
             ['REFUNDED', ['-50.00'], ['throwOnRecord'], $created, 1, null, 'remainder accepted, recording fails: no notice'],
             ['REFUNDED', ['-50.00'], ['throwOnRebuild'], $created, 0, $rest('an unexpected error stopped it'), 'remainder fails before its POST: remainder wording'],
+            ['REFUNDED', ['-50.00'], [], $refused, 1, $rest('the provider did not accept it (HTTP 400)'), 'remainder refused: remainder wording'],
             ['REFUNDED', ['-50.00'], [], $created, 1, null, 'remainder sent, no notice'],
         ];
         foreach ($cases as [$state, $twoRefunds, $switches, $response, $calls, $notice, $desc]) {
