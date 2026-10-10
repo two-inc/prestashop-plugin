@@ -22071,7 +22071,9 @@ class Twopayment extends PaymentModule
             return true;
         }
 
-        return $status_id === (int)$this->getTwoVerifiedPendingFulfillmentStatusId();
+        // The mapped Verified status and the branded state both stand for a verified order.
+        return $status_id === (int)$this->getTwoVerifiedPendingFulfillmentStatusId()
+            || $status_id === (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
     }
 
     /**
