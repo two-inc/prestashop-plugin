@@ -5926,8 +5926,6 @@ class Twopayment extends PaymentModule
      * @param array $orderpaymentdata
      * @param array $two_order the Two order as just read
      * @param array $sent getTwoSentRefunds()
-     */
-    /**
      * @param bool $accepted set true as soon as Two has accepted the remainder, for the caller's error handling
      */
     protected function refundTwoRemainder($order, $orderpaymentdata, $two_order, array $sent, &$accepted = false)
