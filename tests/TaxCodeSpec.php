@@ -55,9 +55,9 @@ final class TaxCodeSpec
                 self::assertVatRow(...$row);
             });
         }
-        foreach (self::normaliseRows() as [$raw, $country, $expected, $description]) {
-            self::collect($failures, $description, function () use ($raw, $country, $expected, $description) {
-                $got = TwoTaxCodeResolver::normaliseVatNumber($raw, $country);
+        foreach (self::trimRows() as [$raw, $expected, $description]) {
+            self::collect($failures, $description, function () use ($raw, $expected, $description) {
+                $got = TwoTaxCodeResolver::trimVatNumber($raw);
                 TinyAssert::same($expected, $got, $description . ' (got: ' . json_encode($got) . ')');
             });
         }
@@ -158,12 +158,12 @@ final class TaxCodeSpec
             ['ES', 'goods', 'FR', 'DE', 'ESB12345678', '', [], [null, null], 'ESB12345678', 'goods to France, German buyer whose VAT prefix is the merchant\'s country: nothing derived'],
             ['ES', 'goods', 'FR', 'DE', 'US123456789', '', [], [null, null], 'US123456789', 'goods to France, German buyer with a non-EU VAT prefix: nothing derived'],
             ['ES', 'goods', 'FR', 'GR', 'EL123456789', '', [], [self::INTRA, self::INTRA], 'EL123456789', 'goods to France, Greek buyer with an EL VAT number: EL reads as Greece, intra-community'],
-            ['ES', 'goods', 'FR', 'GR', '123456789', '', [], [self::INTRA, self::INTRA], 'EL123456789', 'an unprefixed Greek VAT number gains EL from the invoice country'],
-            ['ES', 'goods', 'FR', 'FR', 'fr 123.456-789', '', [], [self::INTRA, self::INTRA], 'FR123456789', 'a VAT number is stripped of spaces, dots and hyphens and upper-cased'],
-            ['ES', 'goods', 'FR', 'FR', '123456789', '', [], [self::INTRA, self::INTRA], 'FR123456789', 'an unprefixed VAT number gains the invoice country'],
-            ['ES', 'goods', 'FR', 'DE', ' .- ', '', [], [null, null], null, 'a VAT number of separators only is no number'],
+            ['ES', 'goods', 'FR', 'GR', '123456789', '', [], [null, null], '123456789', 'an unprefixed number gains no prefix and names no country: sent as entered, nothing derived'],
+            ['ES', 'goods', 'FR', 'FR', 'fr 123.456-789', '', [], [null, null], 'fr 123.456-789', 'a lower-case prefix is sent as entered and names no country: nothing derived'],
+            ['ES', 'goods', 'FR', 'GR', 'el123456789', '', [], [null, null], 'el123456789', 'a lower-case el prefix is not read as Greece: nothing derived'],
+            ['ES', 'goods', 'FR', 'DE', ' .- ', '', [], [null, null], '.-', 'any non-empty trimmed value is a VAT number: sent, nothing derived'],
             ['ES', 'goods', 'FR', 'MC', 'MC12345678901', '', [], [null, null], 'MC12345678901', 'a Monaco buyer with an MC-prefixed number: MC is no VAT prefix, nothing derived'],
-            ['ES', 'goods', 'FR', 'MC', '12345678901', '', [], [self::INTRA, self::INTRA], 'FR12345678901', 'an unprefixed Monaco number gains FR, the prefix Monaco businesses hold'],
+            ['ES', 'goods', 'FR', 'MC', '12345678901', '', [], [null, null], '12345678901', 'an unprefixed Monaco number gains no FR prefix: nothing derived'],
             ['ES', 'goods', 'FR', 'DE', '', 'DE123456789', [], [null, null], null, 'the delivery address VAT number is never a source: only the invoice address'],
             ['ES', 'goods', 'FR', 'DE', 'DE111111111', 'NL222222222', [], [self::INTRA, self::INTRA], 'DE111111111', 'the invoice address VAT number wins over the delivery one'],
             ['ES', 'goods', 'FR', 'DE', '', '', [$lamp => self::ART20], [self::ART20, null], null, 'with no VAT number a mapping still wins, and the unmapped shipping derives nothing'],
@@ -176,13 +176,13 @@ final class TaxCodeSpec
             ['ES', 'goods', 'FR', 'ES', 'ESB12345678', '', [], [null, null], null, 'a Spanish buyer\'s VAT number is never sent'],
             ['DE', 'goods', 'FR', 'FR', 'FR123456789', '', [], [null, null], null, 'a non-Spanish merchant never sends the VAT number'],
             ['', 'goods', 'FR', 'DE', 'DE123456789', '', [], [null, null], null, 'merchant country not known yet (a cold or failed record): nothing derived, and no key'],
-            ['ES', 'service', 'ES', 'DE', 'n/a', '', [], [null, null], null, 'a placeholder "n/a" holds no digit, so is no number: never DEN/A deriving intra-community services'],
-            ['ES', 'goods', 'FR', 'DE', 'N.A.', '', [], [null, null], null, 'a placeholder "N.A." is no number, and no key'],
-            ['ES', 'goods', 'FR', 'DE', 'none', '', [], [null, null], null, 'a placeholder "none" is no number, and no key'],
-            ['ES', 'goods', 'FR', 'DE', 'DE 123/456', '', [], [self::INTRA, self::INTRA], 'DE123456', 'a slash is stripped like any other separator'],
-            ['ES', 'goods', 'FR', 'DE', 'vat: DE123456789', '', [], [null, null], 'VATDE123456789', 'a leading label is not parsed out: VA names no EU country, so nothing derived'],
-            ['ES', 'goods', 'FR', 'GR', 'gr 123456789', '', [], [self::INTRA, self::INTRA], 'EL123456789', 'a GR prefix is written as EL and still qualifies as Greece'],
-            ['ES', 'goods', 'FR', 'NL', 'nl 1234.5678.B01', '', [], [self::INTRA, self::INTRA], 'NL12345678B01', 'unchanged: letters inside a number are kept'],
+            ['ES', 'service', 'ES', 'DE', 'n/a', '', [], [null, null], 'n/a', 'a non-empty "n/a" is a VAT number, sent as n/a, and names no country: no intra-community services'],
+            ['ES', 'goods', 'FR', 'DE', 'N.A.', '', [], [null, null], 'N.A.', 'N.A. is sent as entered and names no country'],
+            ['ES', 'goods', 'FR', 'DE', ' DE123 ', '', [], [self::INTRA, self::INTRA], 'DE123', 'leading and trailing spaces are trimmed'],
+            ['ES', 'goods', 'FR', 'DE', 'DE 123/456', '', [], [self::INTRA, self::INTRA], 'DE 123/456', 'inner spaces and slashes are kept, and the DE prefix still qualifies'],
+            ['ES', 'goods', 'FR', 'DE', 'vat: DE123456789', '', [], [null, null], 'vat: DE123456789', 'a leading label is kept and not parsed out: nothing derived'],
+            ['ES', 'goods', 'FR', 'GR', 'GR123456789', '', [], [self::INTRA, self::INTRA], 'GR123456789', 'a GR prefix is not rewritten to EL, and reads as Greece'],
+            ['ES', 'goods', 'FR', 'NL', 'NL 1234.5678.B01', '', [], [self::INTRA, self::INTRA], 'NL 1234.5678.B01', 'dots and letters inside a number are kept'],
         ];
     }
 
@@ -199,20 +199,23 @@ final class TaxCodeSpec
     }
 
     /**
-     * TwoTaxCodeResolver::normaliseVatNumber(). Columns: raw value, address country, expected, description.
+     * TwoTaxCodeResolver::trimVatNumber(): the value as entered, only leading and trailing whitespace trimmed.
+     * Columns: raw value, expected, description.
      *
      * @return array<int,array>
      */
-    private static function normaliseRows(): array
+    private static function trimRows(): array
     {
         return [
-            ['', 'FR', '', 'normalise: empty is no number'],
-            ['FR 123.456-789', 'DE', 'FR123456789', 'normalise: a prefixed number keeps its own prefix'],
-            ['123456789', 'gr', 'EL123456789', 'normalise: an unprefixed number in Greece gains EL'],
-            ['123456789', '', '123456789', 'normalise: with no address country an unprefixed number stays unprefixed'],
-            ['123456789', 'MC', 'FR123456789', 'normalise: an unprefixed number in Monaco gains FR'],
-            ["DE\u{00A0}123\t456\n789", 'FR', 'DE123456789', 'normalise: tabs, newlines and non-breaking spaces are stripped too'],
-            ['1A23', 'NL', 'NL1A23', 'normalise: a number whose first two characters are not both letters gains the prefix'],
+            ['', '', 'trim: empty is no number'],
+            ['   ', '', 'trim: whitespace only is no number'],
+            [' DE123 ', 'DE123', 'trim: leading and trailing spaces are trimmed'],
+            ["\tDE123\n", 'DE123', 'trim: leading and trailing tabs and newlines are trimmed'],
+            ['FR 123.456-789', 'FR 123.456-789', 'trim: inner spaces, dots and hyphens are kept'],
+            ['n/a', 'n/a', 'trim: a placeholder is kept as entered'],
+            ['el123456789', 'el123456789', 'trim: a lower-case prefix is not upper-cased'],
+            ['GR123456789', 'GR123456789', 'trim: a GR prefix is not rewritten'],
+            ['123456789', '123456789', 'trim: an unprefixed number gains no prefix'],
         ];
     }
 
