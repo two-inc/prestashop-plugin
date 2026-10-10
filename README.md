@@ -858,12 +858,12 @@ no cart rule, a fee that cannot be replayed, an unreadable tax code mapping, or 
 shipping or wrapping that cannot reach the shop's amounts, which includes shipping spread
 over several rates of a populated Default shipping tax code.
 
-**The buyer fee.** The cart's buyer fee line is priced on the module's own lines. When one
-of them fails a declared-rate check, that pricing cannot run, so the cart keeps the fee
-line it had, which may be stale or absent, while the payload carries a freshly quoted fee
-line. The fee parity check catches that, and with a merchant handler it is the handler's:
-a handler that fixes such a line should call `runTwoShopMatchChecks()` on what it returns,
-or check the fee itself.
+**The buyer fee.** The cart's buyer fee line is priced on the module's own lines, before
+the hook. With no merchant handler, a line that fails a declared-rate check stops that
+pricing: the cart keeps the fee line it had and the fee parity check refuses the order.
+With a merchant handler the checks on single lines are the handler's, so they do not stop
+the pricing: the cart carries the fee line the payload sends, and a later update replays
+that fee from the placed order.
 
 **Order of refusals.** With no merchant handler the checks keep their order among
 themselves, but they now run after the payload is built. A build failure that used to
