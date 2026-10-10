@@ -340,7 +340,7 @@ An order update (a back-office edit, a tracking number, the sync after checkout)
 
 #### Buyer surcharge on order updates
 
-An order update (a back-office edit, a tracking number) replays the buyer surcharge exactly as PrestaShop currently records it on the order. Its amounts and rate come from the stored order data, never from the live surcharge configuration, so changing the surcharge settings, tax rules or tax treatment later does not change an existing order's fee at Two. Rates stacked one after another are compounded, as PrestaShop applied them. The fee is recognised under any product id the hidden fee product has had, so recreating or deleting that product does not orphan older orders (see [Recognising the fee row](#recognising-the-fee-row)).
+An order update (a back-office edit, a tracking number) replays the buyer surcharge exactly as PrestaShop currently records it on the order. Its amounts and rate come from the stored order data, never from the live surcharge configuration, so changing the surcharge settings, tax rules or tax treatment later does not change an existing order's fee at Two. Rates stacked one after another are compounded, as PrestaShop applied them. The fee is recognised under any product id the hidden fee product has had, so recreating or deleting that product does not orphan older orders (see [Recognising the fee row](#recognising-the-fee-row)). The fee is priced on the order the module built, before the order postprocessing hook runs, so a merchant's subscriber that changes the order does not change the fee (see [The buyer fee is priced before the hook](#the-buyer-fee-is-priced-before-the-hook)).
 
 PrestaShop's own admin actions can rewrite that record: on 8 and 9 an address change re-taxes every order line from the live rates, and on 1.7 editing a line re-taxes it from the product's live tax group. The update then sends what PrestaShop now holds.
 
@@ -914,6 +914,19 @@ changes nothing else. Each total, and each per-rate subtotal, is the sum of its 
 plus any residual it carried before the hook; the module's own payloads carry none, so
 it is the sum of the lines. Its result replaces whatever the payload held, hand edits
 included, and it never writes `-0.00`. It is opt-in and part of this contract.
+
+### The buyer fee is priced before the hook
+
+The module's fee calculations operate on the order as the module built it, before any
+subscriber runs. On a cart, the buyer fee is quoted on the gross of the module's own
+lines; on an order update, it is replayed from what PrestaShop recorded on the order.
+The module does not re-price the fee on the payload a subscriber returns, so a
+subscriber that adds a line or changes gross, net or tax does not change the fee.
+
+Any fee consequence of the amounts a subscriber declares is the merchant's, and their
+subscriber handles it. With a percentage fee, for example, no fee is charged on a line
+the subscriber adds; a merchant who wants it charged changes the fee line in their
+subscriber, together with the totals it affects.
 
 ### Requirements on a subscriber
 
