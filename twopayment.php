@@ -5093,6 +5093,18 @@ class Twopayment extends PaymentModule
                 $two_order_id = $orderpaymentdata['two_order_id'];
 
                 if ($new_order_status->id == Configuration::get('PS_TWO_OS_CANCELLED_MAP')) {
+                    // Already cancelled at Two: every path that mirrors a Two-side cancellation stores CANCELLED here
+                    // before moving the order (syncLocalOrderStatusFromTwoState, the buyer cancel). A second cancel
+                    // would only fail, so skip it, log it and show no notice.
+                    $stored_two_state = isset($orderpaymentdata['two_order_state']) ? strtoupper(trim((string)$orderpaymentdata['two_order_state'])) : '';
+                    if ($stored_two_state === 'CANCELLED') {
+                        PrestaShopLogger::addLog(
+                            'TwoPayment: Cancel not sent for Two order ' . $two_order_id . ', order ' . (int)$id_order .
+                            ': it is already cancelled at Two (stored state=CANCELLED)',
+                            1
+                        );
+                        return;
+                    }
                     $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
                     $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                     if (isset($response['id']) && $response['id']) {
@@ -22232,13 +22244,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The status a verified Two order sits in: the merchant's mapping, as confirmation applies it,
+     * then the branded state, then core's Processing in progress.
+     *
      * @return int
      */
     public function getTwoVerifiedPendingFulfillmentStatusId()
     {
-        $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
+        $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
         if ($verified_status <= 0) {
-            $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
+            $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
             if ($verified_status <= 0) {
                 $verified_status = (int)Configuration::get('PS_OS_PREPARATION');
             }
@@ -22262,7 +22277,9 @@ class Twopayment extends PaymentModule
             return true;
         }
 
-        return $status_id === (int)$this->getTwoVerifiedPendingFulfillmentStatusId();
+        // The mapped Verified status and the branded state both stand for a verified order.
+        return $status_id === (int)$this->getTwoVerifiedPendingFulfillmentStatusId()
+            || $status_id === (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
     }
 
     /**
@@ -22339,13 +22356,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The status a cancelled Two order is moved to: the merchant's Order Cancelled mapping,
+     * as for every other mapped status, then the branded state, then core's Canceled.
+     *
      * @return int
      */
     public function getTwoCancelledOrderStatusId()
     {
-        $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED');
+        $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED_MAP');
         if ($cancelled_status <= 0) {
-            $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED_MAP');
+            $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED');
             if ($cancelled_status <= 0) {
                 $cancelled_status = (int)Configuration::get('PS_OS_CANCELED');
             }
@@ -22446,11 +22466,17 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Mirror a Two-side cancellation onto the PrestaShop order. The order's `twopayment` row is marked CANCELLED
+     * first, because moving the order to the mapped Order Cancelled status fires hookActionOrderStatusUpdate, which
+     * reads that row and must not send Two a cancel for an order Two already holds cancelled.
+     *
      * @param int $id_order
      * @param string $two_state
+     * @param bool $confirmed_by_two false when Two has not confirmed the cancellation: the row keeps Two's last known
+     *        state, and the status hook sends the cancel
      * @return bool
      */
-    public function syncLocalOrderStatusFromTwoState($id_order, $two_state)
+    public function syncLocalOrderStatusFromTwoState($id_order, $two_state, $confirmed_by_two = true)
     {
         $id_order = (int)$id_order;
         if ($id_order <= 0) {
@@ -22465,6 +22491,11 @@ class Twopayment extends PaymentModule
         $cancelled_status = $this->getTwoCancelledOrderStatusId();
         if ($cancelled_status <= 0) {
             return false;
+        }
+
+        if ($confirmed_by_two) {
+            // A narrow update: only the state column, and only an existing row (an UPDATE matching no row writes nothing).
+            Db::getInstance()->update('twopayment', array('two_order_state' => 'CANCELLED'), 'id_order = ' . (int)$id_order);
         }
 
         return (bool)$this->changeOrderStatus($id_order, $cancelled_status);

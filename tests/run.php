@@ -117,6 +117,7 @@ final class OrderBuilderSpec
         self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
         self::testIsTwoAttemptStatusTerminalMatchesCancelledGuard();
         self::testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain();
+        self::testGetTwoVerifiedPendingFulfillmentStatusIdUsesConfiguredFallbackChain();
         self::testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId();
         self::testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled();
         self::testIsTwoOrderCancelledResponseRequires2xxAndCancelledState();
@@ -4277,19 +4278,38 @@ final class OrderBuilderSpec
 
     private static function testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
+        // TWO-26289: the merchant's Order Cancelled mapping wins, as for every other mapped status.
+        // [PS_TWO_OS_CANCELLED_MAP, PS_TWO_OS_CANCELLED, PS_OS_CANCELED, expected, description]
+        $cases = [
+            [902, 901, 903, 902, 'mapping wins over the branded state'],
+            [0, 901, 903, 901, 'no mapping falls back to the branded state'],
+            [0, 0, 903, 903, 'neither falls back to core Canceled'],
+        ];
+        foreach ($cases as [$map, $branded, $core, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_CANCELLED', $branded);
+            Configuration::updateValue('PS_OS_CANCELED', $core);
+            TinyAssert::same($expected, (new TwopaymentTestHarness())->getTwoCancelledOrderStatusId(), $description);
+        }
+    }
 
-        Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
-        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 902);
-        Configuration::updateValue('PS_OS_CANCELED', 903);
-        TinyAssert::same(901, $module->getTwoCancelledOrderStatusId());
-
-        Configuration::updateValue('PS_TWO_OS_CANCELLED', 0);
-        TinyAssert::same(902, $module->getTwoCancelledOrderStatusId());
-
-        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 0);
-        TinyAssert::same(903, $module->getTwoCancelledOrderStatusId());
+    private static function testGetTwoVerifiedPendingFulfillmentStatusIdUsesConfiguredFallbackChain(): void
+    {
+        // TWO-26289: the merchant's Verified mapping wins, as confirmation applies it.
+        // [PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP, PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT, PS_OS_PREPARATION, expected, description]
+        $cases = [
+            [902, 901, 903, 902, 'mapping wins over the branded state'],
+            [0, 901, 903, 901, 'no mapping falls back to the branded state'],
+            [0, 0, 903, 903, 'neither falls back to core Processing in progress'],
+        ];
+        foreach ($cases as [$map, $branded, $core, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $branded);
+            Configuration::updateValue('PS_OS_PREPARATION', $core);
+            TinyAssert::same($expected, (new TwopaymentTestHarness())->getTwoVerifiedPendingFulfillmentStatusId(), 'verified: ' . $description);
+        }
     }
 
     private static function testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId(): void
@@ -4324,9 +4344,10 @@ final class OrderBuilderSpec
         };
 
         Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
+        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 6);
         TinyAssert::true($module->syncLocalOrderStatusFromTwoState(55, 'CANCELLED'));
         TinyAssert::count(1, $module->calls);
-        TinyAssert::same([55, 901], $module->calls[0]);
+        TinyAssert::same([55, 6], $module->calls[0], 'a provider cancel moves the order to the mapped status, not the branded one');
 
         TinyAssert::false($module->syncLocalOrderStatusFromTwoState(56, 'CONFIRMED'));
         TinyAssert::count(1, $module->calls);
@@ -4368,15 +4389,25 @@ final class OrderBuilderSpec
 
     private static function testShouldBlockTwoStatusTransitionByCancelledStateCoversVerifiedAndFulfillment(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-        Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', 901);
-        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
-        Configuration::updateValue('PS_OS_SHIPPING', 4);
-
-        TinyAssert::true($module->shouldBlockTwoStatusTransitionByCancelledState(901));
-        TinyAssert::true($module->shouldBlockTwoStatusTransitionByCancelledState(4));
-        TinyAssert::false($module->shouldBlockTwoStatusTransitionByCancelledState(99));
+        // TWO-26289: a cancelled order may not move to the mapped Verified status, the branded one, or a fulfilment status.
+        // [PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP, PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT, target status, blocked, description]
+        $cases = [
+            [902, 0, 902, true, 'mapping only: the mapped Verified status is blocked'],
+            [0, 901, 901, true, 'branded only: the branded Verified state is blocked'],
+            [902, 901, 902, true, 'both set: the mapped Verified status is blocked'],
+            [902, 901, 901, true, 'both set: the branded Verified state is blocked too'],
+            [902, 901, 4, true, 'a fulfilment status is blocked'],
+            [902, 901, 99, false, 'any other status is allowed'],
+            [902, 901, 0, false, 'no status is allowed'],
+        ];
+        foreach ($cases as [$map, $branded, $target, $blocked, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $branded);
+            Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
+            Configuration::updateValue('PS_OS_SHIPPING', 4);
+            TinyAssert::same($blocked, (new TwopaymentTestHarness())->shouldBlockTwoStatusTransitionByCancelledState($target), $description);
+        }
     }
 
     private static function testIsTwoOrderFulfillableStateRequiresConfirmed(): void
@@ -5856,6 +5887,7 @@ require __DIR__ . '/MerchantFeeRatesSpec.php';
 require __DIR__ . '/TermSurchargeAmountsSpec.php';
 require __DIR__ . '/SurchargeCartLineSpec.php';
 require __DIR__ . '/ConfirmationLegacyParitySpec.php';
+require __DIR__ . '/CancelMirrorSpec.php';
 require __DIR__ . '/MinimumOrderGateSpec.php';
 require __DIR__ . '/InvoiceUploadGateSpec.php';
 require __DIR__ . '/FxRatesSpec.php';
@@ -5936,6 +5968,7 @@ $tests = [
     'TermSurchargeAmountsSpec::runAll' => [TermSurchargeAmountsSpec::class, 'runAll'],
     'SurchargeCartLineSpec::runAll' => [SurchargeCartLineSpec::class, 'runAll'],
     'ConfirmationLegacyParitySpec::runAll' => [ConfirmationLegacyParitySpec::class, 'runAll'],
+    'CancelMirrorSpec::runAll' => [CancelMirrorSpec::class, 'runAll'],
     'MinimumOrderGateSpec::runAll' => [MinimumOrderGateSpec::class, 'runAll'],
     'InvoiceUploadGateSpec::runAll' => [InvoiceUploadGateSpec::class, 'runAll'],
     'FxRatesSpec::runAll' => [FxRatesSpec::class, 'runAll'],
