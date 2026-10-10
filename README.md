@@ -749,6 +749,7 @@ totals and fields the module does not itself send.
 | `fallback_shipping_tax_rate` | float or null | The rate of the module's Default shipping tax code, null when it is not set |
 | `contract_version` | int | `1` |
 | `order_lines` | array or null | Two's lines for the order, not PrestaShop's `order_detail` rows (those are on `order`): the order's line items as Two holds them, with Two's line ids. They are the lines of the last create or update Two accepted, after the subscribers' edits, as Two's `GET /v1/order/{id}` returns them. Each carries its `id`, `type`, `gross_amount`, `net_amount`, `tax_amount`, `tax_rate`, `tax_code` and the other line fields. Given on `refund` and `order_update`. Null on the other request types, when the module could not read the order from Two, and on the merchant order id sync of a repeated confirmation callback, which reads no order. Read-only: changing it changes nothing |
+| `order_refunds` | array or null | Two's refunds for the order: every refund Two already holds for it, from the same `GET /v1/order/{id}` response as `order_lines`, verbatim. Each carries its `id`, its `total_amount` (Two records refunds as negative amounts) and its `line_items`, and each refund line names the order line it credited in `prototype_id`, with the amounts refunded on it, `gross_amount` among them. Given on `refund` and `order_update`, on the same requests and with the same null rules as `order_lines`. On a refund it holds the earlier refunds, not the one being sent. Read-only: changing it changes nothing |
 
 As on every hook, `$params` also carries core's `cookie`, `cart` and `altern`.
 `$params['cart']` is the visitor's cart from `Context`, which on an admin edit, a
@@ -758,7 +759,8 @@ status change or a refund is not the order's cart: use `$params['context']['cart
 order id sync already make. An admin edit or a tracking number reads the order only when
 it changed something, so with a subscriber registered the module reads it before
 building the update: a save that changes nothing then makes that one read, and a shop
-with no subscriber makes the same calls as without `order_lines`.
+with no subscriber makes the same calls as without `order_lines`. `order_refunds` comes
+from that same read, so it adds no call.
 
 ### When it fires
 
@@ -1045,6 +1047,43 @@ untaxed. A shop with untaxed products can tell the shares apart from
 refunds, and that line's `type` there says whether it is shipping or a product. The same
 lines tell a subscriber that added its own line at create which share of a refund is
 that line's.
+
+What is left to refund on one of Two's order lines is that line's amount less the sum of
+what Two's earlier refunds credited it. `order_lines` gives the line's amount and
+`order_refunds` the earlier refunds, each refund line naming the order line it credited
+in `prototype_id`:
+
+```php
+public static function leftToRefund(array $context, $lineId)
+{
+    if (!is_array($context['order_lines']) || !is_array($context['order_refunds'])) {
+        return null;
+    }
+    $left = null;
+    foreach ($context['order_lines'] as $line) {
+        if ((string) $line['id'] === (string) $lineId) {
+            $left = (float) $line['gross_amount'];
+        }
+    }
+    if ($left === null) {
+        return null;
+    }
+    foreach ($context['order_refunds'] as $refund) {
+        foreach (isset($refund['line_items']) ? $refund['line_items'] : array() as $refunded) {
+            // Each refund line names the order line it credited in prototype_id; Two records refunds as negatives.
+            if (isset($refunded['prototype_id']) && (string) $refunded['prototype_id'] === (string) $lineId) {
+                $left -= abs((float) $refunded['gross_amount']);
+            }
+        }
+    }
+
+    return round($left, 2);
+}
+```
+
+A subscriber that itemises a refund itself keeps each line's share within that. When the
+module cannot itemise a refund it logs why, ending "sending the refund without line
+items", only if the payload sent after the hook still has no lines.
 
 Add a line for a cost the shop adds to the cart total outside any carrier. The shop's
 total carries it and the lines the module built do not, so the default handler would

@@ -62,6 +62,20 @@ function oppTwoLines()
 }
 
 /**
+ * A refund Two already holds for the order, crediting part of line-1, as Two's GET answers it (TWO-26287).
+ *
+ * @return array
+ */
+function oppTwoRefunds()
+{
+    return array(
+        array('id' => 'refund-0', 'total_amount' => '-12.10', 'line_items' => array(
+            array('prototype_id' => 'line-1', 'gross_amount' => '-12.10', 'net_amount' => '-10.00', 'tax_amount' => '-2.10'),
+        )),
+    );
+}
+
+/**
  * Records sends instead of making them, and answers as a CONFIRMED Two order.
  */
 class OppProbeTwopayment extends Twopayment
@@ -69,6 +83,8 @@ class OppProbeTwopayment extends Twopayment
     /** @var array<int,array{endpoint:string,payload:mixed,method:string}> */
     public $sent = array();
     public $twoState = 'CONFIRMED';
+    /** @var array the refunds Two holds for the order, on a read (TWO-26287) */
+    public $twoRefunds = array();
 
     public function setTwoPaymentRequest($endpoint, $payload = array(), $method = 'POST', $additional_headers = array(), $timeout = null)
     {
@@ -90,7 +106,7 @@ class OppProbeTwopayment extends Twopayment
         }
 
         // The order's lines at Two, on a read only: the context's order_lines (TWO-26282).
-        $lines = $method === 'GET' ? array('line_items' => oppTwoLines()) : array();
+        $lines = $method === 'GET' ? array('line_items' => oppTwoLines(), 'refunds' => $this->twoRefunds) : array();
 
         return $lines + array(
             'http_status' => 200, 'id' => OPP_TWO_ORDER, 'state' => $this->twoState, 'status' => 'APPROVED',
@@ -545,7 +561,7 @@ function oppRunScenario($name, &$detail)
                 $module->cancelTwoOrderBestEffort(OPP_TWO_ORDER, 'attempt_persist_failed');
             }),
         );
-        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines');
+        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines', 'order_refunds');
         // Loads the fixture's class, whose static records the calls.
         Module::getInstanceByName('twoorderpostprocessingtest');
         foreach ($drivers as $driver) {
@@ -553,6 +569,8 @@ function oppRunScenario($name, &$detail)
             $label = $type . '/' . $trigger;
             Twoorderpostprocessingtest::$calls = array();
             $module->sent = array();
+            // An earlier refund at Two, except on the Refunded status, where it would make the refund a remainder.
+            $module->twoRefunds = $label === 'refund/status_change' ? array() : oppTwoRefunds();
             $run();
             $calls = Twoorderpostprocessingtest::$calls;
             $checks[] = array(count($calls), 1, $label . ': fired exactly once');
@@ -567,6 +585,11 @@ function oppRunScenario($name, &$detail)
             // The refunds and the updates are given the order's lines at Two; the others read no order from Two, or are not given it.
             $placed = in_array($type, array('refund', 'order_update'), true) ? oppTwoLines() : null;
             $checks[] = array($context['order_lines'], $placed, $label . ': order_lines');
+            // The refunds Two holds come from the same read, verbatim (TWO-26287).
+            $checks[] = array($context['order_refunds'], $placed === null ? null : $module->twoRefunds, $label . ': order_refunds');
+            if ($placed !== null && $module->twoRefunds !== array()) {
+                $checks[] = array(Twoorderpostprocessingtest::leftToRefund($context, 'line-1'), 108.9, $label . ': the README left to refund on line-1');
+            }
             $checks[] = array($calls[0]['payload_out'], $calls[0]['payload_in'], $label . ': a recording subscriber changes nothing');
             $sent = array_values(array_filter($module->sent, function ($r) {
                 return strpos($r['endpoint'], '/v1/order') === 0;
