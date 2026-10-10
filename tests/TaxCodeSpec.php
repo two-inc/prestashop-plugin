@@ -3,12 +3,12 @@
 declare(strict_types=1);
 
 /**
- * TWO-24877 - tax codes on 0% lines.
+ * TWO-24877, TWO-26153 - tax codes on 0% lines.
  *
- * One row per derivation rule of the README table, plus the mapping, the non-Spanish merchant and the non-zero
- * cases; then one row per kind of charge line (ecotax, wrapping, the buyer fee, discounts, shipping by carrier and
- * by the Default shipping tax code); then the address fallbacks, the merchant country, the code list and the
- * settings form. The cart is OrderPostprocessingSpec's (a 100.00 lamp and 29.00 of shipping, Madrid invoice address)
+ * The mapped and unmapped payload rows (an unmapped line gets no code: the plugin picks none), the shared case
+ * table, the buyer VAT number, then one row per kind of charge line (ecotax, wrapping, the buyer fee, discounts,
+ * shipping by carrier and by the Default shipping tax code); then updates, the merchant country, the code list,
+ * the settings form and the migration. The cart is OrderPostprocessingSpec's (a 100.00 lamp and 29.00 of shipping, Madrid invoice address)
  * with the lamp's and the carrier's tax rules groups at 0%, a delivery address of its own, and the merchant's
  * country set as the merchant record caches it.
  *
@@ -41,7 +41,6 @@ final class TaxCodeSpec
     private const EXPORT = 'ES_IVA_EXPORT';
     private const INTRA = 'ES_IVA_INTRA_COMMUNITY';
     private const SERVICES = 'ES_IVA_INTRA_COMMUNITY_SERVICES';
-    private const NON_EU = 'ES_IVA_NON_EU_SERVICES';
     private const ART20 = 'ES_IVA_EXEMPT_ART20';
     private const ART22 = 'ES_IVA_EXEMPT_ART22';
 
@@ -64,12 +63,6 @@ final class TaxCodeSpec
                 self::assertVatRow(...$row);
             });
         }
-        foreach (self::trimRows() as [$raw, $expected, $description]) {
-            self::collect($failures, $description, function () use ($raw, $expected, $description) {
-                $got = TwoTaxCodeResolver::trimVatNumber($raw);
-                TinyAssert::same($expected, $got, $description . ' (got: ' . json_encode($got) . ')');
-            });
-        }
         foreach (self::chargeRows() as [$setup, $expected, $description]) {
             self::collect($failures, $description, function () use ($setup, $expected, $description) {
                 self::assertChargeRow($setup, $expected, $description);
@@ -77,8 +70,6 @@ final class TaxCodeSpec
         }
         $tests = [
             'testUpdateKeepsPlacementCodes', 'testUpdateOfUnrecordedOrderResolvesNow', 'testUpdateReadsTheVatNumberLikeCreate',
-            'testAddressFallbacks',
-            'testTheBuyerPostcodeComesFromTheCompanyAddress', 'testUpdateTakesTheBuyerPostcodeFromTheCompanyAddress',
             'testDescriptorMismatchSendsLinesUncoded', 'testMappingIsReadOnlyForAZeroLineAndFailsLoud',
             'testMerchantCountryIsStoredAndRefetchedOnce', 'testTaxCodeListHidesCodesNeedingAReason',
             'testTaxCodeListRetriesOnAFloor', 'testFormSaveValidatesPostedCodes', 'testOptionLabelShowsTheRateOnce',
@@ -120,33 +111,17 @@ final class TaxCodeSpec
         $lamp = self::PRODUCT_GROUP;
 
         return [
-            ['ES', 'goods', 'US', '10001', 'ES', '', [], '0', [self::EXPORT, self::EXPORT], null, 'goods delivered outside the EU: export, and shipping follows the goods'],
-            ['ES', 'goods', 'ES', '35001', 'ES', '', [], '0', [self::EXPORT, self::EXPORT], null, 'goods delivered to Las Palmas (35): export'],
-            ['ES', 'goods', 'ES', '38001', 'ES', '', [], '0', [self::EXPORT, self::EXPORT], null, 'goods delivered to Tenerife (38): export'],
-            ['ES', 'goods', 'ES', '51001', 'ES', '', [], '0', [self::EXPORT, self::EXPORT], null, 'goods delivered to Ceuta (51): export'],
-            ['ES', 'goods', 'ES', '52001', 'ES', '', [], '0', [self::EXPORT, self::EXPORT], null, 'goods delivered to Melilla (52): export'],
-            ['ES', 'goods', 'FR', '75001', 'DE', 'DE123456789', [], '0', [self::INTRA, self::INTRA], null, 'goods delivered to France for a German buyer: intra-community, the buyer need not match the destination'],
-            ['ES', 'goods', 'MC', '98000', 'FR', 'FR123456789', [], '0', [self::INTRA, self::INTRA], null, 'goods delivered to Monaco count as France: intra-community, not export'],
-            ['ES', 'goods', 'FR', '75001', 'ES', '', [], '0', [null, null], 'goods-eu-dest-es-buyer', 'goods delivered to France for a Spanish buyer: nothing derived'],
-            ['ES', 'goods', 'ES', '28001', 'FR', '', [], '0', [null, null], 'goods-domestic', 'goods delivered in mainland Spain, even for a French buyer: nothing derived'],
-            ['ES', 'goods', 'ES', '07001', 'ES', '', [], '0', [null, null], null, 'goods delivered to the Balearics (07): domestic, nothing derived'],
-            ['ES', 'service', 'ES', '28001', 'FR', 'FR123456789', [], '0', [self::SERVICES, self::SERVICES], null, 'a service for a French buyer: intra-community services, and shipping follows the services'],
-            ['ES', 'service', 'FR', '75001', 'ES', '', [], '0', [null, null], null, 'a service for a Spanish buyer, delivered to France: nothing derived'],
-            ['ES', 'service', 'NO', '0150', 'NO', '', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer outside the EU: non-EU services, and shipping follows the non-EU services'],
-            ['ES', 'service', 'ES', '28001', 'US', '', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer outside the EU, delivered in Spain: non-EU services'],
-            ['ES', 'service', 'ES', '28001', 'ES 35001', '', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Las Palmas (35): non-EU services'],
-            ['ES', 'service', 'ES', '28001', 'ES 38001', '', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Tenerife (38): non-EU services'],
-            ['ES', 'service', 'ES', '28001', 'ES 51001', '', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Ceuta (51): non-EU services'],
-            ['ES', 'service', 'ES', '28001', 'ES 52001', '', [], '0', [self::NON_EU, self::NON_EU], null, 'a service for a buyer invoiced in Melilla (52): non-EU services'],
-            ['ES', 'service', 'ES', '35001', 'ES 28001', '', [], '0', [null, null], null, 'a service delivered to the Canaries for a mainland buyer: nothing derived'],
-            ['ES', 'goods', 'ES', '28001', 'ES 35001', '', [], '0', [null, null], null, 'goods delivered in mainland Spain for a buyer invoiced in the Canaries: nothing derived'],
-            ['ES', 'mixed', 'FR', '75001', 'NL', 'NL123456789', [], '0', [self::INTRA, self::SERVICES, self::INTRA], null, 'goods and a service to the Netherlands: each by its own rule, shipping follows the goods'],
-            ['ES', 'goods', 'ES', '28001', 'ES', '', [$lamp => self::ART20], '0', [self::ART20, null], null, 'a mapped product group: its code, and the unmapped shipping derives nothing domestic'],
-            ['ES', 'goods', 'US', '10001', 'ES', '', [$lamp => self::ART20], '0', [self::ART20, self::EXPORT], null, 'mapping beats derivation'],
+            ['ES', 'goods', 'US', '10001', 'ES', '', [], '0', [null, null], null, 'an unmapped shop\'s export: no code, the plugin picks none'],
+            ['ES', 'goods', 'ES', '35001', 'ES', '', [], '0', [null, null], null, 'an unmapped shop\'s order to the Canaries: no code'],
+            ['ES', 'goods', 'FR', '75001', 'DE', 'DE123456789', [], '0', [null, null], null, 'an unmapped shop\'s EU buyer with a VAT number: no code'],
+            ['ES', 'service', 'NO', '0150', 'NO', '', [], '0', [null, null], null, 'an unmapped shop\'s service outside the EU: no code'],
+            ['ES', 'goods', 'FR', '75001', 'ES', '', [], '0', [null, null], 'goods-eu-dest-es-buyer', 'goods delivered to France for a Spanish buyer, unmapped: untouched'],
+            ['ES', 'goods', 'ES', '28001', 'FR', '', [], '0', [null, null], 'goods-domestic', 'goods delivered in mainland Spain, unmapped: untouched'],
+            ['ES', 'goods', 'ES', '28001', 'ES', '', [$lamp => self::ART20], '0', [self::ART20, null], null, 'a mapped product group: its code, and the unmapped shipping none'],
+            ['ES', 'goods', 'US', '10001', 'ES', '', [$lamp => self::ART20], '0', [self::ART20, null], null, 'an unmapped group gets no code, even on an export'],
             ['ES', 'goods', 'ES', '28001', 'ES', '', [self::CARRIER_GROUP => self::ART22], '0', [null, self::ART22], null, 'shipping maps by its carrier\'s tax rules group'],
             ['DE', 'goods', 'US', '10001', 'DE', '', [], '0', [null, null], 'non-es-unmapped', 'non-Spanish merchant, unmapped: untouched'],
             ['DE', 'goods', 'US', '10001', 'DE', '', [$lamp => 'DE_ZERO'], '0', ['DE_ZERO', null], null, 'non-Spanish merchant, mapped: the mapping still applies'],
-            ['', 'goods', 'US', '10001', 'ES', '', [], '0', [null, null], null, 'merchant country not known yet: nothing derived'],
             ['ES', 'goods', 'US', '10001', 'ES', '', [$lamp => self::ART20], '21', [null, null], 'non-zero', 'lines at 21%: untouched, mapping or not'],
         ];
     }
@@ -258,17 +233,17 @@ final class TaxCodeSpec
 
     /**
      * Step 4 on an update shares only the recorded codes steps 1 to 3 gave at placement, as placement itself does: a
-     * derived code never joins the pool. Rows: the rows mapped, delivery country, invoice country, invoice VAT number,
+     * stored code from anywhere else never joins the pool. Rows: the rows mapped, delivery country, invoice country, invoice VAT number,
      * a record written before provenance was kept (tax_codes_mapped dropped), expected discount code, description.
      */
     private static function testUpdateSharesOnlyMappedCodesWithKeylessLines(): void
     {
         $lamp = self::PRODUCT_GROUP;
         $rows = [
-            [[], 'US', 'ES', '', false, self::EXPORT, 'an unmapped shop\'s export with goods, a service and a 0% discount: the edit derives the discount\'s code as placement did'],
+            [[], 'US', 'ES', '', false, null, 'an unmapped shop\'s export with goods, a service and a 0% discount: the discount gets no code'],
             [[$lamp . '|exempt' => self::INTRA], 'DE', 'DE', 'DE123', false, self::INTRA, 'a mapped goods group and an unmapped services group: the edit shares only the mapped code'],
-            [[], 'US', 'ES', '', true, self::EXPORT, 'a record from before provenance was kept whose lines disagree derives as before'],
-            [[$lamp . '|none' => self::ART20, ($lamp + 1) . '|none' => self::ART20], 'ES', 'ES', '', true, self::ART20, 'a record from before provenance was kept whose lines agree shares their code, as staging did, where derivation finds none'],
+            [[$lamp . '|none' => self::ART20, ($lamp + 1) . '|none' => self::ART22], 'ES', 'ES', '', true, null, 'a record from before provenance was kept whose lines disagree gives no code'],
+            [[$lamp . '|none' => self::ART20, ($lamp + 1) . '|none' => self::ART20], 'ES', 'ES', '', true, self::ART20, 'a record from before provenance was kept whose lines agree shares their code'],
         ];
         foreach ($rows as [$map, $dest, $buyer, $vat, $legacy, $expected, $description]) {
             self::seed('ES', 'mixed', $dest, '10001', $buyer, [], '0');
@@ -295,12 +270,12 @@ final class TaxCodeSpec
             $declared = $decode->invoke($module, ['two_declared_rates' => json_encode($record)]);
             $lines = [['tax_rate' => '0', 'gross_amount' => '100.00'], ['tax_rate' => '0', 'gross_amount' => '100.00'], ['tax_rate' => '0', 'gross_amount' => '-10.00']];
             $keys = [
-                ['key' => 'product:' . self::PRODUCT, 'group' => $lamp, 'goods' => true, 'discount' => false],
-                ['key' => 'product:' . (self::PRODUCT + 1), 'group' => $lamp + 1, 'goods' => false, 'discount' => false],
-                ['key' => null, 'group' => 0, 'goods' => null, 'discount' => true],
+                ['key' => 'product:' . self::PRODUCT, 'group' => $lamp, 'discount' => false],
+                ['key' => 'product:' . (self::PRODUCT + 1), 'group' => $lamp + 1, 'discount' => false],
+                ['key' => null, 'group' => 0, 'discount' => true],
             ];
             $apply = new ReflectionMethod(Twopayment::class, 'applyTwoTaxCodes');
-            $updated = $apply->invoke(new TwopaymentTestHarness(), $lines, $keys, new Address(self::DELIVERY), new Address(self::INVOICE), $buyer, new Address(self::INVOICE), $declared['tax_codes'], $declared['tax_codes_mapped']);
+            $updated = $apply->invoke(new TwopaymentTestHarness(), $lines, $keys, new Address(self::DELIVERY), new Address(self::INVOICE), $declared['tax_codes'], $declared['tax_codes_mapped']);
             TinyAssert::same($expected, $discount($updated), $description . ': on update (got: ' . json_encode($discount($updated)) . ')');
         }
     }
@@ -424,7 +399,7 @@ final class TaxCodeSpec
             [false, 'US', 'ES', '', [$group . '|none' => self::EXPORT], null, 'no Default shipping tax code: null'],
             [true, 'US', 'ES', '', [$group . '|none' => self::EXPORT], self::EXPORT, 'an export takes the group\'s no-rule row'],
             [true, 'DE', 'DE', 'DE123', [$group . '|exempt' => self::INTRA, $group . '|none' => self::EXPORT], self::INTRA, 'an EU buyer with a VAT number takes the exempt row'],
-            [true, 'ES', 'ES', '', [$group . '|exempt' => self::INTRA], null, 'a matched row on (none): null, never derived'],
+            [true, 'ES', 'ES', '', [$group . '|exempt' => self::INTRA], null, 'a matched row on (none): null'],
         ];
         foreach ($rows as [$set, $dest, $buyer, $vat, $map, $expected, $description]) {
             self::seed('ES', 'goods', $dest, '10001', $buyer, [], '0');
@@ -442,83 +417,46 @@ final class TaxCodeSpec
     }
 
     /**
-     * The buyer VAT number (TWO-26153): the intra-community codes need one whose prefix names an EU member state other
-     * than the merchant's country, and a Spanish merchant's create payload carries it as buyer_vat_number, except for a
-     * Spanish buyer. Columns: merchant country, cart, delivery country, invoice (buyer company) country, invoice
-     * vat_number, delivery vat_number, mapping, expected codes as [lamp, shipping], expected buyer_vat_number (null for
-     * the key absent), description.
+     * The buyer VAT number (TWO-26153): a Spanish merchant's create payload carries the invoice address VAT number as
+     * buyer_vat_number, as entered with only leading and trailing whitespace trimmed, except for a Spanish buyer.
+     * Columns: merchant country, delivery country, invoice (buyer company) country, invoice vat_number, delivery
+     * vat_number, expected buyer_vat_number (null for the key absent), description.
      *
      * @return array<int,array>
      */
     private static function vatRows(): array
     {
-        $lamp = self::PRODUCT_GROUP;
-
         return [
-            ['ES', 'goods', 'FR', 'DE', 'DE123456789', '', [], [self::INTRA, self::INTRA], 'DE123456789', 'goods to France, German buyer with a German VAT number: intra-community, and the number is sent'],
-            ['ES', 'goods', 'FR', 'DE', '', '', [], [null, null], null, 'goods to France, German buyer with no VAT number: nothing derived, and no key'],
-            ['ES', 'goods', 'FR', 'DE', 'ESB12345678', '', [], [null, null], 'ESB12345678', 'goods to France, German buyer whose VAT prefix is the merchant\'s country: nothing derived'],
-            ['ES', 'goods', 'FR', 'DE', 'US123456789', '', [], [null, null], 'US123456789', 'goods to France, German buyer with a non-EU VAT prefix: nothing derived'],
-            ['ES', 'goods', 'FR', 'GR', 'EL123456789', '', [], [self::INTRA, self::INTRA], 'EL123456789', 'goods to France, Greek buyer with an EL VAT number: EL reads as Greece, intra-community'],
-            ['ES', 'goods', 'FR', 'GR', '123456789', '', [], [null, null], '123456789', 'an unprefixed number gains no prefix and names no country: sent as entered, nothing derived'],
-            ['ES', 'goods', 'FR', 'FR', 'fr 123.456-789', '', [], [null, null], 'fr 123.456-789', 'a lower-case prefix is sent as entered and names no country: nothing derived'],
-            ['ES', 'goods', 'FR', 'GR', 'el123456789', '', [], [null, null], 'el123456789', 'a lower-case el prefix is not read as Greece: nothing derived'],
-            ['ES', 'goods', 'FR', 'DE', ' .- ', '', [], [null, null], '.-', 'any non-empty trimmed value is a VAT number: sent, nothing derived'],
-            ['ES', 'goods', 'FR', 'MC', 'MC12345678901', '', [], [null, null], 'MC12345678901', 'a Monaco buyer with an MC-prefixed number: MC is no VAT prefix, nothing derived'],
-            ['ES', 'goods', 'FR', 'MC', '12345678901', '', [], [null, null], '12345678901', 'an unprefixed Monaco number gains no FR prefix: nothing derived'],
-            ['ES', 'goods', 'FR', 'DE', '', 'DE123456789', [], [null, null], null, 'the delivery address VAT number is never a source: only the invoice address'],
-            ['ES', 'goods', 'FR', 'DE', 'DE111111111', 'NL222222222', [], [self::INTRA, self::INTRA], 'DE111111111', 'the invoice address VAT number wins over the delivery one'],
-            ['ES', 'goods', 'FR', 'DE', '', '', [$lamp => self::ART20], [self::ART20, null], null, 'with no VAT number a mapping still wins, and the unmapped shipping derives nothing'],
-            ['ES', 'goods', 'US', 'DE', '', '', [], [self::EXPORT, self::EXPORT], null, 'export needs no VAT number'],
-            ['ES', 'service', 'ES', 'FR', 'FR123456789', '', [], [self::SERVICES, self::SERVICES], 'FR123456789', 'a service for a French buyer with a French VAT number: intra-community services'],
-            ['ES', 'service', 'ES', 'FR', '', '', [], [null, null], null, 'a service for a French buyer with no VAT number: nothing derived, never non-EU services'],
-            ['ES', 'service', 'ES', 'FR', 'ESB12345678', '', [], [null, null], 'ESB12345678', 'a service for a French buyer whose VAT prefix is the merchant\'s country: nothing derived'],
-            ['ES', 'service', 'ES', 'FR', 'NO123456789', '', [], [null, null], 'NO123456789', 'a service for a French buyer with a non-EU VAT prefix: nothing derived, never non-EU services'],
-            ['ES', 'service', 'ES', 'NO', '', '', [], [self::NON_EU, self::NON_EU], null, 'non-EU services need no VAT number'],
-            ['ES', 'goods', 'FR', 'ES', 'ESB12345678', '', [], [null, null], null, 'a Spanish buyer\'s VAT number is never sent'],
-            ['DE', 'goods', 'FR', 'FR', 'FR123456789', '', [], [null, null], null, 'a non-Spanish merchant never sends the VAT number'],
-            ['', 'goods', 'FR', 'DE', 'DE123456789', '', [], [null, null], null, 'merchant country not known yet (a cold or failed record): nothing derived, and no key'],
-            ['ES', 'service', 'ES', 'DE', 'n/a', '', [], [null, null], 'n/a', 'a non-empty "n/a" is a VAT number, sent as n/a, and names no country: no intra-community services'],
-            ['ES', 'goods', 'FR', 'DE', 'N.A.', '', [], [null, null], 'N.A.', 'N.A. is sent as entered and names no country'],
-            ['ES', 'goods', 'FR', 'DE', ' DE123 ', '', [], [self::INTRA, self::INTRA], 'DE123', 'leading and trailing spaces are trimmed'],
-            ['ES', 'goods', 'FR', 'DE', 'DE 123/456', '', [], [self::INTRA, self::INTRA], 'DE 123/456', 'inner spaces and slashes are kept, and the DE prefix still qualifies'],
-            ['ES', 'goods', 'FR', 'DE', 'vat: DE123456789', '', [], [null, null], 'vat: DE123456789', 'a leading label is kept and not parsed out: nothing derived'],
-            ['ES', 'goods', 'FR', 'GR', 'GR123456789', '', [], [self::INTRA, self::INTRA], 'GR123456789', 'a GR prefix is not rewritten to EL, and reads as Greece'],
-            ['ES', 'goods', 'FR', 'NL', 'NL 1234.5678.B01', '', [], [self::INTRA, self::INTRA], 'NL 1234.5678.B01', 'dots and letters inside a number are kept'],
+            ['ES', 'FR', 'DE', 'DE123456789', '', 'DE123456789', 'a German buyer\'s VAT number is sent'],
+            ['ES', 'FR', 'DE', '', '', null, 'no VAT number: no key'],
+            ['ES', 'FR', 'DE', '   ', '', null, 'whitespace only is no VAT number: no key'],
+            ['ES', 'FR', 'DE', 'ESB12345678', '', 'ESB12345678', 'a prefix naming the merchant\'s country is sent as entered'],
+            ['ES', 'FR', 'GR', '123456789', '', '123456789', 'an unprefixed number gains no prefix'],
+            ['ES', 'FR', 'FR', 'fr 123.456-789', '', 'fr 123.456-789', 'a lower-case prefix is not upper-cased'],
+            ['ES', 'FR', 'GR', 'GR123456789', '', 'GR123456789', 'a GR prefix is not rewritten to EL'],
+            ['ES', 'FR', 'DE', ' .- ', '', '.-', 'any non-empty trimmed value is a VAT number'],
+            ['ES', 'FR', 'DE', '', 'DE123456789', null, 'the delivery address VAT number is never a source: only the invoice address'],
+            ['ES', 'FR', 'DE', 'DE111111111', 'NL222222222', 'DE111111111', 'the invoice address VAT number wins over the delivery one'],
+            ['ES', 'FR', 'ES', 'ESB12345678', '', null, 'a Spanish buyer\'s VAT number is never sent'],
+            ['DE', 'FR', 'FR', 'FR123456789', '', null, 'a non-Spanish merchant never sends the VAT number'],
+            ['', 'FR', 'DE', 'DE123456789', '', null, 'merchant country not known yet (a cold or failed record): no key'],
+            ['ES', 'FR', 'DE', 'n/a', '', 'n/a', 'a non-empty "n/a" is sent as entered'],
+            ['ES', 'FR', 'DE', ' DE123 ', '', 'DE123', 'leading and trailing spaces are trimmed'],
+            ['ES', 'FR', 'DE', "\tDE123\n", '', 'DE123', 'leading and trailing tabs and newlines are trimmed'],
+            ['ES', 'FR', 'DE', 'DE 123/456', '', 'DE 123/456', 'inner spaces and slashes are kept'],
+            ['ES', 'FR', 'DE', 'vat: DE123456789', '', 'vat: DE123456789', 'a leading label is kept and not parsed out'],
         ];
     }
 
-    private static function assertVatRow(string $merchant, string $cart, string $dest, string $buyer, string $vat, string $deliveryVat, array $map, array $expected, ?string $sent, string $description): void
+    private static function assertVatRow(string $merchant, string $dest, string $buyer, string $vat, string $deliveryVat, ?string $sent, string $description): void
     {
-        self::seed($merchant, $cart, $dest, '10001', $buyer, $map, '0');
+        self::seed($merchant, 'goods', $dest, '10001', $buyer, [], '0');
         StubStore::$addresses[self::INVOICE]['vat_number'] = $vat;
         StubStore::$addresses[self::DELIVERY]['vat_number'] = $deliveryVat;
         $payload = (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-' . self::CART, new Cart(self::CART), self::merchantUrls());
 
-        TinyAssert::same($expected, self::codes($payload), $description . ' (got codes: ' . json_encode(self::codes($payload)) . ')');
         TinyAssert::same($sent, $payload['buyer_vat_number'] ?? null, $description . ' (got buyer_vat_number: ' . json_encode($payload['buyer_vat_number'] ?? null) . ')');
         TinyAssert::same($sent !== null, array_key_exists('buyer_vat_number', $payload), $description . ': the key is absent, never empty');
-    }
-
-    /**
-     * TwoTaxCodeResolver::trimVatNumber(): the value as entered, only leading and trailing whitespace trimmed.
-     * Columns: raw value, expected, description.
-     *
-     * @return array<int,array>
-     */
-    private static function trimRows(): array
-    {
-        return [
-            ['', '', 'trim: empty is no number'],
-            ['   ', '', 'trim: whitespace only is no number'],
-            [' DE123 ', 'DE123', 'trim: leading and trailing spaces are trimmed'],
-            ["\tDE123\n", 'DE123', 'trim: leading and trailing tabs and newlines are trimmed'],
-            ['FR 123.456-789', 'FR 123.456-789', 'trim: inner spaces, dots and hyphens are kept'],
-            ['n/a', 'n/a', 'trim: a placeholder is kept as entered'],
-            ['el123456789', 'el123456789', 'trim: a lower-case prefix is not upper-cased'],
-            ['GR123456789', 'GR123456789', 'trim: a GR prefix is not rewritten'],
-            ['123456789', '123456789', 'trim: an unprefixed number gains no prefix'],
-        ];
     }
 
     /**
@@ -549,11 +487,6 @@ final class TaxCodeSpec
         $discount = static function (): void {
             self::addToTotals(Cart::ONLY_DISCOUNTS, 10.00, -1);
         };
-        $service = static function (string $buyer): void {
-            StubStore::$cartProducts[self::CART][0]['is_virtual'] = 1;
-            StubStore::$addresses[self::INVOICE]['id_country'] = array_flip(self::COUNTRIES)[$buyer];
-            StubStore::$addresses[self::INVOICE]['vat_number'] = $buyer . '123456789';
-        };
         $abroad = static function (string $country): void {
             StubStore::$addresses[self::DELIVERY]['id_country'] = array_flip(self::COUNTRIES)[$country];
         };
@@ -563,28 +496,22 @@ final class TaxCodeSpec
                 $ecotax();
                 $map([self::ECOTAX_GROUP => self::ART20]);
             }, ['Lamp' => null, 'Lamp - Ecotax' => self::ART20, 'Courier' => null], 'ecotax maps by the ecotax tax rules group'],
-            [function () use ($ecotax, $service, $abroad) {
-                $ecotax();
-                $service('NL');
-                $abroad('FR');
-                self::addProduct(1, false, true, 'Crate');
-            }, ['Lamp' => self::SERVICES, 'Lamp - Ecotax' => self::SERVICES, 'Crate' => self::INTRA, 'Courier' => self::INTRA], 'ecotax on a service follows its product, not the order\'s goods'],
             [function () use ($wrapping, $map) {
                 $wrapping();
                 $map([self::WRAPPING_GROUP => self::ART20]);
             }, ['Lamp' => null, 'Courier' => null, 'Gift wrapping' => self::ART20], 'wrapping maps by the gift-wrapping tax rules group'],
-            [function () use ($wrapping, $abroad) {
+            [function () use ($wrapping, $map) {
                 $wrapping();
-                $abroad('US');
-            }, ['Lamp' => self::EXPORT, 'Courier' => self::EXPORT, 'Gift wrapping' => self::EXPORT], 'unmapped wrapping follows the goods'],
+                $map([self::PRODUCT_GROUP => self::ART20, self::CARRIER_GROUP => self::ART20]);
+            }, ['Lamp' => self::ART20, 'Courier' => self::ART20, 'Gift wrapping' => null], 'unmapped wrapping with a group of its own gets no code, though the other lines share one'],
             [function () use ($fee, $map) {
                 $fee();
                 $map([self::FEE_GROUP => self::ART20]);
             }, ['Lamp' => null, 'Courier' => null, 'Fee' => self::ART20], 'the buyer fee maps by its own tax rules group'],
-            [function () use ($fee, $service) {
+            [function () use ($fee, $map) {
                 $fee();
-                $service('FR');
-            }, ['Lamp' => self::SERVICES, 'Courier' => self::SERVICES, 'Fee' => self::SERVICES], 'an unmapped fee on a services-only order follows the services'],
+                $map([self::PRODUCT_GROUP => self::ART20, self::CARRIER_GROUP => self::ART20]);
+            }, ['Lamp' => self::ART20, 'Courier' => self::ART20, 'Fee' => null], 'an unmapped fee gets no code, though the other lines share one'],
             [function () use ($discount, $map) {
                 $discount();
                 $map([self::PRODUCT_GROUP => self::ART20, self::CARRIER_GROUP => self::ART20]);
@@ -592,14 +519,11 @@ final class TaxCodeSpec
             [function () use ($discount, $map) {
                 $discount();
                 $map([self::PRODUCT_GROUP => self::ART20]);
-            }, ['Lamp' => self::ART20, 'Courier' => null, 'discount' => self::ART20], 'a 0% discount takes the code of the lines coded from the mapping, not the unmapped shipping\'s derived nothing'],
+            }, ['Lamp' => self::ART20, 'Courier' => null, 'discount' => self::ART20], 'a 0% discount takes the code of the lines coded from the mapping; the unmapped shipping has none'],
             [function () use ($discount, $abroad) {
-                self::addServiceProduct();
                 $discount();
-                $abroad('FR');
-                StubStore::$addresses[self::INVOICE]['id_country'] = array_flip(self::COUNTRIES)['NL'];
-                StubStore::$addresses[self::INVOICE]['vat_number'] = 'NL123456789B01';
-            }, ['Lamp' => self::INTRA, 'Service' => self::SERVICES, 'Courier' => self::INTRA, 'discount' => self::INTRA], 'with no shared code a 0% discount follows the goods: intra-community'],
+                $abroad('US');
+            }, ['Lamp' => null, 'Courier' => null, 'discount' => null], 'an unmapped shop\'s export with a 0% discount: no line gets a code'],
             [function () use ($map) {
                 StubStore::$carriers[self::CARRIER]['tax_rules_group_id'] = 0;
                 Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
@@ -667,13 +591,14 @@ final class TaxCodeSpec
 
     private static function testUpdateKeepsPlacementCodes(): void
     {
-        self::seed('ES', 'goods', 'US', '10001', 'ES', [], '0');
+        self::seed('ES', 'goods', 'US', '10001', 'ES', [self::PRODUCT_GROUP => self::EXPORT, self::CARRIER_GROUP => self::EXPORT], '0');
         $module = new TwopaymentTestHarness();
         $module->getTwoNewOrderData('merchant-attempt-' . self::CART, new Cart(self::CART), self::merchantUrls());
         $record = (string) $module->getTwoDeclaredChargeRates();
         TinyAssert::same(['product:' . self::PRODUCT => self::EXPORT, 'shipping' => self::EXPORT], json_decode($record, true)['tax_codes'] ?? null, 'placement records the codes it resolved');
 
-        // The order is later edited to a domestic address: the codes placement resolved still go out.
+        // The mapping is later cleared and the order edited to a domestic address: the codes placement resolved still go out.
+        Configuration::updateValue('PS_TWO_TAX_CODE_MAP', '');
         StubStore::$addresses[self::DELIVERY]['id_country'] = 34;
         StubStore::$addresses[self::DELIVERY]['postcode'] = '28001';
         $payload = (new TwopaymentTestHarness())->getTwoUpdateOrderData(self::order(), self::paymentRow($record));
@@ -681,17 +606,18 @@ final class TaxCodeSpec
     }
 
     /**
-     * An update resolves an unrecorded line from the invoice address VAT number, as create does, and never carries
-     * buyer_vat_number (TWO-26153). Rows: invoice vat_number, expected codes, description.
+     * An update resolves an unrecorded line's step 1 from the invoice address VAT number, as create does, and never
+     * carries buyer_vat_number (TWO-26153). Rows: invoice vat_number, expected codes, description.
      */
     private static function testUpdateReadsTheVatNumberLikeCreate(): void
     {
         $rows = [
-            ['DE123456789', [self::INTRA, self::INTRA], 'an update with a German VAT number derives intra-community'],
-            ['', [null, null], 'an update with no VAT number derives nothing'],
+            ['DE123456789', [self::INTRA, self::INTRA], 'an update with a German VAT number takes the exempt rows'],
+            ['', [null, null], 'an update with no VAT number falls on the unmapped no-rule rows: no code'],
         ];
         foreach ($rows as [$vat, $expected, $description]) {
             self::seed('ES', 'goods', 'FR', '75001', 'DE', [], '0');
+            Configuration::updateValue('PS_TWO_TAX_CODE_MAP', json_encode([self::PRODUCT_GROUP . '|exempt' => self::INTRA, self::CARRIER_GROUP . '|exempt' => self::INTRA]));
             StubStore::$addresses[self::INVOICE]['vat_number'] = $vat;
             $payload = (new TwopaymentTestHarness())->getTwoUpdateOrderData(self::order(), self::paymentRow('{"shipping":[],"wrapping":null}'));
             TinyAssert::same($expected, self::codes($payload), $description . ' (got: ' . json_encode(self::codes($payload)) . ')');
@@ -701,75 +627,16 @@ final class TaxCodeSpec
 
     private static function testUpdateOfUnrecordedOrderResolvesNow(): void
     {
-        self::seed('ES', 'goods', 'US', '10001', 'ES', [], '0');
+        self::seed('ES', 'goods', 'US', '10001', 'ES', [self::PRODUCT_GROUP => self::EXPORT, self::CARRIER_GROUP => self::EXPORT], '0');
         $payload = (new TwopaymentTestHarness())->getTwoUpdateOrderData(self::order(), self::paymentRow('{"shipping":[],"wrapping":null}'));
         TinyAssert::same([self::EXPORT, self::EXPORT], self::codes($payload), 'an order placed before the codes were recorded resolves them on update');
-    }
-
-    /**
-     * BUYER falls back to the invoice country when no country_prefix is sent; DEST to the invoice address when there
-     * is no delivery address. Rows: buyer country sent, delivery address id, goods?, expected, description.
-     */
-    private static function testAddressFallbacks(): void
-    {
-        self::seed('ES', 'goods', 'ES', '28001', 'FR', [], '0');
-        StubStore::$addresses[self::INVOICE]['postcode'] = '75001';
-        StubStore::$addresses[self::INVOICE]['vat_number'] = 'FR123456789';
-        $rows = [
-            ['', self::DELIVERY, false, self::SERVICES, 'a service with no country_prefix follows the invoice (French) country'],
-            ['ES', self::DELIVERY, false, null, 'a service follows the country_prefix sent, not the invoice country'],
-            ['ES', 0, true, null, 'goods with no delivery address follow the invoice address (France), and a Spanish buyer derives nothing'],
-            ['DE', 0, true, self::INTRA, 'goods with no delivery address follow the invoice address: France for a German buyer'],
-            ['DE', self::DELIVERY, true, null, 'goods follow the delivery address (Madrid) when there is one'],
-        ];
-        foreach ($rows as [$buyer, $delivery, $goods, $expected, $description]) {
-            $lines = self::apply(
-                [['tax_rate' => '0']],
-                [['key' => 'product:1', 'group' => 0, 'goods' => $goods, 'discount' => false]],
-                new Address($delivery),
-                new Address(self::INVOICE),
-                $buyer
-            );
-            TinyAssert::same($expected, $lines[0]['tax_code'] ?? null, $description);
-        }
-    }
-
-    /**
-     * The buyer postcode comes from the address that gave country_prefix (TWO-26151). Here the invoice address in
-     * Grenoble (38000) carries no company, so the Spanish company on the Madrid delivery address is the buyer, and
-     * 38 is a French postcode, not Tenerife.
-     */
-    private static function testTheBuyerPostcodeComesFromTheCompanyAddress(): void
-    {
-        self::seed('ES', 'service', 'ES', '28001', 'FR 38000', [], '0');
-        StubStore::$addresses[self::INVOICE]['company'] = '';
-        StubStore::$addresses[self::INVOICE]['companyid'] = '';
-        $payload = (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-' . self::CART, new Cart(self::CART), self::merchantUrls());
-
-        TinyAssert::same('ES', $payload['buyer']['company']['country_prefix'] ?? null, 'the Spanish delivery company is the buyer');
-        TinyAssert::same([null, null], self::codes($payload), 'a mainland Spanish buyer invoiced in Grenoble derives nothing (got: ' . json_encode(self::codes($payload)) . ')');
-    }
-
-    /**
-     * An update takes the buyer postcode from the buyer company's address too (TWO-26151). The company is on the
-     * invoice address in Tenerife (38001) and the delivery address is in Madrid, so a postcode read from the delivery
-     * address would derive nothing.
-     */
-    private static function testUpdateTakesTheBuyerPostcodeFromTheCompanyAddress(): void
-    {
-        self::seed('ES', 'service', 'ES', '28001', 'ES 38001', [], '0');
-        // An update reads virtual from the product record, not the cart row.
-        StubStore::$products[self::PRODUCT]['is_virtual'] = 1;
-        $payload = (new TwopaymentTestHarness())->getTwoUpdateOrderData(self::order(), self::paymentRow('{"shipping":[],"wrapping":null}'));
-
-        TinyAssert::same([self::NON_EU, self::NON_EU], self::codes($payload), 'an update for a Spanish company invoiced in Tenerife derives non-EU services (got: ' . json_encode(self::codes($payload)) . ')');
     }
 
     private static function testDescriptorMismatchSendsLinesUncoded(): void
     {
         self::seed('ES', 'goods', 'US', '10001', 'ES', [], '0');
         $lines = [['tax_rate' => '0'], ['tax_rate' => '0']];
-        $got = self::apply($lines, [['key' => 'product:1', 'group' => 0, 'goods' => true, 'discount' => false]], new Address(self::DELIVERY), new Address(self::INVOICE), 'ES');
+        $got = self::apply($lines, [['key' => 'product:1', 'group' => 0, 'discount' => false]], new Address(self::DELIVERY), new Address(self::INVOICE));
         TinyAssert::same($lines, $got, 'lines the descriptors do not describe go out uncoded, never refused');
         TinyAssert::true(self::logged('Tax codes not resolved - 1 line descriptors for 2 lines'), 'and the mismatch is logged');
     }
@@ -957,12 +824,12 @@ final class TaxCodeSpec
         };
     }
 
-    private static function apply(array $lines, array $keys, Address $delivery, Address $invoice, string $buyer): array
+    private static function apply(array $lines, array $keys, Address $delivery, Address $invoice): array
     {
         $module = new TwopaymentTestHarness();
         $method = new ReflectionMethod(Twopayment::class, 'applyTwoTaxCodes');
 
-        return $method->invoke($module, $lines, $keys, $delivery, $invoice, $buyer, $invoice);
+        return $method->invoke($module, $lines, $keys, $delivery, $invoice);
     }
 
     private static function seed(string $merchant, string $cart, string $destCountry, string $destPostcode, string $buyerCountry, array $map, string $rate): void
@@ -1022,11 +889,6 @@ final class TaxCodeSpec
         StubStore::$taxRuleRates[self::PRODUCT_GROUP + $n] = $zero ? 0.0 : 21.0;
         StubStore::$productCategories[self::PRODUCT + $n] = [['name' => 'General']];
         self::setTotals();
-    }
-
-    private static function addServiceProduct(): void
-    {
-        self::addProduct(1, true, true);
     }
 
     /**

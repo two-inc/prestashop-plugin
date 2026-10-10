@@ -24,7 +24,6 @@ require_once dirname(__FILE__) . '/classes/TwoDiscrepancySnapshot.php';
 require_once dirname(__FILE__) . '/classes/TwoPostcodeFormat.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessing.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessingException.php';
-require_once dirname(__FILE__) . '/classes/TwoTaxCodeResolver.php';
 require_once dirname(__FILE__) . '/classes/TwoShopTaxCode.php';
 
 class Twopayment extends PaymentModule
@@ -3509,7 +3508,7 @@ class Twopayment extends PaymentModule
             'name' => 'PS_TWO_TAX_CODE_MAP_INTRO',
             'html_content' => '',
             'desc' => sprintf(
-                $this->l('%s requires a tax code on every line at a 0%% rate for a Spanish merchant. Choose the code for each case your tax rules groups give a 0%% line: a buyer company billed and taxed in another EU country (the 27 member states, Monaco and Northern Ireland) whose invoice address carries a VAT number; each 0%% tax rule; and an address no tax rule of the group covers, such as an export. The module sends the code you choose and decides nothing about how the line is taxed. A line with no tax rules group of its own, such as a discount, takes the code the order\'s other 0%% lines share. Northern Ireland is in the EU VAT area for goods only: do not map a services group\'s EU row to an intra-community services code if you sell services there. While a group has no code chosen at all, the module still derives one for a Spanish merchant as before. The module never refuses an order over a tax code; %s validates it.'),
+                $this->l('%s requires a tax code on every line at a 0%% rate for a Spanish merchant. Choose the code for each case your tax rules groups give a 0%% line: a buyer company billed and taxed in another EU country (the 27 member states, Monaco and Northern Ireland) whose invoice address carries a VAT number; each 0%% tax rule; and an address no tax rule of the group covers, such as an export. The module sends the code you choose and decides nothing about how the line is taxed. A line with no tax rules group of its own, such as a discount, takes the code the order\'s other 0%% lines share. Northern Ireland is in the EU VAT area for goods only: do not map a services group\'s EU row to an intra-community services code if you sell services there. A 0%% line whose case has no code chosen is sent without one. The module never refuses an order over a tax code; %s validates it, and refuses such a line for a Spanish merchant.'),
                 $this->getTwoBrandConfig('product_name'),
                 $this->getTwoBrandConfig('product_name')
             ),
@@ -8420,7 +8419,7 @@ class Twopayment extends PaymentModule
             $this->twoDeferredPlacedWrapping = null;
         }
         // A line the builder did not describe (an override of getTwoProductItems()) is resolved as an order-level charge.
-        $this->tagTwoLineTaxKeys(is_array($line_items) ? $line_items : array(), null, 0, null);
+        $this->tagTwoLineTaxKeys(is_array($line_items) ? $line_items : array(), null, 0);
         if (empty($line_items)) {
             // Nothing to send, so not a payload check: refused here, before the hook, as ever.
             PrestaShopLogger::addLog('TwoPayment: Cannot build ' . $contextLabel . ' - no valid line items', 3);
@@ -8456,7 +8455,7 @@ class Twopayment extends PaymentModule
         if ($surchargeLine !== null && $this->validateTwoLineItems(array($surchargeLine))) {
             $feeIndex = count($line_items);
             $line_items[] = $surchargeLine;
-            $this->tagTwoLineTaxKeys($line_items, 'fee', $this->getTwoSurchargeTaxRulesGroupId(), null);
+            $this->tagTwoLineTaxKeys($line_items, 'fee', $this->getTwoSurchargeTaxRulesGroupId());
             $tax_subtotals = $this->getTwoTaxSubtotals($line_items);
             $subtotalsTotals = $this->calculateOrderTotalsFromTaxSubtotals($tax_subtotals);
         }
@@ -8700,25 +8699,22 @@ class Twopayment extends PaymentModule
      * 3. no rule of the group matches the tax address: the group's no-rule row;
      * 4. a line with no tax rules group (a discount, shipping with no one group, wrapping under PS_ATCP_SHIPWRAP):
      *    the one code the order's lines coded by steps 1 to 3 share, none when they disagree.
-     * A matched row on (none) gives no code. Until the derivation is retired, a line whose group has no row mapped at
-     * all, and a line with no group when no line was coded by steps 1 to 3, still take TwoTaxCodeResolver's derived
-     * code (TWO-24877). Runs in the builder, so the postprocessing hook sees the codes and can change them. Lines at any
-     * other rate are left untouched.
+     * A matched row on (none), or a line no step codes, gives no code: the plugin never picks a code itself, and Two's
+     * API refuses a 0% line that needs one. Runs in the builder, so the postprocessing hook sees the codes and can
+     * change them. Lines at any other rate are left untouched.
      *
      * @param array $lineItems
      * @param array $keys one tagTwoLineTaxKeys() descriptor per line
      * @param Address $deliveryAddress
      * @param Address $invoiceAddress
-     * @param string $buyerCountry the payload's buyer.company.country_prefix, for the derivation
-     * @param Address $buyerAddress the address that country_prefix came from, for the derivation
      * @param array|null $stored the codes placement resolved, by line key; null on a create, which records them
      * @param string[]|null $storedMapped the keys of $stored whose codes came from steps 1 to 3, the only stored codes
      *                                    step 4 shares; null for a record written before they were kept, whose keyless
-     *                                    lines take the one code the order's other 0% lines carry, else the derivation
+     *                                    lines take the one code the order's other 0% lines carry, else none
      * @return array
      * @throws Exception when a 0% line needs the stored mapping and it is unreadable
      */
-    private function applyTwoTaxCodes(array $lineItems, array $keys, $deliveryAddress, $invoiceAddress, $buyerCountry, $buyerAddress, $stored = null, $storedMapped = null)
+    private function applyTwoTaxCodes(array $lineItems, array $keys, $deliveryAddress, $invoiceAddress, $stored = null, $storedMapped = null)
     {
         if (count($keys) !== count($lineItems) || array_keys($keys) !== array_keys($lineItems)) {
             // Never a refusal: the lines go out uncoded and the API decides.
@@ -8729,28 +8725,13 @@ class Twopayment extends PaymentModule
         // Read only once a 0% line needs them, so an order with none never depends on the stored mapping.
         $map = null;
         $shop = null;
-        $destination = Validate::isLoadedObject($deliveryAddress) ? $deliveryAddress : $invoiceAddress;
-        $invoiceCountry = Validate::isLoadedObject($invoiceAddress) ? (string) Country::getIsoById((int) $invoiceAddress->id_country) : '';
-        $order = array(
-            'merchant_country' => $this->getTwoMerchantCountry(),
-            'dest_country' => Validate::isLoadedObject($destination) ? (string) Country::getIsoById((int) $destination->id_country) : '',
-            'dest_postcode' => Validate::isLoadedObject($destination) ? (string) $destination->postcode : '',
-            'buyer_country' => trim((string) $buyerCountry) !== '' ? (string) $buyerCountry : $invoiceCountry,
-            'buyer_postcode' => Validate::isLoadedObject($buyerAddress) ? (string) $buyerAddress->postcode : '',
-            'buyer_vat_number' => $this->getTwoBuyerVatNumber($invoiceAddress),
-        );
-        $hasGoods = false;
-        foreach ($keys as $key) {
-            $hasGoods = $hasGoods || $key['goods'] === true;
-        }
-
         $codes = array();
         $coded = array();
         $mappedKeys = array();
         $keyless = array();
         foreach ($lineItems as $i => $line) {
             $key = $keys[$i];
-            if (!TwoTaxCodeResolver::isZeroRate($line['tax_rate'])) {
+            if (!is_numeric($line['tax_rate']) || (float) $line['tax_rate'] != 0.0) {
                 continue;
             }
             if ($stored !== null && $key['key'] !== null && isset($stored[$key['key']])) {
@@ -8777,22 +8758,17 @@ class Twopayment extends PaymentModule
                 if ($key['key'] !== null) {
                     $mappedKeys[] = $key['key'];
                 }
-            } elseif (!TwoShopTaxCode::isGroupMapped($map, $key['group'], array_column($this->getTwoTaxRulesOfGroup($key['group']), 'id_tax_rule'))) {
-                $codes[$i] = TwoTaxCodeResolver::resolve($line['tax_rate'], null, $key['goods'] === null ? $hasGoods : $key['goods'], $order);
             }
         }
         $shared = TwoShopTaxCode::shared($coded);
-        // An update of an order placed before 2.7.20 keeps the rule it was placed under: the one code every other 0%
-        // line carries, else the derivation.
-        $legacyRecord = $stored !== null && $storedMapped === null;
-        if ($legacyRecord) {
+        if ($stored !== null && $storedMapped === null) {
+            // An update of an order placed before 2.7.20, whose record does not say which codes were mapped: the one
+            // code every other 0% line carries, none when they disagree or one has none.
             $others = array_values(array_unique(array_map('strval', $codes)));
             $shared = count($others) === 1 && $others[0] !== '' ? $others[0] : null;
         }
         foreach ($keyless as $i) {
-            $codes[$i] = $shared !== null || ($coded !== array() && !$legacyRecord)
-                ? $shared
-                : TwoTaxCodeResolver::resolve($lineItems[$i]['tax_rate'], null, $hasGoods, $order);
+            $codes[$i] = $shared;
         }
         $record = array();
         foreach ($codes as $i => $code) {
@@ -8805,7 +8781,7 @@ class Twopayment extends PaymentModule
         }
         if ($stored === null && $record !== array() && is_array($this->twoDeclaredChargeRates)) {
             $this->twoDeclaredChargeRates['tax_codes'] = $record;
-            // Which of them step 4 may share on an update: a derived code never is (TWO-26153).
+            // Which of them step 4 may share on an update: a code step 4 gave never is (TWO-26153).
             $this->twoDeclaredChargeRates['tax_codes_mapped'] = array_values(array_unique($mappedKeys));
         }
 
@@ -9002,7 +8978,7 @@ class Twopayment extends PaymentModule
 
     /**
      * The buyer's VAT number (TWO-26153): the invoice address `vat_number`, the field the `vatnumber` module validates
-     * and stores, sent as entered with only leading and trailing whitespace trimmed (TwoTaxCodeResolver::trimVatNumber()).
+     * and stores, sent as entered with only leading and trailing whitespace trimmed.
      * It is never a source for the organisation number (TWO-40).
      *
      * @param Address $invoiceAddress
@@ -9014,7 +8990,7 @@ class Twopayment extends PaymentModule
             return '';
         }
 
-        return TwoTaxCodeResolver::trimVatNumber($invoiceAddress->vat_number);
+        return trim((string) $invoiceAddress->vat_number);
     }
 
     /**
@@ -10181,9 +10157,7 @@ class Twopayment extends PaymentModule
             $line_items,
             $pricingData['line_tax_keys'],
             $delivery_address,
-            $invoice_address,
-            $buyerCompany['country_iso'],
-            $this->resolveBuyerCompanyAddress($buyerData, $invoice_address, $delivery_address)
+            $invoice_address
         );
 
         // A Spanish merchant's order tells Two the buyer's VAT number (TWO-26153), on create only: an edit that omits
@@ -10704,9 +10678,6 @@ class Twopayment extends PaymentModule
                 'country_iso' => $buyerData['country_iso'],
             )
             : $this->resolveBuyerCompanyData($buyerData, $shippingData);
-        $buyerCompanyAddress = $hasStoredCompany
-            ? $invoice_address
-            : $this->resolveBuyerCompanyAddress($buyerData, $invoice_address, $delivery_address);
         $buyerOrgNumber = $buyerCompany['organization_number'];
         $buyerCompanyName = $buyerCompany['company_name'];
         $buyerCountryIso = $buyerCompany['country_iso'];
@@ -10769,8 +10740,6 @@ class Twopayment extends PaymentModule
             $pricingData['line_tax_keys'],
             $delivery_address,
             $invoice_address,
-            $buyerCountryIso,
-            $buyerCompanyAddress,
             $declaredRates['tax_codes'],
             $declaredRates['tax_codes_mapped']
         );
@@ -11041,9 +11010,7 @@ class Twopayment extends PaymentModule
             }
 
             $items[] = $product;
-            // Virtual is PrestaShop's downloadable product, so a service; every other product is goods (TWO-24877).
-            $is_goods = empty($line_item['is_virtual']);
-            $this->tagTwoLineTaxKeys($items, 'product:' . (int) $line_item['id_product'], $declared_tax_rules_group_id, $is_goods);
+            $this->tagTwoLineTaxKeys($items, 'product:' . (int) $line_item['id_product'], $declared_tax_rules_group_id);
 
             if (!empty($ecotax_breakdown['enabled'])) {
                 $ecotax_rate = (float)$ecotax_breakdown['rate'];
@@ -11065,7 +11032,7 @@ class Twopayment extends PaymentModule
                     'type' => 'SERVICE',
                 ];
                 $items[] = $ecotax_service_line;
-                $this->tagTwoLineTaxKeys($items, 'ecotax:' . (int) $line_item['id_product'], (int) Configuration::get('PS_ECOTAX_TAX_RULES_GROUP_ID'), $is_goods);
+                $this->tagTwoLineTaxKeys($items, 'ecotax:' . (int) $line_item['id_product'], (int) Configuration::get('PS_ECOTAX_TAX_RULES_GROUP_ID'));
             }
         }
 
@@ -11239,7 +11206,7 @@ class Twopayment extends PaymentModule
             }
         }
 
-        $this->tagTwoLineTaxKeys($items, 'shipping', $shipping_tax_group, null);
+        $this->tagTwoLineTaxKeys($items, 'shipping', $shipping_tax_group);
 
         $wrapping_totals = $placed !== null ? $placed['wrapping'] : $this->getTwoGiftWrappingTotals($cart);
         if ($wrapping_totals['gross'] > 0) {
@@ -11299,13 +11266,13 @@ class Twopayment extends PaymentModule
             ? $this->buildTwoPlacedDiscountLines($placed['cart_rules'], $items, $product_items)
             : $this->buildTwoDiscountLinesFromCartTotals($cart, $items);
         // PS_ATCP_SHIPWRAP taxes wrapping at the products' average, so no one group declared its rate.
-        $this->tagTwoLineTaxKeys($items, 'wrapping', $this->isTwoAtcpShipWrapEnabled() ? 0 : (int) Configuration::get('PS_GIFT_WRAPPING_TAX_RULES_GROUP'), null);
+        $this->tagTwoLineTaxKeys($items, 'wrapping', $this->isTwoAtcpShipWrapEnabled() ? 0 : (int) Configuration::get('PS_GIFT_WRAPPING_TAX_RULES_GROUP'));
         if (!empty($discount_lines)) {
             foreach ($discount_lines as $discount_line) {
                 $items[] = $discount_line;
             }
         }
-        $this->tagTwoLineTaxKeys($items, null, 0, null, true);
+        $this->tagTwoLineTaxKeys($items, null, 0, true);
 
         return $items;
     }
@@ -11316,14 +11283,13 @@ class Twopayment extends PaymentModule
      * @param array $items the lines built so far
      * @param string|null $key what the Two row records the resolved code under; null for a discount
      * @param int $group the tax rules group a merchant mapping is looked up by; 0 for none
-     * @param bool|null $goods true goods, false a service, null a charge that follows the order's products
      * @param bool $discount
      * @return void
      */
-    private function tagTwoLineTaxKeys(array $items, $key, $group, $goods, $discount = false)
+    private function tagTwoLineTaxKeys(array $items, $key, $group, $discount = false)
     {
         for ($i = count($this->twoLineTaxKeys); $i < count($items); $i++) {
-            $this->twoLineTaxKeys[$i] = array('key' => $key, 'group' => (int) $group, 'goods' => $goods, 'discount' => $discount);
+            $this->twoLineTaxKeys[$i] = array('key' => $key, 'group' => (int) $group, 'discount' => $discount);
         }
     }
 
@@ -11331,7 +11297,7 @@ class Twopayment extends PaymentModule
      * The tax rules group a shipping line's mapping is looked up by (TWO-24877): the group that declared its rate.
      * That is the Default shipping tax code's when it supplied the rate, else the carriers' when every carrier behind
      * the shipping declares the same one. A "No tax" carrier, no carrier, or carriers declaring different groups give
-     * none, so only derivation applies. Never `$cart->id_carrier` alone: core leaves it stale on a multi-address cart.
+     * none, so only step 4 applies. Never `$cart->id_carrier` alone: core leaves it stale on a multi-address cart.
      *
      * @param string $source a SHIPPING_RATE_* value
      * @param int[] $carrierIds the carriers behind the shipping
@@ -14121,19 +14087,6 @@ class Twopayment extends PaymentModule
     private function resolveBuyerCompanyData($invoice_company, $shipping_company)
     {
         return $this->hasTwoInvoiceCompany($invoice_company) ? $invoice_company : $shipping_company;
-    }
-
-    /**
-     * The address resolveBuyerCompanyData() took the buyer company, and so `country_prefix`, from (TWO-26151).
-     *
-     * @param array $invoice_company getCompanyDataWithFallbacks() output for the invoice address
-     * @param Address $invoice_address
-     * @param Address $delivery_address
-     * @return Address
-     */
-    private function resolveBuyerCompanyAddress($invoice_company, $invoice_address, $delivery_address)
-    {
-        return $this->hasTwoInvoiceCompany($invoice_company) ? $invoice_address : $delivery_address;
     }
 
     /**
