@@ -193,7 +193,7 @@ Two requires a `tax_code` on every line at a 0% rate for a Spanish merchant, on 
 
 **1. The mapping.** In **Module Configuration → Order management → Tax codes for 0% lines**, each of the shop's tax rules groups has a dropdown of the codes Two lists for the merchant's country (`GET /v1/tax_codes/<country>`, cached for a day), plus **(none)**, the default. A 0% line taxed by a mapped group carries its code, for any merchant country. A product line maps by the product's tax rules group; shipping by the group that supplied its rate: the Default shipping tax code's, or the carriers' when every carrier in the selected delivery option declares the same group; wrapping by the gift-wrapping group; ecotax by the ecotax group; the buyer fee by its own group. A "No tax" carrier, no carrier, or carriers declaring different groups give no group, so only the derivation applies. Codes that need a reason from the caller (today only `ES_IVA_EXEMPT_OTHER`) are not offered: a merchant who needs one sets the code and its `tax_exemption_reason_code` in the order postprocessing hook. If the list cannot be fetched, the section shows why (retrying at most every five minutes), and saved mappings keep working at checkout. A stored mapping the form could not have written withholds the payment method at checkout, and the configuration health panel names it; an order with no 0% line never reads the mapping.
 
-**2. The derivation**, for a Spanish merchant and an unmapped line. A product is a service when it is virtual, and goods otherwise; a shipping, wrapping, fee or discount line counts as goods when the order holds any physical product, and as a service otherwise. Goods follow the delivery address (the invoice address when there is none); services follow the buyer company's country, the country the module sends as `buyer.company.country_prefix`.
+**2. The derivation**, for a Spanish merchant and an unmapped line. A product is a service when it is virtual, and goods otherwise; a shipping, wrapping, fee or discount line counts as goods when the order holds any physical product, and as a service otherwise. Goods follow the delivery address (the invoice address when there is none); services follow the buyer company's country, the country the module sends as `buyer.company.country_prefix`. The Canary Islands, Ceuta and Melilla count as outside the EU: the delivery postcode decides for goods, the invoice postcode for a Spanish buyer of services.
 
 | Line | Condition | Code |
 |---|---|---|
@@ -201,8 +201,9 @@ Two requires a `tax_code` on every line at a 0% rate for a Spanish merchant, on 
 | Goods | Delivered to the Canary Islands (postcodes 35, 38), Ceuta (51) or Melilla (52) | `ES_IVA_EXPORT` |
 | Goods | Delivered to another EU country, for a buyer company in another EU country (not necessarily the same one) | `ES_IVA_INTRA_COMMUNITY` |
 | Goods | Anything else: mainland Spain or the Balearics, or an EU destination with a Spanish buyer | none |
-| Service | Buyer company in another EU country | `ES_IVA_REVERSE_CHARGE` |
-| Service | Buyer company in Spain or outside the EU | none |
+| Service | Buyer company in another EU country | `ES_IVA_INTRA_COMMUNITY_SERVICES` |
+| Service | Buyer company outside the EU, or a Spanish buyer invoiced in the Canary Islands, Ceuta or Melilla | `ES_IVA_NON_EU_SERVICES` |
+| Service | Buyer company in mainland Spain or the Balearics | none |
 
 A 0% discount line takes the code its order's other 0% lines share; when they do not share one, it follows the goods like a charge. The code is set while the module builds the payload, so a postprocessing hook subscriber sees it and may change it.
 
