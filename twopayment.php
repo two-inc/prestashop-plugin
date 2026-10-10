@@ -7989,8 +7989,8 @@ class Twopayment extends PaymentModule
         }
 
         // The shop-match checks on single lines are recorded against their line while it is built, and run after the
-        // hook (TWO-26274). Only here and in the fee basis above with a merchant handler: getTwoProductItems() called on
-        // its own refuses at once.
+        // hook (TWO-26274). Recorded only here, and in the fee basis above when a merchant handler is registered
+        // (getTwoSurchargeFeeBasisItems()): getTwoProductItems() called any other way refuses at once.
         $this->twoDeferredShopMatch = array();
         $this->twoDeferredPlacedWrapping = null;
         try {
@@ -18656,8 +18656,8 @@ class Twopayment extends PaymentModule
     /**
      * The lines the buyer fee is quoted on, as the order build makes them. With a merchant handler on the postprocessing
      * hook, the shop-match checks on single lines are its own (TWO-26274): a line one of them would refuse is still a
-     * basis, and the request the fee is synced for records the refusal itself. With none, getTwoProductItems() refuses
-     * at once, as before.
+     * basis, and the order request records the refusal again when it builds that line. With none, getTwoProductItems()
+     * refuses at once, as before.
      *
      * @param Cart $cart
      * @return array
