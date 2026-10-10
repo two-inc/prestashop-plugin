@@ -5021,11 +5021,39 @@ class Twopayment extends PaymentModule
             $this->getTwoBrandConfig('product_name'),
             $reason
         );
+        $this->flagTwoRefundNotSent($idOrder, $text, 'credit slip ' . (int) $slipId);
+    }
+
+    /**
+     * Tell the merchant, as for a credit slip, that the full refund a status change asked for did not reach Two (TWO-26290).
+     *
+     * @param int $idOrder
+     * @param string $statusName
+     * @param string $reason
+     */
+    protected function flagTwoFullRefundNotSent($idOrder, $statusName, $reason)
+    {
+        $text = sprintf(
+            $this->l('The order was set to %1$s in PrestaShop but the refund was not sent to %2$s, because %3$s. Refund it in the %2$s Merchant Portal.'),
+            $statusName,
+            $this->getTwoBrandConfig('product_name'),
+            $reason
+        );
+        $this->flagTwoRefundNotSent($idOrder, $text, 'the full refund');
+    }
+
+    /**
+     * @param int $idOrder
+     * @param string $text
+     * @param string $what what was not sent, for the log
+     */
+    private function flagTwoRefundNotSent($idOrder, $text, $what)
+    {
         $this->addTwoBackOfficeWarning($text);
         try {
             $this->addTwoOrderPrivateNote((int) $idOrder, $text);
         } catch (Throwable $e) {
-            PrestaShopLogger::addLog('TwoPayment: could not note on order ' . (int) $idOrder . ' that credit slip ' . (int) $slipId . ' was not sent - ' . $e->getMessage(), 3);
+            PrestaShopLogger::addLog('TwoPayment: could not note on order ' . (int) $idOrder . ' that ' . $what . ' was not sent - ' . $e->getMessage(), 3);
         }
     }
 
@@ -5240,6 +5268,7 @@ class Twopayment extends PaymentModule
                         $order_state = isset($current_two_order['state']) ? $current_two_order['state'] : null;
                         if ($order_state !== 'FULFILLED' && $order_state !== 'REFUNDED') {
                             PrestaShopLogger::addLog('TwoPayment: Order not in refundable state. Current state: ' . $order_state . '. Two only allows refunds for FULFILLED orders. Two order ID: ' . $two_order_id . ', Order ID: ' . $order->id, 2);
+                            $this->flagTwoFullRefundNotSent((int) $order->id, (string) $new_order_status->name, $this->l('the order is not fulfilled yet'));
                             return;
                         }
                         

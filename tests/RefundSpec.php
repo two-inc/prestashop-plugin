@@ -11,6 +11,7 @@ final class RefundSpec
     public static function runAll(): void
     {
         self::testPartialRefundPayloadHasCorrectAmount();
+        self::testRefundedStatusBeforeFulfilmentTellsTheMerchant();
         self::testIdempotencyKeyUsesSlipId();
         self::testSequentialSlipsSameAmountIssueTwoDistinctCalls();
         self::testFullAmountSlipAfterStatusRefundIsSuppressed();
@@ -981,6 +982,39 @@ final class RefundSpec
             }
             TinyAssert::count(1, $calls, $desc);
             TinyAssert::same($expected, $calls[0]['payload'], $desc . ': got ' . json_encode($calls[0]['payload']));
+        }
+    }
+
+    /**
+     * TWO-26290: a Refunded status while Two cannot refund the order yet tells the merchant on the order page and in
+     * its private notes, as a skipped credit slip does, instead of only logging. Columns: Two state, expected refund
+     * calls, whether the merchant is told, description.
+     */
+    private static function testRefundedStatusBeforeFulfilmentTellsTheMerchant(): void
+    {
+        $notice = 'The order was set to Refunded in PrestaShop but the refund was not sent to Two, because the order is not fulfilled yet. Refund it in the Two Merchant Portal.';
+        $cases = [
+            ['FULFILLING', 0, true, 'still fulfilling at Two: not sent, merchant told'],
+            ['CONFIRMED', 0, true, 'not fulfilled at Two: not sent, merchant told'],
+            ['FULFILLED', 1, false, 'fulfilled at Two: refund sent, no notice'],
+        ];
+        foreach ($cases as [$state, $calls, $told, $desc]) {
+            StubStore::reset();
+            StubStore::$orders[5100] = ['module' => 'twopayment'];
+            StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+            $twoOrder = self::fulfilledOrder(148.00);
+            $twoOrder['state'] = $state;
+            $module = self::makeModule($twoOrder);
+            $module->context->controller = new stdClass();
+            $status = new OrderState();
+            $status->id = 7;
+            $status->name = 'Refunded';
+
+            $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+
+            TinyAssert::count($calls, $module->refundCalls(), $desc . ': refund calls');
+            TinyAssert::same($told ? [$notice] : [], $module->privateNotes, $desc . ': private notes');
+            TinyAssert::same($told ? [$notice] : [], $module->context->controller->warnings ?? [], $desc . ': order page warning');
         }
     }
 
