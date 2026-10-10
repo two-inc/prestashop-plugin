@@ -578,6 +578,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_d9e8fd0ca4e27bc560c15e7ac3e5c1ff'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] = 'Ändringen sparades i PrestaShop men skickades inte till fakturaleverantören: %s';
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Ändringar i ordern sedan %s sparades i PrestaShop men har inte nått %s, så fakturan kanske inte stämmer med ordern. Upprepa inte en ändring för att försöka igen; kontakta support.';
 $_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'Kreditnota #%1$s sparades i PrestaShop men skickades inte till %2$s, eftersom %3$s. Återbetala den i %2$ss handlarportal.';
+$_MODULE['<{twopayment}prestashop>twopayment_ebc864b3509e036ad2c3e83a074e22b4'] = 'Ordern sattes till %1$s i PrestaShop men återbetalningen skickades inte till %2$s, eftersom %3$s. Återbetala den i %2$ss handlarportal.';
 $_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'det återbetalda beloppet inte kunde fördelas på orderns momssatser';
 $_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] = 'ordern inte kunde läsas från leverantören';
 $_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'ordern inte är levererad ännu';

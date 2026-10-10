@@ -578,6 +578,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_d9e8fd0ca4e27bc560c15e7ac3e5c1ff'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4dc517f40901d69b93f38c3fe61bbbf1'] = 'Este cambio se ha guardado en PrestaShop, pero no se ha enviado al proveedor de facturas: %s';
 $_MODULE['<{twopayment}prestashop>displayadminorderleft_d216229bbd92c63a72246dab84a0c922'] = 'Los cambios de este pedido desde %s se han guardado en PrestaShop, pero no han llegado a %s, así que su factura puede no coincidir con este pedido. No repitas una modificación para reintentarla; ponte en contacto con el soporte.';
 $_MODULE['<{twopayment}prestashop>twopayment_2fc971e9913ba013c78211d6aedd67a1'] = 'La factura por abono n.º %1$s se ha guardado en PrestaShop, pero no se ha enviado a %2$s porque %3$s. Reembólsala en el Portal de Comerciantes de %2$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_ebc864b3509e036ad2c3e83a074e22b4'] = 'El pedido se ha cambiado a %1$s en PrestaShop, pero el reembolso no se ha enviado a %2$s porque %3$s. Reembólsalo en el Portal de Comerciantes de %2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_69eb9289105eb0f3456783a264a8f0ff'] = 'su importe reembolsado no se ha podido repartir entre los tipos de impuesto del pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] = 'no se ha podido leer el pedido del proveedor';
 $_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'el pedido aún no se ha completado';
