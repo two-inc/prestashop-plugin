@@ -30,6 +30,89 @@ final class RefundSpec
         self::testTheHookSeesAndCanEditTheLines();
         self::testSubtotalsThatCannotBeItemised();
         self::testSlipShippingCheckIsTheDefaultHandlers();
+        self::testUnitemisedLogFollowsWhatIsSent();
+    }
+
+    /**
+     * TWO-26287: the module's log that it could not itemise a refund is written after the order postprocessing hook,
+     * at the same severity and in the same words, and only when the refund sent still has no lines. Columns: the
+     * refund (a credit slip or the Refunded remainder), whether the module can itemise it, the subscriber (null: none),
+     * whether the log is expected, description.
+     */
+    private static function testUnitemisedLogFollowsWhatIsSent(): void
+    {
+        $sub = static function (string $rate, string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => $rate];
+        };
+        // One line per rate, matching the refund's subtotals.
+        $itemise = static function (array &$p): void {
+            $p['line_items'] = array_map(static function ($t) {
+                $gross = number_format((float) $t['taxable_amount'] + (float) $t['tax_amount'], 2, '.', '');
+                return ['id' => 'own-' . $t['tax_rate'], 'quantity' => 1, 'unit_price' => $t['taxable_amount'], 'discount_amount' => '0.00', 'net_amount' => $t['taxable_amount'], 'tax_amount' => $t['tax_amount'], 'gross_amount' => $gross];
+            }, $p['tax_subtotals']);
+        };
+        $leave = static function (array &$p): void {
+        };
+        $drop = static function (array &$p): void {
+            unset($p['line_items']);
+        };
+        $slip = static function (bool $itemisable): object {
+            $twoOrder = self::fulfilledOrder(100.00, [], 'EUR');
+            $twoOrder['line_items'] = $itemisable ? [self::twoLine('p1', 'PHYSICAL', '0', '100.00')] : [];
+            $module = self::makeModule($twoOrder);
+            $module->hookActionOrderSlipAdd(['order' => self::makeOrder(), 'orderSlipCreated' => self::makeSlip(907, 30.00)]);
+            return $module;
+        };
+        $remainder = static function (bool $itemisable) use ($sub): object {
+            StubStore::$orders[5100] = ['module' => 'twopayment'];
+            StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+            $twoOrder = self::fulfilledOrder(148.00, [self::twoRefund('-50.00', ['p1' => '-50.00'])]);
+            $twoOrder['state'] = 'REFUNDED';
+            $twoOrder['line_items'] = $itemisable
+                ? [self::twoLine('p1', 'PHYSICAL', '0.25', '100.00'), self::twoLine('p2', 'PHYSICAL', '0.15', '20.00')]
+                : [self::twoLine('p1', 'PHYSICAL', '0.25', '100.00')];
+            $module = self::makeModule($twoOrder);
+            $module->placedSubtotals = [$sub('0.250000', '100.00', '25.00'), $sub('0.150000', '20.00', '3.00')];
+            $module->refundRows[1] = ['id_order_slip' => 1, 'status' => 'SENT', 'amount' => '50.00', 'tax_subtotals' => [$sub('0.250000', '40.00', '10.00')]];
+            $status = new OrderState();
+            $status->id = 7;
+            $status->name = 'Refunded';
+            $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+            return $module;
+        };
+        $cases = [
+            [$slip, false, null, true, 'a credit slip, no subscriber: logged'],
+            [$slip, false, $leave, true, 'a credit slip a subscriber leaves unitemised: logged'],
+            [$slip, false, $itemise, false, 'a credit slip a subscriber itemises: not logged'],
+            [$slip, true, null, false, 'a credit slip the module itemises: not logged'],
+            [$slip, true, $drop, false, 'a credit slip the module itemised and a subscriber sends without lines: no reason to log, the order note says so'],
+            [$remainder, false, null, true, 'the remainder, no subscriber: logged'],
+            [$remainder, false, $leave, true, 'the remainder a subscriber leaves unitemised: logged'],
+            [$remainder, false, $itemise, false, 'the remainder a subscriber itemises: not logged'],
+        ];
+        foreach ($cases as [$refund, $itemisable, $edit, $logged, $desc]) {
+            StubStore::reset();
+            PrestaShopLogger::$logs = [];
+            Hook::$subscribers = [];
+            if ($edit !== null) {
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK]['refundspecsubscriber'] = static function (array $params) use ($edit): void {
+                    if ($params['context']['request_type'] === TwoOrderPostprocessing::REQUEST_REFUND) {
+                        $edit($params['payload']);
+                    }
+                };
+            }
+
+            $module = $refund($itemisable);
+
+            $calls = $module->refundCalls();
+            TinyAssert::count(1, $calls, $desc . ': sent');
+            $unitemised = array_values(array_filter(PrestaShopLogger::$logs, static function ($l) {
+                return strpos($l['message'], '; sending the refund without line items') !== false;
+            }));
+            TinyAssert::same($logged ? [3] : [], array_column($unitemised, 'severity'), $desc . ': ' . json_encode(array_column(PrestaShopLogger::$logs, 'message')));
+            TinyAssert::same($edit === $itemise || ($itemisable && $edit === null), !empty($calls[0]['payload']['line_items']), $desc . ': sent with lines');
+        }
+        Hook::$subscribers = [];
     }
 
     /**

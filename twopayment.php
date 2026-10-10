@@ -5537,7 +5537,7 @@ class Twopayment extends PaymentModule
             return $this->l('its refunded amount could not be split across the order\'s tax rates');
         }
 
-        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $current_two_order, $kind_gross, 'Credit slip ' . $slip_id . ' on order ' . $id_order);
+        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $current_two_order, $kind_gross, 'Credit slip ' . $slip_id . ' on order ' . $id_order, $unitemised);
         $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency, $tax_subtotals, $line_items);
 
         // Idempotency key derived from the credit slip ID (NOT amount) so two
@@ -5566,6 +5566,7 @@ class Twopayment extends PaymentModule
             PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not build tax subtotals from the credit slip. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
             return $this->l('its refunded amount could not be split across the order\'s tax rates');
         }
+        $this->logTwoRefundSentUnitemised($sent_payload, $unitemised);
 
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         if (!($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'])) {
@@ -5914,7 +5915,7 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $two_order, array(), 'Refund remainder on order ' . $id_order);
+        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $two_order, array(), 'Refund remainder on order ' . $id_order, $unitemised);
         $payload = $this->buildTwoPartialRefundPayload($remainder, $currency, $tax_subtotals, $line_items);
         $slip_ids = array_map(function ($row) {
             return (int)$row['id_order_slip'];
@@ -5923,6 +5924,7 @@ class Twopayment extends PaymentModule
         $idempotency_key = 'refund_remainder_' . $two_order_id . '_' . md5(implode(',', $slip_ids) . '|' . $payload['amount']);
         $sent_payload = null;
         $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $two_order);
+        $this->logTwoRefundSentUnitemised($sent_payload, $unitemised);
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         if (!($http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'])) {
             $this->logTwoRefundFailure('Full refund remainder', $two_order_id, $id_order, $response, $idempotency_key);
@@ -6156,10 +6158,13 @@ class Twopayment extends PaymentModule
      * @param array $two_order the Two order as just read
      * @param array $kind_gross per rate, the gross each line kind took; empty to weight by what is left alone
      * @param string $label what the log names when the refund cannot be itemised
+     * @param string|null $unitemised set to the log line saying why it cannot be itemised, which the caller writes
+     *   only if the payload sent, after the order postprocessing hook, still has no lines (TWO-26287); null otherwise
      * @return array|null null when the refund cannot be itemised, so it goes without lines
      */
-    public function buildTwoRefundLineItems(array $tax_subtotals, $two_order, array $kind_gross, $label)
+    public function buildTwoRefundLineItems(array $tax_subtotals, $two_order, array $kind_gross, $label, &$unitemised = null)
     {
+        $unitemised = null;
         $order_lines = isset($two_order['line_items']) && is_array($two_order['line_items']) ? $two_order['line_items'] : array();
         $refunded = $this->getTwoRefundedPerLine($two_order);
         // Two requires a tax code on a Spanish merchant's 0% lines; a merchant whose country is not yet known is treated as one.
@@ -6173,13 +6178,13 @@ class Twopayment extends PaymentModule
                 continue;
             }
             if ($gross < 0) {
-                PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - a negative amount ' . $gross . ' at rate ' . $subtotal['tax_rate'] . ' cannot be itemised; sending the refund without line items', 3);
+                $unitemised = 'TwoPayment: ' . $label . ' - a negative amount ' . $gross . ' at rate ' . $subtotal['tax_rate'] . ' cannot be itemised; sending the refund without line items';
                 return null;
             }
             if (abs(round((float)$subtotal['tax_amount'], 2) - round((float)$subtotal['taxable_amount'] * $rate, 2)) > self::TWO_REFUND_LINE_TAX_MARGIN) {
                 // Lines carry tax at their rate, so they could not describe this subtotal, and with lines Two checks each
                 // rate's tax against its taxable amount: the refund would be refused where it is accepted without lines.
-                PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - tax ' . $subtotal['tax_amount'] . ' on ' . $subtotal['taxable_amount'] . ' is not the rate ' . $subtotal['tax_rate'] . ' and cannot be itemised; sending the refund without line items', 3);
+                $unitemised = 'TwoPayment: ' . $label . ' - tax ' . $subtotal['tax_amount'] . ' on ' . $subtotal['taxable_amount'] . ' is not the rate ' . $subtotal['tax_rate'] . ' and cannot be itemised; sending the refund without line items';
                 return null;
             }
             $by_kind = array();
@@ -6199,7 +6204,7 @@ class Twopayment extends PaymentModule
                 }
             }
             if ($left === array() || array_sum($left) + 0.005 < $gross) {
-                PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - the order lines at Two at rate ' . $subtotal['tax_rate'] . ' have ' . round(array_sum($left), 2) . ' left to refund, less than ' . $gross . '; sending the refund without line items', 3);
+                $unitemised = 'TwoPayment: ' . $label . ' - the order lines at Two at rate ' . $subtotal['tax_rate'] . ' have ' . round(array_sum($left), 2) . ' left to refund, less than ' . $gross . '; sending the refund without line items';
                 return null;
             }
             $kinds = isset($kind_gross[$subtotal['tax_rate']]) ? array_intersect_key($kind_gross[$subtotal['tax_rate']], $by_kind) : array();
@@ -6215,7 +6220,7 @@ class Twopayment extends PaymentModule
                     continue;
                 }
                 if ($rate == 0.0 && $needs_code && empty($parents[$id]['tax_code'])) {
-                    PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - order line ' . $id . ' at Two is at 0% with no tax code, so a line refunding it would be refused; sending the refund without line items', 3);
+                    $unitemised = 'TwoPayment: ' . $label . ' - order line ' . $id . ' at Two is at 0% with no tax code, so a line refunding it would be refused; sending the refund without line items';
                     return null;
                 }
                 $net = round($line_gross / (1 + $rate), 2);
@@ -6291,6 +6296,20 @@ class Twopayment extends PaymentModule
         }
 
         return $fixed;
+    }
+
+    /**
+     * Log why the module could not itemise a refund, once the payload sent is known (TWO-26287): only when it was
+     * sent and still has no lines, so a subscriber that itemises the refund itself leaves no warning behind.
+     *
+     * @param array|null $sent the payload as sent, after the order postprocessing hook; null when it was not sent
+     * @param string|null $unitemised buildTwoRefundLineItems()'s reason
+     */
+    protected function logTwoRefundSentUnitemised($sent, $unitemised)
+    {
+        if ($unitemised !== null && is_array($sent) && empty($sent['line_items'])) {
+            PrestaShopLogger::addLog($unitemised, 3);
+        }
     }
 
     /**
@@ -8603,6 +8622,7 @@ class Twopayment extends PaymentModule
             'fallback_shipping_tax_rate' => $this->resolveTwoContextFallbackShippingTaxRate($cart),
             'contract_version' => TwoOrderPostprocessing::CONTRACT_VERSION,
             'order_lines' => $this->getTwoOrderLinesAtTwo($twoOrder),
+            'order_refunds' => $this->getTwoOrderRefundsAtTwo($twoOrder),
         );
     }
 
@@ -8615,14 +8635,38 @@ class Twopayment extends PaymentModule
      */
     public function getTwoOrderLinesAtTwo($twoOrder)
     {
-        if (!is_array($twoOrder) || !isset($twoOrder['line_items']) || !is_array($twoOrder['line_items'])) {
+        return $this->getTwoOrderListAtTwo($twoOrder, 'line_items');
+    }
+
+    /**
+     * The context's order_refunds (TWO-26287): the refunds Two holds for the order, verbatim from the same GET
+     * response, each with the lines it credited. Null when there is no successful response with a list of refunds.
+     *
+     * @param array|null $twoOrder
+     * @return array|null
+     */
+    public function getTwoOrderRefundsAtTwo($twoOrder)
+    {
+        return $this->getTwoOrderListAtTwo($twoOrder, 'refunds');
+    }
+
+    /**
+     * A list from Two's GET /v1/order/{id} response, as a value copy; null without a successful response carrying it.
+     *
+     * @param array|null $twoOrder
+     * @param string $key
+     * @return array|null
+     */
+    private function getTwoOrderListAtTwo($twoOrder, $key)
+    {
+        if (!is_array($twoOrder) || !isset($twoOrder[$key]) || !is_array($twoOrder[$key])) {
             return null;
         }
         if (isset($twoOrder['http_status']) && ((int) $twoOrder['http_status'] < 200 || (int) $twoOrder['http_status'] >= 300)) {
             return null;
         }
 
-        return array_values($twoOrder['line_items']);
+        return array_values($twoOrder[$key]);
     }
 
     /**

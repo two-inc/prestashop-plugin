@@ -247,6 +247,40 @@ class Twoorderpostprocessingtest extends Module
     }
 
     /**
+     * The README example, verbatim: what is left to refund on one of Two's order lines, its amount less what Two's
+     * earlier refunds credited it. Null when the line is not in the context's order_lines or the refunds are unknown.
+     *
+     * @param array $context
+     * @param string $lineId
+     * @return float|null
+     */
+    public static function leftToRefund(array $context, $lineId)
+    {
+        if (!is_array($context['order_lines']) || !is_array($context['order_refunds'])) {
+            return null;
+        }
+        $left = null;
+        foreach ($context['order_lines'] as $line) {
+            if ((string) $line['id'] === (string) $lineId) {
+                $left = (float) $line['gross_amount'];
+            }
+        }
+        if ($left === null) {
+            return null;
+        }
+        foreach ($context['order_refunds'] as $refund) {
+            foreach (isset($refund['line_items']) ? $refund['line_items'] : array() as $refunded) {
+                // Each refund line names the order line it credited in prototype_id; Two records refunds as negatives.
+                if (isset($refunded['prototype_id']) && (string) $refunded['prototype_id'] === (string) $lineId) {
+                    $left -= abs((float) $refunded['gross_amount']);
+                }
+            }
+        }
+
+        return round($left, 2);
+    }
+
+    /**
      * Edits applied on top of the re-split. Each is sent as returned: a gross change, and the others, which leave the
      * payload's arithmetic inconsistent for Two's API to judge (TWO-26283).
      *
