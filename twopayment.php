@@ -9791,7 +9791,8 @@ class Twopayment extends PaymentModule
      * @param float $tax
      * @param float|null $declared
      * A shop-match check (TWO-26274): while an order request is built, a rate no candidate reconciles with is recorded
-     * for the wrapping line and enforced after the hook, and the line meanwhile carries the first candidate there is.
+     * for the wrapping line and enforced after the hook, and the line meanwhile carries the declared rate, else the
+     * invoiced one, else the configured one.
      *
      * @return float a decimal rate
      * @throws Exception when the invoices disagree or, outside an order build, no candidate reconciles
@@ -9829,7 +9830,8 @@ class Twopayment extends PaymentModule
         $this->twoDeferredPlacedWrapping = function () use ($refuse) {
             throw $refuse();
         };
-        foreach (array($invoiced, $declared) as $rate) {
+        // The rate the create sent first, so a merchant handler sees the same wrapping line on create and update.
+        foreach (array($declared, $invoiced) as $rate) {
             if ($rate !== null) {
                 return $rate;
             }
