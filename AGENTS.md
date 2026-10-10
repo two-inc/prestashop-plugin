@@ -242,6 +242,8 @@ lines" is the specification.
 - **The derivation is transitional.** `TwoTaxCodeResolver` still codes a line whose group has no
   row mapped at all, and a keyless line when nothing was coded by steps 1 to 3, so shops that have
   mapped nothing keep working until it is deleted. It never overrides a mapped group.
+- **A mapping still stored per group** (an unmoved shop tier, a failed upgrade) is read as the
+  rows the 2.7.20 upgrade would write (`readTwoTaxCodeMap()`), never treated as unreadable.
 - **The hook context's `fallback_shipping_tax_code`** is steps 1 to 3 for the Default shipping
   tax code's group, never derived.
 - **Never refuse and never coerce.** An uncodable line goes out without a code and Two's API
@@ -268,6 +270,8 @@ lines" is the specification.
   `hookPaymentOptions()` rather than failing the order after submit.
 - **Placement's codes win on update.** They live in `two_declared_rates` under `tax_codes`,
   written only when a code resolved, so an order with none keeps its row byte-identical.
+  `tax_codes_mapped` lists the keys whose codes came from steps 1 to 3: only those join step 4's
+  pool on update, as at placement. A record without it (written before TWO-26153) shares none.
 - The line builder tags every line it appends (`tagTwoLineTaxKeys()`); a new kind of line needs
   a descriptor of its own, or it is resolved as an order-level charge.
 

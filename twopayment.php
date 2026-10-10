@@ -426,6 +426,9 @@ class Twopayment extends PaymentModule
     /** @var bool the unreadable tax code mapping is logged once per request */
     private $twoTaxCodeMapLogged = false;
 
+    /** @var bool a mapping still stored per tax rules group is logged once per request (TWO-26153) */
+    private $twoTaxCodeMapLegacyLogged = false;
+
     /** @var array<string,mixed> tax rule lookups of this request, by query (TWO-26153) */
     private $twoTaxRuleCache = array();
 
@@ -3385,7 +3388,7 @@ class Twopayment extends PaymentModule
             self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP,
             $this->getTwoDefaultShippingTaxRulesGroupFormDefault()
         );
-        $map = self::parseTwoTaxCodeMap((string) Configuration::get(self::CONFIG_TAX_CODE_MAP));
+        $map = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
         foreach ($this->getTwoTaxCodeMapRows() as $row) {
             $fields_values[$row['field']] = (string) Tools::getValue($row['field'], is_array($map) && isset($map[$row['key']]) ? $map[$row['key']] : '');
         }
@@ -3394,6 +3397,14 @@ class Twopayment extends PaymentModule
 
     protected function validTwoOrderManagementFormValues()
     {
+        if ($this->isTwoOrderManagementPostTruncated()) {
+            $this->errors[] = sprintf(
+                $this->l('Some of the form\'s fields did not arrive (this server accepts at most %d per request, its max_input_vars setting), so nothing was saved. Reload the page and save again; if this message returns, ask your host to raise max_input_vars.'),
+                (int) ini_get('max_input_vars')
+            );
+
+            return;
+        }
         if ($this->getPostedTwoTaxCodeMap() === null) {
             $this->errors[] = $this->l('Each tax code must be (none) or one of the codes listed.');
         }
@@ -3411,6 +3422,29 @@ class Twopayment extends PaymentModule
         if ($group_id < 0 || ($group_id > 0 && !Validate::isLoadedObject(new TaxRulesGroup($group_id)))) {
             $this->errors[] = $this->l('Default shipping tax code must be "No tax" or one of the shop\'s existing tax rules groups.');
         }
+    }
+
+    /**
+     * Whether PHP dropped the end of the Order management post (TWO-26153): the request reached max_input_vars, or the
+     * tax code mapping's first row arrived and its last did not. PHP truncates silently, so saving would report
+     * success while ignoring every row past the limit.
+     *
+     * @return bool
+     */
+    protected function isTwoOrderManagementPostTruncated()
+    {
+        $limit = (int) ini_get('max_input_vars');
+        if ($limit > 0 && count($_POST, COUNT_RECURSIVE) >= $limit) {
+            return true;
+        }
+        $rows = $this->getTwoTaxCodeMapRows();
+        if ($rows === array()) {
+            return false;
+        }
+        $first = reset($rows);
+        $last = end($rows);
+
+        return Tools::getValue($first['field'], false) !== false && Tools::getValue($last['field'], false) === false;
     }
 
     protected function saveTwoOrderManagementFormValues()
@@ -3477,7 +3511,7 @@ class Twopayment extends PaymentModule
 
             return $inputs;
         }
-        $map = self::parseTwoTaxCodeMap((string) Configuration::get(self::CONFIG_TAX_CODE_MAP));
+        $map = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
         $group = null;
         foreach ($this->getTwoTaxCodeMapRows() as $row) {
             if ($row['group'] !== $group) {
@@ -3608,7 +3642,7 @@ class Twopayment extends PaymentModule
      */
     protected function getPostedTwoTaxCodeMap()
     {
-        $stored = self::parseTwoTaxCodeMap((string) Configuration::get(self::CONFIG_TAX_CODE_MAP));
+        $stored = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
         $map = is_array($stored) ? $stored : array();
         $posted = false;
         $codes = null;
@@ -8663,10 +8697,12 @@ class Twopayment extends PaymentModule
      * @param string $buyerCountry the payload's buyer.company.country_prefix, for the derivation
      * @param Address $buyerAddress the address that country_prefix came from, for the derivation
      * @param array|null $stored the codes placement resolved, by line key; null on a create, which records them
+     * @param string[]|null $storedMapped the keys of $stored whose codes came from steps 1 to 3, the only stored codes
+     *                                    step 4 shares; null for a record written before they were kept, which shares none
      * @return array
      * @throws Exception when a 0% line needs the stored mapping and it is unreadable
      */
-    private function applyTwoTaxCodes(array $lineItems, array $keys, $deliveryAddress, $invoiceAddress, $buyerCountry, $buyerAddress, $stored = null)
+    private function applyTwoTaxCodes(array $lineItems, array $keys, $deliveryAddress, $invoiceAddress, $buyerCountry, $buyerAddress, $stored = null, $storedMapped = null)
     {
         if (count($keys) !== count($lineItems) || array_keys($keys) !== array_keys($lineItems)) {
             // Never a refusal: the lines go out uncoded and the API decides.
@@ -8694,6 +8730,7 @@ class Twopayment extends PaymentModule
 
         $codes = array();
         $coded = array();
+        $mappedKeys = array();
         $keyless = array();
         foreach ($lineItems as $i => $line) {
             $key = $keys[$i];
@@ -8701,7 +8738,11 @@ class Twopayment extends PaymentModule
                 continue;
             }
             if ($stored !== null && $key['key'] !== null && isset($stored[$key['key']])) {
-                $codes[$i] = $coded[] = $stored[$key['key']];
+                $codes[$i] = $stored[$key['key']];
+                if (is_array($storedMapped) && in_array($key['key'], $storedMapped, true)) {
+                    $coded[] = $codes[$i];
+                    $mappedKeys[] = $key['key'];
+                }
                 continue;
             }
             if ($map === null) {
@@ -8717,6 +8758,9 @@ class Twopayment extends PaymentModule
             $codes[$i] = $this->resolveTwoShopTaxCode($map, $key['group'], $shop);
             if ($codes[$i] !== null) {
                 $coded[] = $codes[$i];
+                if ($key['key'] !== null) {
+                    $mappedKeys[] = $key['key'];
+                }
             } elseif (!TwoShopTaxCode::isGroupMapped($map, $key['group'], array_column($this->getTwoTaxRulesOfGroup($key['group']), 'id_tax_rule'))) {
                 $codes[$i] = TwoTaxCodeResolver::resolve($line['tax_rate'], null, $key['goods'] === null ? $hasGoods : $key['goods'], $order);
             }
@@ -8738,6 +8782,8 @@ class Twopayment extends PaymentModule
         }
         if ($stored === null && $record !== array() && is_array($this->twoDeclaredChargeRates)) {
             $this->twoDeclaredChargeRates['tax_codes'] = $record;
+            // Which of them step 4 may share on an update: a derived code never is (TWO-26153).
+            $this->twoDeclaredChargeRates['tax_codes_mapped'] = array_values(array_unique($mappedKeys));
         }
 
         return $lineItems;
@@ -8882,25 +8928,51 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The one-time move of a mapping by tax rules group to the rows (TWO-26153), run by upgrade-2.7.20.php: each
-     * group's code goes to its exempt row, its no-rule row and every 0% rule it has now, so every line the old mapping
-     * covered keeps its code. Anything else stored (nothing, or rows already) is left as it is.
+     * The one-time move of a mapping by tax rules group to the rows (TWO-26153), run by upgrade-2.7.20.php: on the
+     * global tier and, on a multistore shop, every shop group and shop tier that holds one of its own. Each group's
+     * code goes to its exempt row, its no-rule row and every 0% rule it has now, so every line the old mapping covered
+     * keeps its code. A tier holding anything else (nothing, or rows already) is left as it is.
      *
-     * @return int the number of groups moved
+     * @return int the number of tax rules group mappings moved, over every tier
+     * @throws Exception naming the tiers that could not be written, after moving every other tier; those keep their
+     *                   old value, which readTwoTaxCodeMap() still reads
      */
     public function migrateTwoTaxCodeMapToRows()
     {
-        $legacy = TwoShopTaxCode::parseLegacy(Configuration::get(self::CONFIG_TAX_CODE_MAP));
-        if ($legacy === null) {
-            return 0;
+        $tiers = array('global' => array(0, 0));
+        if (Shop::isFeatureActive()) {
+            foreach (Shop::getShops(false, null, true) as $idShop) {
+                $idShopGroup = (int) Shop::getGroupFromShop((int) $idShop);
+                $tiers['shop group ' . $idShopGroup] = array($idShopGroup, 0);
+                $tiers['shop ' . (int) $idShop] = array($idShopGroup, (int) $idShop);
+            }
         }
-        $zeroRules = array();
-        foreach (array_keys($legacy) as $group) {
-            $zeroRules[$group] = array_map('intval', array_column($this->getTwoZeroTaxRules($group), 'id_tax_rule'));
+        $moved = 0;
+        $failed = array();
+        foreach ($tiers as $tier => $ids) {
+            list($idShopGroup, $idShop) = $ids;
+            if (!Configuration::hasKey(self::CONFIG_TAX_CODE_MAP, null, $idShopGroup, $idShop)) {
+                continue;
+            }
+            $legacy = TwoShopTaxCode::parseLegacy(Configuration::get(self::CONFIG_TAX_CODE_MAP, null, $idShopGroup, $idShop));
+            if ($legacy === null) {
+                continue;
+            }
+            $value = json_encode($this->fanOutTwoTaxCodeMap($legacy));
+            $written = $tier === 'global'
+                ? Configuration::updateGlobalValue(self::CONFIG_TAX_CODE_MAP, $value)
+                : Configuration::updateValue(self::CONFIG_TAX_CODE_MAP, $value, false, $idShopGroup, $idShop);
+            if ($written) {
+                $moved += count($legacy);
+            } else {
+                $failed[] = $tier;
+            }
         }
-        Configuration::updateValue(self::CONFIG_TAX_CODE_MAP, json_encode(TwoShopTaxCode::fanOut($legacy, $zeroRules)));
+        if ($failed !== array()) {
+            throw new Exception('the tax code mapping of the ' . implode(', ', $failed) . ' tier could not be written');
+        }
 
-        return count($legacy);
+        return $moved;
     }
 
     /**
@@ -8958,7 +9030,7 @@ class Twopayment extends PaymentModule
         if ($raw === false || $raw === null || trim((string) $raw) === '') {
             return array();
         }
-        $map = self::parseTwoTaxCodeMap($raw);
+        $map = $this->readTwoTaxCodeMap($raw);
         if ($map === null) {
             if (!$this->twoTaxCodeMapLogged) {
                 $this->twoTaxCodeMapLogged = true;
@@ -8987,12 +9059,43 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The stored mapping as rows. A mapping still stored per tax rules group (before 2.7.20, on a shop tier the
+     * upgrade did not move or where it failed) is read as the upgrade would move it, and logged once, so it keeps
+     * working until the upgrade or a save stores it as rows.
+     *
      * @param mixed $raw the stored JSON
-     * @return array<string,string>|null null when it is not a map of rows to codes
+     * @return array<string,string>|null null when it is neither
      */
-    private static function parseTwoTaxCodeMap($raw)
+    private function readTwoTaxCodeMap($raw)
     {
-        return TwoShopTaxCode::parse($raw);
+        $map = TwoShopTaxCode::parse($raw);
+        if ($map !== null) {
+            return $map;
+        }
+        $legacy = TwoShopTaxCode::parseLegacy($raw);
+        if ($legacy === null) {
+            return null;
+        }
+        if (!$this->twoTaxCodeMapLegacyLogged) {
+            $this->twoTaxCodeMapLegacyLogged = true;
+            PrestaShopLogger::addLog('TwoPayment: The tax code mapping (' . self::CONFIG_TAX_CODE_MAP . ') is still stored per tax rules group; it is read as the per-rule rows until it is saved again on the Order management form', 2);
+        }
+
+        return $this->fanOutTwoTaxCodeMap($legacy);
+    }
+
+    /**
+     * @param array<int,string> $legacy tax rules group id => code
+     * @return array<string,string> the rows, see TwoShopTaxCode::fanOut()
+     */
+    private function fanOutTwoTaxCodeMap(array $legacy)
+    {
+        $zeroRules = array();
+        foreach (array_keys($legacy) as $group) {
+            $zeroRules[$group] = array_map('intval', array_column($this->getTwoZeroTaxRules($group), 'id_tax_rule'));
+        }
+
+        return TwoShopTaxCode::fanOut($legacy, $zeroRules);
     }
 
     /**
@@ -10415,7 +10518,9 @@ class Twopayment extends PaymentModule
      *
      * @param array $row the Two row
      * @return array ['shipping' => classes, 'wrapping' => decimal rate|null, 'shipping_rate_provided' => bool|null, null before TWO-26117,
-     *               'tax_codes' => the codes placement resolved by line key (TWO-24877), empty before it or when none resolved]
+     *               'tax_codes' => the codes placement resolved by line key (TWO-24877), empty before it or when none resolved,
+     *               'tax_codes_mapped' => the keys of those codes that came from the merchant's rows (steps 1 to 3,
+     *               TWO-26153); null for a record written before it]
      */
     private function decodeTwoDeclaredChargeRates($row)
     {
@@ -10435,7 +10540,12 @@ class Twopayment extends PaymentModule
             }
         }
 
-        return array('shipping' => $shipping, 'wrapping' => $wrapping, 'shipping_rate_provided' => $provided, 'tax_codes' => $taxCodes);
+        $mapped = null;
+        if (is_array($decoded) && isset($decoded['tax_codes_mapped']) && is_array($decoded['tax_codes_mapped'])) {
+            $mapped = array_values(array_map('strval', array_filter($decoded['tax_codes_mapped'], 'is_scalar')));
+        }
+
+        return array('shipping' => $shipping, 'wrapping' => $wrapping, 'shipping_rate_provided' => $provided, 'tax_codes' => $taxCodes, 'tax_codes_mapped' => $mapped);
     }
 
     /**
@@ -10627,6 +10737,7 @@ class Twopayment extends PaymentModule
             'line_items' => $line_items,
         ];
         // The codes placement resolved win over today's mapping and addresses; a line placement did not code resolves now.
+        $declaredRates = $this->decodeTwoDeclaredChargeRates($orderpaymentdata);
         $request_data['line_items'] = $this->applyTwoTaxCodes(
             $line_items,
             $pricingData['line_tax_keys'],
@@ -10634,7 +10745,8 @@ class Twopayment extends PaymentModule
             $invoice_address,
             $buyerCountryIso,
             $buyerCompanyAddress,
-            $this->decodeTwoDeclaredChargeRates($orderpaymentdata)['tax_codes']
+            $declaredRates['tax_codes'],
+            $declaredRates['tax_codes_mapped']
         );
 
         if ($this->shouldIncludeTaxSubtotals()) {

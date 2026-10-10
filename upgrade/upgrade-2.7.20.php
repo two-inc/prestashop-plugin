@@ -9,10 +9,12 @@
  * 0% tax rule the group has now, so every line the old mapping covered keeps
  * its code. Tax rules added later start on (none).
  *
- * A shop with no mapping, or one already stored as rows, is left as it is, so
- * the script is safe to run again. It carries the global tier only, like
- * upgrade-2.7.12.php, and returns true on every path: a mapping it could not
- * move is reported by the reader as unreadable and re-saved on the form.
+ * It moves the global tier and, on a multistore shop, every shop group and
+ * shop tier that holds a mapping of its own. A tier with no mapping, or one
+ * already stored as rows, is left as it is, so the script is safe to run
+ * again. It returns true on every path: a tier it could not write is logged,
+ * keeps its old value, and the module still reads that value as the rows it
+ * would have become until the merchant saves the form.
  *
  * Created: 2026-10-10
  *
@@ -29,7 +31,7 @@ function upgrade_module_2_7_20($module)
     try {
         $moved = $module->migrateTwoTaxCodeMapToRows();
         PrestaShopLogger::addLog(
-            'Two Payment: Upgraded to version 2.7.20 - moved the tax code mapping of ' . (int) $moved . ' tax rules group(s) to the per-rule rows',
+            'Two Payment: Upgraded to version 2.7.20 - moved ' . (int) $moved . ' tax rules group mapping(s) to the per-rule rows',
             1,
             null,
             'Module',
@@ -37,7 +39,7 @@ function upgrade_module_2_7_20($module)
         );
     } catch (Throwable $e) {
         PrestaShopLogger::addLog(
-            'Two Payment: Upgrade to version 2.7.20 could not move the tax code mapping - ' . $e->getMessage() . '; re-save it on the Order management form',
+            'Two Payment: Upgrade to version 2.7.20 could not move every tax code mapping - ' . $e->getMessage() . '; it is still read as before, and saving the Order management form stores it as rows',
             3,
             null,
             'Module',
