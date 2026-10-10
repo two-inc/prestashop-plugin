@@ -188,6 +188,8 @@ final class OrderPostprocessingSpec
             public array $notes = [];
             /** @var array|null the order's line_items in Two's GET answer, when set (TWO-26282) */
             public ?array $twoLines = null;
+            /** @var array|null the order's refunds in Two's GET answer, when set (TWO-26287) */
+            public ?array $twoRefunds = null;
             /** @var int the GET answer's status */
             public int $getStatus = 200;
             /** @var string[] the GETs made, by endpoint */
@@ -218,6 +220,9 @@ final class OrderPostprocessingSpec
                     $this->gets[] = $endpoint;
                 }
                 $lines = $method === 'GET' && $this->twoLines !== null ? ['line_items' => $this->twoLines] : [];
+                if ($method === 'GET' && $this->twoRefunds !== null) {
+                    $lines['refunds'] = $this->twoRefunds;
+                }
 
                 return $lines + [
                     'http_status' => $method === 'GET' ? $this->getStatus : 200,
@@ -1341,12 +1346,16 @@ final class OrderPostprocessingSpec
      * TWO-26282: order_lines is the order's line items as Two's GET returned them, verbatim, on the refunds and the
      * order updates; null where the request reads no order from Two, or the read failed. An admin edit or a tracking
      * number reads the order before the build only for a merchant handler, which these cases always register.
+     * TWO-26287: order_refunds is that same GET's refunds, verbatim, on exactly the same firings.
      */
     private static function testPlacedLinesAreTwosLinesWhereTheRequestHasThem(): void
     {
         $lines = [
             ['id' => 'line-1', 'type' => 'PHYSICAL', 'name' => 'Widget', 'gross_amount' => '121.00', 'net_amount' => '100.00', 'tax_amount' => '21.00', 'tax_rate' => '0.21', 'tax_code' => null],
             ['id' => 'line-2', 'type' => 'SERVICE', 'name' => 'Handling', 'gross_amount' => '29.00', 'net_amount' => '23.97', 'tax_amount' => '5.03', 'tax_rate' => '0.21', 'tax_code' => null],
+        ];
+        $refunds = [
+            ['id' => 'refund-0', 'total_amount' => '-12.10', 'line_items' => [['prototype_id' => 'line-1', 'gross_amount' => '-12.10', 'net_amount' => '-10.00', 'tax_amount' => '-2.10']]],
         ];
         $drivers = [];
         foreach (self::requestDrivers() as [$type, $trigger, , $driver]) {
@@ -1366,27 +1375,28 @@ final class OrderPostprocessingSpec
                 $m->putTwoOrderUpdate(self::order(), $m->getTwoOrderPaymentData(self::ORDER), $payload, 'merchant_order_id', $twoOrder);
             };
         };
-        // [driver, GET status, expected order_lines per firing, description]
+        // [driver, GET status, expected order_lines per firing, refunds at Two, description]
         $cases = [
-            [$drivers['order_update/admin_edit'], 200, [$lines], 'an admin edit: read before the build'],
-            [$drivers['order_update/tracking_number'], 200, [$lines], 'a tracking number: read before the build'],
-            [$drivers['order_update/admin_edit'], 500, [null], 'an admin edit whose read failed: null, and the edit goes on'],
-            [$merchantOrderId(['http_status' => 200, 'line_items' => $lines]), 200, [$lines], 'the merchant order id sync: the confirmation callback\'s read'],
-            [$merchantOrderId(null), 200, [null], 'the merchant order id sync with no read in hand: null'],
-            [$drivers['refund/status_change'], 200, [$lines], 'a full refund: the refundable-state read'],
-            [$drivers['refund/credit_slip'], 200, [$lines], 'a credit slip: the remaining-balance read'],
-            [$remainder, 200, [$lines, $lines], 'the refunded remainder: its rebuild and its refund'],
-            [$drivers['order_create/checkout'], 200, [null], 'an order create: no order at Two yet'],
-            [$drivers['order_intent/precheck'], 200, [null], 'an order intent: no order at Two yet'],
-            [$drivers['order_confirm/payment_return'], 200, [null], 'a confirm: not given'],
-            [$drivers['capture/status_change'], 200, [null], 'a capture: not given'],
-            [$drivers['cancel/status_change'], 200, [null], 'a cancel: not given'],
+            [$drivers['order_update/admin_edit'], 200, [$lines], $refunds, 'an admin edit: read before the build'],
+            [$drivers['order_update/tracking_number'], 200, [$lines], $refunds, 'a tracking number: read before the build'],
+            [$drivers['order_update/admin_edit'], 500, [null], $refunds, 'an admin edit whose read failed: null, and the edit goes on'],
+            [$merchantOrderId(['http_status' => 200, 'line_items' => $lines, 'refunds' => $refunds]), 200, [$lines], $refunds, 'the merchant order id sync: the confirmation callback\'s read'],
+            [$merchantOrderId(null), 200, [null], $refunds, 'the merchant order id sync with no read in hand: null'],
+            [$drivers['refund/status_change'], 200, [$lines], [], 'a full refund: the refundable-state read, no refund at Two yet'],
+            [$drivers['refund/credit_slip'], 200, [$lines], $refunds, 'a credit slip: the remaining-balance read'],
+            [$remainder, 200, [$lines, $lines], $refunds, 'the refunded remainder: its rebuild and its refund'],
+            [$drivers['order_create/checkout'], 200, [null], $refunds, 'an order create: no order at Two yet'],
+            [$drivers['order_intent/precheck'], 200, [null], $refunds, 'an order intent: no order at Two yet'],
+            [$drivers['order_confirm/payment_return'], 200, [null], $refunds, 'a confirm: not given'],
+            [$drivers['capture/status_change'], 200, [null], $refunds, 'a capture: not given'],
+            [$drivers['cancel/status_change'], 200, [null], $refunds, 'a cancel: not given'],
         ];
-        foreach ($cases as [$driver, $getStatus, $expected, $description]) {
+        foreach ($cases as [$driver, $getStatus, $expected, $atTwo, $description]) {
             $cart = self::seed(true);
             $module = self::module();
             self::harnessAsInstance($module);
             $module->twoLines = $lines;
+            $module->twoRefunds = $atTwo;
             $module->getStatus = $getStatus;
             $calls = [];
             self::subscribe('tag', $calls);
@@ -1394,6 +1404,11 @@ final class OrderPostprocessingSpec
             TinyAssert::same($expected, array_map(static function ($c) {
                 return $c['context']['order_lines'];
             }, $calls), $description);
+            TinyAssert::same(array_map(static function ($l) use ($atTwo) {
+                return $l === null ? null : $atTwo;
+            }, $expected), array_map(static function ($c) {
+                return $c['context']['order_refunds'];
+            }, $calls), $description . ': order_refunds');
         }
     }
 
@@ -1446,7 +1461,7 @@ final class OrderPostprocessingSpec
     private static function testEachRequestTypeFiresExactlyOnce(): void
     {
         $cases = self::requestDrivers();
-        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines'];
+        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines', 'order_refunds'];
         foreach ($cases as [$type, $trigger, $sends, $driver, $description]) {
             $cart = self::seed(true);
             $module = self::module();
@@ -1679,7 +1694,7 @@ final class OrderPostprocessingSpec
      */
     private static function testReadmeExampleIsTheFixturesOwnCode(): void
     {
-        foreach (['resplitShipping', 'resplitUntaxedRefund', 'addOutsideCarrierLine'] as $name) {
+        foreach (['resplitShipping', 'resplitUntaxedRefund', 'addOutsideCarrierLine', 'leftToRefund'] as $name) {
             $method = new ReflectionMethod(Twoorderpostprocessingtest::class, $name);
             $lines = array_slice(file((string) $method->getFileName()), $method->getStartLine() - 1, $method->getEndLine() - $method->getStartLine() + 1);
             $source = implode('', array_map(static function (string $line): string {
@@ -1699,6 +1714,28 @@ final class OrderPostprocessingSpec
         foreach ($cases as [$in, $out, $description]) {
             $payload = Twoorderpostprocessingtest::resplitUntaxedRefund(['amount' => '1.00', 'currency' => 'EUR', 'tax_subtotals' => $in], 0.21);
             TinyAssert::same(['amount' => '1.00', 'currency' => 'EUR', 'tax_subtotals' => $out], $payload, 'refund re-split, ' . $description);
+        }
+        // The README's left to refund (TWO-26287): a line's amount less what Two's earlier refunds credited it.
+        $lines = [['id' => 'line-1', 'gross_amount' => '121.00'], ['id' => 'line-2', 'gross_amount' => '29.00']];
+        $refund = static function (array $credited): array {
+            $items = [];
+            foreach ($credited as $id => $gross) {
+                $items[] = ['prototype_id' => $id, 'gross_amount' => $gross];
+            }
+            return ['id' => 'refund', 'total_amount' => '-' . number_format(array_sum(array_map('abs', $credited)), 2, '.', ''), 'line_items' => $items];
+        };
+        $cases = [
+            [[], 'line-1', 121.0, 'no refunds yet: the whole line'],
+            [[$refund(['line-1' => '-21.00'])], 'line-1', 100.0, 'one earlier refund on the line'],
+            [[$refund(['line-1' => '-21.00', 'line-2' => '-9.00']), $refund(['line-1' => '-0.50'])], 'line-1', 99.5, 'two refunds, one crediting two lines: only this line\'s shares count'],
+            [[$refund(['line-1' => '-21.00'])], 'line-2', 29.0, 'a refund on another line takes nothing from this one'],
+            [[['id' => 'refund', 'total_amount' => '-5.00']], 'line-1', 121.0, 'a refund with no lines takes nothing from any line'],
+            [[], 'line-9', null, 'a line Two does not hold: null'],
+            [null, 'line-1', null, 'refunds unknown: null'],
+        ];
+        foreach ($cases as [$refunds, $lineId, $left, $description]) {
+            $got = Twoorderpostprocessingtest::leftToRefund(['order_lines' => $lines, 'order_refunds' => $refunds], $lineId);
+            TinyAssert::same($left, $got, 'left to refund, ' . $description);
         }
     }
 
