@@ -860,7 +860,7 @@ over several rates of a populated Default shipping tax code.
 
 **The buyer fee.** The cart's buyer fee line is priced on the module's own lines, before
 the hook. With no merchant handler, a line that fails a declared-rate check stops that
-pricing: the cart keeps the fee line it had and the fee parity check refuses the order.
+pricing: the cart keeps the fee line it had, and that line's check refuses the order.
 With a merchant handler the checks on single lines are the handler's, so they do not stop
 the pricing: the cart carries the fee line the payload sends, and a later update replays
 that fee from the placed order.
