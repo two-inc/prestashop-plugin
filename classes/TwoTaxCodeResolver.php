@@ -54,7 +54,7 @@ class TwoTaxCodeResolver
      * @param string|null $mapped the code the merchant mapped to the line's tax rules group
      * @param bool $goods a goods line (see the class doc of the caller); false for a service line
      * @param array $order ['merchant_country', 'dest_country', 'dest_postcode', 'buyer_country', 'buyer_postcode',
-     *                     'buyer_vat_number' (normalised, see normaliseVatNumber())]
+     *                     'buyer_vat_number' (trimmed, see trimVatNumber())]
      * @return string|null
      */
     public static function resolve($rate, $mapped, $goods, array $order)
@@ -132,35 +132,22 @@ class TwoTaxCodeResolver
     }
 
     /**
-     * A buyer VAT number as the resolver and Two read it (TWO-26153): upper-cased and stripped of everything but
-     * A-Z and 0-9; no number at all when no digit is left (a placeholder such as "n/a" or "none"); a GR prefix written
-     * as EL; and the address country prepended when it does not start with two letters (Greece as EL, Monaco as FR).
-     * Without an address country an unprefixed number stays unprefixed, and so names no country. A leading label is
-     * not parsed out: "VAT: DE123" reads as VATDE123, whose VA prefix names no EU country.
+     * A buyer VAT number as the resolver and Two read it (TWO-26153): exactly as the buyer entered it, with only
+     * leading and trailing whitespace trimmed. Nothing else is changed: no upper-casing, no separators stripped, no
+     * prefix added or rewritten. Any non-empty value is a VAT number.
      *
      * @param mixed $raw
-     * @param mixed $addressCountry alpha-2
      * @return string '' for no number
      */
-    public static function normaliseVatNumber($raw, $addressCountry)
+    public static function trimVatNumber($raw)
     {
-        $vat = (string) preg_replace('/[^A-Z0-9]+/', '', strtoupper((string) $raw));
-        if (preg_match('/\d/', $vat) !== 1) {
-            return '';
-        }
-        if (preg_match('/^[A-Z]{2}/', $vat) === 1) {
-            // Greece's VAT prefix is EL; a GR-prefixed number is written as Two expects it.
-            return strncmp($vat, 'GR', 2) === 0 ? 'EL' . substr($vat, 2) : $vat;
-        }
-        $country = self::iso($addressCountry);
-        // VAT prefixes: Greece is EL, and Monaco businesses hold French numbers.
-        $prefixes = array('GR' => 'EL', 'MC' => 'FR');
-
-        return (isset($prefixes[$country]) ? $prefixes[$country] : $country) . $vat;
+        return trim((string) $raw);
     }
 
     /**
-     * The country a normalised VAT number's prefix names, EL read as GR; '' when it starts with no two letters.
+     * The country a VAT number's prefix names, EL read as GR; '' when it starts with no two upper-case letters.
+     * The value is read as entered, so a lower-case prefix such as "el" names no country. This is the one place
+     * the prefix is compared.
      *
      * @param mixed $vat
      * @return string
