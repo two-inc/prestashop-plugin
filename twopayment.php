@@ -8116,7 +8116,8 @@ class Twopayment extends PaymentModule
             }
         });
 
-        // Shop-match: the lines, the buyer fee line aside, against the cart's (or the placed order's) totals.
+        // Shop-match: the lines, the buyer fee line aside, against the cart's (or the placed order's) totals: gross, net
+        // and tax each, whether or not the lines' own gross is their net + tax (TWO-26283).
         $items[] = array('whole_order' => true, 'run' => function (array $payload, array $before) use ($cart, $contextLabel, $strict, $placedTotals, $feeIndex) {
             $lines = $this->getTwoPayloadLines($payload);
             $at = $feeIndex !== null && isset($before['line_items'][$feeIndex]) ? $this->findTwoPayloadLine($payload, $before['line_items'][$feeIndex]) : null;
@@ -8124,11 +8125,6 @@ class Twopayment extends PaymentModule
                 unset($lines[$at]);
             }
             $totals = $this->calculateTwoLineItemTotals($lines);
-            if (!$this->isTwoAmountWithinTolerance($totals['gross'], $totals['net'] + $totals['tax'])) {
-                // Lines that fail gross = net + tax are not compared with the cart, as they never were: their arithmetic is
-                // Two's API's to judge (TWO-26283).
-                return;
-            }
             $maxDiffCents = 0;
             $drift = '';
             if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $totals, $contextLabel, $maxDiffCents, $drift, $placedTotals)) {
