@@ -239,7 +239,7 @@ final class ConfirmationLegacyParitySpec
                 return true;
             }
 
-            public function syncLocalOrderStatusFromTwoState($order_id, $state)
+            public function syncLocalOrderStatusFromTwoState($order_id, $state, $confirmed_by_two = true)
             {
                 return true;
             }

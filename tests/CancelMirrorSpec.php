@@ -21,16 +21,23 @@ final class CancelMirrorSpec
 
     public static function runAll(): void
     {
-        // [controller method, its arguments, attempt status, expected cancel POSTs, description]
+        $abort = ['abortConfirmationIfAttemptCancelled', [self::TOKEN, null], 'CANCELLED'];
+        $best = 'confirmation_after_cancelled_attempt';
+        // [controller method, its arguments, attempt status, cancel HTTP status, state Two's GET answers,
+        //  expected cancel POSTs by trigger in order, expected stored state, description]
         $rows = [
-            ['handleAttemptTokenConfirmation', [self::TOKEN], 'CREATED', 0, 'attempt confirmation, Two answers CANCELLED: no cancel POST'],
-            ['handleLegacyOrderConfirmation', [self::ORDER], 'CREATED', 0, 'legacy confirmation, Two answers CANCELLED: no cancel POST'],
-            ['abortConfirmationIfAttemptCancelled', [self::TOKEN, null], 'CANCELLED', 1, 'attempt already cancelled: only the best-effort cancel, no second one from the status hook'],
+            ['handleAttemptTokenConfirmation', [self::TOKEN], 'CREATED', 200, 'CANCELLED', [], 'CANCELLED', 'attempt confirmation, Two answers CANCELLED: no cancel POST'],
+            ['handleLegacyOrderConfirmation', [self::ORDER], 'CREATED', 200, 'CANCELLED', [], 'CANCELLED', 'legacy confirmation, Two answers CANCELLED: no cancel POST'],
+            array_merge($abort, [200, 'VERIFIED', [$best], 'CANCELLED', 'attempt cancelled, the best-effort cancel succeeds: recorded, no second cancel from the status hook']),
+            array_merge($abort, [409, 'CANCELLED', [$best], 'CANCELLED', 'attempt cancelled, the cancel is refused but Two reads CANCELLED: recorded, no second cancel']),
+            array_merge($abort, [500, 'VERIFIED', [$best, 'status_change'], 'VERIFIED', 'attempt cancelled, the cancel fails and Two reads VERIFIED: not recorded, the status hook sends the cancel after the best-effort one']),
         ];
         $failures = [];
-        foreach ($rows as [$method, $args, $attemptStatus, $posts, $description]) {
+        foreach ($rows as [$method, $args, $attemptStatus, $cancelHttp, $twoState, $triggers, $stored, $description]) {
             try {
                 $module = self::module($attemptStatus);
+                $module->cancelHttp = $cancelHttp;
+                $module->twoState = $twoState;
                 $controller = new TwopaymentConfirmationModuleFrontController();
                 $controller->module = $module;
                 $args = array_map(static function ($a) use ($module) {
@@ -43,8 +50,8 @@ final class CancelMirrorSpec
                 }
 
                 TinyAssert::same([self::ORDER], $module->statusChanges, $description . ': the order is moved to the mapped cancelled status');
-                TinyAssert::count($posts, $module->cancels, $description . ': cancel POSTs (got ' . json_encode($module->cancels) . ')');
-                TinyAssert::same('CANCELLED', StubStore::$twoPaymentRows[self::ORDER]['two_order_state'], $description . ': stored state');
+                TinyAssert::same($triggers, $module->cancels, $description . ': cancel POSTs by trigger');
+                TinyAssert::same($stored, StubStore::$twoPaymentRows[self::ORDER]['two_order_state'], $description . ': stored state');
             } catch (Throwable $e) {
                 $failures[] = $e->getMessage();
             }
@@ -73,8 +80,10 @@ final class CancelMirrorSpec
             'two_order_id' => self::TWO_ORDER, 'cart_snapshot_hash' => '', 'status' => $attemptStatus, 'customer_secure_key' => 'key-7813',
         ]) extends TwopaymentTestHarness {
             public array $attempt;
-            /** @var string[] cancel endpoints sent */
+            /** @var string[] the trigger of each cancel sent */
             public array $cancels = [];
+            public int $cancelHttp = 200;
+            public string $twoState = 'CANCELLED';
             /** @var int[] orders moved to a status */
             public array $statusChanges = [];
 
@@ -87,7 +96,9 @@ final class CancelMirrorSpec
             public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null, $twoOrder = null)
             {
                 if (substr((string) $endpoint, -7) === '/cancel') {
-                    $this->cancels[] = $trigger . ' ' . $endpoint;
+                    $this->cancels[] = (string) $trigger;
+
+                    return ['http_status' => $this->cancelHttp];
                 }
 
                 return ['http_status' => 200];
@@ -95,7 +106,7 @@ final class CancelMirrorSpec
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
-                return ['http_status' => 200, 'id' => 'two-order-7811', 'state' => 'CANCELLED', 'status' => 'APPROVED', 'merchant_reference' => 'ref', 'invoice_url' => ''];
+                return ['http_status' => 200, 'id' => 'two-order-7811', 'state' => $this->twoState, 'status' => 'APPROVED', 'merchant_reference' => 'ref', 'invoice_url' => ''];
             }
 
             /** Core's OrderHistory::changeIdOrderState() fires actionOrderStatusUpdate. */
