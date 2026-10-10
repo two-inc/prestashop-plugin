@@ -1229,6 +1229,12 @@ namespace {
             return StubStore::$countries[(int) $id] ?? false;
         }
 
+        /** The country's name; its ISO code stands in, as the stub holds no names. */
+        public static function getNameById($idLang, $id)
+        {
+            return StubStore::$countries[(int) $id] ?? false;
+        }
+
         /**
          * @return array<int,array{id_country:int,iso_code:string}>
          */
@@ -2743,6 +2749,37 @@ namespace {
             return $matches;
         }
 
+        /**
+         * Sort rows by the statement's own ORDER BY (`tr.`col` [ASC|DESC]`, ...), so a test exercises the order the
+         * module asks for: ids and states compare as numbers, postcodes as the strings their varchar columns hold.
+         */
+        private static function orderBy(array $rows, string $sql): array
+        {
+            if (!preg_match('/ORDER BY (.+)$/s', $sql, $m)) {
+                return $rows;
+            }
+            $terms = [];
+            foreach (explode(',', $m[1]) as $term) {
+                if (preg_match('/`(\w+)`\s*(ASC|DESC)?/i', $term, $t)) {
+                    $terms[] = [$t[1], strtoupper($t[2] ?? 'ASC') === 'DESC' ? -1 : 1];
+                }
+            }
+            usort($rows, static function ($a, $b) use ($terms) {
+                foreach ($terms as [$column, $direction]) {
+                    $x = $a[$column] ?? '';
+                    $y = $b[$column] ?? '';
+                    $cmp = strpos($column, 'zipcode') === 0 ? strcmp((string) $x, (string) $y) : ((int) $x <=> (int) $y);
+                    if ($cmp !== 0) {
+                        return $cmp * $direction;
+                    }
+                }
+
+                return 0;
+            });
+
+            return $rows;
+        }
+
         public function executeS($sql): array
         {
             StubStore::$dbLastExecuteS[] = (string) $sql;
@@ -2753,6 +2790,37 @@ namespace {
                 }
 
                 return $rows;
+            }
+            // Core's tax rule selection (TaxRulesTaxManager), as the module runs it for a 0% line's tax code
+            // (TWO-26153): the group's active rules for the country, state 0 or the address's, postcode in range or
+            // open, most specific first. Postcodes compare as strings, as the varchar columns do.
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "tax_rule` tr JOIN .* trg\\.`active` = 1 AND tr\\.`id_country` = (\\d+) AND tr\\.`id_tax_rules_group` = (\\d+) AND tr\\.`id_state` IN \\(0, (\\d+)\\) AND \\('([^']*)' BETWEEN/", (string) $sql, $m)) {
+                if (empty(StubStore::$taxRulesGroups[(int) $m[2]]['active'])) {
+                    return [];
+                }
+                $rows = [];
+                foreach (StubStore::$taxRules as $id => $rule) {
+                    $from = (string) ($rule['zipcode_from'] ?? '0');
+                    $to = (string) ($rule['zipcode_to'] ?? '0');
+                    $open = in_array($to, ['', '0'], true) && in_array($from, ['', '0', $m[4]], true);
+                    if ((int) $rule['id_tax_rules_group'] === (int) $m[2] && (int) $rule['id_country'] === (int) $m[1]
+                        && in_array((int) ($rule['id_state'] ?? 0), [0, (int) $m[3]], true)
+                        && ($open || (strcmp($m[4], $from) >= 0 && strcmp($m[4], $to) <= 0))) {
+                        $rows[] = ['id_tax_rule' => (string) $id, 'id_tax' => (string) $rule['id_tax'], 'zipcode_from' => $from, 'zipcode_to' => $to, 'id_state' => (int) ($rule['id_state'] ?? 0), 'id_country' => (int) $rule['id_country']];
+                    }
+                }
+
+                return self::orderBy($rows, (string) $sql);
+            }
+            // Every rule of a tax rules group, for the tax code mapping's rows (TWO-26153).
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "tax_rule` WHERE `id_tax_rules_group` = (\\d+) ORDER BY/", (string) $sql, $m)) {
+                $rows = [];
+                foreach (StubStore::$taxRules as $id => $rule) {
+                    if ((int) $rule['id_tax_rules_group'] === (int) $m[1]) {
+                        $rows[] = ['id_tax_rule' => (string) $id] + $rule + ['id_state' => 0, 'zipcode_from' => '0', 'zipcode_to' => '0', 'description' => ''];
+                    }
+                }
+                return self::orderBy($rows, (string) $sql);
             }
             if (!empty(StubStore::$dbExecuteSResponses)) {
                 $next = array_shift(StubStore::$dbExecuteSResponses);
