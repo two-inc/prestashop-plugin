@@ -27,6 +27,7 @@ final class RefundSpec
         self::testFailureAfterClaimTellsTheMerchant();
         self::testWhatTheHookSentIsWhatIsRecorded();
         self::testSlipsAreSentAsLinesOfTheTwoOrder();
+        self::testSlipCreditsTheProductsItRefunds();
         self::testRemainderIsSentAsLinesOfTheTwoOrder();
         self::testRemainderCreditsOnlyWhatIsLeftOnEachLine();
         self::testTheHookSeesAndCanEditTheLines();
@@ -332,6 +333,101 @@ final class RefundSpec
     }
 
     /**
+     * TWO-26293: a credit slip credits the Two line each of its products was last sent as, matched exactly by name: the
+     * order_detail name once an order update was accepted, and before that only for a product with no combination (the
+     * create sends the cart's name, which core stores without the combination's attributes). Several lines of that name
+     * are narrowed to those at the product's unit price. A product with no such line, a combination with no update
+     * accepted, and more than a line has left, are spread over the rate's lines by what each has left, as before. The
+     * rate's amount is shared in cents first, so no cent of the slip's products lands on a line not on the slip.
+     * Columns: slip lines; slip shipping tax incl / excl; slip amount and order_slip_type (null: the slip's own total);
+     * whether an order update was accepted ('placement': only on the row of the split cart's order holding the Two row);
+     * the Two order's lines and refunds (null: the order below); expected
+     * [id, net, tax, gross] lines; description.
+     */
+    private static function testSlipCreditsTheProductsItRefunds(): void
+    {
+        $two = static function (string $id, string $type, string $name, string $unit, string $net, string $gross, ?float $quantity = null): array {
+            return ['id' => $id, 'type' => $type, 'name' => $name, 'tax_rate' => '0.200000', 'tax_code' => null, 'quantity' => $quantity ?? round((float)$net / (float)$unit, 2), 'unit_price' => $unit, 'net_amount' => $net, 'gross_amount' => $gross];
+        };
+        $order = [
+            $two('shipping', 'SHIPPING_FEE', 'My carrier', '2.00', '2.00', '2.40'),
+            $two('sweater', 'PHYSICAL', 'Sweater (Size: S)', '28.72', '28.72', '34.46'),
+            $two('mug', 'PHYSICAL', 'Mug', '11.90', '59.50', '71.40'),
+            $two('notebook', 'PHYSICAL', 'Notebook (Paper: Ruled)', '12.90', '25.80', '30.96'),
+        ];
+        $shirt = $two('shirt', 'PHYSICAL', 'Shirt', '50.00', '50.00', '60.00');
+        $kids = $two('kids', 'PHYSICAL', 'Shirt - Kids', '50.00', '50.00', '60.00');
+        $mugs = self::line(23.80, 28.56, '20.000', '0', 'Mug', '11.90');
+        $sweater = self::line(28.72, 34.46, '20.000', '0', 'Sweater (Size: S)', '28.72', 7);
+        $notebooks = self::line(25.80, 30.96, '20.000', '0', 'Notebook (Paper: Ruled)', '12.90', 3);
+        $giftWrap = self::line(10.00, 12.00, '20.000', '0', 'Gift wrap', '10.00');
+        $odd = static function (string $name, string $unit, int $combination): array {
+            return self::line(7.77, 9.32, '20.000', '0', $name, $unit, $combination);
+        };
+        $cases = [
+            [[$mugs], 0.0, 0.0, null, true, null, [['mug', '23.80', '4.76', '28.56']], 'two mugs: the mug line alone, not every line at the rate'],
+            [[$mugs], 2.40, 2.00, null, true, null, [['shipping', '2.00', '0.40', '2.40'], ['mug', '23.80', '4.76', '28.56']], 'two mugs and the shipping: each to its own line'],
+            [[$mugs], 0.0, 0.0, [20.00, 2], true, null, [['mug', '16.67', '3.33', '20.00']], 'a specific amount for two mugs: the mug line alone'],
+            [[$mugs], 0.0, 0.0, null, false, null, [['mug', '23.80', '4.76', '28.56']], 'no update accepted, a product with no combination: created under its order_detail name, so matched'],
+            [[$sweater], 0.0, 0.0, null, true, null, [['sweater', '28.72', '5.74', '34.46']], 'a combination after an accepted update: matched by its order_detail name'],
+            [[$sweater], 0.0, 0.0, null, false, null, [['sweater', '7.23', '1.45', '8.68'], ['mug', '14.98', '3.00', '17.98'], ['notebook', '6.50', '1.30', '7.80']], 'a combination with no update accepted: its created name is not known, so spread'],
+            [[self::line(20.00, 24.00, '20.000', '0', 'Shirt - Kids - Size : S', '20.00', 5)], 0.0, 0.0, null, false, [$shirt, $kids, $order[2]], [['shirt', '6.28', '1.25', '7.53'], ['kids', '6.27', '1.25', '7.52'], ['mug', '7.46', '1.49', '8.95']], 'a product whose name begins with another\'s: never matched to it by prefix, spread'],
+            [[self::line(23.80, 28.56, '20.000', '0', 'Shirt - Kids', '50.00')], 0.0, 0.0, null, true, ['lines' => [$shirt, $kids, $order[2]], 'refunds' => [self::twoRefund('-60.00', ['kids' => '-60.00'])]], [['shirt', '10.87', '2.17', '13.04'], ['mug', '12.93', '2.59', '15.52']], 'its line refunded in full: spread, never moved to another product\'s line'],
+            [[$odd('Mug', '11.90', 0), $odd('Notebook (Paper: Ruled)', '12.90', 3), $odd('Sweater (Size: S)', '28.72', 7)], 0.0, 0.0, [10.00, 2], true, ['lines' => array_merge($order, [$two('laptop', 'PHYSICAL', 'Laptop', '1000.00', '1000.00', '1200.00')])], [['sweater', '2.78', '0.55', '3.33'], ['mug', '2.78', '0.56', '3.34'], ['notebook', '2.78', '0.55', '3.33']], 'a specific amount over three products: shared in cents over them, no cent on a line not on the slip'],
+            [[self::line(59.50, 71.40, '20.000', '0', 'Mug', '11.90')], 2.40, 2.00, null, true, ['lines' => [$order[0], $order[2]]], [['shipping', '2.00', '0.40', '2.40'], ['mug', '59.50', '11.90', '71.40']], 'every product line used up by the slip, shipping still to spread: no division by zero'],
+            [[self::line(8.25, 9.90, '20.000', '0', 'Mug', '8.25')], 0.0, 0.0, null, true, ['lines' => [$order[2], $two('mug2', 'PHYSICAL', 'Mug', '8.25', '16.50', '19.80')]], [['mug2', '8.25', '1.65', '9.90']], 'two lines of the same name: the one at the product\'s unit price'],
+            [[$giftWrap], 0.0, 0.0, null, true, null, [['sweater', '2.52', '0.50', '3.02'], ['mug', '5.22', '1.04', '6.26'], ['notebook', '2.27', '0.45', '2.72']], 'a product with no line at Two: spread over the rate\'s product lines by what each has left'],
+            [[$mugs, $giftWrap], 0.0, 0.0, null, true, null, [['sweater', '3.18', '0.64', '3.82'], ['mug', '27.76', '5.55', '33.31'], ['notebook', '2.86', '0.57', '3.43']], 'two mugs and a product with no line: the mugs to the mug line, the rest spread over what is left'],
+            [[$mugs], 0.0, 0.0, null, true, ['lines' => $order, 'refunds' => [self::twoRefund('-60.00', ['mug' => '-60.00'])]], [['sweater', '7.53', '1.51', '9.04'], ['mug', '9.50', '1.90', '11.40'], ['notebook', '6.77', '1.35', '8.12']], 'more than the mug line has left: it takes what is left, the excess spread over the other product lines'],
+            [[self::line(9.92, 11.90, '20.000', '0', 'Mug', '11.90')], 0.0, 0.0, null, true, ['lines' => [$two('mugA', 'PHYSICAL', 'Mug', '11.90', '59.50', '71.40'), $two('mugB', 'PHYSICAL', 'Mug', '11.90', '59.50', '71.40')], 'refunds' => [self::twoRefund('-71.40', ['mugA' => '-71.40'])]], [['mugB', '9.92', '1.98', '11.90']], 'two lines of the same name, one refunded in full: the other takes it, and nothing reads the exhausted line'],
+            [[self::line(8.25, 9.90, '20.000', '0', 'Mug', '9.90')], 0.0, 0.0, null, true, ['lines' => [$order[2], $two('mugB', 'PHYSICAL', 'Mug', '11.90', '19.80', '23.76', 2.0)]], [['mugB', '8.25', '1.65', '9.90']], 'two lines of the same name, one discounted: matched on the net per unit after the discount, not the unit price before it'],
+            [[self::line(10.00, 12.00, '20.000', '0', 'My carrier', '10.00')], 0.0, 0.0, null, true, null, [['sweater', '2.52', '0.50', '3.02'], ['mug', '5.22', '1.04', '6.26'], ['notebook', '2.27', '0.45', '2.72']], 'a product named exactly like the carrier: never matched to the shipping line'],
+            [[$sweater], 0.0, 0.0, null, 'placement', null, [['sweater', '28.72', '5.74', '34.46']], 'a combination on another order of a split cart: the update is read from the order holding the Two row'],
+        ];
+        foreach ($cases as $i => [$lines, $shipIncl, $shipExcl, $specific, $updated, $twoLines, $expected, $desc]) {
+            StubStore::reset();
+            PrestaShopLogger::$logs = [];
+            StubStore::$dbExecuteSResponses = [$lines];
+            $twoLines = $twoLines ?? $order;
+            $twoOrder = self::fulfilledOrder(2000.00, $twoLines['refunds'] ?? []);
+            $twoLines = $twoLines['lines'] ?? $twoLines;
+            $twoOrder['line_items'] = $twoLines;
+            $module = self::makeModule($twoOrder, ['two_order_id' => 'two-order-uuid', 'two_update_hash' => $updated === true ? 'hash' : null]);
+            $module->merchantCountry = 'GB';
+            $module->readSlipLinesFromDb = true;
+            $order5100 = self::makeOrder($updated === 'placement' ? 5101 : 5100);
+            $order5100->carrier_tax_rate = 20.0;
+            if ($updated === 'placement') {
+                // The slip's order has a row of its own, but the hash is written on the placement order's.
+                StubStore::$orders[5101] = ['module' => 'twopayment'];
+                $order5100->brothers = [self::makeOrder(5100)];
+                $module->paymentRows[5100] = ['two_order_id' => 'two-order-uuid', 'two_update_hash' => 'hash'];
+            }
+            $slip = self::makeSlip(700 + $i, (float)array_sum(array_column($lines, 'amount_tax_incl')), $shipIncl);
+            $slip->total_shipping_tax_excl = $shipExcl;
+            $slip->total_products_tax_excl = (float)array_sum(array_column($lines, 'amount_tax_excl'));
+            $slip->amount = $specific[0] ?? null;
+            $slip->order_slip_type = $specific[1] ?? 0;
+
+            // As PrestaShop's debug mode does, a warning is an exception, which leaves the slip not sent.
+            set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+                throw new ErrorException($message, 0, $severity, $file, $line);
+            });
+            try {
+                $module->hookActionOrderSlipAdd(['order' => $order5100, 'order_slip' => $slip]);
+            } finally {
+                restore_error_handler();
+            }
+
+            $refunds = $module->refundCalls();
+            TinyAssert::count(1, $refunds, $desc . ': sent');
+            $got = self::sentLines($refunds[0]['payload'], $twoLines);
+            TinyAssert::same($expected, $got, $desc . ': got ' . json_encode($got));
+            TinyAssert::same($refunds[0]['payload']['amount'], number_format(array_sum(array_column($got ?? [], 3)), 2, '.', ''), $desc . ': lines sum to the amount');
+        }
+    }
+
+    /**
      * TWO-26143: the Refunded remainder is sent as lines too, each rate's share spread over that rate's lines at Two.
      * Columns: the Two order's lines, expected [id, net, tax, gross] lines (null: sent without lines), description.
      */
@@ -489,11 +585,18 @@ final class RefundSpec
             public int $id_currency = 826;
             public $carrier_tax_rate = 0;
             public $round_type = null;
+            /** The other orders core split the cart into. */
+            public array $brothers = [];
 
             public function __construct(int $id, string $module)
             {
                 $this->id = $id;
                 $this->module = $module;
+            }
+
+            public function getBrother(): array
+            {
+                return $this->brothers;
             }
         };
     }
@@ -557,9 +660,12 @@ final class RefundSpec
                 $this->paymentData = $paymentData;
             }
 
+            /** Payment rows by order id, for a split cart; any other order reads $paymentData. */
+            public array $paymentRows = [];
+
             public function getTwoOrderPaymentData($id_order)
             {
-                return $this->paymentData;
+                return $this->paymentRows[(int)$id_order] ?? $this->paymentData;
             }
 
             public function setTwoOrderPaymentData($id_order, $payment_data)
@@ -885,11 +991,12 @@ final class RefundSpec
      * `rate` is the plain sum the query used to return, so a row that fails
      * on the old code fails on its behaviour rather than on a missing key.
      */
-    private static function line(float $excl, float $incl, string $rates, string $method = '0'): array
+    private static function line(float $excl, float $incl, string $rates, string $method = '0', ?string $name = null, string $unit = '0', int $combination = 0): array
     {
         $sum = array_sum(array_map('floatval', explode(',', $rates)));
+        $row = ['amount_tax_excl' => (string)$excl, 'amount_tax_incl' => (string)$incl, 'placed_rates' => $rates, 'tax_computation_method' => $method, 'rate' => (string)$sum];
 
-        return ['amount_tax_excl' => (string)$excl, 'amount_tax_incl' => (string)$incl, 'placed_rates' => $rates, 'tax_computation_method' => $method, 'rate' => (string)$sum];
+        return $name === null ? $row : $row + ['product_name' => $name, 'product_attribute_id' => (string)$combination, 'total_price_tax_excl' => $unit, 'product_quantity' => '1'];
     }
 
     /**
