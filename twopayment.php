@@ -18667,7 +18667,14 @@ class Twopayment extends PaymentModule
      */
     private function getTwoSurchargeFeeBasisItems($cart)
     {
-        if ($this->twoDeferredShopMatch !== null || TwoOrderPostprocessing::runnableSubscribers() === array()) {
+        try {
+            $delegated = TwoOrderPostprocessing::runnableSubscribers() !== array();
+        } catch (Throwable $e) {
+            // A module on the hook that fails to load fails the order request with the hook's code; the sync keeps
+            // the basis it had before, rather than escape the caller's catch.
+            $delegated = false;
+        }
+        if (!$delegated) {
             return $this->getTwoProductItems($cart);
         }
         $this->twoDeferredShopMatch = array();

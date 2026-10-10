@@ -151,6 +151,18 @@ final class OrderPostprocessingSpec
         ];
     }
 
+    /** The buyer fee on: 5% on 30 days, at the carrier group's 21%, quoted 5.00 by module()'s harness. */
+    private static function enableBuyerFee(Cart $cart): void
+    {
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, (string) self::CARRIER_GROUP);
+        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30]');
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', '1');
+        Context::getContext()->cart = $cart;
+        Context::getContext()->cookie->two_payment_term = 30;
+    }
+
     private static function order(): PlacedOrderStub
     {
         $order = PlacedOrderStub::fromCart(self::ORDER, self::CART);
@@ -838,11 +850,7 @@ final class OrderPostprocessingSpec
         $carried = ['PHYSICAL' => '0.21', 'SHIPPING_FEE' => '0', 'DIGITAL' => '0'];
         foreach ($cases as [$mismatch, $type, $handler, $expected, $description]) {
             $cart = self::seed(false, true);
-            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
-            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
-            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, (string) self::CARRIER_GROUP);
-            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30]');
-            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', '1');
+            self::enableBuyerFee($cart);
             if ($mismatch === 'product') {
                 StubStore::$taxRuleRates[9000 + self::PRODUCT] = 10.0;
             }
@@ -859,8 +867,6 @@ final class OrderPostprocessingSpec
             }
             $module = self::module();
             self::harnessAsInstance($module);
-            Context::getContext()->cart = $cart;
-            Context::getContext()->cookie->two_payment_term = 30;
             if ($handler) {
                 // A handler that corrects the line's rate to what its amounts carry, and opts back in to nothing.
                 Hook::$subscribers[TwoOrderPostprocessing::HOOK]['twoorderpostprocessingtest'] = static function (array $params) use ($type, $carried): void {
@@ -975,28 +981,56 @@ final class OrderPostprocessingSpec
      */
     private static function testHandlerDetectionFailureFailsTheRequestWithTheHookCode(): void
     {
-        $broken = static function (): void {
-            StubStore::$moduleInstances['brokenhandler'] = new class {
+        $broken = static function (bool $asError = false): void {
+            StubStore::$moduleInstances['brokenhandler'] = new class ($asError) {
                 public $name = 'brokenhandler';
+                private bool $asError;
+
+                public function __construct(bool $asError)
+                {
+                    $this->asError = $asError;
+                }
 
                 public function __get($property)
                 {
-                    throw new RuntimeException('the module failed to load');
+                    throw $this->asError ? new Error('the module failed to load') : new RuntimeException('the module failed to load');
                 }
             };
             Hook::$execLists[TwoOrderPostprocessing::HOOK] = [['module' => 'brokenhandler']];
         };
-        $cart = self::seed(false, true);
-        $module = self::module();
-        self::harnessAsInstance($module);
-        $broken();
-        $error = null;
-        try {
-            $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
-        } catch (Throwable $e) {
-            $error = $e;
+        // Columns: the module throws an Error (not an Exception), buyer fee on, description.
+        $cases = [
+            [false, false, 'an exception, no buyer fee'],
+            [true, false, 'an error, no buyer fee'],
+            [false, true, 'an exception, the buyer fee on'],
+            [true, true, 'an error, the buyer fee on'],
+        ];
+        foreach ($cases as [$asError, $fee, $description]) {
+            $cart = self::seed(false, true);
+            if ($fee) {
+                self::enableBuyerFee($cart);
+            }
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $broken($asError);
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-9701', $cart, self::merchantUrls());
+            } catch (Throwable $e) {
+                $error = $e;
+            }
+            TinyAssert::same(TwoOrderPostprocessing::CODE_HOOK_FAILED, $error instanceof TwoOrderPostprocessingException ? $error->getTwoCode() : ($error === null ? null : get_class($error)), $description . ': an order create fails with the code');
+            if ($fee) {
+                // The buyer's own sync, as the checkout's AJAX call makes it: the basis it always had, so it succeeds.
+                $synced = null;
+                try {
+                    $synced = $module->syncTwoSurchargeCartLine($cart, true)['success'];
+                } catch (Throwable $e) {
+                    $synced = get_class($e);
+                }
+                TinyAssert::same(true, $synced, $description . ': the buyer sync succeeds');
+            }
         }
-        TinyAssert::same(TwoOrderPostprocessing::CODE_HOOK_FAILED, $error instanceof TwoOrderPostprocessingException ? $error->getTwoCode() : ($error === null ? null : get_class($error)), 'an order create fails with the code');
 
         self::seed(false, true);
         $module = self::module();
