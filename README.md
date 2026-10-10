@@ -193,16 +193,20 @@ Two requires a `tax_code` on every line at a 0% rate for a Spanish merchant, on 
 
 **1. The mapping.** In **Module Configuration → Order management → Tax codes for 0% lines**, each of the shop's tax rules groups has a dropdown of the codes Two lists for the merchant's country (`GET /v1/tax_codes/<country>`, cached for a day), plus **(none)**, the default. A 0% line taxed by a mapped group carries its code, for any merchant country. A product line maps by the product's tax rules group; shipping by the group that supplied its rate: the Default shipping tax code's, or the carriers' when every carrier in the selected delivery option declares the same group; wrapping by the gift-wrapping group; ecotax by the ecotax group; the buyer fee by its own group. A "No tax" carrier, no carrier, or carriers declaring different groups give no group, so only the derivation applies. Codes that need a reason from the caller (today only `ES_IVA_EXEMPT_OTHER`) are not offered: a merchant who needs one sets the code and its `tax_exemption_reason_code` in the order postprocessing hook. If the list cannot be fetched, the section shows why (retrying at most every five minutes), and saved mappings keep working at checkout. A stored mapping the form could not have written withholds the payment method at checkout, and the configuration health panel names it; an order with no 0% line never reads the mapping.
 
-**2. The derivation**, for a Spanish merchant and an unmapped line. A product is a service when it is virtual, and goods otherwise; a shipping, wrapping, fee or discount line counts as goods when the order holds any physical product, and as a service otherwise. Goods follow the delivery address (the invoice address when there is none); services follow the buyer company's country, the country the module sends as `buyer.company.country_prefix`.
+**2. The derivation**, for a Spanish merchant and an unmapped line. A product is a service when it is virtual, and goods otherwise; a shipping, wrapping, fee or discount line counts as goods when the order holds any physical product, and as a service otherwise. Goods follow the delivery address (the invoice address when there is none); services follow the buyer company's country, the country the module sends as `buyer.company.country_prefix`. The Canary Islands, Ceuta and Melilla count as outside the EU: the delivery postcode decides for goods, and for a Spanish buyer of services the postcode of the buyer company's address (the address `country_prefix` comes from). Both intra-community codes also need the buyer's VAT number (below) to name an EU country other than the merchant's; without one the line gets no code, and Two's API refuses the order.
 
 | Line | Condition | Code |
 |---|---|---|
 | Goods | Delivered outside the EU (Monaco counts as France) | `ES_IVA_EXPORT` |
 | Goods | Delivered to the Canary Islands (postcodes 35, 38), Ceuta (51) or Melilla (52) | `ES_IVA_EXPORT` |
-| Goods | Delivered to another EU country, for a buyer company in another EU country (not necessarily the same one) | `ES_IVA_INTRA_COMMUNITY` |
-| Goods | Anything else: mainland Spain or the Balearics, or an EU destination with a Spanish buyer | none |
-| Service | Buyer company in another EU country | `ES_IVA_REVERSE_CHARGE` |
-| Service | Buyer company in Spain or outside the EU | none |
+| Goods | Delivered to another EU country, for a buyer company in another EU country (not necessarily the same one), whose VAT number names an EU country other than the merchant's (not necessarily either of those) | `ES_IVA_INTRA_COMMUNITY` |
+| Goods | Anything else: mainland Spain or the Balearics, an EU destination with a Spanish buyer, or an EU buyer with no such VAT number | none |
+| Service | Buyer company in another EU country, whose VAT number names an EU country other than the merchant's | `ES_IVA_INTRA_COMMUNITY_SERVICES` |
+| Service | Buyer company in another EU country with no such VAT number | none |
+| Service | Buyer company outside the EU, or a Spanish buyer company whose address is in the Canary Islands, Ceuta or Melilla | `ES_IVA_NON_EU_SERVICES` |
+| Service | Buyer company in mainland Spain or the Balearics | none |
+
+**The buyer's VAT number** (TWO-26153) is the invoice address's **VAT number** field, the one the `vatnumber` module validates; the module never reads it as the organisation number. PrestaShop keeps no VIES (EU VAT Information Exchange System) result on the address, so the number is used as entered. It is normalised: upper-cased and stripped of everything but letters and digits; a value with no digit left (a placeholder such as `n/a` or `none`) is no number; a `GR` prefix is written as `EL`; and the invoice address country is prepended when it does not start with two letters (Greece as `EL`, which also reads back as Greece; Monaco as `FR`, the prefix its businesses hold, and an `MC` prefix never counts). A leading label is not parsed out, so `VAT: DE123456789` reads as `VATDE123456789` and qualifies for nothing. A Spanish merchant's order create sends it as the top-level `buyer_vat_number`, unless the buyer company is Spanish (Two requires a Spanish buyer's VAT number to equal its organisation number) or there is none; the key is then absent, so every other payload is unchanged. Updates and refunds do not send it: Two keeps the number given at create. An update that resolves a line afresh reads the number the same way.
 
 A 0% discount line takes the code its order's other 0% lines share; when they do not share one, it follows the goods like a charge. The code is set while the module builds the payload, so a postprocessing hook subscriber sees it and may change it.
 
@@ -427,6 +431,7 @@ Retired ids are recorded whenever the fee product is replaced. Ids from before t
 - Configure refund trigger status in module settings: **Two → Configuration → Order management → Two: Order Refunded**
 - Default: "Refunded" status triggers full refund
 - The module checks if order is already refunded to prevent duplicate refunds
+- Two refunds an order only once it is fulfilled. If the status changes to Refunded before then (for example while Two is still `FULFILLING` the order just after it shipped), no refund is sent: the order page and the order's private notes say so, and the refund is then made in the Two Merchant Portal. They say the same when the order cannot be read from Two, Two refuses the refund, or an unexpected error stops it. A cancelled order, or one Two has already refunded in full, gets no notice, as there is nothing left to refund
 
 **Partial Refunds (Credit Slips):**
 - Partial refunds created as credit slips in PrestaShop are sent to Two automatically
@@ -749,7 +754,7 @@ totals and fields the module does not itself send.
 | `fallback_shipping_tax_rate` | float or null | The rate of the module's Default shipping tax code, null when it is not set |
 | `contract_version` | int | `1` |
 | `order_lines` | array or null | Two's lines for the order, not PrestaShop's `order_detail` rows (those are on `order`): the order's line items as Two holds them, with Two's line ids. They are the lines of the last create or update Two accepted, after the subscribers' edits, as Two's `GET /v1/order/{id}` returns them. Each carries its `id`, `type`, `gross_amount`, `net_amount`, `tax_amount`, `tax_rate`, `tax_code` and the other line fields. Given on `refund` and `order_update`. Null on the other request types, when the module could not read the order from Two, and on the merchant order id sync of a repeated confirmation callback, which reads no order. Read-only: changing it changes nothing |
-| `order_refunds` | array or null | Two's refunds for the order: every refund Two already holds for it, from the same `GET /v1/order/{id}` response as `order_lines`, verbatim. Each carries its `id`, its `total_amount` (Two records refunds as negative amounts) and its `line_items`, and each refund line names the order line it credited in `prototype_id`, with the amounts refunded on it, `gross_amount` among them. Given on `refund` and `order_update`, on the same requests and with the same null rules as `order_lines`. On a refund it holds the earlier refunds, not the one being sent. Read-only: changing it changes nothing |
+| `order_refunds` | array or null | Two's refunds for the order: every refund Two already holds for it, from the same `GET /v1/order/{id}` response as `order_lines`. Each carries its `id`, its `total_amount` (Two records refunds as negative amounts) and its `line_items`, and each refund line names the order line it credited in `prototype_id`, with the amounts refunded on it, `gross_amount` among them. A refund line has its own `id` and the name, description, type, rate and tax code of the order line it was made from, and Two's responses leave its `prototype_id` empty, so where Two leaves it empty the module fills in its best match by name, description, type, rate and tax code: this is the module's inference, not Two's record. Where several order lines match, a refund's matching lines go to different order lines, the largest to the one with the most left to refund. A refund line that matches none keeps it empty, so a line renamed or re-rated by an update after a refund no longer matches its earlier refunds and reads as unrefunded. Everything else is as Two returned it. Given on `refund` and `order_update`, on the same requests and with the same null rules as `order_lines`. On a refund it holds the earlier refunds, not the one being sent. Read-only: changing it changes nothing |
 
 As on every hook, `$params` also carries core's `cookie`, `cart` and `altern`.
 `$params['cart']` is the visitor's cart from `Context`, which on an admin edit, a
@@ -1051,7 +1056,7 @@ that line's.
 What is left to refund on one of Two's order lines is that line's amount less the sum of
 what Two's earlier refunds credited it. `order_lines` gives the line's amount and
 `order_refunds` the earlier refunds, each refund line naming the order line it credited
-in `prototype_id`:
+in `prototype_id` (filled in by the module where Two's response leaves it empty):
 
 ```php
 public static function leftToRefund(array $context, $lineId)

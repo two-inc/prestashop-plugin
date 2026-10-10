@@ -11,6 +11,7 @@ final class RefundSpec
     public static function runAll(): void
     {
         self::testPartialRefundPayloadHasCorrectAmount();
+        self::testRefundedStatusBeforeFulfilmentTellsTheMerchant();
         self::testIdempotencyKeyUsesSlipId();
         self::testSequentialSlipsSameAmountIssueTwoDistinctCalls();
         self::testFullAmountSlipAfterStatusRefundIsSuppressed();
@@ -27,6 +28,7 @@ final class RefundSpec
         self::testWhatTheHookSentIsWhatIsRecorded();
         self::testSlipsAreSentAsLinesOfTheTwoOrder();
         self::testRemainderIsSentAsLinesOfTheTwoOrder();
+        self::testRemainderCreditsOnlyWhatIsLeftOnEachLine();
         self::testTheHookSeesAndCanEditTheLines();
         self::testSubtotalsThatCannotBeItemised();
         self::testSlipShippingCheckIsTheDefaultHandlers();
@@ -368,6 +370,69 @@ final class RefundSpec
     }
 
     /**
+     * TWO-26288: the Refunded remainder after two credit slips, as on a real order. Two's refund lines carry their own
+     * ids and the descriptive fields of the order line they were made from, and its responses leave prototype_id
+     * empty. Each order line takes only what is left on it: shipping, refunded in full by the second slip, takes
+     * nothing. Columns: whether Two names the parent in prototype_id, whether the mug and notebook lines look
+     * identical, expected [id, net, tax, gross] lines, description.
+     */
+    private static function testRemainderCreditsOnlyWhatIsLeftOnEachLine(): void
+    {
+        $sub = static function (string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => '0.200000'];
+        };
+        $cases = [
+            [false, false, [['sweater', '20.63', '4.12', '24.75'], ['mug', '42.73', '8.54', '51.27'], ['notebook', '18.53', '3.71', '22.24']], 'prototype_id empty, as Two returns it: each line takes what is left on it'],
+            [true, false, [['sweater', '20.63', '4.12', '24.75'], ['mug', '42.73', '8.54', '51.27'], ['notebook', '18.53', '3.71', '22.24']], 'prototype_id given: the same'],
+            [false, true, [['sweater', '20.63', '4.12', '24.75'], ['mug', '42.73', '8.54', '51.27'], ['notebook', '18.53', '3.71', '22.24']], 'two lines that look identical: each refund\'s two matching lines go to different order lines, the larger to the one with more left, so each line takes what is left on it'],
+        ];
+        foreach ($cases as [$prototype, $twins, $expected, $desc]) {
+            $line = static function (string $id, string $type, string $name, string $net, string $tax, string $gross) use ($twins): array {
+                $look = $twins && $id === 'notebook' ? 'Mug' : $name;
+                return ['id' => $id, 'name' => $look, 'description' => $look . ' description', 'type' => $type, 'tax_rate' => '0.200000', 'tax_code' => null, 'quantity' => 1.0, 'net_amount' => $net, 'tax_amount' => $tax, 'gross_amount' => $gross];
+            };
+            $lines = [
+                $line('shipping', 'SHIPPING_FEE', 'My carrier', '2.00', '0.40', '2.40'),
+                $line('sweater', 'PHYSICAL', 'Sweater', '28.72', '5.74', '34.46'),
+                $line('mug', 'PHYSICAL', 'Mug', '59.50', '11.90', '71.40'),
+                $line('notebook', 'PHYSICAL', 'Notebook', '25.80', '5.16', '30.96'),
+            ];
+            $byId = array_column($lines, null, 'id');
+            $n = 0;
+            $refund = static function (string $total, array $credited) use ($byId, $prototype, &$n): array {
+                $refundLines = [];
+                foreach ($credited as $id => $gross) {
+                    $refundLines[] = array_intersect_key($byId[$id], array_flip(['name', 'description', 'type', 'tax_rate', 'tax_code'])) + ['id' => 'refund-line-' . ++$n, 'prototype_id' => $prototype ? $id : null, 'quantity' => 1.0, 'gross_amount' => $gross];
+                }
+                return ['id' => 'refund-' . $n, 'total_amount' => $total, 'line_items' => $refundLines];
+            };
+            StubStore::reset();
+            StubStore::$orders[5100] = ['module' => 'twopayment'];
+            StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+            $twoOrder = self::fulfilledOrder(139.22, [
+                $refund('-28.56', ['sweater' => '-7.19', 'mug' => '-14.91', 'notebook' => '-6.46']),
+                $refund('-12.40', ['shipping' => '-2.40', 'sweater' => '-2.52', 'mug' => '-5.22', 'notebook' => '-2.26']),
+            ]);
+            $twoOrder['state'] = 'REFUNDED';
+            $twoOrder['line_items'] = $lines;
+            $module = self::makeModule($twoOrder);
+            $module->placedSubtotals = [$sub('116.02', '23.20')];
+            $module->refundRows[1] = ['id_order_slip' => 1, 'status' => 'SENT', 'amount' => '28.56', 'tax_subtotals' => [$sub('23.80', '4.76')]];
+            $module->refundRows[2] = ['id_order_slip' => 2, 'status' => 'SENT', 'amount' => '12.40', 'tax_subtotals' => [$sub('10.33', '2.07')]];
+            $status = new OrderState();
+            $status->id = 7;
+            $status->name = 'Refunded';
+
+            $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+
+            $calls = $module->refundCalls();
+            TinyAssert::count(1, $calls, $desc);
+            TinyAssert::same('98.26', $calls[0]['payload']['amount'], $desc . ': amount');
+            TinyAssert::same($expected, self::sentLines($calls[0]['payload'], $lines), $desc . ': got ' . json_encode($calls[0]['payload']['line_items'] ?? null));
+        }
+    }
+
+    /**
      * TWO-26143: the order postprocessing hook receives the lines, and what it returns is what is sent and recorded.
      * Columns: the subscriber's edit, expected lines sent, expected recorded amount, description.
      */
@@ -476,6 +541,8 @@ final class RefundSpec
             public bool $throwOnRead = false;
             /** Throw from the order read that follows an accepted refund. */
             public bool $throwOnReadAfterRefund = false;
+            /** What Two answers a refund POST. */
+            public array $refundResponse = ['http_status' => 201, 'id' => 'refund-uuid'];
             /** Throw from recording a refund outcome. */
             public bool $throwOnRecord = false;
             /** What getTwoUpdateOrderData() reports as the order's tax_subtotals. */
@@ -571,8 +638,14 @@ final class RefundSpec
                 }));
             }
 
+            /** Throw an Error, which the rebuild's own Exception handling does not catch, before the remainder's POST. */
+            public bool $throwOnRebuild = false;
+
             public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
             {
+                if ($this->throwOnRebuild) {
+                    throw new Error('rebuild failed');
+                }
                 return ['tax_subtotals' => $this->placedSubtotals];
             }
 
@@ -601,7 +674,7 @@ final class RefundSpec
                     throw new Error('refresh failed');
                 }
                 if ($method === 'POST' && strpos($endpoint, '/refund') !== false) {
-                    return ['http_status' => 201, 'id' => 'refund-uuid'];
+                    return $this->refundResponse;
                 }
 
                 // GET order snapshot (initial check + post-refund refresh).
@@ -981,6 +1054,80 @@ final class RefundSpec
             }
             TinyAssert::count(1, $calls, $desc);
             TinyAssert::same($expected, $calls[0]['payload'], $desc . ': got ' . json_encode($calls[0]['payload']));
+        }
+    }
+
+    /**
+     * TWO-26290: a Refunded status whose refund does not reach Two tells the merchant on the order page and in its
+     * private notes, as a skipped credit slip does, instead of only logging. A cancelled order, or one Two refunded
+     * already, has nothing left for the merchant to do, and a refund Two accepted is never reported as not sent. The
+     * remainder after earlier refunds keeps its own wording. Columns: Two state (null: none given; false: the order
+     * cannot be read), refunds Two already holds, harness switches, refund response, expected refund calls, the
+     * notice (null: none), description.
+     */
+    private static function testRefundedStatusBeforeFulfilmentTellsTheMerchant(): void
+    {
+        $full = static function (string $reason): string {
+            return 'The order was set to Refunded in PrestaShop but the refund was not sent to Two, because ' . $reason . '. Refund it in the Two Merchant Portal.';
+        };
+        $rest = static function (string $reason): string {
+            return 'The order was marked refunded in PrestaShop, but what was left to refund after its credit slips was not sent to Two, because ' . $reason . '. Refund the rest in the Two Merchant Portal.';
+        };
+        $created = ['http_status' => 201, 'id' => 'refund-uuid'];
+        $refused = ['http_status' => 400, 'error' => 'Bad request'];
+        $cases = [
+            ['FULFILLING', [], [], $created, 0, $full('the order is not fulfilled yet'), 'still fulfilling at Two: not sent, merchant told'],
+            ['CONFIRMED', [], [], $created, 0, $full('the order is not fulfilled yet'), 'not fulfilled at Two: not sent, merchant told'],
+            ['SOMETHING_NEW', [], [], $created, 0, $full('the order is not fulfilled yet'), 'unknown state at Two: not sent, merchant told'],
+            [null, [], [], $created, 0, $full('the order could not be read from the provider'), 'no state from Two: not sent, merchant told it could not be read'],
+            ['CANCELLED', [], [], $created, 0, null, 'cancelled at Two: nothing to refund, no notice'],
+            ['REFUNDED', [], [], $created, 0, null, 'already refunded at Two: no call, no notice'],
+            [false, [], [], $created, 0, $full('the order could not be read from the provider'), 'order read fails: merchant told'],
+            ['FULFILLED', [], [], $refused, 1, $full('the provider did not accept it (HTTP 400)'), 'Two refuses the refund: merchant told'],
+            ['FULFILLED', [], ['throwOnRead'], $created, 0, $full('an unexpected error stopped it'), 'exception before the refund: merchant told'],
+            ['FULFILLED', [], ['throwOnReadAfterRefund'], $created, 1, null, 'exception after Two accepted it: no notice'],
+            ['FULFILLED', [], [], $created, 1, null, 'fulfilled at Two: refund sent, no notice'],
+            ['REFUNDED', ['-50.00'], ['throwOnRecord'], $created, 1, null, 'remainder accepted, recording fails: no notice'],
+            ['REFUNDED', ['-50.00'], ['throwOnRebuild'], $created, 0, $rest('an unexpected error stopped it'), 'remainder fails before its POST: remainder wording'],
+            ['REFUNDED', ['-50.00'], [], $refused, 1, $rest('the provider did not accept it (HTTP 400)'), 'remainder refused: remainder wording'],
+            ['REFUNDED', ['-50.00'], [], $created, 1, null, 'remainder sent, no notice'],
+        ];
+        foreach ($cases as [$state, $twoRefunds, $switches, $response, $calls, $notice, $desc]) {
+            StubStore::reset();
+            StubStore::$orders[5100] = ['module' => 'twopayment'];
+            StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+            $twoOrder = self::fulfilledOrder(148.00, array_map(static function ($amount) {
+                return ['total_amount' => $amount];
+            }, $twoRefunds));
+            if ($state === false) {
+                $twoOrder = [];
+            } elseif ($state === null) {
+                unset($twoOrder['state']);
+            } else {
+                $twoOrder['state'] = $state;
+            }
+            $module = self::makeModule($twoOrder);
+            $module->placedSubtotals = [['taxable_amount' => '118.40', 'tax_amount' => '29.60', 'tax_rate' => '0.250000']];
+            $module->refundResponse = $response;
+            foreach ($switches as $switch) {
+                $module->{$switch} = true;
+            }
+            $module->context->controller = new stdClass();
+            $status = new OrderState();
+            $status->id = 7;
+            $status->name = 'Refunded';
+
+            $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+
+            $want = $notice === null ? [] : [$notice];
+            $notSent = static function (array $texts): array {
+                return array_values(array_filter($texts, static function ($t) {
+                    return strpos($t, 'was not sent') !== false;
+                }));
+            };
+            TinyAssert::count($calls, $module->refundCalls(), $desc . ': refund calls');
+            TinyAssert::same($want, $notSent($module->privateNotes), $desc . ': private notes ' . json_encode($module->privateNotes));
+            TinyAssert::same($want, $notSent($module->context->controller->warnings ?? []), $desc . ': order page warning');
         }
     }
 
