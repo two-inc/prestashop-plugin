@@ -12,7 +12,8 @@
  * 1. A code the merchant mapped to the line's tax rules group wins, for any merchant country.
  * 2. Otherwise, for a Spanish merchant only, a code derived from the order: goods follow the delivery address,
  *    services follow the country of the buyer company. The Canaries, Ceuta and Melilla are outside the EU VAT
- *    area, told by the delivery postcode for goods and by the invoice postcode for a Spanish buyer of services.
+ *    area, told by the delivery postcode for goods and, for a Spanish buyer of services, by the postcode of the
+ *    buyer company's address (the address country_prefix comes from).
  *    Both intra-community codes also need a buyer VAT number whose prefix names an EU member state other than the
  *    merchant's country (TWO-26153); without one the line gets no code and Two's API refuses it.
  * 3. Otherwise no code. The plugin never refuses and never coerces a rate: Two's API validates what is sent.
@@ -131,9 +132,11 @@ class TwoTaxCodeResolver
     }
 
     /**
-     * A buyer VAT number as the resolver and Two read it (TWO-26153): whitespace (non-breaking included), dots and
-     * hyphens stripped, upper-cased, and the address country prepended when it does not start with two letters (Greece as EL, Monaco as FR).
-     * Without an address country an unprefixed number stays unprefixed, and so names no country.
+     * A buyer VAT number as the resolver and Two read it (TWO-26153): upper-cased and stripped of everything but
+     * A-Z and 0-9; no number at all when no digit is left (a placeholder such as "n/a" or "none"); a GR prefix written
+     * as EL; and the address country prepended when it does not start with two letters (Greece as EL, Monaco as FR).
+     * Without an address country an unprefixed number stays unprefixed, and so names no country. A leading label is
+     * not parsed out: "VAT: DE123" reads as VATDE123, whose VA prefix names no EU country.
      *
      * @param mixed $raw
      * @param mixed $addressCountry alpha-2
@@ -141,9 +144,13 @@ class TwoTaxCodeResolver
      */
     public static function normaliseVatNumber($raw, $addressCountry)
     {
-        $vat = strtoupper((string) preg_replace('/[\s\x{00A0}.\-]+/u', '', (string) $raw));
-        if ($vat === '' || preg_match('/^[A-Z]{2}/', $vat) === 1) {
-            return $vat;
+        $vat = (string) preg_replace('/[^A-Z0-9]+/', '', strtoupper((string) $raw));
+        if (preg_match('/\d/', $vat) !== 1) {
+            return '';
+        }
+        if (preg_match('/^[A-Z]{2}/', $vat) === 1) {
+            // Greece's VAT prefix is EL; a GR-prefixed number is written as Two expects it.
+            return strncmp($vat, 'GR', 2) === 0 ? 'EL' . substr($vat, 2) : $vat;
         }
         $country = self::iso($addressCountry);
         // VAT prefixes: Greece is EL, and Monaco businesses hold French numbers.

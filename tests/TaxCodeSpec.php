@@ -69,7 +69,7 @@ final class TaxCodeSpec
         $tests = [
             'testUpdateKeepsPlacementCodes', 'testUpdateOfUnrecordedOrderResolvesNow', 'testUpdateReadsTheVatNumberLikeCreate',
             'testAddressFallbacks',
-            'testTheBuyerPostcodeComesFromTheCompanyAddress',
+            'testTheBuyerPostcodeComesFromTheCompanyAddress', 'testUpdateTakesTheBuyerPostcodeFromTheCompanyAddress',
             'testDescriptorMismatchSendsLinesUncoded', 'testMappingIsReadOnlyForAZeroLineAndFailsLoud',
             'testMerchantCountryIsStoredAndRefetchedOnce', 'testTaxCodeListHidesCodesNeedingAReason',
             'testTaxCodeListRetriesOnAFloor', 'testFormSaveValidatesPostedCodes', 'testOptionLabelShowsTheRateOnce',
@@ -176,6 +176,13 @@ final class TaxCodeSpec
             ['ES', 'goods', 'FR', 'ES', 'ESB12345678', '', [], [null, null], null, 'a Spanish buyer\'s VAT number is never sent'],
             ['DE', 'goods', 'FR', 'FR', 'FR123456789', '', [], [null, null], null, 'a non-Spanish merchant never sends the VAT number'],
             ['', 'goods', 'FR', 'DE', 'DE123456789', '', [], [null, null], null, 'merchant country not known yet (a cold or failed record): nothing derived, and no key'],
+            ['ES', 'service', 'ES', 'DE', 'n/a', '', [], [null, null], null, 'a placeholder "n/a" holds no digit, so is no number: never DEN/A deriving intra-community services'],
+            ['ES', 'goods', 'FR', 'DE', 'N.A.', '', [], [null, null], null, 'a placeholder "N.A." is no number, and no key'],
+            ['ES', 'goods', 'FR', 'DE', 'none', '', [], [null, null], null, 'a placeholder "none" is no number, and no key'],
+            ['ES', 'goods', 'FR', 'DE', 'DE 123/456', '', [], [self::INTRA, self::INTRA], 'DE123456', 'a slash is stripped like any other separator'],
+            ['ES', 'goods', 'FR', 'DE', 'vat: DE123456789', '', [], [null, null], 'VATDE123456789', 'a leading label is not parsed out: VA names no EU country, so nothing derived'],
+            ['ES', 'goods', 'FR', 'GR', 'gr 123456789', '', [], [self::INTRA, self::INTRA], 'EL123456789', 'a GR prefix is written as EL and still qualifies as Greece'],
+            ['ES', 'goods', 'FR', 'NL', 'nl 1234.5678.B01', '', [], [self::INTRA, self::INTRA], 'NL12345678B01', 'unchanged: letters inside a number are kept'],
         ];
     }
 
@@ -436,6 +443,21 @@ final class TaxCodeSpec
 
         TinyAssert::same('ES', $payload['buyer']['company']['country_prefix'] ?? null, 'the Spanish delivery company is the buyer');
         TinyAssert::same([null, null], self::codes($payload), 'a mainland Spanish buyer invoiced in Grenoble derives nothing (got: ' . json_encode(self::codes($payload)) . ')');
+    }
+
+    /**
+     * An update takes the buyer postcode from the buyer company's address too (TWO-26151). The company is on the
+     * invoice address in Tenerife (38001) and the delivery address is in Madrid, so a postcode read from the delivery
+     * address would derive nothing.
+     */
+    private static function testUpdateTakesTheBuyerPostcodeFromTheCompanyAddress(): void
+    {
+        self::seed('ES', 'service', 'ES', '28001', 'ES 38001', [], '0');
+        // An update reads virtual from the product record, not the cart row.
+        StubStore::$products[self::PRODUCT]['is_virtual'] = 1;
+        $payload = (new TwopaymentTestHarness())->getTwoUpdateOrderData(self::order(), self::paymentRow('{"shipping":[],"wrapping":null}'));
+
+        TinyAssert::same([self::NON_EU, self::NON_EU], self::codes($payload), 'an update for a Spanish company invoiced in Tenerife derives non-EU services (got: ' . json_encode(self::codes($payload)) . ')');
     }
 
     private static function testDescriptorMismatchSendsLinesUncoded(): void
