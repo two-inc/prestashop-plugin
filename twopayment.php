@@ -5583,7 +5583,9 @@ class Twopayment extends PaymentModule
             // order_detail name. Order create sends the cart's product name, which core also stores as the order_detail
             // name, adding the combination's attributes, so it is that name only for a product with no combination; a
             // combination's line, with no update accepted, has a name the module does not know and is not matched.
-            $updated = !empty($orderpaymentdata['two_update_hash']);
+            // The hash is kept on the row of the order holding the Two row, which another order of a split cart is not.
+            $placement = $this->getTwoOrderGroupPaymentData($order);
+            $updated = $placement !== null && !empty($placement['row']['two_update_hash']);
             foreach (array_keys($kind_gross) as $rate) {
                 if (isset($kind_gross[$rate]['slip_products'])) {
                     $kind_gross[$rate]['slip_products'] = array_values(array_filter($kind_gross[$rate]['slip_products'], function ($product) use ($updated) {
@@ -6323,11 +6325,11 @@ class Twopayment extends PaymentModule
      * amount is first shared in cents over its parts (the shipping, each slip product, and any product share the slip
      * cannot name), so the products' shares sum exactly to their part of it. A product's line is the rate's product
      * line named exactly as the product was sent, which the caller gives as the slip row's order_detail name; where
-     * several lines carry that name, those at the row's unit price, if any. A product takes no more than its line has
+     * several lines carry that name, those at the row's net per unit, if any. A product takes no more than its line has
      * left. What it cannot place (no line of that name, or less left than its share) is left for the rate's spread,
      * together with the shipping and any unnamed share, and $kinds is set to weight that spread.
      *
-     * @param array $refunded the refund's kinds at the rate, with slip_products: entries of name, unit_price and gross
+     * @param array $refunded the refund's kinds at the rate, with slip_products: entries of name, unit_price (net per unit) and gross
      * @param array $lines the rate's Two lines with a positive net, by id, whatever they have left
      * @param array $left what each line has left, reduced by what is credited here
      * @param float $gross the rate's amount
@@ -6357,15 +6359,14 @@ class Twopayment extends PaymentModule
                 }
             }
             if (count($matched) > 1) {
+                // Net per unit after reductions on both sides: a line's unit_price is before its discount.
                 $at_price = array_filter($matched, function ($line) use ($product) {
-                    return isset($line['unit_price']) && $this->getTwoRoundAmount((float)$line['unit_price']) === $product['unit_price'];
+                    return !empty($line['quantity']) && $this->getTwoRoundAmount((float)$line['net_amount'] / (float)$line['quantity']) === $product['unit_price'];
                 });
                 $matched = $at_price !== array() ? $at_price : $matched;
             }
-            $caps = array();
-            foreach (array_keys($matched) as $id) {
-                $caps[$id] = isset($left[$id]) ? $left[$id] : 0.0;
-            }
+            // Only lines with something left can take a share.
+            $caps = array_intersect_key($left, $matched);
             $take = min($share, round(array_sum($caps), 2));
             foreach ($take > 0 ? $this->allocateTwoAmountWithinCaps($take, $caps, $caps) : array() as $id => $amount) {
                 $credited[$id] = round((isset($credited[$id]) ? $credited[$id] : 0.0) + $amount, 2);
@@ -6566,7 +6567,8 @@ class Twopayment extends PaymentModule
      * applied them: compounded for tax_computation_method 2, added otherwise.
      *
      * @param object $slip OrderSlip
-     * @return array rows of amount_tax_excl, amount_tax_incl, rate, product_name, product_attribute_id and unit_price_tax_excl
+     * @return array rows of amount_tax_excl, amount_tax_incl, rate, product_name, product_attribute_id,
+     *   total_price_tax_excl and product_quantity
      */
     public function getTwoCreditSlipTaxLines($slip)
     {
@@ -6575,7 +6577,8 @@ class Twopayment extends PaymentModule
             return $this->twoCreditSlipTaxLines[$id];
         }
         $rows = Db::getInstance()->executeS(
-            'SELECT osd.`amount_tax_excl`, osd.`amount_tax_incl`, od.`tax_computation_method`, od.`product_name`, od.`product_attribute_id`, od.`unit_price_tax_excl`,'
+            'SELECT osd.`amount_tax_excl`, osd.`amount_tax_incl`, od.`tax_computation_method`, od.`product_name`, od.`product_attribute_id`,'
+            . ' od.`total_price_tax_excl`, od.`product_quantity`,'
             . ' (SELECT GROUP_CONCAT(t.`rate`) FROM `' . _DB_PREFIX_ . 'order_detail_tax` odt'
             . ' INNER JOIN `' . _DB_PREFIX_ . 'tax` t ON t.`id_tax` = odt.`id_tax`'
             . ' WHERE odt.`id_order_detail` = osd.`id_order_detail`) AS `placed_rates`'
@@ -6625,9 +6628,9 @@ class Twopayment extends PaymentModule
         }
         $factor = $products_amount > 0 ? $products_amount / $lines_incl : 0.0;
         foreach ($factor > 0 ? $this->getTwoCreditSlipTaxLines($slip) : array() as $line) {
-            $product = isset($line['product_name'], $line['unit_price_tax_excl']) ? array(
+            $product = isset($line['product_name'], $line['total_price_tax_excl']) && (int)$line['product_quantity'] > 0 ? array(
                 'name' => (string)$line['product_name'],
-                'unit_price' => $this->getTwoRoundAmount((float)$line['unit_price_tax_excl']),
+                'unit_price' => $this->getTwoRoundAmount((float)$line['total_price_tax_excl'] / (int)$line['product_quantity']),
                 'combination' => !empty($line['product_attribute_id']),
             ) : null;
             $this->addTwoTaxBucket($buckets, (float)$line['rate'], (float)$line['amount_tax_excl'] * $factor, (float)$line['amount_tax_incl'] * $factor, 'products', $product);
@@ -6789,7 +6792,7 @@ class Twopayment extends PaymentModule
      * @param float $excl
      * @param float $incl
      * @param string|null $kind what getTwoRefundLineKind() names the Two lines this part refunds, tracked per rate
-     * @param array|null $product a product part's order_detail name, unit price and whether it is a combination;
+     * @param array|null $product a product part's order_detail name, net per unit and whether it is a combination;
      *   tracked per rate (TWO-26293)
      */
     private function addTwoTaxBucket(array &$buckets, $rate_percent, $excl, $incl, $kind = null, $product = null)
