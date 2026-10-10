@@ -273,7 +273,7 @@ final class PlacedOrderUpdateSpec
             }, $track, 'tracking', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.15 = 35.00 NOK', 'a rate the carrier provided that does not reconcile goes out as is, never swapped for the config'],
             [$placedAtUnreconciledDefault, function ($o) use ($handler, $unchanged) {
                 $handler($unchanged);
-            }, 'edit', 'no PUT, paid 35.00, logged TwoPayment CRITICAL Tax Formula Error - Item: Placed Carrier, Got: 2, Expected: 1.2 (diff: 0.8), marked not sent', 'the same, with a merchant handler that leaves the line: the shop-match check stands down, the line\'s own formula still refuses it'],
+            }, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.15 = 35.00 NOK, paid 35.00', 'the same, with a merchant handler that leaves the line: the shop-match check stands down, and the line goes to Two as it is, whose API judges its arithmetic (TWO-26283)'],
             [$placedAtUnreconciledDefault, function ($o) use ($handler, $atRate) {
                 $handler($atRate('SHIPPING_FEE', '0.25'));
             }, 'edit', 'PUT PHYSICAL 20.00/5.00/25.00@0.25; SHIPPING_FEE 8.00/2.00/10.00@0.25 = 35.00 NOK, paid 35.00', 'the same, with a merchant handler that declares the rate the amounts carry: sent as returned'],

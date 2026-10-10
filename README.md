@@ -714,9 +714,9 @@ shop recorded is not the order the merchant wants invoiced (a charge the shop le
 untaxed that the business books as VAT-inclusive, or a cost the shop adds to the cart
 total outside any carrier, say), the merchant fixes it up in their own module on this
 hook, before the order reaches Two's API. The module fires the hook consistently and
-sends the payload as the merchant's handler returns it, once it adds up. A handler that
-changes gross, net or tax is not held to what the shop worked out: it owns that, and
-Two's API validates whatever arrives.
+sends the payload as the merchant's handler returns it. A handler that changes gross,
+net or tax is not held to what the shop worked out: it owns that, and Two's API
+validates whatever arrives.
 
 ### The hook
 
@@ -779,7 +779,7 @@ subscribers cheap.
 
 ### The module's checks
 
-The module checks every order payload it builds. Its checks are of two kinds.
+The module checks every order payload it builds against the shop.
 
 **Shop-match checks** ask whether the payload matches what PrestaShop worked out:
 
@@ -791,21 +791,20 @@ The module checks every order payload it builds. Its checks are of two kinds.
 - on a credit slip, the refunded shipping against the Default shipping tax code the
   order was placed at.
 
-**Consistency checks** ask whether the payload adds up by itself, on the order intent,
-create and update:
-
-- each line's arithmetic: gross = net + tax, tax at the line's declared rate, and net =
-  quantity x unit price - discount;
-- the order has at least one line;
-- the tax subtotals (or, when the payload sends none, the ones its lines give) agree
-  with the lines;
-- the order's `net_amount`, `tax_amount` and `gross_amount` agree with the lines.
+**Whether the payload adds up by itself is Two's API's to judge.** The module does not
+check a payload's own arithmetic: each line's gross = net + tax, its tax at its declared
+rate and its net = quantity x unit price - discount, that the order has a line, or that
+the tax subtotals and the order's `net_amount`, `tax_amount` and `gross_amount` agree
+with the lines. Two's API validates the order data it receives, and a check in the module
+can only be relaxed or corrected when every merchant upgrades, so the module sends such a
+payload as it is and Two's response decides.
 
 **The default handler.** The module registers its own handler on the hook, and that
 handler runs the shop-match checks. It runs only when no merchant handler is
 registered: no other module on the hook that the module would call (registered for the
-shop, active, and allowed by "Disable non PrestaShop modules"). With none, every
-request has the outcome it had before: sent, or refused with the same refusal. Where
+shop, active, and allowed by "Disable non PrestaShop modules"). With none, each
+shop-match check has the outcome it always had: passed, or refused with the same
+refusal. Where
 more than one check or build failure applies, which one is reported can differ (see
 "Order of refusals" below). The module runs its handler itself, after the hook, so its position under Design >
 Positions does not matter.
@@ -817,13 +816,10 @@ gross, an added line, a re-split) is its decision, and the module does not compa
 with the cart. An enabled handler stands the default handler down even when it changes
 nothing.
 
-**Always.** The consistency checks run after the hook on the payload as the hooks
-returned it, with or without a merchant handler, with the tolerances and messages they
-always had: the order intent pre-check still only warns when the lines' totals fail
-gross = net + tax. A payload that does not add up is refused locally and nothing is
-sent. A line's tax-at-declared-rate check covers the same ground as the shop-match check
-on its declared rate, so a line the module built whose rate its amounts contradict is
-still refused unless the handler changes that line.
+**Nothing else is checked after the hook.** With a merchant handler registered, the
+payload it returns is sent as it is, even one that does not add up, or a line the module
+built whose declared rate its amounts contradict, which the handler left unchanged. Two's
+API judges it.
 
 **Opting back in.** A merchant handler can run the module's shop-match checks itself on
 the payload it returns, once it has made its edits. Here it adds a cost outside any
@@ -873,15 +869,16 @@ the pricing: the cart carries the fee line the payload sends, and a later update
 that fee from the placed order. A subscriber that adds a line or changes gross does not
 change that price (see [The buyer fee is priced before the hook](#the-buyer-fee-is-priced-before-the-hook)).
 
-**Order of refusals.** With no merchant handler the checks keep their order among
-themselves, but they now run after the payload is built. A build failure that used to
+**Order of refusals.** With no merchant handler the shop-match checks keep their order
+among themselves, but they now run after the payload is built. A build failure that used to
 come after a check (a negative discount after a product's declared rate, an invalid
 address or an unreadable tax code mapping after any check) is now the refusal reported
 when both apply.
 
 ### What the module does with the result
 
-The payload goes out as the subscribers return it, once the checks above pass.
+The payload goes out as the subscribers return it, once the shop-match checks above
+pass where they run.
 
 Two's API validates what arrives, and its error message is written to the module log
 and, for an order update, to the order's private messages. With a subscriber that
@@ -1030,9 +1027,9 @@ public static function resplitUntaxedRefund(array $payload, $rate)
 On a 100.00 product at 21% with 29.00 of untaxed shipping, the shipping line becomes
 23.97 net + 5.03 tax = 29.00, and the order 123.97 + 26.03 = 150.00: the same gross,
 split the way the merchant books it. Without the `recomputeTwoOrderTotals()` call the
-tax subtotals no longer match the lines, and the module's consistency checks refuse the
-order; the Debug Mode diff then names only the shipping line's fields, which points
-straight at the missing update.
+order goes to Two with tax subtotals and totals that no longer match the lines, for Two's
+API to judge; the Debug Mode diff then names only the shipping line's fields, which
+points straight at the missing update.
 
 A PrestaShop refund carries no lines: a full refund has no body, and a credit slip, or
 what is left after slips, sends `{amount, currency, tax_subtotals}`. Its `tax_subtotals`
@@ -1101,8 +1098,8 @@ public static function addOutsideCarrierLine(array $payload, array $context, $ra
 A 29.00 cost becomes a 23.97 + 5.03 shipping line at 21%, on the create and on later
 updates alike, beside the carrier's shipping as the module built it, and the order gross
 becomes the cart's. The `recomputeTwoOrderTotals()` call is what keeps the order totals and
-`tax_subtotals` consistent with the new line; without it the consistency checks refuse
-the order.
+`tax_subtotals` consistent with the new line; without it they no longer match the lines
+when the order reaches Two's API.
 
 A working subscriber, exercised on every request type in CI, is
 `tests/integration/fixtures/twoorderpostprocessingtest`. Its `resplitShipping()`,
@@ -1227,8 +1224,7 @@ and the offline suite fails if they drift apart.
 
 ### Discrepancy snapshot
 When an order is refused by a tax or totals gate (order lines not reconciling with the
-cart total, line formulas or tax subtotals that do not hold, a declared tax rate
-contradicting the applied amounts, shipping with no declared tax rate, or any other refusal while
+cart total, a declared tax rate contradicting the applied amounts, shipping with no declared tax rate, or any other refusal while
 pricing the cart), the module writes one JSON record for that cart to the PrestaShop
 log (object type `TwoDiscrepancySnapshot`, object id = the cart id). With Debug Mode on
 it also writes one for every cart that passes, as a baseline to compare against.
