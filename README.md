@@ -804,10 +804,12 @@ handler runs the shop-match checks. It runs only when no merchant handler is
 registered: no other module on the hook that the module would call (registered for the
 shop, active, and allowed by "Disable non PrestaShop modules"). With none, each
 shop-match check has the outcome it always had: passed, or refused with the same
-refusal. Where
-more than one check or build failure applies, which one is reported can differ (see
-"Order of refusals" below). The module runs its handler itself, after the hook, so its position under Design >
-Positions does not matter.
+refusal. The one difference is that the comparison with the cart's totals now also
+judges lines whose gross is not their net + tax, which it used to leave to a check of
+the payload's own arithmetic that the module no longer makes. Where more than one check
+or build failure applies, which one is reported can differ (see "Order of refusals"
+below). The module runs its handler itself, after the hook, so its position under
+Design > Positions does not matter.
 
 **A merchant handler owns shop-match correctness.** With one registered, the default
 handler stands down: the module logs, once per request, that the shop-match checks are
