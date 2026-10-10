@@ -60,8 +60,8 @@ final class ReconciliationDriftMessageSpec
         // [line net, line tax, line gross, cart net, cart gross, expected exception message (null: none), description]
         $cases = [
             [100.00, 21.00, 121.00, 110.00, 131.00, 'Order totals do not reconcile with cart totals: gross cart 131.00 vs order lines 121.00 (difference 10.00); net cart 110.00 vs order lines 100.00 (difference 10.00)', 'order lines drift from the cart'],
-            // TWO-26283: their arithmetic is Two's API's to judge, and they are not compared with the cart, as they never were.
-            [100.00, 21.00, 125.00, 100.00, 125.00, null, 'order lines failing gross = net + tax are not refused'],
+            // TWO-26283: their own arithmetic is not checked, but they are compared with the cart like any other lines.
+            [100.00, 21.00, 125.00, 100.00, 125.00, 'Order totals do not reconcile with cart totals: tax cart 25.00 vs order lines 21.00 (difference 4.00)', 'order lines failing gross = net + tax: the cart comparison names the figure that drifts'],
         ];
 
         $method = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');

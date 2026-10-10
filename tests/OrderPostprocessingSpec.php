@@ -703,7 +703,12 @@ final class OrderPostprocessingSpec
                 $payload['line_items'][0]['net_amount'] = '99.99';
 
                 return $payload;
-            }, null, 'a line whose net + tax no longer equals gross'],
+            }, null, 'a line whose net + tax no longer equals gross by a cent, within the cart tolerance'],
+            [static function (array $payload): array {
+                $payload['line_items'][0]['gross_amount'] = '131.00';
+
+                return $payload;
+            }, 'TwoCheckoutAmountException: Order totals do not reconcile with cart totals: gross cart 150.00 vs order lines 160.00 (difference 10.00)', 'a line whose gross is not its net + tax, beyond the cart tolerance: the cart comparison refuses it'],
             [static function (array $payload): array {
                 $payload['line_items'][0]['tax_rate'] = '0.10';
 
