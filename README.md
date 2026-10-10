@@ -427,7 +427,7 @@ Retired ids are recorded whenever the fee product is replaced. Ids from before t
 - Configure refund trigger status in module settings: **Two → Configuration → Order management → Two: Order Refunded**
 - Default: "Refunded" status triggers full refund
 - The module checks if order is already refunded to prevent duplicate refunds
-- Two refunds an order only once it is fulfilled. If the status changes to Refunded before then (for example while Two is still `FULFILLING` the order just after it shipped), no refund is sent: the order page and the order's private notes say so, and the refund is then made in the Two Merchant Portal
+- Two refunds an order only once it is fulfilled. If the status changes to Refunded before then (for example while Two is still `FULFILLING` the order just after it shipped), no refund is sent: the order page and the order's private notes say so, and the refund is then made in the Two Merchant Portal. They say the same when the order cannot be read from Two, Two refuses the refund, or an unexpected error stops it. A cancelled order, or one Two has already refunded in full, gets no notice, as there is nothing left to refund
 
 **Partial Refunds (Credit Slips):**
 - Partial refunds created as credit slips in PrestaShop are sent to Two automatically
