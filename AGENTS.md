@@ -236,10 +236,13 @@ builders, before the postprocessing hook, so a subscriber can change it. The REA
 - **The merchant's mapping wins, then the derivation, then nothing.** Never derive
   `ES_IVA_EXEMPT_OTHER`, `ES_IGIC_ZERO` or `ES_IPSI_ZERO`, nor `ES_IVA_REVERSE_CHARGE`, which is
   Spanish domestic reverse charge only. Services to a buyer outside the EU derive
-  `ES_IVA_NON_EU_SERVICES`, and a Spanish buyer counts as outside when its invoice postcode is in
-  the Canaries, Ceuta or Melilla (TWO-26151).
+  `ES_IVA_NON_EU_SERVICES`, and a Spanish buyer counts as outside when the postcode of the buyer
+  company's address (the address `country_prefix` comes from) is in the Canaries, Ceuta or Melilla
+  (TWO-26151).
 - **Both intra-community codes need the buyer's VAT number** (TWO-26153): the invoice address
-  `vat_number`, normalised by `TwoTaxCodeResolver::normaliseVatNumber()`, whose prefix names an EU
+  `vat_number` as entered (PrestaShop keeps no VIES result on the address, so there is no refused
+  number to drop), normalised by `TwoTaxCodeResolver::normaliseVatNumber()` (only A-Z and 0-9 kept, no
+  digit means no number, GR written as EL), whose prefix names an EU
   member state other than the merchant's country. Without one the line gets no code; never fall
   through to another code. A Spanish merchant's create alone sends it as `buyer_vat_number`, never
   for a Spanish buyer company and never as an empty key. It is never an organisation number (TWO-40).
