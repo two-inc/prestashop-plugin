@@ -5093,8 +5093,9 @@ class Twopayment extends PaymentModule
                 $two_order_id = $orderpaymentdata['two_order_id'];
 
                 if ($new_order_status->id == Configuration::get('PS_TWO_OS_CANCELLED_MAP')) {
-                    // Already cancelled at Two (the plugin moving a Two-cancelled order to the mapped status lands
-                    // here too): a second cancel would only fail, so skip it, log it and show no notice.
+                    // Already cancelled at Two: every path that mirrors a Two-side cancellation stores CANCELLED here
+                    // before moving the order (syncLocalOrderStatusFromTwoState, the buyer cancel). A second cancel
+                    // would only fail, so skip it, log it and show no notice.
                     $stored_two_state = isset($orderpaymentdata['two_order_state']) ? strtoupper(trim((string)$orderpaymentdata['two_order_state'])) : '';
                     if ($stored_two_state === 'CANCELLED') {
                         PrestaShopLogger::addLog(
@@ -22468,6 +22469,10 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Mirror a Two-side cancellation onto the PrestaShop order. The order's `twopayment` row is marked CANCELLED
+     * first, because moving the order to the mapped Order Cancelled status fires hookActionOrderStatusUpdate, which
+     * reads that row and must not send Two a cancel for an order Two already holds cancelled.
+     *
      * @param int $id_order
      * @param string $two_state
      * @return bool
@@ -22488,6 +22493,9 @@ class Twopayment extends PaymentModule
         if ($cancelled_status <= 0) {
             return false;
         }
+
+        // A narrow update: only the state column, and only an existing row (an UPDATE matching no row writes nothing).
+        Db::getInstance()->update('twopayment', array('two_order_state' => 'CANCELLED'), 'id_order = ' . $id_order);
 
         return (bool)$this->changeOrderStatus($id_order, $cancelled_status);
     }

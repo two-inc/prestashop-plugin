@@ -724,16 +724,18 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             return false;
         }
 
+        // Cancel at Two first, then mirror it locally: the mirror records the order as cancelled at Two, so the
+        // status hook it fires sends no second cancel.
+        if (!empty($attempt['two_order_id'])) {
+            $this->module->cancelTwoOrderBestEffort((string)$attempt['two_order_id'], 'confirmation_after_cancelled_attempt');
+        }
+
         $resolved_order_id = (int)$this->module->resolveTwoAttemptOrderIdForCancellation($attempt);
         if ($resolved_order_id > 0) {
             $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', array(
                 'id_order' => $resolved_order_id,
             ));
             $this->module->syncLocalOrderStatusFromTwoState($resolved_order_id, 'CANCELLED');
-        }
-
-        if (!empty($attempt['two_order_id'])) {
-            $this->module->cancelTwoOrderBestEffort((string)$attempt['two_order_id'], 'confirmation_after_cancelled_attempt');
         }
 
         $message = $this->module->l('Your order is cancelled.');
