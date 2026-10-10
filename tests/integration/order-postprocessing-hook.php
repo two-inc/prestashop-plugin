@@ -88,7 +88,7 @@ class OppProbeTwopayment extends Twopayment
             return array('http_status' => 200, 'approved' => true);
         }
 
-        // The order's lines at Two, on a read only: the context's placed_lines (TWO-26282).
+        // The order's lines at Two, on a read only: the context's order_lines (TWO-26282).
         $lines = $method === 'GET' ? array('line_items' => oppTwoLines()) : array();
 
         return $lines + array(
@@ -544,7 +544,7 @@ function oppRunScenario($name, &$detail)
                 $module->cancelTwoOrderBestEffort(OPP_TWO_ORDER, 'attempt_persist_failed');
             }),
         );
-        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'placed_lines');
+        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines');
         // Loads the fixture's class, whose static records the calls.
         Module::getInstanceByName('twoorderpostprocessingtest');
         foreach ($drivers as $driver) {
@@ -565,7 +565,7 @@ function oppRunScenario($name, &$detail)
             $checks[] = array(array($context['request_type'], $context['trigger'], $context['contract_version'], $context['cart']), array($type, $trigger, 1, $cartClass), $label . ': context');
             // The refunds and the updates are given the order's lines at Two; the others read no order from Two, or are not given it.
             $placed = in_array($type, array('refund', 'order_update'), true) ? oppTwoLines() : null;
-            $checks[] = array($context['placed_lines'], $placed, $label . ': placed_lines');
+            $checks[] = array($context['order_lines'], $placed, $label . ': order_lines');
             $checks[] = array($calls[0]['payload_out'], $calls[0]['payload_in'], $label . ': a recording subscriber changes nothing');
             $sent = array_values(array_filter($module->sent, function ($r) {
                 return strpos($r['endpoint'], '/v1/order') === 0;

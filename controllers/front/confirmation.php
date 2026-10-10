@@ -472,7 +472,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
      * @param Order $order
      * @param array $payment_data
      * @param array|null $two_order the order as Two's GET returned it earlier in this callback, for the
-     *   order postprocessing hook's placed_lines (TWO-26282); null when this callback did not read it
+     *   order postprocessing hook's order_lines (TWO-26282); null when this callback did not read it
      */
     private function syncTwoMerchantOrderId($order, $payment_data, $two_order = null)
     {

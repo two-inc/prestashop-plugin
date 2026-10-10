@@ -1324,7 +1324,7 @@ final class OrderPostprocessingSpec
     }
 
     /**
-     * TWO-26282: placed_lines is the order's line items as Two's GET returned them, verbatim, on the refunds and the
+     * TWO-26282: order_lines is the order's line items as Two's GET returned them, verbatim, on the refunds and the
      * order updates; null where the request reads no order from Two, or the read failed. An admin edit or a tracking
      * number reads the order before the build only for a merchant handler, which these cases always register.
      */
@@ -1352,7 +1352,7 @@ final class OrderPostprocessingSpec
                 $m->putTwoOrderUpdate(self::order(), $m->getTwoOrderPaymentData(self::ORDER), $payload, 'merchant_order_id', $twoOrder);
             };
         };
-        // [driver, GET status, expected placed_lines per firing, description]
+        // [driver, GET status, expected order_lines per firing, description]
         $cases = [
             [$drivers['order_update/admin_edit'], 200, [$lines], 'an admin edit: read before the build'],
             [$drivers['order_update/tracking_number'], 200, [$lines], 'a tracking number: read before the build'],
@@ -1378,7 +1378,7 @@ final class OrderPostprocessingSpec
             self::subscribe('tag', $calls);
             $driver($module, $cart);
             TinyAssert::same($expected, array_map(static function ($c) {
-                return $c['context']['placed_lines'];
+                return $c['context']['order_lines'];
             }, $calls), $description);
         }
     }
@@ -1432,7 +1432,7 @@ final class OrderPostprocessingSpec
     private static function testEachRequestTypeFiresExactlyOnce(): void
     {
         $cases = self::requestDrivers();
-        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'placed_lines'];
+        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines'];
         foreach ($cases as [$type, $trigger, $sends, $driver, $description]) {
             $cart = self::seed(true);
             $module = self::module();

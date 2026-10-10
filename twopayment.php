@@ -5947,7 +5947,7 @@ class Twopayment extends PaymentModule
      * @param array $orderpaymentdata
      * @param array $sent getTwoSentRefunds()
      * @param float $remainder
-     * @param array|null $two_order the Two order as just read, for the rebuild's placed_lines
+     * @param array|null $two_order the Two order as just read, for the rebuild's order_lines
      * @return array TaxSubtotalSchema entries; empty when none can be derived
      */
     protected function buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, array $sent, $remainder, $two_order = null)
@@ -8724,18 +8724,18 @@ class Twopayment extends PaymentModule
             'shipping_tax_rate' => $this->resolveTwoContextShippingTaxRate($cart, $order),
             'fallback_shipping_tax_rate' => $this->resolveTwoContextFallbackShippingTaxRate($cart),
             'contract_version' => TwoOrderPostprocessing::CONTRACT_VERSION,
-            'placed_lines' => $this->getTwoPlacedLines($twoOrder),
+            'order_lines' => $this->getTwoOrderLinesAtTwo($twoOrder),
         );
     }
 
     /**
-     * The context's placed_lines (TWO-26282): the order's line items as Two holds them, verbatim from its GET
+     * The context's order_lines (TWO-26282): the order's line items as Two holds them, verbatim from its GET
      * response, so with Two's line ids. Null when there is no successful response with a list of lines.
      *
      * @param array|null $twoOrder
      * @return array|null
      */
-    public function getTwoPlacedLines($twoOrder)
+    public function getTwoOrderLinesAtTwo($twoOrder)
     {
         if (!is_array($twoOrder) || !isset($twoOrder['line_items']) || !is_array($twoOrder['line_items'])) {
             return null;
@@ -8824,7 +8824,7 @@ class Twopayment extends PaymentModule
      * @param array $headers
      * @param array|null $sentPayload set to the payload as the subscribers returned it, which is what is sent; null when refused
      * @param array|null $checks the request's payload checks, see postprocessOrderRequest()
-     * @param array|null $twoOrder the order as Two's GET returned it, for the context's placed_lines
+     * @param array|null $twoOrder the order as Two's GET returned it, for the context's order_lines
      * @return array the API response; a refusal returns http_status 0 and the code, unsent
      * @throws Exception when a payload check refuses
      */
@@ -10047,7 +10047,7 @@ class Twopayment extends PaymentModule
      * @param Order $order
      * @param array $orderpaymentdata
      * @param string $trigger the order postprocessing hook's context trigger
-     * @param array|null $twoOrder the order as Two's GET returned it, for the context's placed_lines
+     * @param array|null $twoOrder the order as Two's GET returned it, for the context's order_lines
      * @return array
      * @throws Exception
      */
