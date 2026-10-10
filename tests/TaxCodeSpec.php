@@ -32,7 +32,11 @@ final class TaxCodeSpec
     private const FEE_GROUP = 7726;
     private const ORDER = 9731;
     private const GOLDEN = __DIR__ . '/fixtures/tax-code-golden.json';
-    private const COUNTRIES = [34 => 'ES', 8 => 'FR', 1 => 'DE', 21 => 'US', 17 => 'NO', 6 => 'NL', 148 => 'MC', 9 => 'GR'];
+    private const COUNTRIES = [34 => 'ES', 8 => 'FR', 1 => 'DE', 21 => 'US', 17 => 'NO', 6 => 'NL', 148 => 'MC', 9 => 'GR', 117 => 'GB', 119 => 'CH'];
+    private const RULE = 9801;
+    private const OTHER_RULE = 9802;
+    private const TAX_ZERO = 9811;
+    private const TAX_21 = 9812;
 
     private const EXPORT = 'ES_IVA_EXPORT';
     private const INTRA = 'ES_IVA_INTRA_COMMUNITY';
@@ -48,6 +52,11 @@ final class TaxCodeSpec
         foreach (self::rows() as $row) {
             self::collect($failures, $row[10], function () use ($row, $golden) {
                 self::assertRow($row, $golden);
+            });
+        }
+        foreach (self::caseRows() as $row) {
+            self::collect($failures, end($row), function () use ($row) {
+                self::assertCaseRow(...$row);
             });
         }
         foreach (self::vatRows() as $row) {
@@ -73,6 +82,7 @@ final class TaxCodeSpec
             'testDescriptorMismatchSendsLinesUncoded', 'testMappingIsReadOnlyForAZeroLineAndFailsLoud',
             'testMerchantCountryIsStoredAndRefetchedOnce', 'testTaxCodeListHidesCodesNeedingAReason',
             'testTaxCodeListRetriesOnAFloor', 'testFormSaveValidatesPostedCodes', 'testOptionLabelShowsTheRateOnce',
+            'testFormRowsFollowTheShopRules', 'testMigrationFansTheGroupCodeOut', 'testFallbackShippingTaxCodeInTheHookContext',
         ];
         foreach ($tests as $test) {
             self::collect($failures, $test, function () use ($test) {
@@ -137,6 +147,134 @@ final class TaxCodeSpec
             ['', 'goods', 'US', '10001', 'ES', '', [], '0', [null, null], null, 'merchant country not known yet: nothing derived'],
             ['ES', 'goods', 'US', '10001', 'ES', '', [$lamp => self::ART20], '21', [null, null], 'non-zero', 'lines at 21%: untouched, mapping or not'],
         ];
+    }
+
+    /**
+     * The shared tax-code case table (TWO-26153), one row per case of the design's table, in its order, with the
+     * merchant in ES. The lamp is taxed by PRODUCT_GROUP; a second, virtual product (column cart 'mixed') by
+     * PRODUCT_GROUP + 1. PS_TAX_ADDRESS_TYPE is the delivery address, so the delivery address is the tax address.
+     *
+     * Columns: cart ('goods', 'service' or 'mixed'), discount (a 0% cart rule, the keyless line), rate ('0' or '21'),
+     * billing (invoice country, optionally a space and postcode), tax address (delivery country and postcode), invoice
+     * VAT number, the rule PRODUCT_GROUP has for the tax address (null for none, else [rate, zipcode_from,
+     * zipcode_to]), rows mapped (EX, R0 and NR of PRODUCT_GROUP; EX2 the exempt row of PRODUCT_GROUP + 1), the
+     * expected code of the lamp (or of the discount line when discount is true), description.
+     *
+     * @return array<int,array>
+     */
+    private static function caseRows(): array
+    {
+        $zero = [0, '0', '0'];
+
+        return [
+            ['goods', false, '21', 'ES', 'ES 28001', '', [21, '0', '0'], ['EX' => self::INTRA], null, '1: non-0% lines are never touched'],
+            ['goods', false, '0', 'DE', 'DE 10115', 'DE123', null, ['EX' => self::INTRA], self::INTRA, '2: step 1 exempt buyer'],
+            ['goods', false, '0', 'DE', 'DE 10115', 'de 123', null, ['EX' => self::INTRA], self::INTRA, '3: VAT read as entered, any non-empty value counts'],
+            ['goods', false, '0', 'DE', 'DE 10115', '   ', null, ['EX' => self::INTRA], null, '4: whitespace-only VAT is empty; NR on (none) gives no code'],
+            ['goods', false, '0', 'DE', 'US 10001', 'DE123', $zero, ['EX' => self::INTRA, 'R0' => self::EXPORT], self::EXPORT, '5: export: tax address outside the EU skips step 1'],
+            ['goods', false, '0', 'ES', 'ES 35001', '', [0, '35000', '35999'], ['R0' => self::EXPORT], self::EXPORT, '6: step 2 shop\'s 0% rule'],
+            ['goods', false, '0', 'US', 'US 10001', '', null, ['NR' => self::EXPORT], self::EXPORT, '7: step 3 no-rule row'],
+            ['goods', false, '0', 'DE', 'DE 10115', 'DE123', null, ['NR' => self::INTRA], null, '8: a matched row on (none) never falls through'],
+            ['goods', false, '0', 'ES', 'ES 28001', 'ESB123', null, ['EX' => self::INTRA], null, '9: merchant-country buyer is never exempt'],
+            ['goods', false, '0', 'MC', 'MC 98000', 'FR123', null, ['EX' => self::INTRA], self::INTRA, '10: Monaco is in the EU VAT area'],
+            ['goods', false, '0', 'GB BT1 1AA', 'GB BT1 1AA', 'XI123', null, ['EX' => self::INTRA], self::INTRA, '11: Northern Ireland (GB + BT postcode) is in the EU VAT area'],
+            ['goods', false, '0', 'GB SW1A 1AA', 'GB SW1A 1AA', 'GB123', null, ['EX' => self::INTRA, 'NR' => self::EXPORT], self::EXPORT, '12: Great Britain is outside'],
+            ['goods', false, '0', 'CH', 'CH 8001', 'CHE123', null, ['EX' => self::INTRA, 'NR' => self::EXPORT], self::EXPORT, '13: Switzerland is outside'],
+            ['service', false, '0', 'FR', 'FR 75001', 'FR123', null, ['EX' => self::SERVICES], self::SERVICES, '14: goods vs services comes from the merchant\'s per-group mapping'],
+            ['goods', true, '0', 'DE', 'DE 10115', 'DE123', null, ['EX' => self::INTRA], self::INTRA, '15: step 4: shared code of the order\'s coded 0% lines'],
+            ['mixed', true, '0', 'DE', 'DE 10115', 'DE123', null, ['EX' => self::INTRA, 'EX2' => self::SERVICES], null, '16: step 4: disagreeing codes give no code'],
+            ['goods', true, '0', 'DE', 'DE 10115', '', null, ['EX' => self::INTRA], null, '17: step 4 with nothing to share'],
+        ];
+    }
+
+    private static function assertCaseRow(string $cart, bool $discount, string $rate, string $billing, string $taxAddress, string $vat, ?array $rule, array $rows, ?string $expected, string $description): void
+    {
+        [$taxCountry, $taxPostcode] = explode(' ', $taxAddress, 2);
+        self::seed('ES', $cart, $taxCountry, $taxPostcode, $billing, [], $rate);
+        Configuration::updateValue('PS_TAX_ADDRESS_TYPE', 'id_address_delivery');
+        StubStore::$addresses[self::INVOICE]['vat_number'] = $vat;
+        StubStore::$taxRulesGroups[self::PRODUCT_GROUP] = ['name' => 'Lamp', 'active' => 1];
+        StubStore::$taxes[self::TAX_ZERO] = ['name' => 'IVA 0%', 'rate' => 0, 'active' => 1];
+        StubStore::$taxes[self::TAX_21] = ['name' => 'IVA 21%', 'rate' => 21, 'active' => 1];
+        if ($rule !== null) {
+            StubStore::$taxRules[self::RULE] = [
+                'id_tax_rules_group' => self::PRODUCT_GROUP, 'id_country' => array_flip(self::COUNTRIES)[$taxCountry], 'id_state' => 0,
+                'zipcode_from' => $rule[1], 'zipcode_to' => $rule[2], 'id_tax' => $rule[0] === 0 ? self::TAX_ZERO : self::TAX_21,
+            ];
+        }
+        if ($discount) {
+            self::addToTotals(Cart::ONLY_DISCOUNTS, 10.00, -1);
+        }
+        $keys = ['EX' => self::PRODUCT_GROUP . '|exempt', 'R0' => 'rule:' . self::RULE, 'NR' => self::PRODUCT_GROUP . '|none', 'EX2' => (self::PRODUCT_GROUP + 1) . '|exempt'];
+        $map = [];
+        foreach ($rows as $row => $code) {
+            $map[$keys[$row]] = $code;
+        }
+        Configuration::updateValue('PS_TWO_TAX_CODE_MAP', json_encode($map));
+        $payload = (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-' . self::CART, new Cart(self::CART), self::merchantUrls());
+
+        $line = $payload['line_items'][0];
+        foreach ($payload['line_items'] as $candidate) {
+            if ($discount && (float) $candidate['gross_amount'] < 0) {
+                $line = $candidate;
+            }
+        }
+        TinyAssert::true(!$discount || (float) $line['gross_amount'] < 0, $description . ': the cart has a discount line');
+        TinyAssert::same($expected, $line['tax_code'] ?? null, $description . ' (got: ' . json_encode($line['tax_code'] ?? null) . ')');
+    }
+
+    /**
+     * Case 18: the upgrade moves a group's code to its exempt row, its no-rule row and every 0% rule it has, and no
+     * other group's rows; a mapping already stored as rows is left as it is.
+     */
+    private static function testMigrationFansTheGroupCodeOut(): void
+    {
+        self::seed('ES', 'goods', 'ES', '28001', 'ES', [], '0');
+        StubStore::$taxes[self::TAX_ZERO] = ['name' => 'IVA 0%', 'rate' => 0, 'active' => 1];
+        StubStore::$taxes[self::TAX_21] = ['name' => 'IVA 21%', 'rate' => 21, 'active' => 1];
+        StubStore::$taxRules[8201] = ['id_tax_rules_group' => 8101, 'id_country' => 21, 'id_tax' => self::TAX_ZERO];
+        StubStore::$taxRules[8202] = ['id_tax_rules_group' => 8101, 'id_country' => 34, 'id_tax' => self::TAX_21];
+        StubStore::$taxRules[8203] = ['id_tax_rules_group' => 8101, 'id_country' => 34, 'zipcode_from' => '35000', 'zipcode_to' => '35999', 'id_tax' => 0];
+        StubStore::$taxRules[8204] = ['id_tax_rules_group' => 8102, 'id_country' => 21, 'id_tax' => self::TAX_ZERO];
+        Configuration::updateValue('PS_TWO_TAX_CODE_MAP', '{"8101":"ES_IVA_EXPORT"}');
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::same(1, $module->migrateTwoTaxCodeMapToRows(), 'one group moved');
+        $moved = ['8101|exempt' => 'ES_IVA_EXPORT', '8101|none' => 'ES_IVA_EXPORT', 'rule:8201' => 'ES_IVA_EXPORT', 'rule:8203' => 'ES_IVA_EXPORT'];
+        TinyAssert::same($moved, json_decode((string) Configuration::get('PS_TWO_TAX_CODE_MAP'), true), 'EX, NR and every 0% rule of the group take its code; the 21% rule and other groups none');
+        TinyAssert::same(0, $module->migrateTwoTaxCodeMapToRows(), 'a mapping already in rows is not moved again');
+        TinyAssert::same($moved, json_decode((string) Configuration::get('PS_TWO_TAX_CODE_MAP'), true), 'and is left as it is');
+        Configuration::updateValue('PS_TWO_TAX_CODE_MAP', '');
+        TinyAssert::same(0, $module->migrateTwoTaxCodeMapToRows(), 'a shop with no mapping has nothing to move');
+    }
+
+    /**
+     * The hook context's fallback_shipping_tax_code: the code steps 1 to 3 give a 0% line in the Default shipping tax
+     * code's group at the cart's addresses. Rows: Default shipping tax code group set?, delivery country, invoice
+     * country, invoice VAT number, rows mapped of that group, expected, description.
+     */
+    private static function testFallbackShippingTaxCodeInTheHookContext(): void
+    {
+        $group = self::DEFAULT_SHIPPING_GROUP;
+        $rows = [
+            [false, 'US', 'ES', '', [$group . '|none' => self::EXPORT], null, 'no Default shipping tax code: null'],
+            [true, 'US', 'ES', '', [$group . '|none' => self::EXPORT], self::EXPORT, 'an export takes the group\'s no-rule row'],
+            [true, 'DE', 'DE', 'DE123', [$group . '|exempt' => self::INTRA, $group . '|none' => self::EXPORT], self::INTRA, 'an EU buyer with a VAT number takes the exempt row'],
+            [true, 'ES', 'ES', '', [$group . '|exempt' => self::INTRA], null, 'a matched row on (none): null, never derived'],
+        ];
+        foreach ($rows as [$set, $dest, $buyer, $vat, $map, $expected, $description]) {
+            self::seed('ES', 'goods', $dest, '10001', $buyer, [], '0');
+            Configuration::updateValue('PS_TAX_ADDRESS_TYPE', 'id_address_delivery');
+            StubStore::$addresses[self::INVOICE]['vat_number'] = $vat;
+            if ($set) {
+                Configuration::updateValue('PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED', '1');
+                Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', (string) $group);
+                StubStore::$taxRulesGroups[$group] = ['name' => 'Shipping', 'active' => 1];
+            }
+            Configuration::updateValue('PS_TWO_TAX_CODE_MAP', json_encode($map));
+            $context = (new TwopaymentTestHarness())->buildTwoOrderPostprocessingContext('order_create', 'spec', '/v1/order', new Cart(self::CART));
+            TinyAssert::same($expected, $context['fallback_shipping_tax_code'], $description);
+        }
     }
 
     /**
@@ -228,7 +366,7 @@ final class TaxCodeSpec
     private static function chargeRows(): array
     {
         $map = static function (array $map): void {
-            Configuration::updateValue('PS_TWO_TAX_CODE_MAP', json_encode(array_map('strval', array_combine(array_map('strval', array_keys($map)), $map))));
+            self::storeGroupMap($map);
         };
         $ecotax = static function (): void {
             StubStore::$cartProducts[self::CART][0]['ecotax'] = 5.00;
@@ -290,7 +428,7 @@ final class TaxCodeSpec
             [function () use ($discount, $map) {
                 $discount();
                 $map([self::PRODUCT_GROUP => self::ART20]);
-            }, ['Lamp' => self::ART20, 'Courier' => null, 'discount' => null], 'with no shared code a 0% discount derives like a charge: nothing domestic'],
+            }, ['Lamp' => self::ART20, 'Courier' => null, 'discount' => self::ART20], 'a 0% discount takes the code of the lines coded from the mapping, not the unmapped shipping\'s derived nothing'],
             [function () use ($discount, $abroad) {
                 self::addServiceProduct();
                 $discount();
@@ -547,43 +685,80 @@ final class TaxCodeSpec
     }
 
     /**
-     * The Order management save. Rows: stored map, posted fields, expected result, description.
+     * The Order management save, one select per row (TWO-26153). Rows: stored map, posted fields (by suffix after
+     * PS_TWO_TAX_CODE_MAP_), expected result, description.
      */
     private static function testFormSaveValidatesPostedCodes(): void
     {
-        $g1 = 8101;
-        $g2 = 8102;
-        $g3 = 8103;
         $rows = [
-            [[], [$g1 => 'ES_IVA_EXPORT'], [$g1 => 'ES_IVA_EXPORT'], 'a listed code is saved'],
-            [[], [$g1 => 'ES_IVA_EXEMPT_OTHER'], null, 'a code the list does not offer is refused'],
-            [[$g1 => 'ES_OLD_CODE'], [$g1 => 'ES_OLD_CODE', $g2 => 'ES_IVA_EXPORT'], [$g1 => 'ES_OLD_CODE', $g2 => 'ES_IVA_EXPORT'], 'a stored code no longer listed survives an unrelated save'],
-            [[$g1 => 'ES_IVA_EXPORT', $g3 => 'ES_IVA_EXEMPT_ART20'], [$g1 => ''], [$g3 => 'ES_IVA_EXEMPT_ART20'], '(none) removes a mapping, and a group not on the form keeps its own'],
-            [[$g1 => 'ES_IVA_EXPORT'], [], false, 'a form without the mapping writes nothing'],
+            [[], ['8101_EXEMPT' => 'ES_IVA_EXPORT'], ['8101|exempt' => 'ES_IVA_EXPORT'], 'a listed code is saved on the exempt row'],
+            [[], ['RULE_8201' => 'ES_IVA_EXPORT'], ['rule:8201' => 'ES_IVA_EXPORT'], 'a 0% tax rule has a row of its own'],
+            [[], ['RULE_8202' => 'ES_IVA_EXPORT'], false, 'a rule above 0% has no row, so its field is not read'],
+            [[], ['8101_NONE' => 'ES_IVA_EXEMPT_OTHER'], null, 'a code the list does not offer is refused'],
+            [['8101|none' => 'ES_OLD_CODE'], ['8101_NONE' => 'ES_OLD_CODE', '8102_EXEMPT' => 'ES_IVA_EXPORT'], ['8101|none' => 'ES_OLD_CODE', '8102|exempt' => 'ES_IVA_EXPORT'], 'a stored code no longer listed survives an unrelated save'],
+            [['8101|exempt' => 'ES_IVA_EXPORT', '8103|none' => 'ES_IVA_EXEMPT_ART20'], ['8101_EXEMPT' => ''], ['8103|none' => 'ES_IVA_EXEMPT_ART20'], '(none) removes a mapping, and a group not on the form keeps its own'],
+            [['8101|exempt' => 'ES_IVA_EXPORT'], [], false, 'a form without the mapping writes nothing'],
         ];
         foreach ($rows as [$stored, $posted, $expected, $description]) {
             self::seed('ES', 'goods', 'ES', '28001', 'ES', [], '0');
-            StubStore::$taxRulesGroups[$g1] = ['name' => 'IVA 0%', 'active' => 1];
-            StubStore::$taxRulesGroups[$g2] = ['name' => 'IVA 21%', 'active' => 1];
+            StubStore::$taxRulesGroups[8101] = ['name' => 'IVA 0%', 'active' => 1];
+            StubStore::$taxRulesGroups[8102] = ['name' => 'IVA 21%', 'active' => 1];
+            StubStore::$taxes[self::TAX_ZERO] = ['name' => 'IVA 0%', 'rate' => 0, 'active' => 1];
+            StubStore::$taxes[self::TAX_21] = ['name' => 'IVA 21%', 'rate' => 21, 'active' => 1];
+            StubStore::$taxRules[8201] = ['id_tax_rules_group' => 8101, 'id_country' => 34, 'id_tax' => self::TAX_ZERO];
+            StubStore::$taxRules[8202] = ['id_tax_rules_group' => 8101, 'id_country' => 8, 'id_tax' => self::TAX_21];
             Configuration::updateValue('PS_TWO_TAX_CODE_MAP', $stored === [] ? '' : json_encode($stored));
             Tools::resetTestValues();
-            foreach ($posted as $group => $code) {
-                Tools::setTestValue('PS_TWO_TAX_CODE_MAP_' . $group, $code);
+            foreach ($posted as $field => $code) {
+                Tools::setTestValue('PS_TWO_TAX_CODE_MAP_' . $field, $code);
             }
-            $module = new class extends TwopaymentTestHarness {
-                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
-                {
-                    return ['http_status' => 200, 'data' => TaxCodeSpec::codeList()];
-                }
-
-                public function exposePostedTwoTaxCodeMap()
-                {
-                    return $this->getPostedTwoTaxCodeMap();
-                }
-            };
-            TinyAssert::same($expected, $module->exposePostedTwoTaxCodeMap(), $description);
+            TinyAssert::same($expected, self::formModule()->exposePostedTwoTaxCodeMap(), $description);
         }
         Tools::resetTestValues();
+    }
+
+    /**
+     * The form's rows for a group: the exempt buyer, each 0% rule labelled as the shop describes it, by country id
+     * (a rule above 0% is not listed), then no rule.
+     */
+    private static function testFormRowsFollowTheShopRules(): void
+    {
+        self::seed('ES', 'goods', 'ES', '28001', 'ES', [], '0');
+        StubStore::$taxRulesGroups = [8101 => ['name' => 'IVA 21%', 'active' => 1]];
+        StubStore::$taxes[self::TAX_21] = ['name' => 'IVA 21%', 'rate' => 21, 'active' => 1];
+        StubStore::$taxes[self::TAX_ZERO] = ['name' => 'IVA 0%', 'rate' => 0, 'active' => 1];
+        StubStore::$taxRules[8201] = ['id_tax_rules_group' => 8101, 'id_country' => 34, 'zipcode_from' => '35000', 'zipcode_to' => '35999', 'id_tax' => 0];
+        StubStore::$taxRules[8202] = ['id_tax_rules_group' => 8101, 'id_country' => 34, 'id_tax' => self::TAX_21];
+        StubStore::$taxRules[8203] = ['id_tax_rules_group' => 8101, 'id_country' => 21, 'id_tax' => self::TAX_ZERO, 'description' => 'Exports'];
+        $got = array_map(static function (array $row) {
+            return [$row['field'], $row['key'], $row['label']];
+        }, self::formModule()->exposeRows());
+        TinyAssert::same([
+            ['PS_TWO_TAX_CODE_MAP_8101_EXEMPT', '8101|exempt', 'Buyer in another EU country with a VAT number'],
+            ['PS_TWO_TAX_CODE_MAP_RULE_8203', 'rule:8203', 'US (IVA 0%) - Exports'],
+            ['PS_TWO_TAX_CODE_MAP_RULE_8201', 'rule:8201', 'ES, 35000-35999 (No tax)'],
+            ['PS_TWO_TAX_CODE_MAP_8101_NONE', '8101|none', 'No rule for the address'],
+        ], $got, 'rows for the group (got: ' . json_encode($got) . ')');
+    }
+
+    private static function formModule(): TwopaymentTestHarness
+    {
+        return new class extends TwopaymentTestHarness {
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                return ['http_status' => 200, 'data' => TaxCodeSpec::codeList()];
+            }
+
+            public function exposePostedTwoTaxCodeMap()
+            {
+                return $this->getPostedTwoTaxCodeMap();
+            }
+
+            public function exposeRows()
+            {
+                return $this->getTwoTaxCodeMapRows();
+            }
+        };
     }
 
     /** @return array<int,array> a /v1/tax_codes/ES response's data */
@@ -654,8 +829,20 @@ final class TaxCodeSpec
 
         Configuration::updateValue('PS_TWO_MERCHANT_COUNTRY', $merchant);
         if ($map !== []) {
-            Configuration::updateValue('PS_TWO_TAX_CODE_MAP', json_encode(array_combine(array_map('strval', array_keys($map)), $map)));
+            self::storeGroupMap($map);
         }
+    }
+
+    /**
+     * Store a mapping by tax rules group as a shop upgrading from it holds it, and move it to the rows as the 2.7.20
+     * upgrade does: each group's code on its exempt row, its no-rule row and each 0% rule it has.
+     *
+     * @param array<int,string> $map
+     */
+    private static function storeGroupMap(array $map): void
+    {
+        Configuration::updateValue('PS_TWO_TAX_CODE_MAP', json_encode(array_combine(array_map('strval', array_keys($map)), $map)));
+        (new TwopaymentTestHarness())->migrateTwoTaxCodeMapToRows();
     }
 
     private static function addProduct(int $n, bool $virtual, bool $zero, ?string $name = null): void

@@ -1229,6 +1229,12 @@ namespace {
             return StubStore::$countries[(int) $id] ?? false;
         }
 
+        /** The country's name; its ISO code stands in, as the stub holds no names. */
+        public static function getNameById($idLang, $id)
+        {
+            return StubStore::$countries[(int) $id] ?? false;
+        }
+
         /**
          * @return array<int,array{id_country:int,iso_code:string}>
          */
@@ -2751,6 +2757,44 @@ namespace {
                 foreach (self::customerRecords($m[1]) as [$cartId, $shopId, $record]) {
                     $rows[] = ['id_cart' => (string) $cartId, 'record' => $record, 'data' => StubStore::$cartRecords[$cartId][$shopId][$record], 'updated_at' => StubStore::$cartRecordUpdatedAt[$cartId][$shopId][$record] ?? ''];
                 }
+
+                return $rows;
+            }
+            // Core's tax rule selection (TaxRulesTaxManager), as the module runs it for a 0% line's tax code
+            // (TWO-26153): the group's active rules for the country, state 0 or the address's, postcode in range or
+            // open, most specific first. Postcodes compare as strings, as the varchar columns do.
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "tax_rule` tr JOIN .* trg\\.`active` = 1 AND tr\\.`id_country` = (\\d+) AND tr\\.`id_tax_rules_group` = (\\d+) AND tr\\.`id_state` IN \\(0, (\\d+)\\) AND \\('([^']*)' BETWEEN/", (string) $sql, $m)) {
+                if (empty(StubStore::$taxRulesGroups[(int) $m[2]]['active'])) {
+                    return [];
+                }
+                $rows = [];
+                foreach (StubStore::$taxRules as $id => $rule) {
+                    $from = (string) ($rule['zipcode_from'] ?? '0');
+                    $to = (string) ($rule['zipcode_to'] ?? '0');
+                    $open = in_array($to, ['', '0'], true) && in_array($from, ['', '0', $m[4]], true);
+                    if ((int) $rule['id_tax_rules_group'] === (int) $m[2] && (int) $rule['id_country'] === (int) $m[1]
+                        && in_array((int) ($rule['id_state'] ?? 0), [0, (int) $m[3]], true)
+                        && ($open || (strcmp($m[4], $from) >= 0 && strcmp($m[4], $to) <= 0))) {
+                        $rows[] = ['id_tax_rule' => (string) $id, 'id_tax' => (string) $rule['id_tax'], 'zipcode_from' => $from, 'zipcode_to' => $to, 'id_state' => (int) ($rule['id_state'] ?? 0)];
+                    }
+                }
+                usort($rows, static function ($a, $b) {
+                    return [$b['zipcode_from'], $b['zipcode_to'], $b['id_state']] <=> [$a['zipcode_from'], $a['zipcode_to'], $a['id_state']];
+                });
+
+                return $rows;
+            }
+            // Every rule of a tax rules group, for the tax code mapping's rows (TWO-26153).
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "tax_rule` WHERE `id_tax_rules_group` = (\\d+) ORDER BY/", (string) $sql, $m)) {
+                $rows = [];
+                foreach (StubStore::$taxRules as $id => $rule) {
+                    if ((int) $rule['id_tax_rules_group'] === (int) $m[1]) {
+                        $rows[] = ['id_tax_rule' => (string) $id] + $rule + ['id_state' => 0, 'zipcode_from' => '0', 'zipcode_to' => '0', 'description' => ''];
+                    }
+                }
+                usort($rows, static function ($a, $b) {
+                    return [(int) $a['id_country'], (int) $a['id_state'], (string) $a['zipcode_from'], (int) $a['id_tax_rule']] <=> [(int) $b['id_country'], (int) $b['id_state'], (string) $b['zipcode_from'], (int) $b['id_tax_rule']];
+                });
 
                 return $rows;
             }
