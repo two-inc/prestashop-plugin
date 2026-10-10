@@ -863,7 +863,8 @@ the hook. With no merchant handler, a line that fails a declared-rate check stop
 pricing: the cart keeps the fee line it had, and that line's check refuses the order.
 With a merchant handler the checks on single lines are the handler's, so they do not stop
 the pricing: the cart carries the fee line the payload sends, and a later update replays
-that fee from the placed order.
+that fee from the placed order. A subscriber that adds a line or changes gross does not
+change that price (see [The buyer fee is priced before the hook](#the-buyer-fee-is-priced-before-the-hook)).
 
 **Order of refusals.** With no merchant handler the checks keep their order among
 themselves, but they now run after the payload is built. A build failure that used to
@@ -918,10 +919,14 @@ included, and it never writes `-0.00`. It is opt-in and part of this contract.
 ### The buyer fee is priced before the hook
 
 The module's fee calculations operate on the order as the module built it, before any
-subscriber runs. On a cart, the buyer fee is quoted on the gross of the module's own
-lines; on an order update, it is replayed from what PrestaShop recorded on the order.
-The module does not re-price the fee on the payload a subscriber returns, so a
-subscriber that adds a line or changes gross, net or tax does not change the fee.
+subscriber runs. On order intent and create, from the cart, the buyer fee is quoted on
+the gross of the module's own lines; on an order update, it is replayed from what
+PrestaShop recorded on the order (how the checks treat that pricing is under "The buyer
+fee" in [The module's checks](#the-modules-checks)). The module does not re-price the
+fee on the payload a subscriber returns, so a subscriber that adds a line or changes
+gross, net or tax does not change the fee. The shop's own fee row (the cart line, and
+the order line once placed) stays at the module's price, and every update replays it,
+so a subscriber that changes the fee line re-applies that change on every request.
 
 Any fee consequence of the amounts a subscriber declares is the merchant's, and their
 subscriber handles it. With a percentage fee, for example, no fee is charged on a line
