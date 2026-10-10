@@ -23,6 +23,10 @@
  * shape, a cost the shop adds to the cart total outside any carrier (29.00, on
  * every leg): refused with no handler, and sent as a handler that adds the line
  * returns it. A handler that leaves the payload inconsistent is refused locally.
+ * The `surcharge_*` scenarios put the Default shipping tax code at 21% under the
+ * "No tax" carrier's shipping with the buyer fee on: the fee's cart line is
+ * written, and create and update send that fee, only when a handler owns the
+ * shipping line's check.
  *
  * One process per scenario, for the same per-request caches reason as
  * default-shipping-tax-code.php. Requires dev/ci/install-order-postprocessing-fixture.sh.
@@ -54,6 +58,10 @@ class OppProbeTwopayment extends Twopayment
 
     public function setTwoPaymentRequest($endpoint, $payload = array(), $method = 'POST', $additional_headers = array(), $timeout = null)
     {
+        if ($endpoint === '/v1/pricing/order/fee') {
+            // The buyer fee quote, for the surcharge scenarios: not an order request.
+            return array('http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR');
+        }
         if ($method !== 'GET') {
             $this->sent[] = array('endpoint' => $endpoint, 'payload' => $payload, 'method' => $method);
         }
@@ -569,6 +577,9 @@ function oppRunScenario($name, &$detail)
     if (in_array($name, array('unhandled', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match'), true)) {
         return oppOutsideCarrierChecks($module, $name, $cart, $order);
     }
+    if (in_array($name, array('surcharge_unhandled', 'surcharge_resplit'), true)) {
+        return oppSurchargeChecks($module, $name === 'surcharge_resplit', $cart, $order);
+    }
 
     // Order create under one fixture behaviour: sent as returned, unless the subscriber has a code bug, or leaves a
     // payload that does not add up, which the consistency checks refuse after the hook (TWO-26274).
@@ -755,6 +766,117 @@ function oppOutsideCarrierChecks(OppProbeTwopayment $module, $name, Cart $oppCar
         }
     }
     $checks[] = array(oppLoggedNow('the shop-match checks are delegated to it'), $name !== 'unhandled', 'the delegation line, only with a handler');
+
+    return $checks;
+}
+
+/**
+ * TWO-26274: the buyer fee's cart line is priced on the module's own lines, before the hook. With the Default shipping
+ * tax code at 21%, the "No tax" carrier's untaxed shipping fails its declared-rate check. With no handler the cart gets
+ * no fee line and the create is refused, as before. With a handler that re-splits that shipping, the cart carries the
+ * fee, the create sends that fee, and the update of the order placed with it sends the same fee.
+ *
+ * @param bool $handled
+ * @return array<int,array{0:mixed,1:mixed,2:string}>
+ */
+function oppSurchargeChecks(OppProbeTwopayment $module, $handled, Cart $cart, Order $order)
+{
+    $checks = array();
+    $group = (int) Configuration::get('TWO_OPP_TEST_TRG');
+    $config = array(
+        'PS_TWO_SURCHARGE_TYPE' => 'percentage', 'PS_TWO_SURCHARGE_PCT_30' => '5', Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP => (string) $group,
+        Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS => '[30]', 'PS_TWO_PAYMENT_TERMS_30' => '1',
+    );
+    $saved = array();
+    foreach ($config as $key => $value) {
+        $saved[$key] = Configuration::get($key);
+        Configuration::updateValue($key, $value);
+    }
+    // oppRun restores it.
+    Configuration::updateValue('PS_TWO_DEFAULT_SHIPPING_TAX_RULES_GROUP', (string) $group);
+    Configuration::updateValue('TWO_OPP_TEST_MODE', $handled ? 'resplit' : '');
+    Context::getContext()->cookie->two_payment_term = 30;
+    $fields = array('total_paid_tax_incl', 'total_paid_tax_excl', 'total_products', 'total_products_wt');
+    $paid = array();
+    foreach ($fields as $field) {
+        $paid[$field] = (float) $order->$field;
+    }
+    $detail = 0;
+    try {
+        $error = null;
+        $payload = null;
+        try {
+            $payload = $module->getTwoNewOrderData('opp-surcharge', $cart, oppMerchantUrls());
+        } catch (Exception $e) {
+            $error = get_class($e) . ': ' . $e->getMessage();
+        }
+        $row = $module->getTwoSurchargeCartLine(new Cart((int) $cart->id));
+        if (!$handled) {
+            $refusal = 'TwoCheckoutAmountException: Declared tax rate diverges from applied tax amounts for shipping';
+            $checks[] = array(substr((string) $error, 0, strlen($refusal)), $refusal, 'no handler: the create is refused on the shipping line, as before');
+            $checks[] = array($row, null, 'no handler: the cart gets no fee line, as before');
+            // Not scoped to this run: core drops a message identical to one already logged.
+            $checks[] = array((int) Db::getInstance()->getValue('SELECT COUNT(*) FROM `' . _DB_PREFIX_ . "log` WHERE message LIKE '%Surcharge cart line sync failed for cart " . (int) $cart->id . " - Declared tax rate diverges%'") > 0, true, 'no handler: the sync failure is logged, as before');
+
+            return $checks;
+        }
+        $fee = is_array($payload) ? oppLine($payload, 'SERVICE') : null;
+        $checks[] = array($error, null, 'a handler: the create is sent');
+        $checks[] = array($fee, array('5.00', '1.05', '6.05'), 'a handler: the create sends the quoted fee');
+        $checks[] = array($row === null ? null : array(number_format((float) $row['net'], 2, '.', ''), number_format((float) $row['gross'], 2, '.', '')), is_array($fee) ? array($fee[0], $fee[2]) : $fee, 'a handler: the cart carries the fee the create sends');
+        if ($row === null) {
+            return $checks;
+        }
+        // The order placed from that cart: its fee row as core records it, and its totals carrying it.
+        $id_order = (int) $order->id;
+        Db::getInstance()->insert('order_detail', array(
+            'id_order' => $id_order, 'id_shop' => (int) Context::getContext()->shop->id, 'id_warehouse' => 0,
+            'product_id' => (int) $module->getTwoSurchargeCartProductId(false), 'product_attribute_id' => 0,
+            'product_name' => 'Payment terms fee', 'product_reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE,
+            'product_quantity' => 1, 'product_price' => (float) $row['net'], 'unit_price_tax_excl' => (float) $row['net'],
+            'unit_price_tax_incl' => (float) $row['gross'], 'total_price_tax_excl' => (float) $row['net'],
+            'total_price_tax_incl' => (float) $row['gross'], 'id_tax_rules_group' => $group, 'tax_computation_method' => 0,
+        ));
+        $detail = (int) Db::getInstance()->Insert_ID();
+        $tax = round((float) $row['gross'] - (float) $row['net'], 2);
+        Db::getInstance()->insert('order_detail_tax', array(
+            'id_order_detail' => $detail,
+            'id_tax' => (int) Db::getInstance()->getValue('SELECT id_tax FROM `' . _DB_PREFIX_ . 'tax` WHERE rate = 21 ORDER BY id_tax DESC'),
+            'unit_amount' => $tax, 'total_amount' => $tax,
+        ));
+        $add = array('total_paid_tax_incl' => (float) $row['gross'], 'total_paid_tax_excl' => (float) $row['net'], 'total_products' => (float) $row['net'], 'total_products_wt' => (float) $row['gross']);
+        $placedTotals = array();
+        foreach ($fields as $field) {
+            $placedTotals[$field] = $paid[$field] + $add[$field];
+        }
+        Db::getInstance()->update('orders', $placedTotals, 'id_order = ' . $id_order);
+        Cache::clean('*');
+        $placed = new Order($id_order);
+        $error = null;
+        $updated = null;
+        try {
+            $updated = $module->getTwoUpdateOrderData($placed, $module->getTwoOrderPaymentData($id_order), 'admin_edit');
+        } catch (Exception $e) {
+            $error = get_class($e) . ': ' . $e->getMessage();
+        }
+        $checks[] = array(array($error, is_array($updated) ? oppLine($updated, 'SERVICE') : null), array(null, $fee), 'a handler: the update sends the same fee');
+    } finally {
+        if ($detail > 0) {
+            Db::getInstance()->delete('order_detail_tax', 'id_order_detail = ' . $detail);
+            Db::getInstance()->delete('order_detail', 'id_order_detail = ' . $detail);
+        }
+        Db::getInstance()->update('orders', $paid, 'id_order = ' . (int) $order->id);
+        $feeId = (int) $module->getTwoSurchargeCartProductId(false);
+        if ($feeId > 0) {
+            $cart->deleteProduct($feeId);
+            SpecificPrice::deleteByIdCart((int) $cart->id, $feeId);
+        }
+        foreach ($saved as $key => $value) {
+            Configuration::updateValue($key, $value === false ? '' : (string) $value);
+        }
+        unset(Context::getContext()->cookie->two_payment_term);
+    }
+    $checks[] = array(oppLoggedNow('the shop-match checks are delegated to it'), $handled, 'the delegation line, only with a handler');
 
     return $checks;
 }
@@ -1007,8 +1129,12 @@ if (!Module::isInstalled('twoorderpostprocessingtest')) {
 }
 oppBootKernel();
 oppSeed();
+// The hidden buyer fee product, made here once: the surcharge scenarios price a shop that already has it, and making
+// it records a stock movement, which needs an employee on the command line.
+Context::getContext()->employee = new Employee((int) Db::getInstance()->getValue('SELECT MIN(id_employee) FROM `' . _DB_PREFIX_ . 'employee`'));
+Module::getInstanceByName('twopayment')->getTwoSurchargeCartProductId(true);
 $exit = 0;
-$scenario_names = array('unhandled', 'unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'no_lines', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match', 'outside_carrier_parity_untaxed', 'outside_carrier_parity_taxed', 'outside_carrier_parity_none', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit');
+$scenario_names = array('unhandled', 'unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'no_lines', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match', 'outside_carrier_parity_untaxed', 'outside_carrier_parity_taxed', 'outside_carrier_parity_none', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit', 'surcharge_unhandled', 'surcharge_resplit');
 // The carrier-less fixture injects through actionFilterDeliveryOptionList, which core only fires from 8.0.
 if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
     $scenario_names[] = 'carrierless';
@@ -1019,7 +1145,7 @@ if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
 $fixture = Module::getInstanceByName('twoorderpostprocessingtest');
 try {
     foreach ($scenario_names as $scenario_name) {
-        $scenario_name === 'unhandled' ? $fixture->disable() : $fixture->enable();
+        in_array($scenario_name, array('unhandled', 'surcharge_unhandled'), true) ? $fixture->disable() : $fixture->enable();
         $status = 0;
         passthru(escapeshellarg(PHP_BINARY) . ' -d memory_limit=512M ' . escapeshellarg(__FILE__) . ' ' . escapeshellarg($scenario_name), $status);
         $exit = $status !== 0 ? 1 : $exit;
