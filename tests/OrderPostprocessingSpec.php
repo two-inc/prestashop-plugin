@@ -52,6 +52,7 @@ final class OrderPostprocessingSpec
         self::testApiRejectionReachesTheLogAndTheOrder();
         self::testOrderIntentRelayBuildsThePayloadItself();
         self::testEachRequestTypeFiresExactlyOnce();
+        self::testPlacedLinesAreTwosLinesWhereTheRequestHasThem();
         self::testRefundedRemainderRebuildsTheOrderThenSendsTheRefund();
         self::testNoChangeKeepsTodaysOutcomeOnEveryRequestType();
         self::testRecomputeTotalsHelper();
@@ -185,6 +186,12 @@ final class OrderPostprocessingSpec
             public ?array $putAnswer = null;
             /** @var string[] */
             public array $notes = [];
+            /** @var array|null the order's line_items in Two's GET answer, when set (TWO-26282) */
+            public ?array $twoLines = null;
+            /** @var int the GET answer's status */
+            public int $getStatus = 200;
+            /** @var string[] the GETs made, by endpoint */
+            public array $gets = [];
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
@@ -207,9 +214,13 @@ final class OrderPostprocessingSpec
                 if ($endpoint === '/v1/order_intent') {
                     return ['http_status' => 200, 'approved' => true];
                 }
+                if ($method === 'GET') {
+                    $this->gets[] = $endpoint;
+                }
+                $lines = $method === 'GET' && $this->twoLines !== null ? ['line_items' => $this->twoLines] : [];
 
-                return [
-                    'http_status' => 200,
+                return $lines + [
+                    'http_status' => $method === 'GET' ? $this->getStatus : 200,
                     'id' => 'two-order-9731',
                     'state' => $this->twoState,
                     'status' => 'APPROVED',
@@ -275,9 +286,9 @@ final class OrderPostprocessingSpec
             /** @var object|null the placed order to rebuild, since the status hook loads core's Order, which the stubs cannot place */
             public $placedOrder = null;
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit')
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
             {
-                return parent::getTwoUpdateOrderData($this->placedOrder !== null ? $this->placedOrder : $order, $orderpaymentdata, $trigger);
+                return parent::getTwoUpdateOrderData($this->placedOrder !== null ? $this->placedOrder : $order, $orderpaymentdata, $trigger, $twoOrder);
             }
 
             public function getTwoCreditSlipTaxLines($slip)
@@ -1313,6 +1324,66 @@ final class OrderPostprocessingSpec
     }
 
     /**
+     * TWO-26282: order_lines is the order's line items as Two's GET returned them, verbatim, on the refunds and the
+     * order updates; null where the request reads no order from Two, or the read failed. An admin edit or a tracking
+     * number reads the order before the build only for a merchant handler, which these cases always register.
+     */
+    private static function testPlacedLinesAreTwosLinesWhereTheRequestHasThem(): void
+    {
+        $lines = [
+            ['id' => 'line-1', 'type' => 'PHYSICAL', 'name' => 'Widget', 'gross_amount' => '121.00', 'net_amount' => '100.00', 'tax_amount' => '21.00', 'tax_rate' => '0.21', 'tax_code' => null],
+            ['id' => 'line-2', 'type' => 'SERVICE', 'name' => 'Handling', 'gross_amount' => '29.00', 'net_amount' => '23.97', 'tax_amount' => '5.03', 'tax_rate' => '0.21', 'tax_code' => null],
+        ];
+        $drivers = [];
+        foreach (self::requestDrivers() as [$type, $trigger, , $driver]) {
+            $drivers[$type . '/' . $trigger] = $driver;
+        }
+        $remainder = static function ($m) {
+            $m->twoState = 'FULFILLED';
+            $m->placedOrder = self::order();
+            $m->sentRefunds = [['id_order_slip' => 77, 'status' => 'SENT', 'amount' => '30.00', 'tax_subtotals' => [['tax_rate' => '0.21', 'taxable_amount' => '24.79', 'tax_amount' => '5.21']]]];
+            Configuration::updateValue('PS_TWO_OS_REFUNDED_MAP', 42);
+            $status = new OrderState(42);
+            $status->name = 'Refunded';
+            $m->hookActionOrderStatusUpdate(['id_order' => self::ORDER, 'newOrderStatus' => $status]);
+        };
+        $merchantOrderId = static function (?array $twoOrder) {
+            return static function ($m) use ($twoOrder) {
+                $m->putTwoOrderUpdate(self::order(), $m->getTwoOrderPaymentData(self::ORDER), $payload, 'merchant_order_id', $twoOrder);
+            };
+        };
+        // [driver, GET status, expected order_lines per firing, description]
+        $cases = [
+            [$drivers['order_update/admin_edit'], 200, [$lines], 'an admin edit: read before the build'],
+            [$drivers['order_update/tracking_number'], 200, [$lines], 'a tracking number: read before the build'],
+            [$drivers['order_update/admin_edit'], 500, [null], 'an admin edit whose read failed: null, and the edit goes on'],
+            [$merchantOrderId(['http_status' => 200, 'line_items' => $lines]), 200, [$lines], 'the merchant order id sync: the confirmation callback\'s read'],
+            [$merchantOrderId(null), 200, [null], 'the merchant order id sync with no read in hand: null'],
+            [$drivers['refund/status_change'], 200, [$lines], 'a full refund: the refundable-state read'],
+            [$drivers['refund/credit_slip'], 200, [$lines], 'a credit slip: the remaining-balance read'],
+            [$remainder, 200, [$lines, $lines], 'the refunded remainder: its rebuild and its refund'],
+            [$drivers['order_create/checkout'], 200, [null], 'an order create: no order at Two yet'],
+            [$drivers['order_intent/precheck'], 200, [null], 'an order intent: no order at Two yet'],
+            [$drivers['order_confirm/payment_return'], 200, [null], 'a confirm: not given'],
+            [$drivers['capture/status_change'], 200, [null], 'a capture: not given'],
+            [$drivers['cancel/status_change'], 200, [null], 'a cancel: not given'],
+        ];
+        foreach ($cases as [$driver, $getStatus, $expected, $description]) {
+            $cart = self::seed(true);
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $module->twoLines = $lines;
+            $module->getStatus = $getStatus;
+            $calls = [];
+            self::subscribe('tag', $calls);
+            $driver($module, $cart);
+            TinyAssert::same($expected, array_map(static function ($c) {
+                return $c['context']['order_lines'];
+            }, $calls), $description);
+        }
+    }
+
+    /**
      * Refunded after a credit slip: the order is rebuilt through the hook to split the remainder by rate
      * (order_update, refund_remainder, never sent), then the remainder is sent as the subscribers return it.
      * A subscriber that throws on the rebuild stops the remainder, and the merchant is told the hook did.
@@ -1361,7 +1432,7 @@ final class OrderPostprocessingSpec
     private static function testEachRequestTypeFiresExactlyOnce(): void
     {
         $cases = self::requestDrivers();
-        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version'];
+        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines'];
         foreach ($cases as [$type, $trigger, $sends, $driver, $description]) {
             $cart = self::seed(true);
             $module = self::module();
