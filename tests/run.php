@@ -4277,19 +4277,20 @@ final class OrderBuilderSpec
 
     private static function testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-
-        Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
-        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 902);
-        Configuration::updateValue('PS_OS_CANCELED', 903);
-        TinyAssert::same(901, $module->getTwoCancelledOrderStatusId());
-
-        Configuration::updateValue('PS_TWO_OS_CANCELLED', 0);
-        TinyAssert::same(902, $module->getTwoCancelledOrderStatusId());
-
-        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 0);
-        TinyAssert::same(903, $module->getTwoCancelledOrderStatusId());
+        // TWO-26289: the merchant's Order Cancelled mapping wins, as for every other mapped status.
+        // [PS_TWO_OS_CANCELLED_MAP, PS_TWO_OS_CANCELLED, PS_OS_CANCELED, expected, description]
+        $cases = [
+            [902, 901, 903, 902, 'mapping wins over the branded state'],
+            [0, 901, 903, 901, 'no mapping falls back to the branded state'],
+            [0, 0, 903, 903, 'neither falls back to core Canceled'],
+        ];
+        foreach ($cases as [$map, $branded, $core, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_CANCELLED', $branded);
+            Configuration::updateValue('PS_OS_CANCELED', $core);
+            TinyAssert::same($expected, (new TwopaymentTestHarness())->getTwoCancelledOrderStatusId(), $description);
+        }
     }
 
     private static function testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId(): void
@@ -4324,9 +4325,10 @@ final class OrderBuilderSpec
         };
 
         Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
+        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 6);
         TinyAssert::true($module->syncLocalOrderStatusFromTwoState(55, 'CANCELLED'));
         TinyAssert::count(1, $module->calls);
-        TinyAssert::same([55, 901], $module->calls[0]);
+        TinyAssert::same([55, 6], $module->calls[0], 'a provider cancel moves the order to the mapped status, not the branded one');
 
         TinyAssert::false($module->syncLocalOrderStatusFromTwoState(56, 'CONFIRMED'));
         TinyAssert::count(1, $module->calls);

@@ -22145,13 +22145,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The status a cancelled Two order is moved to: the merchant's Order Cancelled mapping,
+     * as for every other mapped status, then the branded state, then core's Canceled.
+     *
      * @return int
      */
     public function getTwoCancelledOrderStatusId()
     {
-        $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED');
+        $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED_MAP');
         if ($cancelled_status <= 0) {
-            $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED_MAP');
+            $cancelled_status = (int)Configuration::get('PS_TWO_OS_CANCELLED');
             if ($cancelled_status <= 0) {
                 $cancelled_status = (int)Configuration::get('PS_OS_CANCELED');
             }
