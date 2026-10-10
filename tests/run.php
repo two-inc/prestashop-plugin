@@ -78,7 +78,7 @@ final class OrderBuilderSpec
         self::testGetTwoNewOrderDataOmitsTopLevelTaxRate();
         self::testGetTwoNewOrderDataOmitsTaxSubtotalsWhenDisabled();
         self::testGetTwoIntentOrderDataOmitsTopLevelTaxRateAndOmitsTaxSubtotalsWhenDisabled();
-        self::testGetTwoNewOrderDataThrowsWhenLineItemsFailFormulaValidation();
+        self::testGetTwoNewOrderDataSendsLineItemsThatFailFormulaValidation();
         self::testGetTwoNewOrderDataThrowsWhenCartTotalsMismatchIsMaterial();
         self::testGetTwoIntentOrderDataContinuesWhenCartTotalsDoNotReconcile();
         self::testGetTwoNewOrderDataAllowsTwoCentReconciliationDrift();
@@ -1678,7 +1678,12 @@ final class OrderBuilderSpec
         TinyAssert::false(isset($payloadWithoutSubtotals['tax_subtotals']));
     }
 
-    private static function testGetTwoNewOrderDataThrowsWhenLineItemsFailFormulaValidation(): void
+    /**
+     * TWO-26283: a line's arithmetic is Two's API's to judge, so a line whose tax contradicts its declared rate goes
+     * out as built rather than being refused locally. This holds here because getTwoProductItems() is stubbed: in a
+     * real build with no merchant handler, the declared-rate shop-match check still refuses such a line.
+     */
+    private static function testGetTwoNewOrderDataSendsLineItemsThatFailFormulaValidation(): void
     {
         self::reset();
 
@@ -1739,16 +1744,21 @@ final class OrderBuilderSpec
             'average_products_tax_rate' => 21.0,
         ];
 
-        TinyAssert::throws(function () use ($module, $cart): void {
-            $module->getTwoNewOrderData('merchant-attempt-56', $cart, [
-                'merchant_confirmation_url' => 'https://shop.local/confirm',
-                'merchant_cancel_order_url' => 'https://shop.local/cancel',
-                'merchant_edit_order_url' => '',
-                'merchant_order_verification_failed_url' => '',
-                'merchant_invoice_url' => '',
-                'merchant_shipping_document_url' => '',
-            ]);
-        }, 'Invalid line item formulas');
+        $payload = $module->getTwoNewOrderData('merchant-attempt-56', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+        TinyAssert::same(['100.00', '10.00', '110.00', '0.21'], [
+            $payload['line_items'][0]['net_amount'],
+            $payload['line_items'][0]['tax_amount'],
+            $payload['line_items'][0]['gross_amount'],
+            $payload['line_items'][0]['tax_rate'],
+        ], 'the line goes out as built');
+        TinyAssert::same(['100.00', '10.00', '110.00'], [$payload['net_amount'], $payload['tax_amount'], $payload['gross_amount']], 'order totals from the line');
     }
 
     private static function testGetTwoNewOrderDataThrowsWhenCartTotalsMismatchIsMaterial(): void

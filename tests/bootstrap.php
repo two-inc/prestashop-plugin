@@ -3265,8 +3265,8 @@ namespace {
         }
 
         /**
-         * Run a pricing build's payload checks (TWO-26274) on the payload it describes, as postprocessOrderRequest()
-         * does after the hook: every check with no merchant handler, the consistency checks alone with one.
+         * Run a pricing build's shop-match checks (TWO-26274) on the payload it describes, as postprocessOrderRequest()
+         * does after the hook: every one with no merchant handler, none with one (TWO-26283).
          */
         public function runPricingChecksForTest(array $pricing, bool $shopMatch = true): void
         {
