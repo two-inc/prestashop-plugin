@@ -561,7 +561,7 @@ function oppRunScenario($name, &$detail)
                 $module->cancelTwoOrderBestEffort(OPP_TWO_ORDER, 'attempt_persist_failed');
             }),
         );
-        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'contract_version', 'order_lines', 'order_refunds');
+        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'fallback_shipping_tax_code', 'contract_version', 'order_lines', 'order_refunds');
         // Loads the fixture's class, whose static records the calls.
         Module::getInstanceByName('twoorderpostprocessingtest');
         foreach ($drivers as $driver) {
