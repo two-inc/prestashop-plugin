@@ -724,10 +724,17 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             return false;
         }
 
-        // Cancel at Two first, then mirror it locally: the mirror records the order as cancelled at Two, so the
-        // status hook it fires sends no second cancel.
-        if (!empty($attempt['two_order_id'])) {
-            $this->module->cancelTwoOrderBestEffort((string)$attempt['two_order_id'], 'confirmation_after_cancelled_attempt');
+        // Cancel at Two first, then mirror it locally. Only a cancellation Two confirmed (the cancel succeeded, or
+        // Two's order reads CANCELLED) is recorded on the order, so the status hook sends no second cancel. Otherwise
+        // the order keeps Two's last known state and the status hook sends the cancel itself.
+        $cancelled_at_two = false;
+        $two_order_id = isset($attempt['two_order_id']) ? trim((string)$attempt['two_order_id']) : '';
+        if ($two_order_id !== '') {
+            $cancelled_at_two = $this->module->cancelTwoOrderBestEffort($two_order_id, 'confirmation_after_cancelled_attempt');
+            if (!$cancelled_at_two) {
+                $two_order = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+                $cancelled_at_two = $this->module->isTwoOrderCancelledResponse($two_order);
+            }
         }
 
         $resolved_order_id = (int)$this->module->resolveTwoAttemptOrderIdForCancellation($attempt);
@@ -735,7 +742,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', array(
                 'id_order' => $resolved_order_id,
             ));
-            $this->module->syncLocalOrderStatusFromTwoState($resolved_order_id, 'CANCELLED');
+            $this->module->syncLocalOrderStatusFromTwoState($resolved_order_id, 'CANCELLED', $cancelled_at_two);
         }
 
         $message = $this->module->l('Your order is cancelled.');

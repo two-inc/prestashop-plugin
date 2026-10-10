@@ -22475,9 +22475,11 @@ class Twopayment extends PaymentModule
      *
      * @param int $id_order
      * @param string $two_state
+     * @param bool $confirmed_by_two false when Two has not confirmed the cancellation: the row keeps Two's last known
+     *        state, and the status hook sends the cancel
      * @return bool
      */
-    public function syncLocalOrderStatusFromTwoState($id_order, $two_state)
+    public function syncLocalOrderStatusFromTwoState($id_order, $two_state, $confirmed_by_two = true)
     {
         $id_order = (int)$id_order;
         if ($id_order <= 0) {
@@ -22494,8 +22496,10 @@ class Twopayment extends PaymentModule
             return false;
         }
 
-        // A narrow update: only the state column, and only an existing row (an UPDATE matching no row writes nothing).
-        Db::getInstance()->update('twopayment', array('two_order_state' => 'CANCELLED'), 'id_order = ' . $id_order);
+        if ($confirmed_by_two) {
+            // A narrow update: only the state column, and only an existing row (an UPDATE matching no row writes nothing).
+            Db::getInstance()->update('twopayment', array('two_order_state' => 'CANCELLED'), 'id_order = ' . (int)$id_order);
+        }
 
         return (bool)$this->changeOrderStatus($id_order, $cancelled_status);
     }
