@@ -74,3 +74,11 @@
         {$smarty.block.parent}
     {/if}
 {/block}
+{* The Order management form's end field (TWO-26153): after the last fieldset and its buttons, so it is the post's last
+   value and its absence means PHP cut the post at max_input_vars. *}
+{block name="other_fieldsets"}
+    {$smarty.block.parent}
+    {if isset($two_form_end_field) && $two_form_end_field}
+        <input type="hidden" name="{$two_form_end_field|escape:'html':'UTF-8'}" value="1" />
+    {/if}
+{/block}
