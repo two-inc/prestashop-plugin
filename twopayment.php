@@ -22038,13 +22038,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The status a verified Two order sits in: the merchant's mapping, as confirmation applies it,
+     * then the branded state, then core's Processing in progress.
+     *
      * @return int
      */
     public function getTwoVerifiedPendingFulfillmentStatusId()
     {
-        $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
+        $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
         if ($verified_status <= 0) {
-            $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
+            $verified_status = (int)Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
             if ($verified_status <= 0) {
                 $verified_status = (int)Configuration::get('PS_OS_PREPARATION');
             }

@@ -117,6 +117,7 @@ final class OrderBuilderSpec
         self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
         self::testIsTwoAttemptStatusTerminalMatchesCancelledGuard();
         self::testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain();
+        self::testGetTwoVerifiedPendingFulfillmentStatusIdUsesConfiguredFallbackChain();
         self::testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId();
         self::testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled();
         self::testIsTwoOrderCancelledResponseRequires2xxAndCancelledState();
@@ -4290,6 +4291,24 @@ final class OrderBuilderSpec
             Configuration::updateValue('PS_TWO_OS_CANCELLED', $branded);
             Configuration::updateValue('PS_OS_CANCELED', $core);
             TinyAssert::same($expected, (new TwopaymentTestHarness())->getTwoCancelledOrderStatusId(), $description);
+        }
+    }
+
+    private static function testGetTwoVerifiedPendingFulfillmentStatusIdUsesConfiguredFallbackChain(): void
+    {
+        // TWO-26289: the merchant's Verified mapping wins, as confirmation applies it.
+        // [PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP, PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT, PS_OS_PREPARATION, expected, description]
+        $cases = [
+            [902, 901, 903, 902, 'mapping wins over the branded state'],
+            [0, 901, 903, 901, 'no mapping falls back to the branded state'],
+            [0, 0, 903, 903, 'neither falls back to core Processing in progress'],
+        ];
+        foreach ($cases as [$map, $branded, $core, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $branded);
+            Configuration::updateValue('PS_OS_PREPARATION', $core);
+            TinyAssert::same($expected, (new TwopaymentTestHarness())->getTwoVerifiedPendingFulfillmentStatusId(), 'verified: ' . $description);
         }
     }
 
