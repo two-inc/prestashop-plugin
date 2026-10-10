@@ -1680,7 +1680,8 @@ final class OrderBuilderSpec
 
     /**
      * TWO-26283: a line's arithmetic is Two's API's to judge, so a line whose tax contradicts its declared rate goes
-     * out as built rather than being refused locally.
+     * out as built rather than being refused locally. This holds here because getTwoProductItems() is stubbed: in a
+     * real build with no merchant handler, the declared-rate shop-match check still refuses such a line.
      */
     private static function testGetTwoNewOrderDataSendsLineItemsThatFailFormulaValidation(): void
     {
