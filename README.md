@@ -749,7 +749,7 @@ totals and fields the module does not itself send.
 | `fallback_shipping_tax_rate` | float or null | The rate of the module's Default shipping tax code, null when it is not set |
 | `contract_version` | int | `1` |
 | `order_lines` | array or null | Two's lines for the order, not PrestaShop's `order_detail` rows (those are on `order`): the order's line items as Two holds them, with Two's line ids. They are the lines of the last create or update Two accepted, after the subscribers' edits, as Two's `GET /v1/order/{id}` returns them. Each carries its `id`, `type`, `gross_amount`, `net_amount`, `tax_amount`, `tax_rate`, `tax_code` and the other line fields. Given on `refund` and `order_update`. Null on the other request types, when the module could not read the order from Two, and on the merchant order id sync of a repeated confirmation callback, which reads no order. Read-only: changing it changes nothing |
-| `order_refunds` | array or null | Two's refunds for the order: every refund Two already holds for it, from the same `GET /v1/order/{id}` response as `order_lines`, verbatim. Each carries its `id`, its `total_amount` (Two records refunds as negative amounts) and its `line_items`, and each refund line names the order line it credited in `prototype_id`, with the amounts refunded on it, `gross_amount` among them. Given on `refund` and `order_update`, on the same requests and with the same null rules as `order_lines`. On a refund it holds the earlier refunds, not the one being sent. Read-only: changing it changes nothing |
+| `order_refunds` | array or null | Two's refunds for the order: every refund Two already holds for it, from the same `GET /v1/order/{id}` response as `order_lines`. Each carries its `id`, its `total_amount` (Two records refunds as negative amounts) and its `line_items`, and each refund line names the order line it credited in `prototype_id`, with the amounts refunded on it, `gross_amount` among them. A refund line has its own `id` and the name, description, type, rate and tax code of the order line it was made from, and Two's responses leave its `prototype_id` empty, so where Two leaves it empty the module fills in its best match by name, description, type, rate and tax code: this is the module's inference, not Two's record. Where several order lines match, a refund's matching lines go to different order lines, the largest to the one with the most left to refund. A refund line that matches none keeps it empty, so a line renamed or re-rated by an update after a refund no longer matches its earlier refunds and reads as unrefunded. Everything else is as Two returned it. Given on `refund` and `order_update`, on the same requests and with the same null rules as `order_lines`. On a refund it holds the earlier refunds, not the one being sent. Read-only: changing it changes nothing |
 
 As on every hook, `$params` also carries core's `cookie`, `cart` and `altern`.
 `$params['cart']` is the visitor's cart from `Context`, which on an admin edit, a
@@ -1051,7 +1051,7 @@ that line's.
 What is left to refund on one of Two's order lines is that line's amount less the sum of
 what Two's earlier refunds credited it. `order_lines` gives the line's amount and
 `order_refunds` the earlier refunds, each refund line naming the order line it credited
-in `prototype_id`:
+in `prototype_id` (filled in by the module where Two's response leaves it empty):
 
 ```php
 public static function leftToRefund(array $context, $lineId)

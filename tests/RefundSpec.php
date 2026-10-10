@@ -27,6 +27,7 @@ final class RefundSpec
         self::testWhatTheHookSentIsWhatIsRecorded();
         self::testSlipsAreSentAsLinesOfTheTwoOrder();
         self::testRemainderIsSentAsLinesOfTheTwoOrder();
+        self::testRemainderCreditsOnlyWhatIsLeftOnEachLine();
         self::testTheHookSeesAndCanEditTheLines();
         self::testSubtotalsThatCannotBeItemised();
         self::testSlipShippingCheckIsTheDefaultHandlers();
@@ -364,6 +365,69 @@ final class RefundSpec
             TinyAssert::same('98.00', $calls[0]['payload']['amount'], $desc . ': amount');
             TinyAssert::same($expected, self::sentLines($calls[0]['payload'], $twoLines), $desc . ': got ' . json_encode($calls[0]['payload']));
             TinyAssert::count($expected === null ? 1 : 0, $module->privateNotes, $desc . ': the order notes a refund sent without lines');
+        }
+    }
+
+    /**
+     * TWO-26288: the Refunded remainder after two credit slips, as on a real order. Two's refund lines carry their own
+     * ids and the descriptive fields of the order line they were made from, and its responses leave prototype_id
+     * empty. Each order line takes only what is left on it: shipping, refunded in full by the second slip, takes
+     * nothing. Columns: whether Two names the parent in prototype_id, whether the mug and notebook lines look
+     * identical, expected [id, net, tax, gross] lines, description.
+     */
+    private static function testRemainderCreditsOnlyWhatIsLeftOnEachLine(): void
+    {
+        $sub = static function (string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => '0.200000'];
+        };
+        $cases = [
+            [false, false, [['sweater', '20.63', '4.12', '24.75'], ['mug', '42.73', '8.54', '51.27'], ['notebook', '18.53', '3.71', '22.24']], 'prototype_id empty, as Two returns it: each line takes what is left on it'],
+            [true, false, [['sweater', '20.63', '4.12', '24.75'], ['mug', '42.73', '8.54', '51.27'], ['notebook', '18.53', '3.71', '22.24']], 'prototype_id given: the same'],
+            [false, true, [['sweater', '20.63', '4.12', '24.75'], ['mug', '42.73', '8.54', '51.27'], ['notebook', '18.53', '3.71', '22.24']], 'two lines that look identical: each refund\'s two matching lines go to different order lines, the larger to the one with more left, so each line takes what is left on it'],
+        ];
+        foreach ($cases as [$prototype, $twins, $expected, $desc]) {
+            $line = static function (string $id, string $type, string $name, string $net, string $tax, string $gross) use ($twins): array {
+                $look = $twins && $id === 'notebook' ? 'Mug' : $name;
+                return ['id' => $id, 'name' => $look, 'description' => $look . ' description', 'type' => $type, 'tax_rate' => '0.200000', 'tax_code' => null, 'quantity' => 1.0, 'net_amount' => $net, 'tax_amount' => $tax, 'gross_amount' => $gross];
+            };
+            $lines = [
+                $line('shipping', 'SHIPPING_FEE', 'My carrier', '2.00', '0.40', '2.40'),
+                $line('sweater', 'PHYSICAL', 'Sweater', '28.72', '5.74', '34.46'),
+                $line('mug', 'PHYSICAL', 'Mug', '59.50', '11.90', '71.40'),
+                $line('notebook', 'PHYSICAL', 'Notebook', '25.80', '5.16', '30.96'),
+            ];
+            $byId = array_column($lines, null, 'id');
+            $n = 0;
+            $refund = static function (string $total, array $credited) use ($byId, $prototype, &$n): array {
+                $refundLines = [];
+                foreach ($credited as $id => $gross) {
+                    $refundLines[] = array_intersect_key($byId[$id], array_flip(['name', 'description', 'type', 'tax_rate', 'tax_code'])) + ['id' => 'refund-line-' . ++$n, 'prototype_id' => $prototype ? $id : null, 'quantity' => 1.0, 'gross_amount' => $gross];
+                }
+                return ['id' => 'refund-' . $n, 'total_amount' => $total, 'line_items' => $refundLines];
+            };
+            StubStore::reset();
+            StubStore::$orders[5100] = ['module' => 'twopayment'];
+            StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+            $twoOrder = self::fulfilledOrder(139.22, [
+                $refund('-28.56', ['sweater' => '-7.19', 'mug' => '-14.91', 'notebook' => '-6.46']),
+                $refund('-12.40', ['shipping' => '-2.40', 'sweater' => '-2.52', 'mug' => '-5.22', 'notebook' => '-2.26']),
+            ]);
+            $twoOrder['state'] = 'REFUNDED';
+            $twoOrder['line_items'] = $lines;
+            $module = self::makeModule($twoOrder);
+            $module->placedSubtotals = [$sub('116.02', '23.20')];
+            $module->refundRows[1] = ['id_order_slip' => 1, 'status' => 'SENT', 'amount' => '28.56', 'tax_subtotals' => [$sub('23.80', '4.76')]];
+            $module->refundRows[2] = ['id_order_slip' => 2, 'status' => 'SENT', 'amount' => '12.40', 'tax_subtotals' => [$sub('10.33', '2.07')]];
+            $status = new OrderState();
+            $status->id = 7;
+            $status->name = 'Refunded';
+
+            $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+
+            $calls = $module->refundCalls();
+            TinyAssert::count(1, $calls, $desc);
+            TinyAssert::same('98.26', $calls[0]['payload']['amount'], $desc . ': amount');
+            TinyAssert::same($expected, self::sentLines($calls[0]['payload'], $lines), $desc . ': got ' . json_encode($calls[0]['payload']['line_items'] ?? null));
         }
     }
 

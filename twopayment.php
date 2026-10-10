@@ -6248,7 +6248,7 @@ class Twopayment extends PaymentModule
     private function getTwoRefundedPerLine($two_order)
     {
         $refunded = array();
-        foreach (isset($two_order['refunds']) && is_array($two_order['refunds']) ? $two_order['refunds'] : array() as $refund) {
+        foreach ($this->getTwoRefundsWithParentLines($two_order) as $refund) {
             foreach (isset($refund['line_items']) && is_array($refund['line_items']) ? $refund['line_items'] : array() as $line) {
                 if (!empty($line['prototype_id'])) {
                     $id = (string)$line['prototype_id'];
@@ -6258,6 +6258,86 @@ class Twopayment extends PaymentModule
         }
 
         return $refunded;
+    }
+
+    /**
+     * Two's refunds on the order, each refund line's prototype_id naming the order line it credited (TWO-26288).
+     * A refund line made from an order line gets its own id and that line's name, description, type, rate and tax
+     * code, and Two's responses leave its prototype_id empty, so an empty one is filled with the order line that
+     * matches on those fields. Within one refund each order line is credited by at most one line (the module sends
+     * one line per order line, and Two copies each), so where several order lines match, a refund's matching lines
+     * go to distinct order lines, the largest to the one with the most left to refund; only when a refund has more
+     * matching lines than there are order lines does one take a second, again the one with the most left. This is
+     * a best match, not Two's record. A refund line that matches no order line keeps its empty prototype_id.
+     *
+     * @param array|null $two_order Two order API response
+     * @return array the refunds, as Two returned them apart from the prototype_ids filled in
+     */
+    private function getTwoRefundsWithParentLines($two_order)
+    {
+        $refunds = isset($two_order['refunds']) && is_array($two_order['refunds']) ? array_values($two_order['refunds']) : array();
+        $left = array();
+        $by_look = array();
+        foreach (isset($two_order['line_items']) && is_array($two_order['line_items']) ? $two_order['line_items'] : array() as $line) {
+            if (is_array($line) && !empty($line['id'])) {
+                $left[(string)$line['id']] = isset($line['gross_amount']) ? (float)$line['gross_amount'] : 0.0;
+                $by_look[$this->getTwoLineLook($line)][] = (string)$line['id'];
+            }
+        }
+        // Lines Two already names come off first, so a matched line is judged on what is really left on its candidates.
+        foreach ($refunds as $refund) {
+            foreach (isset($refund['line_items']) && is_array($refund['line_items']) ? $refund['line_items'] : array() as $line) {
+                if (is_array($line) && !empty($line['prototype_id']) && isset($left[(string)$line['prototype_id']])) {
+                    $left[(string)$line['prototype_id']] -= abs((float)(isset($line['gross_amount']) ? $line['gross_amount'] : 0));
+                }
+            }
+        }
+        foreach ($refunds as $r => $refund) {
+            if (!isset($refund['line_items']) || !is_array($refund['line_items'])) {
+                continue;
+            }
+            $unnamed = array();
+            foreach ($refund['line_items'] as $l => $line) {
+                if (is_array($line) && empty($line['prototype_id']) && isset($by_look[$this->getTwoLineLook($line)])) {
+                    $unnamed[$l] = abs((float)(isset($line['gross_amount']) ? $line['gross_amount'] : 0));
+                }
+            }
+            // Largest first, each to the matching order line with the most left that this refund has not credited yet.
+            arsort($unnamed);
+            $used = array();
+            foreach ($unnamed as $l => $gross) {
+                $candidates = $by_look[$this->getTwoLineLook($refund['line_items'][$l])];
+                $fresh = array_values(array_diff($candidates, $used));
+                $parent = null;
+                foreach ($fresh === array() ? $candidates : $fresh as $id) {
+                    if ($parent === null || $left[$id] > $left[$parent] + 0.0001) {
+                        $parent = $id;
+                    }
+                }
+                $left[$parent] -= $gross;
+                $used[] = $parent;
+                $refunds[$r]['line_items'][$l]['prototype_id'] = $parent;
+            }
+        }
+
+        return $refunds;
+    }
+
+    /**
+     * The fields a refund line copies from the order line it was made from, as one key.
+     *
+     * @param array $line
+     * @return string
+     */
+    private function getTwoLineLook(array $line)
+    {
+        $look = array();
+        foreach (array('name', 'description', 'type', 'tax_code') as $field) {
+            $look[] = isset($line[$field]) ? (string)$line[$field] : '';
+        }
+        $look[] = isset($line['tax_rate']) ? number_format((float)$line['tax_rate'], 6, '.', '') : '';
+
+        return implode("\0", $look);
     }
 
     /**
@@ -8639,15 +8719,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The context's order_refunds (TWO-26287): the refunds Two holds for the order, verbatim from the same GET
-     * response, each with the lines it credited. Null when there is no successful response with a list of refunds.
+     * The context's order_refunds (TWO-26287): the refunds Two holds for the order, from the same GET response, each
+     * with the lines it credited, every refund line naming its order line in prototype_id where one matches
+     * (TWO-26288). Null when there is no successful response with a list of refunds.
      *
      * @param array|null $twoOrder
      * @return array|null
      */
     public function getTwoOrderRefundsAtTwo($twoOrder)
     {
-        return $this->getTwoOrderListAtTwo($twoOrder, 'refunds');
+        return $this->getTwoOrderListAtTwo($twoOrder, 'refunds') === null ? null : $this->getTwoRefundsWithParentLines($twoOrder);
     }
 
     /**
