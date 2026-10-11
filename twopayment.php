@@ -25,6 +25,7 @@ require_once dirname(__FILE__) . '/classes/TwoPostcodeFormat.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessing.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessingException.php';
 require_once dirname(__FILE__) . '/classes/TwoShopTaxCode.php';
+require_once dirname(__FILE__) . '/classes/TwoTaxCodeSection.php';
 
 class Twopayment extends PaymentModule
 {
@@ -357,6 +358,13 @@ class Twopayment extends PaymentModule
     // A hidden field rendered after every other control of the Order management form, the save button included, so
     // it is the last value of the post: PHP drops the end of a post past max_input_vars, so a post without it was cut.
     const ORDER_MANAGEMENT_FORM_END_FIELD = 'twoOrderManagementFormEnd';
+    // The merchant id and country behind the "Tax codes for 0% lines" section (TWO-26153), resolved from the stored
+    // API key for that page alone and never read at order time: JSON {slot, merchant_id, country, fetched_at, tried_at,
+    // failure}, where slot is verificationSlotKey() of the key it was resolved for.
+    const CONFIG_TAX_CODE_PROFILE = 'PS_TWO_TAX_CODE_PROFILE';
+    const TAX_CODE_PROFILE_TTL = 86400;
+    // The section's "Clear saved tax codes" checkbox, which writes an empty map ({}) to the context shop.
+    const TAX_CODES_CLEAR_FIELD = 'PS_TWO_TAX_CODES_CLEAR';
 
     // JSON array of {name, value, send_from_browser}.
     const CONFIG_CUSTOM_HEADERS = 'PS_TWO_CUSTOM_HEADERS';
@@ -1190,6 +1198,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_TAX_CODES);
         Configuration::deleteByName(self::CONFIG_TAX_CODES_TRIED_TS);
         Configuration::deleteByName(self::CONFIG_TAX_CODE_MAP_LEGACY_LOGGED_TS);
+        Configuration::deleteByName(self::CONFIG_TAX_CODE_PROFILE);
         return true;
     }
 
@@ -3457,10 +3466,15 @@ class Twopayment extends PaymentModule
     {
         Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', (int) Tools::getValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1));
 
-        // Only when the mapping was on the form: it is absent while the code list cannot be fetched.
-        $map = $this->getPostedTwoTaxCodeMap();
-        if (is_array($map)) {
-            Configuration::updateValue(self::CONFIG_TAX_CODE_MAP, $map === array() ? '' : json_encode($map));
+        // Clear wins over any posted row. Otherwise only when the mapping was on the form, which it is only while the
+        // section shows its rows.
+        if ($this->isTwoTaxCodesClearPosted()) {
+            $this->writeTwoTaxCodeShopValue(self::CONFIG_TAX_CODE_MAP, '{}');
+        } else {
+            $map = $this->getPostedTwoTaxCodeMap();
+            if (is_array($map)) {
+                Configuration::updateValue(self::CONFIG_TAX_CODE_MAP, $map === array() ? '' : json_encode($map));
+            }
         }
 
         // Write the default shipping tax code ONLY when actually submitted.
@@ -3485,67 +3499,320 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The tax code mapping on the Order management form (TWO-26153): for each tax rules group, a select for a buyer in
-     * another EU country with a VAT number, one per 0% tax rule labelled as the shop describes it, and one for no
-     * rule, each filled from GET /v1/tax_codes/<merchant country>. With no code list, a notice in its place, and saved
-     * mappings keep working.
+     * The "Tax codes for 0% lines" section of the Order management form (TWO-26153), as TwoTaxCodeSection decides it:
+     * nothing at all while it is hidden, else one block holding its notices and, while Two requires codes for the
+     * merchant's country, a table with one row per tax rules group. The selects keep their field names, so the save
+     * path reads them as before.
      *
      * @return array HelperForm inputs
      */
     protected function getTwoTaxCodeMapInputs()
     {
-        $inputs = array(array(
+        $state = $this->getTwoTaxCodeSectionState();
+        if ($state['view'] === TwoTaxCodeSection::VIEW_HIDDEN) {
+            return array();
+        }
+
+        return array(array(
             'type' => 'html',
             'label' => $this->l('Tax codes for 0% lines'),
-            'name' => 'PS_TWO_TAX_CODE_MAP_INTRO',
-            'html_content' => '',
-            'desc' => sprintf(
-                $this->l('%s requires a tax code on every line at a 0%% rate for a Spanish merchant. Choose the code for each case your tax rules groups give a 0%% line: a buyer company billed and taxed in another EU country (the 27 member states, Monaco and Northern Ireland) whose invoice address carries a VAT number; each 0%% tax rule; and an address no tax rule of the group covers, such as an export. The module sends the code you choose and decides nothing about how the line is taxed. A line with no tax rules group of its own, such as a discount, takes the code the order\'s other 0%% lines share. Northern Ireland is in the EU VAT area for goods only: do not map a services group\'s EU row to an intra-community services code if you sell services there. A 0%% line whose case has no code chosen is sent without one. The module never refuses an order over a tax code; %s validates it, and refuses such a line for a Spanish merchant.'),
-                $this->getTwoBrandConfig('product_name'),
-                $this->getTwoBrandConfig('product_name')
-            ),
+            'name' => 'PS_TWO_TAX_CODES_SECTION',
+            'html_content' => $this->renderTwoTaxCodeSection($state),
         ));
-        $error = '';
-        $codes = $this->getTwoTaxCodeOptions($error);
-        if ($codes === null) {
-            $inputs[] = array(
-                'type' => 'html',
-                'label' => '',
-                'name' => 'PS_TWO_TAX_CODE_MAP_UNAVAILABLE',
-                'html_content' => '<div class="alert alert-warning">' . htmlspecialchars($error, ENT_QUOTES, 'UTF-8') . '</div>',
-            );
+    }
 
-            return $inputs;
+    /**
+     * The facts TwoTaxCodeSection::state() decides on (TWO-26153). Admin only. The merchant country comes from the
+     * section's own profile of the stored API key, never from checkout's record, and render and save use the same one.
+     *
+     * @param bool $forSave a save asks only whether the rows are shown, and never for checkout's details
+     * @return array TwoTaxCodeSection::state()
+     */
+    protected function getTwoTaxCodeSectionState($forSave = false)
+    {
+        // Asked once per render, where the code list used to ask it, so checkout's record is refetched exactly as
+        // before. Compared with the profile only, for W1.
+        $checkoutCountry = $forSave ? '' : $this->getTwoMerchantCountry();
+        $facts = array(
+            'single_shop' => $this->isTwoSingleShopContext(),
+            'has_key' => !Tools::isEmpty((string) Configuration::get('PS_TWO_MERCHANT_API_KEY')),
+            'readable' => true,
+            'entries' => array(),
+            'profile' => null,
+            'profile_failure' => null,
+            'list' => null,
+            'list_http' => 0,
+            'checkout_id' => '',
+            'checkout_country' => '',
+        );
+        if (!$facts['single_shop'] || !$facts['has_key']) {
+            return TwoTaxCodeSection::state($facts);
         }
-        $map = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
-        $group = null;
-        foreach ($this->getTwoTaxCodeMapRows() as $row) {
-            if ($row['group'] !== $group) {
-                $group = $row['group'];
-                $inputs[] = array(
-                    'type' => 'html',
-                    'label' => $row['group_name'],
-                    'name' => self::TAX_CODE_MAP_FIELD_PREFIX . $group . '_GROUP',
-                    'html_content' => '',
-                );
+        $facts['readable'] = $this->isTwoTaxCodeMapReadable();
+        $facts['entries'] = $facts['readable'] ? $this->getTwoTaxCodeMap() : array();
+        $failure = null;
+        $profile = $this->getTwoTaxCodeMerchantProfile($failure);
+        $facts['profile'] = $profile;
+        $facts['profile_failure'] = $failure;
+        if ($profile !== null) {
+            $meta = null;
+            $codes = $this->getTwoTaxCodeOptions($profile['country'], $meta);
+            $facts['list'] = $codes === null ? null : array('codes' => $codes, 'mandatory' => $meta['mandatory']);
+            $facts['list_http'] = $meta['http'];
+            $facts['checkout_id'] = $forSave ? $profile['merchant_id'] : (string) Configuration::get('PS_TWO_MERCHANT_ID');
+            $facts['checkout_country'] = $forSave ? $profile['country'] : $checkoutCountry;
+        }
+
+        return TwoTaxCodeSection::state($facts);
+    }
+
+    /**
+     * The merchant behind the stored API key, for the tax code section alone (TWO-26153): verify_api_key gives the
+     * merchant id and GET /v1/merchant/<id> its country. Held a day per key and environment at the context shop's
+     * tier, with a five-minute floor stamped before the calls, so an outage costs one attempt per floor. Inside the
+     * floor, or when the lookup fails, the last profile for this key is served, whatever its age.
+     *
+     * It never writes PS_TWO_MERCHANT_ID, the merchant record or the API key verdict: checkout keeps what it holds.
+     *
+     * @param array|null $failure set to why there is no fresh profile: ['stage', 'category', 'http']
+     * @return array{merchant_id:string,country:string}|null null when no profile for this key was ever resolved
+     */
+    protected function getTwoTaxCodeMerchantProfile(&$failure = null)
+    {
+        $failure = null;
+        $key = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        $slot = self::verificationSlotKey($key);
+        $stored = json_decode((string) Configuration::get(self::CONFIG_TAX_CODE_PROFILE), true);
+        $held = is_array($stored) && isset($stored['slot']) && $stored['slot'] === $slot
+            ? $stored + array('merchant_id' => '', 'country' => '', 'fetched_at' => 0, 'tried_at' => 0, 'failure' => null)
+            : array('slot' => $slot, 'merchant_id' => '', 'country' => '', 'fetched_at' => 0, 'tried_at' => 0, 'failure' => null);
+        $profile = is_string($held['merchant_id']) && $held['merchant_id'] !== '' && is_string($held['country']) && preg_match('/^[A-Z]{2}$/', $held['country']) === 1
+            ? array('merchant_id' => $held['merchant_id'], 'country' => $held['country'])
+            : null;
+        if ($profile !== null && (int) $held['fetched_at'] + self::TAX_CODE_PROFILE_TTL > time()) {
+            return $profile;
+        }
+        if ((int) $held['tried_at'] + self::MERCHANT_RECORD_RETRY_BACKOFF > time()) {
+            $failure = is_array($held['failure']) ? $held['failure'] : array('stage' => '', 'category' => 'pending', 'http' => 0);
+
+            return $profile;
+        }
+        $held['tried_at'] = time();
+        $this->writeTwoTaxCodeShopValue(self::CONFIG_TAX_CODE_PROFILE, json_encode($held));
+
+        $verified = $this->verifyTwoApiKey($key, Configuration::get('PS_TWO_ENVIRONMENT'), self::API_TIMEOUT_STATE_CHECK);
+        if ($verified['status'] !== self::API_KEY_STATUS_OK) {
+            $failure = array('stage' => 'verify_api_key', 'category' => (string) $verified['status'], 'http' => (int) $verified['code']);
+        } else {
+            $merchantId = (string) $verified['body']['id'];
+            $response = $this->setTwoPaymentRequest('/v1/merchant/' . rawurlencode($merchantId), array(), 'GET', array(), self::API_TIMEOUT_STATE_CHECK);
+            $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+            $country = isset($response['country_code']) && is_string($response['country_code']) ? strtoupper(trim($response['country_code'])) : '';
+            if ($status === self::HTTP_STATUS_OK && preg_match('/^[A-Z]{2}$/', $country) === 1) {
+                $now = time();
+                $this->writeTwoTaxCodeShopValue(self::CONFIG_TAX_CODE_PROFILE, json_encode(array(
+                    'slot' => $slot, 'merchant_id' => $merchantId, 'country' => $country, 'fetched_at' => $now, 'tried_at' => $now, 'failure' => null,
+                )));
+
+                return array('merchant_id' => $merchantId, 'country' => $country);
             }
-            $options = array(array('id' => '', 'name' => $this->l('(none)')));
-            foreach ($codes as $code) {
-                $options[] = array('id' => $code['code'], 'name' => $this->formatTwoTaxCodeOptionLabel($code));
+            $failure = array('stage' => 'GET /v1/merchant', 'category' => 'HTTP ' . $status, 'http' => $status);
+        }
+        PrestaShopLogger::addLog('TwoPayment: Tax codes: merchant lookup failed at ' . $failure['stage'] . ' (' . $failure['category'] . '); the section shows a notice', 2);
+        $held['failure'] = $failure;
+        $this->writeTwoTaxCodeShopValue(self::CONFIG_TAX_CODE_PROFILE, json_encode($held));
+
+        return $profile;
+    }
+
+    /**
+     * Write a tax code section value at the context shop's tier with explicit ids (TWO-26153); the global tier on a
+     * single-store install. Explicit, so the row is the shop's own whatever the context's fallbacks.
+     *
+     * @param string $key
+     * @param string $value
+     * @return bool
+     */
+    private function writeTwoTaxCodeShopValue($key, $value)
+    {
+        if (!Shop::isFeatureActive()) {
+            return Configuration::updateGlobalValue($key, $value);
+        }
+
+        return Configuration::updateValue($key, $value, false, (int) Shop::getContextShopGroupID(), (int) Shop::getContextShopID());
+    }
+
+    /**
+     * Whether this save carries "Clear saved tax codes" (TWO-26153). Never outside a single shop's context, where the
+     * section offers no Clear.
+     *
+     * @return bool
+     */
+    protected function isTwoTaxCodesClearPosted()
+    {
+        return $this->isTwoSingleShopContext() && (string) Tools::getValue(self::TAX_CODES_CLEAR_FIELD, '') === '1';
+    }
+
+    /**
+     * The section's HTML for a TwoTaxCodeSection::state() (TWO-26153).
+     *
+     * @param array $state
+     * @return string
+     */
+    protected function renderTwoTaxCodeSection(array $state)
+    {
+        $brand = (string) $this->getTwoBrandConfig('product_name');
+        $country = $this->getTwoTaxCodeCountryName($state['country']);
+        $http = $state['http'] > 0 ? (string) $state['http'] : '-';
+        if ($state['view'] === TwoTaxCodeSection::VIEW_SELECT_SHOP) {
+            return $this->twoTaxCodeNotice('info', $this->l('Select a single shop to see its tax code settings.'));
+        }
+        $html = '';
+        if ($state['view'] === TwoTaxCodeSection::VIEW_PROFILE_ERROR) {
+            $html .= $this->twoTaxCodeNotice('warning', $state['rejected']
+                ? sprintf($this->l('%s rejected the stored API key; fix it on the General tab.'), $brand)
+                : sprintf($this->l('Could not read your merchant details from %1$s (HTTP %2$s); try again in a few minutes.'), $brand, $http));
+        } elseif ($state['view'] === TwoTaxCodeSection::VIEW_LIST_ERROR) {
+            $html .= $this->twoTaxCodeNotice('warning', sprintf(
+                $this->l('Could not check whether %1$s requires tax codes for your country (%2$s, HTTP %3$s); try again in a few minutes.'),
+                $brand,
+                $country,
+                $http
+            ));
+        }
+        $notices = array(
+            TwoTaxCodeSection::NOTICE_UNREADABLE => array('danger', sprintf($this->l('Saved tax codes can\'t be read, so %s is hidden at checkout; clear them to restore it.'), $brand)),
+            TwoTaxCodeSection::NOTICE_CHECKOUT_STALE => array('warning', $this->l('Checkout has not picked up your merchant details; press Save on the General tab.')),
+            TwoTaxCodeSection::NOTICE_SAVED_VALID => array('info', sprintf($this->l('Saved tax codes still apply at checkout, though %1$s does not require them for your country (%2$s).'), $brand, $country)),
+            TwoTaxCodeSection::NOTICE_SAVED_INVALID => array('warning', sprintf($this->l('Some saved tax codes are not valid on 0%% lines for your country (%1$s), so %2$s refuses orders that use them.'), $country, $brand)),
+        );
+        foreach ($state['notices'] as $notice) {
+            $html .= $this->twoTaxCodeNotice($notices[$notice][0], $notices[$notice][1]);
+        }
+        if ($state['view'] === TwoTaxCodeSection::VIEW_ROWS) {
+            $intro = htmlspecialchars(sprintf(
+                $this->l('%1$s requires a tax code on every 0%% line for your country (%2$s): choose one for each case below. A case left on (none) sends no code, and %1$s refuses the line. Northern Ireland counts as EU for goods only: in a services group\'s EU column, don\'t choose an intra-community services code.'),
+                $brand,
+                $country
+            ), ENT_QUOTES, 'UTF-8');
+            $help = self::normalizeTwoBrandUrl($this->getTwoBrandConfig('tax_codes_help_url'));
+            if ($help !== '') {
+                $intro .= ' <a href="' . htmlspecialchars($help, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener noreferrer">'
+                    . htmlspecialchars($this->l('How lines are matched'), ENT_QUOTES, 'UTF-8') . '</a>';
+            }
+            $html .= '<p class="help-block" style="margin-top:0;">' . $intro . '</p>' . $this->renderTwoTaxCodeTable($state['codes']);
+        }
+        if ($state['clear']) {
+            $html .= '<div class="checkbox"><label><input type="checkbox" name="' . self::TAX_CODES_CLEAR_FIELD . '" value="1"> '
+                . htmlspecialchars($this->l('Clear saved tax codes'), ENT_QUOTES, 'UTF-8') . '</label></div>';
+        }
+
+        return $html;
+    }
+
+    /**
+     * The mapping as a table, one row per tax rules group: the exempt buyer, the group's 0% tax rules (each with its
+     * own select, labelled as the shop describes the rule), and no rule. Every select offers (none) and the listed
+     * codes at rate 0, plus a stored code that is not one of them, marked, so nothing saved disappears unseen.
+     *
+     * @param array $codes getTwoTaxCodeOptions()
+     * @return string
+     */
+    private function renderTwoTaxCodeTable(array $codes)
+    {
+        $map = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
+        $zero = TwoTaxCodeSection::zeroRated($codes);
+        $groups = array();
+        foreach ($this->getTwoTaxCodeMapRows() as $row) {
+            $kind = strpos($row['key'], 'rule:') === 0 ? 'rules' : (substr($row['key'], -7) === '|exempt' ? 'exempt' : 'none');
+            if (!isset($groups[$row['group']])) {
+                $groups[$row['group']] = array('name' => $row['group_name'], 'exempt' => '', 'rules' => array(), 'none' => '');
             }
             $saved = is_array($map) && isset($map[$row['key']]) ? $map[$row['key']] : '';
-            if ($saved !== '' && !$this->isTwoTaxCodeListed($codes, $saved)) {
-                $options[] = array('id' => $saved, 'name' => $saved . ' (' . $this->l('no longer listed') . ')');
+            $select = $this->renderTwoTaxCodeSelect($row['field'], (string) Tools::getValue($row['field'], $saved), $zero, $codes);
+            if ($kind === 'rules') {
+                $groups[$row['group']]['rules'][] = '<div style="margin-bottom:6px;"><div class="text-muted" style="font-size:90%;">'
+                    . htmlspecialchars($row['label'], ENT_QUOTES, 'UTF-8') . '</div>' . $select . '</div>';
+            } else {
+                $groups[$row['group']][$kind] = $select;
             }
-            $inputs[] = array(
-                'type' => 'select',
-                'label' => $row['label'],
-                'name' => $row['field'],
-                'options' => array('query' => $options, 'id' => 'id', 'name' => 'name'),
-            );
+        }
+        $e = static function ($text) {
+            return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+        };
+        $html = '<table id="two-tax-code-grid" class="table" style="width:auto;margin-bottom:0;"><thead><tr>'
+            . '<th>' . $e($this->l('Tax rules group')) . '</th>'
+            . '<th>' . $e($this->l('VAT-registered buyer, other EU state')) . '</th>'
+            . '<th>' . $e($this->l('Your 0% tax rules')) . '</th>'
+            . '<th>' . $e($this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)')) . '</th>'
+            . '</tr></thead><tbody>';
+        foreach ($groups as $group) {
+            $rules = $group['rules'] !== array()
+                ? implode('', $group['rules'])
+                : '<span class="text-muted">' . $e($this->l('No 0% tax rule in this group')) . '</span>';
+            $html .= '<tr><td style="vertical-align:middle;">' . $e($group['name']) . '</td>'
+                . '<td style="vertical-align:middle;">' . $group['exempt'] . '</td>'
+                . '<td style="vertical-align:middle;">' . $rules . '</td>'
+                . '<td style="vertical-align:middle;">' . $group['none'] . '</td></tr>';
         }
 
-        return $inputs;
+        return $html . '</tbody></table>';
+    }
+
+    /**
+     * @param string $field
+     * @param string $selected
+     * @param array $zero the listed codes at rate 0
+     * @param array $codes every listed code
+     * @return string
+     */
+    private function renderTwoTaxCodeSelect($field, $selected, array $zero, array $codes)
+    {
+        $options = array('' => $this->l('(none)'));
+        foreach ($zero as $code) {
+            $options[$code['code']] = $this->formatTwoTaxCodeOptionLabel($code);
+        }
+        if ($selected !== '' && !isset($options[$selected])) {
+            $options[$selected] = $selected . ' (' . ($this->isTwoTaxCodeListed($codes, $selected) ? $this->l('not valid on 0% lines') : $this->l('no longer listed')) . ')';
+        }
+        $html = '<select name="' . htmlspecialchars($field, ENT_QUOTES, 'UTF-8') . '" class="form-control" style="min-width:16em;">';
+        foreach ($options as $value => $label) {
+            $value = (string) $value;
+            $html .= '<option value="' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '"' . ($value === $selected ? ' selected="selected"' : '') . '>'
+                . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '</option>';
+        }
+
+        return $html . '</select>';
+    }
+
+    /**
+     * @param string $level a Bootstrap alert level
+     * @param string $text plain text
+     * @return string
+     */
+    private function twoTaxCodeNotice($level, $text)
+    {
+        return '<div class="alert alert-' . $level . '">' . htmlspecialchars($text, ENT_QUOTES, 'UTF-8') . '</div>';
+    }
+
+    /**
+     * A country's name in the admin language, falling back to its ISO code.
+     *
+     * @param string $iso alpha-2
+     * @return string
+     */
+    private function getTwoTaxCodeCountryName($iso)
+    {
+        $idLang = isset($this->context->language->id) ? (int) $this->context->language->id : (int) Configuration::get('PS_LANG_DEFAULT');
+        foreach ((array) Country::getCountries($idLang) as $id => $row) {
+            if (isset($row['iso_code']) && strtoupper((string) $row['iso_code']) === $iso) {
+                $name = isset($row['name']) ? (string) $row['name'] : (string) Country::getNameById($idLang, (int) $id);
+
+                return $name !== '' ? $name : $iso;
+            }
+        }
+
+        return $iso;
     }
 
     /**
@@ -3561,7 +3828,7 @@ class Twopayment extends PaymentModule
             $rows[] = $row + array(
                 'key' => TwoShopTaxCode::exemptKey($groupId),
                 'field' => self::TAX_CODE_MAP_FIELD_PREFIX . $groupId . '_EXEMPT',
-                'label' => $this->l('Buyer in another EU country with a VAT number'),
+                'label' => $this->l('VAT-registered buyer, other EU state'),
             );
             foreach ($this->getTwoZeroTaxRules($groupId) as $rule) {
                 $rows[] = $row + array(
@@ -3573,7 +3840,7 @@ class Twopayment extends PaymentModule
             $rows[] = $row + array(
                 'key' => TwoShopTaxCode::noRuleKey($groupId),
                 'field' => self::TAX_CODE_MAP_FIELD_PREFIX . $groupId . '_NONE',
-                'label' => $this->l('No rule for the address'),
+                'label' => $this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)'),
             );
         }
 
@@ -3641,25 +3908,35 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The mapping the form posted, merged over the stored one: a row not on the form keeps its code.
+     * The mapping the form posted, merged over the stored one: a row not on the form keeps its code. Rows are read
+     * only while the section shows them, so a stale tab posting rows the section no longer shows changes nothing, and
+     * a save carrying Clear reads none.
      *
      * @return array<string,string>|false|null the map; false when the form carried no mapping; null when a posted code
-     *                                         is neither listed nor the one already stored for that row
+     *                                         is neither listed at rate 0 nor the one already stored for that row
      */
     protected function getPostedTwoTaxCodeMap()
     {
-        $stored = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
-        $map = is_array($stored) ? $stored : array();
-        $posted = false;
-        $codes = null;
+        $posted = array();
         foreach ($this->getTwoTaxCodeMapRows() as $row) {
             $raw = Tools::getValue($row['field'], false);
-            if ($raw === false) {
-                continue;
+            if ($raw !== false) {
+                $posted[] = array($row['key'], is_string($raw) ? trim($raw) : '');
             }
-            $posted = true;
-            $code = is_string($raw) ? trim($raw) : '';
-            $key = $row['key'];
+        }
+        if ($posted === array() || $this->isTwoTaxCodesClearPosted()) {
+            return false;
+        }
+        $state = $this->getTwoTaxCodeSectionState(true);
+        if ($state['view'] !== TwoTaxCodeSection::VIEW_ROWS) {
+            return false;
+        }
+        $stored = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
+        $map = is_array($stored) ? $stored : array();
+        $codes = TwoTaxCodeSection::zeroRated($state['codes']);
+        $asked = false;
+        foreach ($posted as $pair) {
+            list($key, $code) = $pair;
             if ($code === '') {
                 unset($map[$key]);
                 continue;
@@ -3667,17 +3944,15 @@ class Twopayment extends PaymentModule
             if (isset($map[$key]) && $map[$key] === $code) {
                 continue;
             }
-            if ($codes === null) {
-                $error = '';
-                $codes = (array) $this->getTwoTaxCodeOptions($error);
+            if (!$asked) {
+                // Where the code list used to be fetched, so checkout's record is refetched exactly as before.
+                $asked = true;
+                $this->getTwoMerchantCountry();
             }
             if (!$this->isTwoTaxCodeListed($codes, $code)) {
                 return null;
             }
             $map[$key] = $code;
-        }
-        if (!$posted) {
-            return false;
         }
         ksort($map);
 
@@ -3701,62 +3976,65 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The codes the merchant may map a tax rules group to, from GET /v1/tax_codes/<merchant country> (TWO-24877),
-     * cached a day. A failed fetch serves the last good list. Codes that need a caller-supplied exemption reason are
-     * left out: a mapping holds a code only, and the API supplies every other code's reason itself.
+     * The codes Two lists for a country, from GET /v1/tax_codes/<country> (TWO-24877), with whether Two requires a
+     * code on a 0% line there (TWO-26153), cached a day. A country with no code registry (400 COUNTRY_NOT_SUPPORTED)
+     * is an answer, cached the same way: no codes, not required. A failed fetch serves the last answer for the country,
+     * whatever its age, and an entry cached without that metadata counts as none. Codes that need a caller-supplied
+     * exemption reason are left out: a mapping holds a code only, and the API supplies every other code's reason
+     * itself. Admin only.
      *
-     * @param string $error set to why there is no list
-     * @return array|null [['code', 'display_name', 'rate'], ...]; null when none can be had
+     * @param string $country alpha-2, the tax code section's merchant country
+     * @param array|null $meta set to ['mandatory' => bool, 'http' => the failed fetch's status, 0 when none]
+     * @return array|null [['code', 'display_name', 'rate'], ...]; null when there is no answer
      */
-    public function getTwoTaxCodeOptions(&$error = '')
+    public function getTwoTaxCodeOptions($country, &$meta = null)
     {
-        $error = '';
-        $country = $this->getTwoMerchantCountry();
-        if ($country === '') {
-            $error = $this->l('The merchant country is not known yet, so no tax codes can be listed. Save a valid API key, or refresh the merchant profile on the Diagnostics tab.');
-
+        $meta = array('mandatory' => false, 'http' => 0);
+        $country = strtoupper((string) $country);
+        if (preg_match('/^[A-Z]{2}$/', $country) !== 1) {
             return null;
         }
         $cached = json_decode((string) Configuration::get(self::CONFIG_TAX_CODES), true);
-        $held = is_array($cached) && isset($cached['country'], $cached['codes'], $cached['fetched_at'])
-            && $cached['country'] === $country && is_array($cached['codes']);
-        if ($held && (int) $cached['fetched_at'] + self::TAX_CODES_TTL > time()) {
-            return $cached['codes'];
+        $held = is_array($cached) && isset($cached['country'], $cached['codes'], $cached['fetched_at'], $cached['metadata'])
+            && $cached['country'] === $country && is_array($cached['codes']) && is_array($cached['metadata']);
+        if ($held) {
+            $meta['mandatory'] = !empty($cached['metadata']['mandatory']);
+            if ((int) $cached['fetched_at'] + self::TAX_CODES_TTL > time()) {
+                return $cached['codes'];
+            }
         }
         // Stamped before the call, so an outage costs one attempt per backoff, not one per page load.
         $tried = (int) Configuration::get(self::CONFIG_TAX_CODES_TRIED_TS);
         if ($tried + self::MERCHANT_RECORD_RETRY_BACKOFF > time()) {
-            if ($held) {
-                return $cached['codes'];
-            }
-            $error = sprintf(
-                $this->l('The tax code list could not be read from %1$s (HTTP %2$s). Saved mappings keep working at checkout; reload this page to try again.'),
-                $this->getTwoBrandConfig('product_name'),
-                '-'
-            );
-
-            return null;
+            return $held ? $cached['codes'] : null;
         }
         Configuration::updateValue(self::CONFIG_TAX_CODES_TRIED_TS, time());
         $response = $this->setTwoPaymentRequest('/v1/tax_codes/' . rawurlencode($country), array(), 'GET', array(), self::API_TIMEOUT_STATE_CHECK);
         $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
-        $codes = $status === self::HTTP_STATUS_OK && isset($response['data']) && is_array($response['data'])
-            ? self::normaliseTwoTaxCodes($response['data'])
-            : null;
+        $codes = null;
+        $mandatory = false;
+        if ($status === self::HTTP_STATUS_OK && isset($response['data']) && is_array($response['data'])) {
+            $codes = self::normaliseTwoTaxCodes($response['data']);
+            $mandatory = TwoTaxCodeSection::isMandatoryAtZero(isset($response['metadata']) ? $response['metadata'] : null);
+        } elseif ($status === self::HTTP_STATUS_BAD_REQUEST && isset($response['error_code']) && $response['error_code'] === 'COUNTRY_NOT_SUPPORTED') {
+            $codes = array();
+        }
         if ($codes !== null) {
-            Configuration::updateValue(self::CONFIG_TAX_CODES, json_encode(array('country' => $country, 'fetched_at' => time(), 'codes' => $codes)));
+            Configuration::updateValue(self::CONFIG_TAX_CODES, json_encode(array(
+                'country' => $country,
+                'fetched_at' => time(),
+                'codes' => $codes,
+                'metadata' => array('mandatory' => $mandatory),
+            )));
+            $meta['mandatory'] = $mandatory;
 
             return $codes;
         }
         if ($held) {
             return $cached['codes'];
         }
-        PrestaShopLogger::addLog('TwoPayment: GET /v1/tax_codes/' . $country . ' failed (HTTP ' . $status . '); the tax code mapping cannot be shown', 2);
-        $error = sprintf(
-            $this->l('The tax code list could not be read from %1$s (HTTP %2$s). Saved mappings keep working at checkout; reload this page to try again.'),
-            $this->getTwoBrandConfig('product_name'),
-            $status > 0 ? (string) $status : '-'
-        );
+        PrestaShopLogger::addLog('TwoPayment: GET /v1/tax_codes/' . $country . ' failed (HTTP ' . $status . '); the tax code section shows a notice', 2);
+        $meta['http'] = $status;
 
         return null;
     }
@@ -4137,7 +4415,9 @@ class Twopayment extends PaymentModule
             $reason = $this->l('the saved surcharge method is not recognised. Check Surcharge method.');
         }
         if ($reason === null && !$this->isTwoTaxCodeMapReadable()) {
-            $reason = $this->l('the saved tax code mapping is unreadable. Save Tax codes for 0% lines again.');
+            $reason = Shop::isFeatureActive()
+                ? $this->l('the saved tax code mapping is unreadable. Use Clear saved tax codes under Order management (select the shop first).')
+                : $this->l('the saved tax code mapping is unreadable. Use Clear saved tax codes under Order management.');
         }
         if ($reason === null) {
             $countryState = $this->getTwoBuyerCountryRestrictionState();
