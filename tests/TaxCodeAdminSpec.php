@@ -37,6 +37,7 @@ final class TaxCodeAdminSpec
             'testHiddenSectionIgnoresPostedRows', 'testClearOnAShopWithItsOwnMap', 'testClearOnAShopInheritingTheGlobalMap',
             'testEachShopResolvesItsOwnKey', 'testClearMakesAnUnreadableMapReadable', 'testTableOffersOnlyZeroRatedCodes',
             'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap',
+            'testListFloorIsPerCountry',
         ];
         foreach ($tests as $test) {
             self::collect($failures, $test, function () use ($test) {
@@ -309,6 +310,19 @@ final class TaxCodeAdminSpec
         TinyAssert::true(strpos((string) self::render($module), 'Could not check whether Two requires tax codes for your country (ES, HTTP 503); try again in a few minutes.') !== false, 'E2 names the country and the status');
         self::render($module);
         TinyAssert::same(1, self::requests($module, 'GET /v1/tax_codes/'), 'no retry inside the floor');
+    }
+
+    /** A list fetched for one country moments ago does not hold back the list for the next one. */
+    private static function testListFloorIsPerCountry(): void
+    {
+        [$setup, $responses] = self::fixture('es-mandatory');
+        $setup();
+        self::render(self::module($responses));
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-2');
+        $module = self::module(TaxAdminCases::healthy('GB', 'merchant-2'));
+        self::render($module);
+        TinyAssert::same(1, self::requests($module, 'GET /v1/tax_codes/GB'), 'the new country\'s list is fetched at once');
+        TinyAssert::same(TwoTaxCodeSection::VIEW_NOTICE, self::state($module)['view'], 'and the section shows from it, not E2');
     }
 
     private static function testProfileFailureLogsOncePerFloor(): void

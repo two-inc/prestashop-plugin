@@ -4023,20 +4023,22 @@ class Twopayment extends PaymentModule
             return null;
         }
         $cached = json_decode((string) Configuration::get(self::CONFIG_TAX_CODES), true);
-        $held = is_array($cached) && isset($cached['country'], $cached['codes'], $cached['fetched_at'], $cached['metadata'])
-            && $cached['country'] === $country && is_array($cached['codes']) && is_array($cached['metadata']);
+        $mine = is_array($cached) && isset($cached['country']) && $cached['country'] === $country;
+        $held = $mine && isset($cached['codes'], $cached['fetched_at'], $cached['metadata']) && is_array($cached['codes']) && is_array($cached['metadata']);
         if ($held) {
             $meta['mandatory'] = !empty($cached['metadata']['mandatory']);
             if ((int) $cached['fetched_at'] + self::TAX_CODES_TTL > time()) {
                 return $cached['codes'];
             }
         }
+        // The floor is the country's own, kept in its entry, so a merchant whose country just changed is asked at once.
         // Stamped before the call, so an outage costs one attempt per backoff, not one per page load.
-        $tried = (int) Configuration::get(self::CONFIG_TAX_CODES_TRIED_TS);
-        if ($tried + self::MERCHANT_RECORD_RETRY_BACKOFF > time()) {
+        if ($mine && isset($cached['tried_at']) && (int) $cached['tried_at'] + self::MERCHANT_RECORD_RETRY_BACKOFF > time()) {
             return $held ? $cached['codes'] : null;
         }
-        Configuration::updateValue(self::CONFIG_TAX_CODES_TRIED_TS, time());
+        $entry = $held ? $cached : array('country' => $country);
+        $entry['tried_at'] = time();
+        Configuration::updateValue(self::CONFIG_TAX_CODES, json_encode($entry));
         $response = $this->setTwoPaymentRequest('/v1/tax_codes/' . rawurlencode($country), array(), 'GET', array(), self::API_TIMEOUT_STATE_CHECK);
         $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
         $codes = null;
@@ -4051,6 +4053,7 @@ class Twopayment extends PaymentModule
             Configuration::updateValue(self::CONFIG_TAX_CODES, json_encode(array(
                 'country' => $country,
                 'fetched_at' => time(),
+                'tried_at' => $entry['tried_at'],
                 'codes' => $codes,
                 'metadata' => array('mandatory' => $mandatory),
             )));
