@@ -3524,6 +3524,9 @@ class Twopayment extends PaymentModule
             'label' => $this->l('Tax codes for 0% lines'),
             'name' => 'PS_TWO_TAX_CODES_SECTION',
             'html_content' => $this->renderTwoTaxCodeSection($state),
+            // The module's form.tpl puts the label above and gives the section the panel's full width, so the
+            // table's four columns fit without scrolling.
+            'two_full_width' => true,
         ));
     }
 

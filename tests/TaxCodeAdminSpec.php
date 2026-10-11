@@ -256,6 +256,9 @@ final class TaxCodeAdminSpec
         $form = new ReflectionMethod(Twopayment::class, 'getTwoOrderManagementForm');
         foreach ($form->invoke($module)['form']['input'] as $input) {
             if ($input['name'] === 'PS_TWO_TAX_CODES_SECTION') {
+                // The module's form.tpl gives the section the panel's full width, label above (Q82).
+                TinyAssert::same(true, $input['two_full_width'] ?? null, 'the tax code section spans the full panel width');
+
                 return $input['html_content'];
             }
         }
