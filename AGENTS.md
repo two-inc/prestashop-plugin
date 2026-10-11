@@ -189,6 +189,13 @@ read standing in for a schedule that has stopped.
 - **No admin control is gated on any of this**, and no failure blocks a save.
 - A shop where no fetch has ever succeeded has nothing to serve, so a read retries on
   the short backoff until one does.
+- **The record is fetched for the API key's merchant.** `PS_TWO_MERCHANT_ID` and the
+  short name are written only by a verified General save, so a seeded, cloned or migrated
+  shop can hold an empty or stale id and no short name. When either is empty or the fetch
+  answers 404, the refresh resolves the merchant from the key (`verify_api_key`), fetches
+  that record and stores the resolved id and short name (a response without a short name
+  keeps the stored one). Once both are stored, a refresh makes no extra call. The
+  refresh's time cap applies to each call, so a resolving refresh can take up to twice it.
 
 ## State Propagation Runs Plugin To Provider Only
 
