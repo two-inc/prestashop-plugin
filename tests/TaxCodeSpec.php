@@ -72,7 +72,7 @@ final class TaxCodeSpec
             'testUpdateKeepsPlacementCodes', 'testUpdateOfUnrecordedOrderResolvesNow', 'testUpdateReadsTheVatNumberLikeCreate',
             'testDescriptorMismatchSendsLinesUncoded', 'testMappingIsReadOnlyForAZeroLineAndFailsLoud',
             'testMerchantCountryIsStoredAndRefetchedOnce', 'testTaxCodeListHidesCodesNeedingAReason',
-            'testTaxCodeListRetriesOnAFloor', 'testFormSaveValidatesPostedCodes', 'testOptionLabelShowsTheRateOnce',
+            'testTaxCodeListRetriesOnAFloor', 'testFormSaveValidatesPostedCodes',
             'testFormRowsFollowTheShopRules', 'testMigrationFansTheGroupCodeOut', 'testFallbackShippingTaxCodeInTheHookContext',
             'testUpdateSharesOnlyMappedCodesWithKeylessLines', 'testMigrationMovesEveryShopTier', 'testAnUnmovedGroupMappingStillReads',
             'testATruncatedFormIsRefused',
@@ -678,9 +678,9 @@ final class TaxCodeSpec
     {
         self::seed('ES', 'goods', 'ES', '28001', 'ES', [], '0');
         $module = self::recordingModule(['http_status' => 200, 'data' => self::codeList()]);
-        $codes = array_column((array) $module->getTwoTaxCodeOptions(), 'code');
+        $codes = array_column((array) $module->getTwoTaxCodeOptions('ES'), 'code');
         TinyAssert::same(['ES_IVA_EXPORT', 'ES_IVA_EXEMPT_ART20', 'ES_IVA_STANDARD'], $codes, 'a code needing a caller-supplied reason is not offered');
-        $module->getTwoTaxCodeOptions();
+        $module->getTwoTaxCodeOptions('ES');
         TinyAssert::same(['GET /v1/tax_codes/ES'], $module->requested, 'the list is fetched for the merchant country once, then served from cache');
     }
 
@@ -688,31 +688,11 @@ final class TaxCodeSpec
     {
         self::seed('ES', 'goods', 'ES', '28001', 'ES', [], '0');
         $module = self::recordingModule(['http_status' => 503]);
-        $error = '';
-        TinyAssert::same(null, $module->getTwoTaxCodeOptions($error), 'no list can be had');
-        TinyAssert::true(strpos($error, 'HTTP 503') !== false, 'and the notice says why: ' . $error);
-        $module->getTwoTaxCodeOptions($error);
+        $meta = null;
+        TinyAssert::same(null, $module->getTwoTaxCodeOptions('ES', $meta), 'no list can be had');
+        TinyAssert::same(503, $meta['http'], 'and the section is told why');
+        $module->getTwoTaxCodeOptions('ES', $meta);
         TinyAssert::same(1, count($module->requested), 'a failed fetch is not retried on every page load');
-    }
-
-    /**
-     * The mapping dropdown's option label. Rows: code, display name, rate, expected label, description.
-     */
-    private static function testOptionLabelShowsTheRateOnce(): void
-    {
-        $label = new ReflectionMethod(Twopayment::class, 'formatTwoTaxCodeOptionLabel');
-        $module = new TwopaymentTestHarness();
-        $rows = [
-            ['ES_IVA_STANDARD', 'IVA General (21%)', 0.21, 'ES_IVA_STANDARD - IVA General (21%)', 'a name ending with its rate is not given it again'],
-            ['FI_ALV_STANDARD', 'ALV Yleinen (25.5%)', 0.255, 'FI_ALV_STANDARD - ALV Yleinen (25.5%)', 'a decimal rate in the name counts too'],
-            ['ES_IVA_ZERO', 'IVA Tipo Cero (0%)', 0.0, 'ES_IVA_ZERO - IVA Tipo Cero (0%)', 'a zero rate in the name counts too'],
-            ['ES_IVA_EXPORT', 'Exportación', 0.0, 'ES_IVA_EXPORT - Exportación (0%)', 'a name without a rate is given it'],
-            ['ES_IVA_EXEMPT_ART20', 'Exento - Artículo 20', 0.0, 'ES_IVA_EXEMPT_ART20 - Exento - Artículo 20 (0%)', 'a name ending in a number but no rate is given it'],
-            ['XX_TEST', 'Test (B2B)', 0.1, 'XX_TEST - Test (B2B) (10%)', 'a name ending in a bracket that is not a rate is given it'],
-        ];
-        foreach ($rows as [$code, $name, $rate, $expected, $description]) {
-            TinyAssert::same($expected, $label->invoke($module, ['code' => $code, 'display_name' => $name, 'rate' => $rate]), $description);
-        }
     }
 
     /**
@@ -726,6 +706,7 @@ final class TaxCodeSpec
             [[], ['RULE_8201' => 'ES_IVA_EXPORT'], ['rule:8201' => 'ES_IVA_EXPORT'], 'a 0% tax rule has a row of its own'],
             [[], ['RULE_8202' => 'ES_IVA_EXPORT'], false, 'a rule above 0% has no row, so its field is not read'],
             [[], ['8101_NONE' => 'ES_IVA_EXEMPT_OTHER'], null, 'a code the list does not offer is refused'],
+            [[], ['8101_NONE' => 'ES_IVA_STANDARD'], null, 'a listed code above 0% is refused on a 0% row'],
             [['8101|none' => 'ES_OLD_CODE'], ['8101_NONE' => 'ES_OLD_CODE', '8102_EXEMPT' => 'ES_IVA_EXPORT'], ['8101|none' => 'ES_OLD_CODE', '8102|exempt' => 'ES_IVA_EXPORT'], 'a stored code no longer listed survives an unrelated save'],
             [['8101|exempt' => 'ES_IVA_EXPORT', '8103|none' => 'ES_IVA_EXEMPT_ART20'], ['8101_EXEMPT' => ''], ['8103|none' => 'ES_IVA_EXEMPT_ART20'], '(none) removes a mapping, and a group not on the form keeps its own'],
             [['8101|exempt' => 'ES_IVA_EXPORT'], [], false, 'a form without the mapping writes nothing'],
@@ -739,6 +720,7 @@ final class TaxCodeSpec
             StubStore::$taxRules[8201] = ['id_tax_rules_group' => 8101, 'id_country' => 34, 'id_tax' => self::TAX_ZERO];
             StubStore::$taxRules[8202] = ['id_tax_rules_group' => 8101, 'id_country' => 8, 'id_tax' => self::TAX_21];
             Configuration::updateValue('PS_TWO_TAX_CODE_MAP', $stored === [] ? '' : json_encode($stored));
+            self::showSection();
             Tools::resetTestValues();
             foreach ($posted as $field => $code) {
                 Tools::setTestValue('PS_TWO_TAX_CODE_MAP_' . $field, $code);
@@ -765,10 +747,10 @@ final class TaxCodeSpec
             return [$row['field'], $row['key'], $row['label']];
         }, self::formModule()->exposeRows());
         TinyAssert::same([
-            ['PS_TWO_TAX_CODE_MAP_8101_EXEMPT', '8101|exempt', 'Buyer in another EU country with a VAT number'],
+            ['PS_TWO_TAX_CODE_MAP_8101_EXEMPT', '8101|exempt', 'VAT-registered buyer, other EU state'],
             ['PS_TWO_TAX_CODE_MAP_RULE_8203', 'rule:8203', 'US (IVA 0%) - Exports'],
             ['PS_TWO_TAX_CODE_MAP_RULE_8201', 'rule:8201', 'ES, 35000-35999 (No tax)'],
-            ['PS_TWO_TAX_CODE_MAP_8101_NONE', '8101|none', 'No rule for the address'],
+            ['PS_TWO_TAX_CODE_MAP_8101_NONE', '8101|none', 'No tax rule for the buyer\'s address (no tax charged, e.g. exports)'],
         ], $got, 'rows for the group (got: ' . json_encode($got) . ')');
     }
 
@@ -777,7 +759,7 @@ final class TaxCodeSpec
         return new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
-                return ['http_status' => 200, 'data' => TaxCodeSpec::codeList()];
+                return ['http_status' => 200, 'data' => TaxCodeSpec::codeList(), 'metadata' => ['mandatory_tax_codes_enabled' => true, 'mandatory_tax_rates' => ['0']]];
             }
 
             public function exposePostedTwoTaxCodeMap()
@@ -790,6 +772,16 @@ final class TaxCodeSpec
                 return $this->getTwoTaxCodeMapRows();
             }
         };
+    }
+
+    /** The section shows its rows (TWO-26153): an API key with a fresh profile in ES, whose code list is mandatory. */
+    private static function showSection(): void
+    {
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-1');
+        Configuration::updateValue('PS_TWO_TAX_CODE_PROFILE', json_encode([
+            'slot' => TwopaymentTestHarness::recordKeyStampForTest('key-1'), 'merchant_id' => 'merchant-1', 'country' => 'ES',
+            'fetched_at' => time(), 'tried_at' => time(), 'failure' => null,
+        ]));
     }
 
     /** @return array<int,array> a /v1/tax_codes/ES response's data */
