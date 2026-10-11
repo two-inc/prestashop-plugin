@@ -71,6 +71,9 @@ return array(
     // absent, empty or a non-http(s) scheme) renders no icon and no link at all.
     // Resolved by Twopayment::getTwoAboutUrl().
     'about_url' => 'https://www.two.inc/what-is-two',
+    // "How lines are matched" link beside the "Tax codes for 0% lines" intro (TWO-26153): the README section that
+    // specifies the matching, on the default branch. null renders no link.
+    'tax_codes_help_url' => 'https://github.com/two-inc/prestashop-plugin#tax-codes-for-0-lines',
     // FAQ link target for the tile subtitle's brand fallback, used only when
     // the merchant leaves the per-language Subtitle field blank (ABN-554). The
     // sentence itself stays a translated string in twopayment.php - a brand

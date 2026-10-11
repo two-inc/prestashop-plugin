@@ -219,8 +219,8 @@ final class CheckoutWithholdReasonSpec
                 static function ($module): void {
                     Configuration::updateValue('PS_TWO_TAX_CODE_MAP', '{"not-a-group":"ES_IVA_EXPORT"}');
                 },
-                'the saved tax code mapping is unreadable. Save Tax codes for 0% lines again.',
-                'TWO-24877: an unreadable tax code mapping names its own admin section',
+                'the saved tax code mapping is unreadable. Use Clear saved tax codes under Order management.',
+                'TWO-24877, TWO-26153: an unreadable tax code mapping points at Clear in its own admin section',
             ],
             [
                 static function ($module): void {

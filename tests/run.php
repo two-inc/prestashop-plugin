@@ -5953,6 +5953,7 @@ require __DIR__ . '/ShippingRateControlSpec.php';
 require __DIR__ . '/PostcodeFormatSpec.php';
 require __DIR__ . '/DiscrepancySnapshotSpec.php';
 require __DIR__ . '/TaxCodeSpec.php';
+require __DIR__ . '/TaxCodeAdminSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -6007,6 +6008,7 @@ $tests = [
     'PaymentTileAboutControlSpec::runAll' => [PaymentTileAboutControlSpec::class, 'runAll'],
     'DiscrepancySnapshotSpec::runAll' => [DiscrepancySnapshotSpec::class, 'runAll'],
     'TaxCodeSpec::runAll' => [TaxCodeSpec::class, 'runAll'],
+    'TaxCodeAdminSpec::runAll' => [TaxCodeAdminSpec::class, 'runAll'],
     'ConfigFallbackSpec::runAll' => [ConfigFallbackSpec::class, 'runAll'],
     'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],
     'CompanyRefusalMessageSpec::runAll' => [CompanyRefusalMessageSpec::class, 'runAll'],
