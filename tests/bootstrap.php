@@ -3258,6 +3258,20 @@ namespace {
         }
 
         /**
+         * The key verifies as the stored merchant by default, so a merchant record
+         * refresh (which resolves its id from the key) stays off the network and
+         * fetches the id the spec seeded. Specs that drive verification override this.
+         */
+        protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
+        {
+            return array(
+                'response' => json_encode(array('id' => (string) Configuration::get('PS_TWO_MERCHANT_ID'), 'short_name' => 'merchant')),
+                'code' => 200,
+                'error' => '',
+            );
+        }
+
+        /**
          * Sets (or, with null, clears) the request-scoped verification memo the
          * checkout gates read, without going near the network.
          *

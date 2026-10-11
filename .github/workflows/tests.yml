@@ -54,6 +54,7 @@ jobs:
           php -l tests/OverrideMigrationSpec.php
           php -l tests/ApiKeyVerificationSpec.php
           php -l tests/MerchantRecordPolicySpec.php
+          php -l tests/MerchantIdResolutionSpec.php
           php -l tests/SoleTraderTokenPreconditionSpec.php
           php -l classes/TwoOverrideMigrator.php
           php -l classes/TwoDiscrepancySnapshot.php
@@ -79,6 +80,7 @@ jobs:
           php -l tests/integration/fixtures/twocarrierlesstest/override/classes/Cart.php
           php -l tests/integration/order-postprocessing-hook.php
           php -l tests/integration/order-management-form-end-field.php
+          php -l tests/integration/stale-merchant-id.php
           php -l tests/integration/fixtures/twoorderpostprocessingtest/twoorderpostprocessingtest.php
           php -l dev/ci/seed-carrierless-cart.php
           php -l dev/ci/two-api-stub.php

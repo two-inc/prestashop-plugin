@@ -5932,6 +5932,7 @@ require __DIR__ . '/AdminControlsSpec.php';
 require __DIR__ . '/PaymentCountryRestrictionSpec.php';
 require __DIR__ . '/MerchantRecordKeyBindingSpec.php';
 require __DIR__ . '/MerchantRecordPolicySpec.php';
+require __DIR__ . '/MerchantIdResolutionSpec.php';
 require __DIR__ . '/BillingCompanyCaptureSpec.php';
 require __DIR__ . '/BuyerCompanyFallbackSpec.php';
 require __DIR__ . '/BuyerCountryGateSpec.php';
@@ -6016,6 +6017,7 @@ $tests = [
     'PaymentCountryRestrictionSpec::runAll' => [PaymentCountryRestrictionSpec::class, 'runAll'],
     'MerchantRecordKeyBindingSpec::runAll' => [MerchantRecordKeyBindingSpec::class, 'runAll'],
     'MerchantRecordPolicySpec::runAll' => [MerchantRecordPolicySpec::class, 'runAll'],
+    'MerchantIdResolutionSpec::runAll' => [MerchantIdResolutionSpec::class, 'runAll'],
     'BillingCompanyCaptureSpec::runAll' => [BillingCompanyCaptureSpec::class, 'runAll'],
     'BuyerCompanyFallbackSpec::runAll' => [BuyerCompanyFallbackSpec::class, 'runAll'],
     'BuyerCountryGateSpec::runAll' => [BuyerCountryGateSpec::class, 'runAll'],
