@@ -39,6 +39,8 @@ final class TaxCodeAdminSpec
             'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap', 'testRefusedClearKeepsThePostedPicks',
             'testListFloorIsPerCountry', 'testFailedListForAnotherCountryKeepsTheLastGoodOne', 'testKeySwappedSaveUsesTheProfileCountry',
             'testGeneralKeySaveRendersWithTheSavedKey', 'testRefreshButtonClearsAStoredLookupFailure', 'testGeneralKeySaveRunsTheButtonsRefresh',
+            'testGeneralKeySaveSyncsTheShortNameCopy', 'testRefreshLooksUpAResolvedProfileAgain', 'testFailedLookupAfterRefreshKeepsTheHeldProfile',
+            'testRefreshedParameterOpensDiagnostics',
         ];
         foreach ($tests as $test) {
             self::collect($failures, $test, function () use ($test) {
@@ -774,5 +776,126 @@ final class TaxCodeAdminSpec
         Tools::resetTestValues();
 
         TinyAssert::same(1, $module->profileRefreshes, 'the save refreshes through the button\'s function');
+    }
+
+    /** TWO-26304: the checkout guard and the order payload read the short name copy taken at construction. */
+    private static function testGeneralKeySaveSyncsTheShortNameCopy(): void
+    {
+        [$setup] = self::fixture('es-mandatory');
+        $setup();
+        $module = new class extends TaxAdminFixtureModule {
+            // No refresh, so only the save itself can bring the copy into line.
+            protected function refreshTwoMerchantProfile()
+            {
+                return false;
+            }
+
+            public function refreshTwoFxRates()
+            {
+                return false;
+            }
+        };
+        $module->responses = TaxAdminCases::healthy('ES', 'merchant-2');
+        $module->responses['verify'][1]['short_name'] = 'shop-2';
+        $module->merchant_short_name = 'shop';
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'staging');
+        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'key-2');
+        foreach (array('validTwoGeneralFormValues', 'saveTwoGeneralFormValues') as $step) {
+            $method = new ReflectionMethod(Twopayment::class, $step);
+            $method->setAccessible(true);
+            $method->invoke($module);
+        }
+        Tools::resetTestValues();
+
+        TinyAssert::same('shop-2', (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'), 'the save stores the new short name');
+        TinyAssert::same('shop-2', $module->merchant_short_name, 'and the copy the rest of the request reads follows it');
+    }
+
+    /** TWO-26304: Refresh expires a profile that resolved, so a country Two has since corrected shows at once. */
+    private static function testRefreshLooksUpAResolvedProfileAgain(): void
+    {
+        [$setup, $responses] = self::fixture('es-mandatory');
+        $setup();
+        $module = self::refreshableModule($responses);
+        self::render($module);
+        $module->responses = TaxAdminCases::healthy('GB');
+        $module->requested = array();
+        self::render($module);
+        TinyAssert::same(0, self::requests($module, 'GET /v1/merchant/verify_api_key'), 'inside the day the resolved profile is served');
+        TinyAssert::same('ES', self::state($module)['country'], 'with its country');
+
+        $module->ajaxProcessRefreshMerchantRecord();
+        $module->requested = array();
+        self::render($module);
+
+        TinyAssert::same(true, $module->response['success'] ?? null, 'the refresh succeeds');
+        TinyAssert::same(1, self::requests($module, 'GET /v1/merchant/verify_api_key'), 'the next render looks the merchant up again');
+        TinyAssert::same('GB', self::state($module)['country'], 'and shows the corrected country');
+    }
+
+    /** TWO-26304: a lookup that fails after Refresh shows the profile held for this key, not an error. */
+    private static function testFailedLookupAfterRefreshKeepsTheHeldProfile(): void
+    {
+        [$setup, $responses] = self::fixture('es-mandatory');
+        $setup();
+        $module = self::refreshableModule($responses);
+        self::render($module);
+        $module->responses = array('verify' => array(503, array())) + TaxAdminCases::healthy('ES');
+
+        $module->ajaxProcessRefreshMerchantRecord();
+        $module->requested = array();
+        $html = (string) self::render($module);
+
+        TinyAssert::same(1, self::requests($module, 'GET /v1/merchant/verify_api_key'), 'the next render tries the lookup');
+        $state = self::state($module);
+        TinyAssert::same(array(TwoTaxCodeSection::VIEW_ROWS, 'ES'), array($state['view'], $state['country']), 'and shows the held profile\'s rows');
+        TinyAssert::false(strpos($html, 'HTTP 503') !== false, 'with no lookup error (got: ' . $html . ')');
+    }
+
+    /** TWO-26304: the page Refresh reloads opens on Diagnostics with the confirmation, and only then. */
+    private static function testRefreshedParameterOpensDiagnostics(): void
+    {
+        $refreshed = array('6', 'Merchant profile refreshed.');
+        $stored = array('4', '');
+        $cases = array(
+            array('1', $refreshed, 'two_refreshed=1'),
+            array(null, $stored, 'no parameter'),
+            array('0', $stored, 'two_refreshed=0'),
+            array('1<script>', $stored, 'any other text'),
+            array(array('1'), $stored, 'an array'),
+        );
+        $landing = new ReflectionMethod(Twopayment::class, 'getTwoAdminPageLanding');
+        $landing->setAccessible(true);
+        foreach ($cases as [$value, $expected, $case]) {
+            [$setup, $responses] = self::fixture('es-mandatory');
+            $setup();
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 4);
+            if ($value !== null) {
+                Tools::setTestValue('two_refreshed', $value);
+            }
+            $got = $landing->invoke(self::module($responses));
+            Tools::resetTestValues();
+
+            TinyAssert::same($expected, array((string) $got['tab'], $got['confirmation']), $case . ': the tab and confirmation');
+            TinyAssert::same('4', (string) Configuration::get('PS_TWO_TAB_VALUE'), $case . ': the stored tab is left alone');
+        }
+    }
+
+    /** A fixture module whose Refresh response is captured instead of ending the request. */
+    private static function refreshableModule(array $responses): TaxAdminFixtureModule
+    {
+        $module = new class extends TaxAdminFixtureModule {
+            /** @var array|null */
+            public $response = null;
+
+            protected function respondTwoRefreshMerchantRecord(array $payload)
+            {
+                $this->response = $payload;
+            }
+        };
+        $module->responses = $responses;
+
+        return $module;
     }
 }
