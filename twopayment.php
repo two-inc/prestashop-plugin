@@ -1360,6 +1360,11 @@ class Twopayment extends PaymentModule
             $this->output .= $this->displayError($apiKeyNotice);
         }
 
+        $landing = $this->getTwoAdminPageLanding();
+        if ($landing['confirmation'] !== '') {
+            $this->output .= $this->displayConfirmation($landing['confirmation']);
+        }
+
         $this->context->smarty->assign(
             array(
                 'renderTwoGeneralForm' => $this->renderTwoGeneralForm(),
@@ -1370,7 +1375,7 @@ class Twopayment extends PaymentModule
                 'renderTwoOrderStatusForm' => $this->renderTwoOrderStatusForm(),
                 'renderTwoDiagnosticsForm' => $this->renderTwoDiagnosticsForm(),
                 'renderTwoPluginInfo' => $this->renderTwoPluginInfo(),
-                'twotabvalue' => Configuration::get('PS_TWO_TAB_VALUE'),
+                'twotabvalue' => $landing['tab'],
                 // The CURRENT verdict, not the sticky save-time flag
                 // (TWO-25326): a key that has since expired, been rotated or
                 // stopped being reachable would otherwise render the green
@@ -1415,6 +1420,23 @@ class Twopayment extends PaymentModule
 
         $this->output .= $this->display(__FILE__, 'views/templates/admin/configuration.tpl');
         return $this->output;
+    }
+
+    /**
+     * The tab the configuration page opens on, and any confirmation to show above it. After "Refresh merchant profile"
+     * the page reloads with two_refreshed=1 (TWO-26304): that opens Diagnostics, where the button is, and confirms the
+     * refresh. It only picks the tab and a fixed message, and never writes PS_TWO_TAB_VALUE, so the next visit opens
+     * where the last save left it.
+     *
+     * @return array{tab:mixed,confirmation:string}
+     */
+    protected function getTwoAdminPageLanding()
+    {
+        if (Tools::getValue('two_refreshed', '') === '1') {
+            return array('tab' => 6, 'confirmation' => $this->l('Merchant profile refreshed.'));
+        }
+
+        return array('tab' => Configuration::get('PS_TWO_TAB_VALUE'), 'confirmation' => '');
     }
 
     protected function renderTwoGeneralForm()
@@ -1617,6 +1639,12 @@ class Twopayment extends PaymentModule
             : (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKeyToSave);
+        // The request headers and the checkout guard read the copies taken at
+        // construction, and getContent() renders every tab in this request:
+        // without this, its calls for the new merchant carry the old key and
+        // Two answers 404 (TWO-26304).
+        $this->merchant_short_name = $shortNameToSave;
+        $this->api_key = $apiKeyToSave;
         Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', $submittedEnv);
 
@@ -1661,7 +1689,8 @@ class Twopayment extends PaymentModule
             // Refreshed, never cleared (ABN-519): a shop whose key was cycled
             // elsewhere and never updated here keeps every cached value the
             // admin controls are built from, and a failed refetch changes nothing.
-            $this->refreshMerchantRecord();
+            // The same refresh as the "Refresh merchant profile" button (TWO-26304).
+            $this->refreshTwoMerchantProfile();
         }
 
         $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
@@ -17058,6 +17087,30 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * "Refresh merchant profile", which a General save that changes the shop's identity runs too (TWO-26304): refresh
+     * the merchant record, and expire the tax code section's stored profile, its lookup failure and its retry floor, so
+     * the next render looks the merchant up afresh: a country Two has since corrected shows at once, and an error is not
+     * repeated for up to five minutes. The profile itself is kept, so a lookup that then fails still shows it. The
+     * section's row belongs to one shop, so outside a single shop's context only the record is refreshed.
+     *
+     * @return bool whether the merchant record was refreshed
+     */
+    protected function refreshTwoMerchantProfile()
+    {
+        if ($this->isTwoSingleShopContext()) {
+            $stored = json_decode((string) Configuration::get(self::CONFIG_TAX_CODE_PROFILE), true);
+            if (is_array($stored)) {
+                $stored['fetched_at'] = 0;
+                $stored['tried_at'] = 0;
+                $stored['failure'] = null;
+                $this->writeTwoTaxCodeShopValue(self::CONFIG_TAX_CODE_PROFILE, json_encode($stored));
+            }
+        }
+
+        return $this->refreshMerchantRecord();
+    }
+
+    /**
      * The Diagnostics "Refresh merchant profile" button. A failed refetch leaves
      * the cached record in place rather than dropping the shop to nothing.
      */
@@ -17072,7 +17125,7 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        $refreshed = $this->refreshMerchantRecord();
+        $refreshed = $this->refreshTwoMerchantProfile();
         $this->respondTwoRefreshMerchantRecord(array(
             'success' => $refreshed,
             'message' => $refreshed
