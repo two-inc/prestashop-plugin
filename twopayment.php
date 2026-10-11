@@ -3727,6 +3727,11 @@ class Twopayment extends PaymentModule
         $map = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
         $cleared = $this->isTwoTaxCodesClearPosted();
         $zero = TwoTaxCodeSection::zeroRated($codes);
+        $columns = array(
+            'exempt' => $this->l('VAT-registered buyer, other EU state'),
+            'rules' => $this->l('Your 0% tax rules'),
+            'none' => $this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)'),
+        );
         $groups = array();
         foreach ($this->getTwoTaxCodeMapRows() as $row) {
             $kind = strpos($row['key'], 'rule:') === 0 ? 'rules' : (substr($row['key'], -7) === '|exempt' ? 'exempt' : 'none');
@@ -3736,7 +3741,8 @@ class Twopayment extends PaymentModule
             $saved = is_array($map) && isset($map[$row['key']]) ? $map[$row['key']] : '';
             // A post's picks are shown again (a refused save keeps them), except after Clear, which discarded them.
             $selected = $cleared ? $saved : (string) Tools::getValue($row['field'], $saved);
-            $select = $this->renderTwoTaxCodeSelect($row['field'], $selected, $zero, $codes);
+            $name = $row['group_name'] . ': ' . $columns[$kind] . ($kind === 'rules' ? ': ' . $row['label'] : '');
+            $select = $this->renderTwoTaxCodeSelect($row['field'], $selected, $zero, $codes, $name);
             if ($kind === 'rules') {
                 $groups[$row['group']]['rules'][] = '<div style="margin-bottom:6px;"><div class="text-muted" style="font-size:90%;">'
                     . htmlspecialchars($row['label'], ENT_QUOTES, 'UTF-8') . '</div>' . $select . '</div>';
@@ -3747,11 +3753,12 @@ class Twopayment extends PaymentModule
         $e = static function ($text) {
             return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
         };
-        $html = '<table id="two-tax-code-grid" class="table" style="width:100%;table-layout:fixed;margin-bottom:0;"><thead><tr>'
-            . '<th style="width:9em;">' . $e($this->l('Tax rules group')) . '</th>'
-            . '<th>' . $e($this->l('VAT-registered buyer, other EU state')) . '</th>'
-            . '<th>' . $e($this->l('Your 0% tax rules')) . '</th>'
-            . '<th>' . $e($this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)')) . '</th>'
+        // Columns size to their content, so no label or marker is clipped; a table wider than the panel scrolls.
+        $html = '<div class="table-responsive" style="overflow-x:auto;"><table id="two-tax-code-grid" class="table" style="width:100%;margin-bottom:0;"><thead><tr>'
+            . '<th scope="col">' . $e($this->l('Tax rules group')) . '</th>'
+            . '<th scope="col">' . $e($columns['exempt']) . '</th>'
+            . '<th scope="col">' . $e($columns['rules']) . '</th>'
+            . '<th scope="col">' . $e($columns['none']) . '</th>'
             . '</tr></thead><tbody>';
         foreach ($groups as $group) {
             $rules = $group['rules'] !== array()
@@ -3763,34 +3770,47 @@ class Twopayment extends PaymentModule
                 . '<td style="vertical-align:middle;">' . $group['none'] . '</td></tr>';
         }
 
-        return $html . '</tbody></table>';
+        return $html . '</tbody></table></div>';
     }
 
     /**
+     * One row's select. A stored code the select would not offer is kept as an option and also named under the
+     * select, so its marker shows whatever the column's width.
+     *
      * @param string $field
      * @param string $selected
      * @param array $zero the listed codes at rate 0
      * @param array $codes every listed code
+     * @param string $name the select's accessible name: group, column and, for a tax rule, the rule
      * @return string
      */
-    private function renderTwoTaxCodeSelect($field, $selected, array $zero, array $codes)
+    private function renderTwoTaxCodeSelect($field, $selected, array $zero, array $codes, $name)
     {
+        $e = static function ($text) {
+            return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+        };
         $options = array('' => $this->l('(none)'));
         foreach ($zero as $code) {
             // Every offered code is at 0%, so the label leaves the rate out.
             $options[$code['code']] = $code['code'] . ' - ' . $code['display_name'];
         }
+        $marker = '';
         if ($selected !== '' && !isset($options[$selected])) {
-            $options[$selected] = $selected . ' (' . ($this->isTwoTaxCodeListed($codes, $selected) ? $this->l('not valid on 0% lines') : $this->l('no longer listed')) . ')';
+            $marker = $this->isTwoTaxCodeListed($codes, $selected) ? $this->l('not valid on 0% lines') : $this->l('no longer listed');
+            $options[$selected] = $selected . ' (' . $marker . ')';
         }
-        $html = '<select name="' . htmlspecialchars($field, ENT_QUOTES, 'UTF-8') . '" class="form-control">';
+        $html = '<select name="' . $e($field) . '" class="form-control" aria-label="' . $e($name) . '"'
+            . ($marker !== '' ? ' aria-describedby="' . $e($field . '_MARKER') . '"' : '') . '>';
         foreach ($options as $value => $label) {
             $value = (string) $value;
-            $html .= '<option value="' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '"' . ($value === $selected ? ' selected="selected"' : '') . '>'
-                . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '</option>';
+            $html .= '<option value="' . $e($value) . '"' . ($value === $selected ? ' selected="selected"' : '') . '>' . $e($label) . '</option>';
+        }
+        $html .= '</select>';
+        if ($marker !== '') {
+            $html .= '<div id="' . $e($field . '_MARKER') . '" class="text-warning" style="font-size:90%;margin-top:2px;">' . $e($selected . ': ' . $marker) . '</div>';
         }
 
-        return $html . '</select>';
+        return $html;
     }
 
     /**
