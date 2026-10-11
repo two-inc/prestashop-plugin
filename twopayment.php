@@ -3725,7 +3725,8 @@ class Twopayment extends PaymentModule
     private function renderTwoTaxCodeTable(array $codes)
     {
         $map = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
-        $cleared = $this->isTwoTaxCodesClearPosted();
+        // The save ran only if validation raised no error (postProcess()), so a Clear it refused discarded nothing.
+        $cleared = $this->isTwoTaxCodesClearPosted() && $this->errors === array();
         $zero = TwoTaxCodeSection::zeroRated($codes);
         $columns = array(
             'exempt' => $this->l('VAT-registered buyer, other EU state'),
@@ -3739,7 +3740,7 @@ class Twopayment extends PaymentModule
                 $groups[$row['group']] = array('name' => $row['group_name'], 'exempt' => '', 'rules' => array(), 'none' => '');
             }
             $saved = is_array($map) && isset($map[$row['key']]) ? $map[$row['key']] : '';
-            // A post's picks are shown again (a refused save keeps them), except after Clear, which discarded them.
+            // A post's picks are shown again (a refused save keeps them), except after a Clear that saved, which discarded them.
             $selected = $cleared ? $saved : (string) Tools::getValue($row['field'], $saved);
             $name = $row['group_name'] . ': ' . $columns[$kind] . ($kind === 'rules' ? ': ' . $row['label'] : '');
             $select = $this->renderTwoTaxCodeSelect($row['field'], $selected, $zero, $codes, $name);

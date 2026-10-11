@@ -36,7 +36,7 @@ final class TaxCodeAdminSpec
             'testNoKeyMakesNoRequest', 'testAllShopsContextFetchesNothing', 'testClearWinsOverPostedRows',
             'testHiddenSectionIgnoresPostedRows', 'testClearOnAShopWithItsOwnMap', 'testClearOnAShopInheritingTheGlobalMap',
             'testEachShopResolvesItsOwnKey', 'testClearMakesAnUnreadableMapReadable', 'testTableOffersOnlyZeroRatedCodes',
-            'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap',
+            'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap', 'testRefusedClearKeepsThePostedPicks',
             'testListFloorIsPerCountry', 'testFailedListForAnotherCountryKeepsTheLastGoodOne', 'testKeySwappedSaveUsesTheProfileCountry',
         ];
         foreach ($tests as $test) {
@@ -598,6 +598,22 @@ final class TaxCodeAdminSpec
         TinyAssert::same(0, preg_match('#<option value="[^"]+" selected="selected">#', $html), 'no row shows a code Clear discarded');
         $output = new ReflectionProperty(Twopayment::class, 'output');
         TinyAssert::true(strpos((string) $output->getValue($module), 'Saved tax codes cleared; choose codes again.') !== false, 'the save confirms the Clear');
+        Tools::resetTestValues();
+    }
+
+    /** Clear ticked on a save refused for another reason discarded nothing, so the merchant's picks stay on the form. */
+    private static function testRefusedClearKeepsThePostedPicks(): void
+    {
+        [$setup, $responses] = self::fixture('es-mandatory');
+        $setup();
+        $module = self::module($responses);
+        self::render($module);
+        Tools::resetTestValues();
+        Tools::setTestValue(Twopayment::TAX_CODES_CLEAR_FIELD, '1');
+        Tools::setTestValue('PS_TWO_TAX_CODE_MAP_8101_EXEMPT', 'ES_IVA_EXEMPT_ART20');
+        TinyAssert::true(self::save($module) !== [], 'a cut post is refused');
+        $html = (string) self::render($module);
+        TinyAssert::true(preg_match('#<option value="ES_IVA_EXEMPT_ART20" selected="selected">#', $html) === 1, 'the posted pick is shown, not the stored one');
         Tools::resetTestValues();
     }
 
