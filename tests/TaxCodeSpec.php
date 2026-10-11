@@ -72,7 +72,7 @@ final class TaxCodeSpec
             'testUpdateKeepsPlacementCodes', 'testUpdateOfUnrecordedOrderResolvesNow', 'testUpdateReadsTheVatNumberLikeCreate',
             'testDescriptorMismatchSendsLinesUncoded', 'testMappingIsReadOnlyForAZeroLineAndFailsLoud',
             'testMerchantCountryIsStoredAndRefetchedOnce', 'testTaxCodeListHidesCodesNeedingAReason',
-            'testTaxCodeListRetriesOnAFloor', 'testFormSaveValidatesPostedCodes', 'testOptionLabelShowsTheRateOnce',
+            'testTaxCodeListRetriesOnAFloor', 'testFormSaveValidatesPostedCodes',
             'testFormRowsFollowTheShopRules', 'testMigrationFansTheGroupCodeOut', 'testFallbackShippingTaxCodeInTheHookContext',
             'testUpdateSharesOnlyMappedCodesWithKeylessLines', 'testMigrationMovesEveryShopTier', 'testAnUnmovedGroupMappingStillReads',
             'testATruncatedFormIsRefused',
@@ -693,26 +693,6 @@ final class TaxCodeSpec
         TinyAssert::same(503, $meta['http'], 'and the section is told why');
         $module->getTwoTaxCodeOptions('ES', $meta);
         TinyAssert::same(1, count($module->requested), 'a failed fetch is not retried on every page load');
-    }
-
-    /**
-     * The mapping dropdown's option label. Rows: code, display name, rate, expected label, description.
-     */
-    private static function testOptionLabelShowsTheRateOnce(): void
-    {
-        $label = new ReflectionMethod(Twopayment::class, 'formatTwoTaxCodeOptionLabel');
-        $module = new TwopaymentTestHarness();
-        $rows = [
-            ['ES_IVA_STANDARD', 'IVA General (21%)', 0.21, 'ES_IVA_STANDARD - IVA General (21%)', 'a name ending with its rate is not given it again'],
-            ['FI_ALV_STANDARD', 'ALV Yleinen (25.5%)', 0.255, 'FI_ALV_STANDARD - ALV Yleinen (25.5%)', 'a decimal rate in the name counts too'],
-            ['ES_IVA_ZERO', 'IVA Tipo Cero (0%)', 0.0, 'ES_IVA_ZERO - IVA Tipo Cero (0%)', 'a zero rate in the name counts too'],
-            ['ES_IVA_EXPORT', 'Exportación', 0.0, 'ES_IVA_EXPORT - Exportación (0%)', 'a name without a rate is given it'],
-            ['ES_IVA_EXEMPT_ART20', 'Exento - Artículo 20', 0.0, 'ES_IVA_EXEMPT_ART20 - Exento - Artículo 20 (0%)', 'a name ending in a number but no rate is given it'],
-            ['XX_TEST', 'Test (B2B)', 0.1, 'XX_TEST - Test (B2B) (10%)', 'a name ending in a bracket that is not a rate is given it'],
-        ];
-        foreach ($rows as [$code, $name, $rate, $expected, $description]) {
-            TinyAssert::same($expected, $label->invoke($module, ['code' => $code, 'display_name' => $name, 'rate' => $rate]), $description);
-        }
     }
 
     /**

@@ -3904,23 +3904,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The tax code list names most rated codes with their rate, e.g. "IVA General (21%)"; the rate is added only to a name
-     * that does not already end with one.
-     *
-     * @param array $code a getTwoTaxCodeOptions() entry
-     * @return string
-     */
-    private function formatTwoTaxCodeOptionLabel(array $code)
-    {
-        $label = $code['code'] . ' - ' . $code['display_name'];
-        if (preg_match('/\([^()]*%\)$/', $code['display_name']) === 1) {
-            return $label;
-        }
-
-        return $label . ' (' . $this->formatTwoRatePercent($code['rate']) . ')';
-    }
-
-    /**
      * @return array<int,string> the shop's active tax rules groups, by id
      */
     protected function getTwoTaxCodeMapGroups()

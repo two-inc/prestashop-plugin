@@ -22,6 +22,8 @@ const ALLOWED_METHODS = array(
     'saveTwoOrderManagementFormValues',
     'twoCheckoutVisibilityRow',
     'uninstallTwoSettings',
+    // Admin only, deleted: the old dropdown's option label, which the table no longer uses.
+    'formatTwoTaxCodeOptionLabel',
 );
 const ALLOWED_REQUIRES = array("dirname(__FILE__) . '/classes/TwoTaxCodeSection.php'");
 // The version line .github/workflows/version-bump.yml commits onto every PR into staging.
