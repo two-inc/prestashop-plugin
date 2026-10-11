@@ -37,7 +37,7 @@ final class TaxCodeAdminSpec
             'testHiddenSectionIgnoresPostedRows', 'testClearOnAShopWithItsOwnMap', 'testClearOnAShopInheritingTheGlobalMap',
             'testEachShopResolvesItsOwnKey', 'testClearMakesAnUnreadableMapReadable', 'testTableOffersOnlyZeroRatedCodes',
             'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap',
-            'testListFloorIsPerCountry', 'testKeySwappedSaveUsesTheProfileCountry',
+            'testListFloorIsPerCountry', 'testFailedListForAnotherCountryKeepsTheLastGoodOne', 'testKeySwappedSaveUsesTheProfileCountry',
         ];
         foreach ($tests as $test) {
             self::collect($failures, $test, function () use ($test) {
@@ -325,6 +325,28 @@ final class TaxCodeAdminSpec
         self::render($module);
         TinyAssert::same(1, self::requests($module, 'GET /v1/tax_codes/GB'), 'the new country\'s list is fetched at once');
         TinyAssert::same(TwoTaxCodeSection::VIEW_NOTICE, self::state($module)['view'], 'and the section shows from it, not E2');
+    }
+
+    /** A failed fetch for another country leaves the last good list alone, so swapping back mid-outage still shows it. */
+    private static function testFailedListForAnotherCountryKeepsTheLastGoodOne(): void
+    {
+        [$setup, $responses] = self::fixture('es-mandatory');
+        $setup();
+        self::render(self::module($responses));
+        $outage = static function ($country, $merchantId) {
+            $responses = TaxAdminCases::healthy($country, $merchantId);
+            $responses['codes'] = array();
+
+            return $responses;
+        };
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-2');
+        $module = self::module($outage('GB', 'merchant-2'));
+        self::render($module);
+        TinyAssert::same(TwoTaxCodeSection::VIEW_LIST_ERROR, self::state($module)['view'], 'the GB list is down: E2');
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-1');
+        $module = self::module($outage('ES', 'merchant-1'));
+        self::render($module);
+        TinyAssert::same(TwoTaxCodeSection::VIEW_ROWS, self::state($module)['view'], 'back on ES mid-outage: the rows from its last good list, not E2');
     }
 
     private static function testProfileFailureLogsOncePerFloor(): void
