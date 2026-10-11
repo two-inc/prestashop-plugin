@@ -100,11 +100,23 @@
                             .removeClass('text-muted text-success text-danger')
                             .addClass(ok ? 'text-success' : 'text-danger')
                             .text(response && response.message ? response.message : '');
+                        if (ok) {
+                            // Every tab is rendered by the server from the profile
+                            // (TWO-26304). A GET, so a page shown after a save is
+                            // not posted again; two_refreshed=1 opens Diagnostics
+                            // with the confirmation. The button stays disabled
+                            // until the page has gone.
+                            var url = window.location.href.split('#')[0];
+                            if (!/[?&]two_refreshed=1(&|$)/.test(url)) {
+                                url += (url.indexOf('?') === -1 ? '?' : '&') + 'two_refreshed=1';
+                            }
+                            window.location.assign(url);
+                        } else {
+                            button.prop('disabled', false);
+                        }
                     })
                     .fail(function () {
                         result.removeClass('text-muted text-success').addClass('text-danger').text(twoRefreshMerchantFailedText);
-                    })
-                    .always(function () {
                         button.prop('disabled', false);
                     });
             });
