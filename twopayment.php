@@ -353,6 +353,8 @@ class Twopayment extends PaymentModule
     // When a mapping still stored per tax rules group was last logged (TWO-26153), so it is logged once a day.
     const CONFIG_TAX_CODE_MAP_LEGACY_LOGGED_TS = 'PS_TWO_TAX_CODE_MAP_LEGACY_LOGGED_TS';
     const TAX_CODES_TTL = 86400;
+    // How many ch a tax code's character takes in the mapping's selects: codes are capitals, wider than a "0".
+    const TAX_CODE_SELECT_CH_PER_CHAR = 1.1;
     // One select per mapping row on the Order management form: <group>_EXEMPT, RULE_<id_tax_rule>, <group>_NONE.
     const TAX_CODE_MAP_FIELD_PREFIX = 'PS_TWO_TAX_CODE_MAP_';
     // A hidden field rendered after every other control of the Order management form, the save button included, so
@@ -3733,17 +3735,29 @@ class Twopayment extends PaymentModule
             'rules' => $this->l('Your 0% tax rules'),
             'none' => $this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)'),
         );
+        $rows = $this->getTwoTaxCodeMapRows();
+        $longest = 0;
+        foreach ($zero as $code) {
+            $longest = max($longest, strlen($code['code']));
+        }
+        foreach ($rows as $i => $row) {
+            $saved = is_array($map) && isset($map[$row['key']]) ? $map[$row['key']] : '';
+            // A post's picks are shown again (a refused save keeps them), except after a Clear that saved, which discarded them.
+            $rows[$i]['selected'] = $cleared ? $saved : (string) Tools::getValue($row['field'], $saved);
+            $longest = max($longest, strlen($rows[$i]['selected']));
+        }
+        // Every select is wide enough to show the longest code it holds when closed, as goods and services codes can
+        // differ only at the end; the description after the code may clip. A code's capitals run wider than the "0"
+        // a ch measures, and the rest is the select's padding and arrow.
+        $minWidth = 'calc(' . (int) ceil($longest * self::TAX_CODE_SELECT_CH_PER_CHAR) . 'ch + 3em)';
         $groups = array();
-        foreach ($this->getTwoTaxCodeMapRows() as $row) {
+        foreach ($rows as $row) {
             $kind = strpos($row['key'], 'rule:') === 0 ? 'rules' : (substr($row['key'], -7) === '|exempt' ? 'exempt' : 'none');
             if (!isset($groups[$row['group']])) {
                 $groups[$row['group']] = array('name' => $row['group_name'], 'exempt' => '', 'rules' => array(), 'none' => '');
             }
-            $saved = is_array($map) && isset($map[$row['key']]) ? $map[$row['key']] : '';
-            // A post's picks are shown again (a refused save keeps them), except after a Clear that saved, which discarded them.
-            $selected = $cleared ? $saved : (string) Tools::getValue($row['field'], $saved);
             $name = $row['group_name'] . ': ' . $columns[$kind] . ($kind === 'rules' ? ': ' . $row['label'] : '');
-            $select = $this->renderTwoTaxCodeSelect($row['field'], $selected, $zero, $codes, $name);
+            $select = $this->renderTwoTaxCodeSelect($row['field'], $row['selected'], $zero, $codes, $name, $minWidth);
             if ($kind === 'rules') {
                 $groups[$row['group']]['rules'][] = '<div style="margin-bottom:6px;"><div class="text-muted" style="font-size:90%;">'
                     . htmlspecialchars($row['label'], ENT_QUOTES, 'UTF-8') . '</div>' . $select . '</div>';
@@ -3784,9 +3798,10 @@ class Twopayment extends PaymentModule
      * @param array $zero the listed codes at rate 0
      * @param array $codes every listed code
      * @param string $name the select's accessible name: group, column and, for a tax rule, the rule
+     * @param string $minWidth a CSS length, the same for every select of the table
      * @return string
      */
-    private function renderTwoTaxCodeSelect($field, $selected, array $zero, array $codes, $name)
+    private function renderTwoTaxCodeSelect($field, $selected, array $zero, array $codes, $name, $minWidth)
     {
         $e = static function ($text) {
             return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
@@ -3801,7 +3816,7 @@ class Twopayment extends PaymentModule
             $marker = $this->isTwoTaxCodeListed($codes, $selected) ? $this->l('not valid on 0% lines') : $this->l('no longer listed');
             $options[$selected] = $selected . ' (' . $marker . ')';
         }
-        $html = '<select name="' . $e($field) . '" class="form-control" aria-label="' . $e($name) . '"'
+        $html = '<select name="' . $e($field) . '" class="form-control" style="min-width:' . $e($minWidth) . ';" aria-label="' . $e($name) . '"'
             . ($marker !== '' ? ' aria-describedby="' . $e($field . '_MARKER') . '"' : '') . '>';
         foreach ($options as $value => $label) {
             $value = (string) $value;
