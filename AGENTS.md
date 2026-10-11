@@ -194,7 +194,8 @@ read standing in for a schedule that has stopped.
   shop can hold an empty or stale id and no short name. When either is empty or the fetch
   answers 404, the refresh resolves the merchant from the key (`verify_api_key`), fetches
   that record and stores the resolved id and short name (a response without a short name
-  keeps the stored one). Once both are stored, a refresh makes no extra call.
+  keeps the stored one). Once both are stored, a refresh makes no extra call. The
+  refresh's time cap applies to each call, so a resolving refresh can take up to twice it.
 
 ## State Propagation Runs Plugin To Provider Only
 

@@ -76,7 +76,11 @@ foreach ($keys as $key) {
 }
 register_shutdown_function(static function () use ($saved) {
     foreach ($saved as $key => $value) {
-        Configuration::updateValue($key, $value === false ? '' : $value);
+        if ($value === false) {
+            Configuration::deleteByName($key);
+        } else {
+            Configuration::updateValue($key, $value);
+        }
     }
 });
 
@@ -97,7 +101,7 @@ $check = static function ($ok, $description) use (&$failures) {
 
 $module = new StaleMerchantIdProbeTwopayment();
 $module->ajaxProcessRefreshMerchantRecord();
-$reader = new Twopayment();
+$reader = new StaleMerchantIdProbeTwopayment();
 
 echo 'fetched: ' . implode(', ', $module->fetched) . "\n";
 $check(is_array($module->answer) && $module->answer['success'] === true, 'the Diagnostics refresh reports success');
