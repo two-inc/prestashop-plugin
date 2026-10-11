@@ -37,7 +37,7 @@ final class TaxCodeAdminSpec
             'testHiddenSectionIgnoresPostedRows', 'testClearOnAShopWithItsOwnMap', 'testClearOnAShopInheritingTheGlobalMap',
             'testEachShopResolvesItsOwnKey', 'testClearMakesAnUnreadableMapReadable', 'testTableOffersOnlyZeroRatedCodes',
             'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap',
-            'testListFloorIsPerCountry',
+            'testListFloorIsPerCountry', 'testKeySwappedSaveUsesTheProfileCountry',
         ];
         foreach ($tests as $test) {
             self::collect($failures, $test, function () use ($test) {
@@ -167,14 +167,16 @@ final class TaxCodeAdminSpec
         self::render($module);
         $rendered = $capture();
         TinyAssert::same($before, $rendered, $name . ': rendering the section changed a payload (before: ' . $before . ', after: ' . $rendered . ')');
-        if ($name === 'es-unreadable') {
-            // Saving the shown rows over an unreadable map stores what they show, as it always has: that is the
-            // merchant re-saving the mapping, so the payloads may change. Clear is covered on its own.
-            return;
-        }
         self::postRenderedRows($module);
         self::save($module);
         Tools::resetTestValues();
+        if ($name === 'es-unreadable') {
+            // Saving the shown rows over an unreadable map stores what they show, every row on (none): the merchant
+            // re-saving the mapping, so the shop now sends the unmapped payload.
+            self::assertUnmappedGolden((string) Configuration::get('PS_TWO_TAX_CODE_MAP'), $name . ': saving the rows as rendered');
+
+            return;
+        }
         $after = $capture();
         TinyAssert::same($before, $after, $name . ': saving the section as rendered changed a payload (before: ' . $before . ', after: ' . $after . ')');
     }
@@ -379,6 +381,22 @@ final class TaxCodeAdminSpec
         TinyAssert::same('{"8101|exempt":"ES_IVA_INTRA_COMMUNITY"}', Configuration::get('PS_TWO_TAX_CODE_MAP'), 'W1 does not block saving a listed 0% code');
     }
 
+    /** Checkout knows no country for a swapped key, so the save checks codes against the section's own profile. */
+    private static function testKeySwappedSaveUsesTheProfileCountry(): void
+    {
+        [$setup, $responses] = self::fixture('key-swapped');
+        $setup();
+        $module = self::module($responses);
+        self::render($module);
+        TinyAssert::same('', $module->getTwoMerchantCountry(), 'checkout has no country for the new key');
+        Tools::resetTestValues();
+        Tools::setTestValue(Twopayment::ORDER_MANAGEMENT_FORM_END_FIELD, '1');
+        Tools::setTestValue('PS_TWO_TAX_CODE_MAP_8101_NONE', 'ES_IVA_EXPORT');
+        TinyAssert::same([], self::save($module), 'no validation error');
+        TinyAssert::same('{"8101|none":"ES_IVA_EXPORT"}', Configuration::get('PS_TWO_TAX_CODE_MAP'), 'a code listed for the profile\'s country is saved');
+        Tools::resetTestValues();
+    }
+
     private static function testNoKeyMakesNoRequest(): void
     {
         [$setup, $responses] = self::fixture('no-key');
@@ -508,11 +526,23 @@ final class TaxCodeAdminSpec
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-1');
         Configuration::updateValue('PS_TWO_TAX_CODE_MAP', '{"' . self::cartGroup() . '|none":"ES_IVA_EXPORT","' . self::cartGroup() . '|exempt":"ES_IVA_EXPORT"}');
         self::clear(TaxAdminCases::healthy('ES'));
+        self::assertUnmappedGolden((string) Configuration::get('PS_TWO_TAX_CODE_MAP'), 'the cleared shop');
+    }
+
+    /**
+     * A shop holding $map (its rows on tax rules group 8101 moved onto the cart's) sends TaxCodeSpec's unmapped
+     * golden for a domestic Spanish 0% cart.
+     */
+    private static function assertUnmappedGolden(string $map, string $description): void
+    {
+        $seed = new ReflectionMethod(TaxCodeSpec::class, 'seed');
+        $seed->invoke(null, 'ES', 'goods', 'ES', '28001', 'FR', [], '0');
+        Configuration::updateValue('PS_TWO_TAX_CODE_MAP', str_replace('"8101|', '"' . self::cartGroup() . '|', $map));
         $pin = new ReflectionMethod(TaxCodeSpec::class, 'pin');
         $urls = new ReflectionMethod(TaxCodeSpec::class, 'merchantUrls');
         $payload = $pin->invoke(null, (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-9701', new Cart(9701), $urls->invoke(null)));
         $golden = json_decode((string) file_get_contents(__DIR__ . '/fixtures/tax-code-golden.json'), true)['goods-domestic'];
-        TinyAssert::same($golden, json_decode((string) json_encode($payload), true), 'the cleared shop sends the unmapped payload');
+        TinyAssert::same($golden, json_decode((string) json_encode($payload), true), $description . ' sends the unmapped payload (map: ' . $map . ')');
     }
 
     private static function testMandatoryMeansANumericZeroRate(): void
