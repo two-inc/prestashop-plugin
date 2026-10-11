@@ -15,6 +15,8 @@ final class MerchantIdResolutionSpec
     {
         self::testTheRecordIsFetchedForTheKeysMerchant();
         self::testAnEmptyShortNameIsRepairedOnce();
+        self::testAKeyChangedMidRefreshWritesNothing();
+        self::testTheVerifyCarriesTheCallersTimeout();
     }
 
     /**
@@ -34,6 +36,10 @@ final class MerchantIdResolutionSpec
         return new class ($keyMerchant, $keyShort, $records) extends TwopaymentTestHarness {
             /** @var string[] Wire calls in order: "verify" or the record endpoint. */
             public array $calls = array();
+            /** @var array<int,int|null> Timeout each verify call was given. */
+            public array $verifyTimeouts = array();
+            /** @var callable|null Runs inside the verify call, i.e. mid-flight. */
+            public $duringVerify = null;
             private ?string $keyMerchant;
             private string $keyShort;
             /** @var string[] */
@@ -52,6 +58,10 @@ final class MerchantIdResolutionSpec
             protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
             {
                 $this->calls[] = 'verify';
+                $this->verifyTimeouts[] = $timeout;
+                if (is_callable($this->duringVerify)) {
+                    call_user_func($this->duringVerify);
+                }
 
                 return $this->keyMerchant === null
                     ? array('response' => '{"error":"unauthorized"}', 'code' => 401, 'error' => '')
@@ -85,6 +95,30 @@ final class MerchantIdResolutionSpec
         $module->calls = array();
         TinyAssert::true($module->refreshMerchantRecord(), 'the second refresh succeeds');
         TinyAssert::same(array('/v1/merchant/m-key'), $module->calls, 'the second refresh does not verify');
+    }
+
+    /** An admin save storing another key while the verify is out: nothing is written for the old key's merchant. */
+    private static function testAKeyChangedMidRefreshWritesNothing(): void
+    {
+        $module = self::harness('m-old', 'old-shop', 'm-key', 'shop', array('m-key'));
+        $module->duringVerify = static function () {
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'a-newly-saved-key');
+        };
+
+        TinyAssert::false($module->refreshMerchantRecord(), 'a key changed mid-refresh is a failed refresh');
+        TinyAssert::same(array('/v1/merchant/m-old', 'verify'), $module->calls, 'nothing is fetched for the old key\'s merchant');
+        TinyAssert::same('m-old', (string) Configuration::get('PS_TWO_MERCHANT_ID'), 'the stored id is not written');
+        TinyAssert::same('old-shop', (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'), 'the stored short name is not written');
+    }
+
+    /** The front read path's tight cap applies to the verify too, not the 10 s default. */
+    private static function testTheVerifyCarriesTheCallersTimeout(): void
+    {
+        $module = self::harness('m-old', 'old-shop', 'm-key', 'shop', array('m-key'));
+
+        $module->refreshMerchantRecord(Twopayment::MERCHANT_RECORD_STALE_TIMEOUT);
+
+        TinyAssert::same(array(Twopayment::MERCHANT_RECORD_STALE_TIMEOUT), $module->verifyTimeouts, 'the verify gets the caller\'s cap');
     }
 
     private static function testTheRecordIsFetchedForTheKeysMerchant(): void

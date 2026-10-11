@@ -15471,6 +15471,13 @@ class Twopayment extends PaymentModule
 
             return '';
         }
+        // An admin save may have stored another key while the call was out; its
+        // merchant is not this one, so nothing is written for it.
+        if ((string) Configuration::get('PS_TWO_MERCHANT_API_KEY') !== (string) $api_key) {
+            PrestaShopLogger::addLog('TwoPayment: Merchant record not refreshed - the API key changed during the refresh.', 2);
+
+            return '';
+        }
         $stored = (string) Configuration::get('PS_TWO_MERCHANT_ID');
         if ($stored !== $merchant_id) {
             PrestaShopLogger::addLog(
