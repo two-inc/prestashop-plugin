@@ -632,7 +632,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_b4352626601aa911b50972d37fd0564e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_edc7ec878a918df62445b7f1a94d836c'] = 'Skatteregelgrupp';
 $_MODULE['<{twopayment}prestashop>twopayment_31756cee7901c254e89f74a305641776'] = 'Momsregistrerad köpare, annan EU-stat';
 $_MODULE['<{twopayment}prestashop>twopayment_0fab2ef867430ec270d54230a7245897'] = 'Dina skatteregler med 0 %';
-$_MODULE['<{twopayment}prestashop>twopayment_8998cca1abba4acd2003c93907968b1d'] = 'Ingen skatteregel för köparens adress (ingen skatt debiteras, t.ex. export)';
+$_MODULE['<{twopayment}prestashop>twopayment_83bf6ef9f911c87dba079c3e107340b2'] = 'Köparens adress motsvarar ingen skatteregel (ingen skatt debiteras, t.ex. export)';
 $_MODULE['<{twopayment}prestashop>twopayment_3441e44d9cb54213fa2153566371e20d'] = 'Ingen skatteregel med 0 % i den här gruppen';
 $_MODULE['<{twopayment}prestashop>twopayment_d8b18f5a49707de0eee44ffc69ec5a7c'] = 'inte giltig på rader med 0 %';
 $_MODULE['<{twopayment}prestashop>twopayment_3e54799b38ea681ce59a22cd976b2d61'] = 'den sparade mappningen av skattekoder går inte att läsa. Använd Rensa sparade skattekoder under Orderhantering.';

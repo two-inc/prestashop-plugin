@@ -632,7 +632,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_b4352626601aa911b50972d37fd0564e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_edc7ec878a918df62445b7f1a94d836c'] = 'Avgiftsregelgruppe';
 $_MODULE['<{twopayment}prestashop>twopayment_31756cee7901c254e89f74a305641776'] = 'Mva-registrert kjøper, annen EU-stat';
 $_MODULE['<{twopayment}prestashop>twopayment_0fab2ef867430ec270d54230a7245897'] = 'Avgiftsreglene dine med 0 %';
-$_MODULE['<{twopayment}prestashop>twopayment_8998cca1abba4acd2003c93907968b1d'] = 'Ingen avgiftsregel for kjøperens adresse (ingen avgift, f.eks. eksport)';
+$_MODULE['<{twopayment}prestashop>twopayment_83bf6ef9f911c87dba079c3e107340b2'] = 'Kjøperens adresse samsvarer ikke med noen avgiftsregel (ingen avgift, f.eks. eksport)';
 $_MODULE['<{twopayment}prestashop>twopayment_3441e44d9cb54213fa2153566371e20d'] = 'Ingen avgiftsregel med 0 % i denne gruppen';
 $_MODULE['<{twopayment}prestashop>twopayment_d8b18f5a49707de0eee44ffc69ec5a7c'] = 'ikke gyldig på linjer med 0 %';
 $_MODULE['<{twopayment}prestashop>twopayment_3e54799b38ea681ce59a22cd976b2d61'] = 'den lagrede tilordningen av avgiftskoder kan ikke leses. Bruk Fjern lagrede avgiftskoder under Ordrehåndtering.';
