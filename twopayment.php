@@ -3736,7 +3736,7 @@ class Twopayment extends PaymentModule
         $columns = array(
             'exempt' => $this->l('VAT-registered buyer, other EU state'),
             'rules' => $this->l('Your 0% tax rules'),
-            'none' => $this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)'),
+            'none' => $this->l('Buyer\'s address does not map to a tax rule (no tax charged, e.g. exports)'),
         );
         $rows = $this->getTwoTaxCodeMapRows();
         $longest = 0;
@@ -3888,7 +3888,7 @@ class Twopayment extends PaymentModule
             $rows[] = $row + array(
                 'key' => TwoShopTaxCode::noRuleKey($groupId),
                 'field' => self::TAX_CODE_MAP_FIELD_PREFIX . $groupId . '_NONE',
-                'label' => $this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)'),
+                'label' => $this->l('Buyer\'s address does not map to a tax rule (no tax charged, e.g. exports)'),
             );
         }
 

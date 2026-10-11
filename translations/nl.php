@@ -632,7 +632,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_b4352626601aa911b50972d37fd0564e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_edc7ec878a918df62445b7f1a94d836c'] = 'Belastingregelgroep';
 $_MODULE['<{twopayment}prestashop>twopayment_31756cee7901c254e89f74a305641776'] = 'Btw-geregistreerde koper, andere EU-lidstaat';
 $_MODULE['<{twopayment}prestashop>twopayment_0fab2ef867430ec270d54230a7245897'] = 'Je belastingregels tegen 0%';
-$_MODULE['<{twopayment}prestashop>twopayment_8998cca1abba4acd2003c93907968b1d'] = 'Geen belastingregel voor het adres van de koper (geen belasting berekend, bijv. export)';
+$_MODULE['<{twopayment}prestashop>twopayment_83bf6ef9f911c87dba079c3e107340b2'] = 'Het adres van de koper komt niet overeen met een belastingregel (geen belasting berekend, bijv. export)';
 $_MODULE['<{twopayment}prestashop>twopayment_3441e44d9cb54213fa2153566371e20d'] = 'Geen belastingregel tegen 0% in deze groep';
 $_MODULE['<{twopayment}prestashop>twopayment_d8b18f5a49707de0eee44ffc69ec5a7c'] = 'niet geldig op regels tegen 0%';
 $_MODULE['<{twopayment}prestashop>twopayment_3e54799b38ea681ce59a22cd976b2d61'] = 'de opgeslagen indeling van belastingcodes is onleesbaar. Gebruik Opgeslagen belastingcodes wissen onder Orderbeheer.';
