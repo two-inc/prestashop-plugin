@@ -35,7 +35,7 @@ final class TaxCodeAdminSpec
             'testKeySwapIsResolvedAgain', 'testEnvironmentSwapIsResolvedAgain', 'testStaleCheckoutStillSavesAListedCode',
             'testNoKeyMakesNoRequest', 'testAllShopsContextFetchesNothing', 'testClearWinsOverPostedRows',
             'testHiddenSectionIgnoresPostedRows', 'testClearOnAShopWithItsOwnMap', 'testClearOnAShopInheritingTheGlobalMap',
-            'testEachShopResolvesItsOwnKey', 'testClearMakesAnUnreadableMapReadable', 'testTableOffersOnlyZeroRatedCodes',
+            'testEachShopResolvesItsOwnKey', 'testClearMakesAnUnreadableMapReadable', 'testTableOffersOnlyZeroRatedCodes', 'testSelectsFitTheLongestCode',
             'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap', 'testRefusedClearKeepsThePostedPicks',
             'testListFloorIsPerCountry', 'testFailedListForAnotherCountryKeepsTheLastGoodOne', 'testKeySwappedSaveUsesTheProfileCountry',
         ];
@@ -514,6 +514,26 @@ final class TaxCodeAdminSpec
     }
 
     /** The dropdowns offer (none) and the 0% codes; a stored code that is not one is still shown, marked. */
+    /** Every select is wide enough for the longest code it may hold, a stored one included, so no code clips closed. */
+    private static function testSelectsFitTheLongestCode(): void
+    {
+        $cases = [
+            [null, 'calc(25ch + 3em)', 'the longest listed code, ES_IVA_INTRA_COMMUNITY (22 x 1.1)'],
+            ['{"8101|none":"ES_IVA_RETIRED_INTRA_COMMUNITY"}', 'calc(33ch + 3em)', 'a longer stored code it keeps, marked (30 x 1.1)'],
+        ];
+        foreach ($cases as [$map, $width, $description]) {
+            [$setup, $responses] = self::fixture('es-mandatory');
+            $setup();
+            if ($map !== null) {
+                Configuration::updateValue('PS_TWO_TAX_CODE_MAP', $map);
+            }
+            $html = (string) self::render(self::module($responses));
+            $selects = preg_match_all('#<select #', $html);
+            TinyAssert::true($selects > 0, $description . ': the table has selects');
+            TinyAssert::same($selects, substr_count($html, 'style="min-width:' . $width . ';"'), $description . ': every select');
+        }
+    }
+
     private static function testTableOffersOnlyZeroRatedCodes(): void
     {
         [$setup, $responses] = self::fixture('es-mandatory');
