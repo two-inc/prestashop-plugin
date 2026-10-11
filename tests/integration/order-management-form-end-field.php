@@ -12,7 +12,7 @@
  *   - the end field is its last named control, after the save button and every mapping row
  *   - another of the module's forms, rendered on the same request, has no end field
  *
- * Hermetic: the tax code list is stubbed, so no network and no Two credentials. Needs only the module installed.
+ * Hermetic: the tax code section is stubbed as mandatory, so no network and no Two credentials. Needs only the module installed.
  *
  * Usage: php tests/integration/order-management-form-end-field.php
  */
@@ -29,14 +29,23 @@ require_once __DIR__ . '/lib/probe-helpers.php';
 probeBootKernel();
 Module::getInstanceByName('twopayment');
 
-/** The installed module with a fixed tax code list, so the mapping rows render without calling Two. */
+/** The installed module with the tax code section stubbed as mandatory, so the mapping rows render without calling Two. */
 class EndFieldProbeTwopayment extends Twopayment
 {
-    public function getTwoTaxCodeOptions(&$error = '')
+    protected function getTwoTaxCodeSectionState($forSave = false)
     {
-        $error = '';
-
-        return array(array('code' => 'ES_IVA_EXPORT', 'display_name' => 'Export', 'rate' => '0', 'requires_exemption_reason' => true, 'exemption_reason_code' => 'VATEX-EU-G'));
+        return TwoTaxCodeSection::state(array(
+            'single_shop' => true,
+            'has_key' => true,
+            'readable' => true,
+            'entries' => array(),
+            'profile' => array('merchant_id' => 'probe', 'country' => 'ES'),
+            'profile_failure' => null,
+            'list' => array('codes' => array(array('code' => 'ES_IVA_EXPORT', 'display_name' => 'Export', 'rate' => 0.0)), 'mandatory' => true),
+            'list_http' => 0,
+            'checkout_id' => 'probe',
+            'checkout_country' => 'ES',
+        ));
     }
 
     public function render($method)
