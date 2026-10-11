@@ -33,6 +33,7 @@ jobs:
           php -l controllers/admin/AdminTwopaymentInvoiceController.php
           php -l classes/TwoInvoiceRetrievalService.php
           php -l classes/TwoCheckoutAmountException.php
+          php -l classes/TwoTaxCodeSection.php
           php -l tests/bootstrap.php
           php -l tests/TwoInvoiceRetrievalSpec.php
           php -l tests/CustomerAddressFormatterOverrideSpec.php
@@ -66,6 +67,10 @@ jobs:
           php -l controllers/admin/AdminTwoErrorLogController.php
           php -l tests/DiscrepancySnapshotSpec.php
           php -l upgrade/upgrade-2.7.1.php
+          php -l tests/TaxCodeAdminSpec.php
+          php -l tests/fixtures/tax-admin-cases.php
+          php -l dev/order-time-guard.php
+          php -l dev/tax-admin-baseline.php
           php -l tests/run.php
           # Integration probes + their harness. They only run inside a
           # PrestaShop container (.github/workflows/integration.yml), so this
@@ -81,12 +86,37 @@ jobs:
           php -l tests/integration/order-postprocessing-hook.php
           php -l tests/integration/order-management-form-end-field.php
           php -l tests/integration/stale-merchant-id.php
+          php -l tests/integration/tax-code-clear-multistore.php
           php -l tests/integration/fixtures/twoorderpostprocessingtest/twoorderpostprocessingtest.php
           php -l dev/ci/seed-carrierless-cart.php
           php -l dev/ci/two-api-stub.php
 
       - name: Run offline test suite
         run: php tests/run.php
+
+  # TWO-26153: the "Tax codes for 0% lines" admin rework re-presents an admin section and must leave every order-time
+  # path as it is, which is what keeps its QA light. Runs on that change's branches only.
+  order-time-guard:
+    name: Order-time guard (TWO-26153)
+    if: startsWith(github.head_ref || github.ref_name, 'doug/two-26153-tax-code-admin')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: Order time untouched against staging
+        run: |
+          git fetch --no-tags origin staging
+          dev/check-order-time-untouched.sh origin/staging
 
   # Separate from the offline suite so a catalogue that has drifted from the
   # source reports as an i18n failure rather than one red line among sixty.
