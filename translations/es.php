@@ -457,7 +457,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_740ac829af0e2bbb2816a70b724c851d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'no hay ningún país habilitado para este módulo en Pago > Preferencias.';
 $_MODULE['<{twopayment}prestashop>twopayment_76e82d43a9fa16985ea42045a7bcd83b'] = 'Estado actual de la configuración';
 $_MODULE['<{twopayment}prestashop>twopayment_77e2ed15a93333cc525d628f5ea7f4ef'] = '%s no está disponible para este pedido de %%s (%%s)';
-$_MODULE['<{twopayment}prestashop>twopayment_78ed75859c56af62c3804c75ca86d7d8'] = 'Asignación de estados de pedido de %s';
+$_MODULE['<{twopayment}prestashop>twopayment_1b035ec3e94516c3bcb0e9cd5855abd5'] = 'Asignación de estados';
 $_MODULE['<{twopayment}prestashop>twopayment_79b1ad9464e52fc337e4f72c87658e49'] = 'sin impuestos';
 $_MODULE['<{twopayment}prestashop>twopayment_7b7813f00f42b7e5366e7065aaa798c6'] = 'incluyendo';
 $_MODULE['<{twopayment}prestashop>twopayment_7bed29e48ca0f829b25c6a9979e922b1'] = 'Mostrar el campo de número de pedido de compra';
@@ -532,7 +532,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cfce61245df1fd121dd744d83f38b261'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d16f46d8f28d29b23ce69a87b82dc0c8'] = 'El impuesto del recargo necesita volver a seleccionarse: esta tienda usaba antes una tasa de impuesto fija para el recargo, que ha sido sustituida por un grupo de reglas de impuestos. Hasta que selecciones y guardes un "Tratamiento fiscal del recargo" en los ajustes de pago, el recargo NO se grava.';
 $_MODULE['<{twopayment}prestashop>twopayment_d40f2c2b7a99b454ace5554f91e54c8c'] = 'Comisión fija y porcentaje';
 $_MODULE['<{twopayment}prestashop>twopayment_d41ca42f0d87e4109cac125b584d8b37'] = 'Activa el modo de depuración en Diagnóstico y ponte en contacto con el soporte de %s con los registros';
-$_MODULE['<{twopayment}prestashop>twopayment_d4404362aa07bc22fd82bcfcfc7563d9'] = 'Gestión de pedidos';
+$_MODULE['<{twopayment}prestashop>twopayment_4b78ac8eb158840e9638a3aeb26c4a9d'] = 'Impuestos';
 $_MODULE['<{twopayment}prestashop>twopayment_d4b644ceb41c3a19d874ee330ac45f97'] = 'Sin redondeo';
 $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'no hay ninguna moneda habilitada para este módulo en Pago > Preferencias.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4fe0eb19234f23b3535a03a5801fcae'] = 'actualmente no hay ningún país de comprador activado para su cuenta. Póngase en contacto con %s para activarlos.';

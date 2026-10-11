@@ -258,7 +258,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_736a2c997a0aeb75cd77b06f9a7b6934'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1ff8b74a865d866cf4175c96fb3a723d'] = 'Villkor för månadsskifte (t.ex. EOM + 30 dagar)';
 $_MODULE['<{twopayment}prestashop>twopayment_75245db579ccec068538202def09f353'] = 'Handlarportalen:';
 $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] = 'Produktion';
-$_MODULE['<{twopayment}prestashop>twopayment_78ed75859c56af62c3804c75ca86d7d8'] = 'Statusmappning för %s-order';
+$_MODULE['<{twopayment}prestashop>twopayment_1b035ec3e94516c3bcb0e9cd5855abd5'] = 'Statusmappning';
 $_MODULE['<{twopayment}prestashop>twopayment_779cdd79fa95885841e60852c8d17b1f'] = 'Aktiva statusar som utlöser leveransrapportering:';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Hantera fullständiga återbetalningar via PrestaShops adminpanel';
 $_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Skicka delåterbetalningar (kreditnotor) automatiskt till %s - återbetala dem inte också i handlarportalen';
@@ -461,7 +461,7 @@ $_MODULE['<{twopayment}prestashop>configuration_86c80b3438aaf080deed28e95023241c
 $_MODULE['<{twopayment}prestashop>configuration_d510626d757fd594c73232574fd56d64'] = 'Betalningsvillkor';
 $_MODULE['<{twopayment}prestashop>twopayment_c3bcb4d75d3af37fe613c8077e38441d'] = 'Inställningarna för kassafält är uppdaterade.';
 $_MODULE['<{twopayment}prestashop>twopayment_23c8711f45541e10da6c1eb134fddeb2'] = 'Inställningarna för betalningsvillkor är uppdaterade.';
-$_MODULE['<{twopayment}prestashop>twopayment_d4404362aa07bc22fd82bcfcfc7563d9'] = 'Orderhantering';
+$_MODULE['<{twopayment}prestashop>twopayment_4b78ac8eb158840e9638a3aeb26c4a9d'] = 'Skatt';
 $_MODULE['<{twopayment}prestashop>configuration_d4404362aa07bc22fd82bcfcfc7563d9'] = 'Orderhantering';
 $_MODULE['<{twopayment}prestashop>twopayment_36b64aad8a26246fe3ad4116a2b6f289'] = 'Diagnostik';
 $_MODULE['<{twopayment}prestashop>configuration_36b64aad8a26246fe3ad4116a2b6f289'] = 'Diagnostik';

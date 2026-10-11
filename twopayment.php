@@ -2917,7 +2917,7 @@ class Twopayment extends PaymentModule
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Order management'),
+                    'title' => $this->l('Tax'),
                     'icon' => 'icon-truck',
                 ),
                 'input' => array(
@@ -4844,7 +4844,7 @@ class Twopayment extends PaymentModule
         $fields_form = array(
             'form' => array(
                 'legend' => array(
-                    'title' => sprintf($this->l('%s order status mapping'), $this->getTwoBrandConfig('product_name')),
+                    'title' => $this->l('Status mapping'),
                     'icon' => 'icon-cogs',
                 ),
                 'description' => sprintf($this->l('Map %1$s payment states to PrestaShop order states for workflow integration. %1$s creates its own branded order states automatically, but you can map them to existing PrestaShop states if needed.'), $this->getTwoBrandConfig('product_name')) . '<br><br><strong>' . $this->l('Default mappings:') . '</strong><br>' . 
