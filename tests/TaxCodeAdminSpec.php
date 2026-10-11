@@ -36,7 +36,7 @@ final class TaxCodeAdminSpec
             'testNoKeyMakesNoRequest', 'testAllShopsContextFetchesNothing', 'testClearWinsOverPostedRows',
             'testHiddenSectionIgnoresPostedRows', 'testClearOnAShopWithItsOwnMap', 'testClearOnAShopInheritingTheGlobalMap',
             'testEachShopResolvesItsOwnKey', 'testClearMakesAnUnreadableMapReadable', 'testTableOffersOnlyZeroRatedCodes',
-            'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate',
+            'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap',
         ];
         foreach ($tests as $test) {
             self::collect($failures, $test, function () use ($test) {
@@ -509,6 +509,25 @@ final class TaxCodeAdminSpec
         foreach ($rows as [$metadata, $expected, $description]) {
             TinyAssert::same($expected, TwoTaxCodeSection::isMandatoryAtZero($metadata), $description);
         }
+    }
+
+    /** The page saves and renders in one request: after Clear the rows show the cleared map, not the posted picks. */
+    private static function testClearRendersTheClearedMap(): void
+    {
+        [$setup, $responses] = self::fixture('es-mandatory');
+        $setup();
+        $module = self::module($responses);
+        self::render($module);
+        Tools::resetTestValues();
+        Tools::setTestValue(Twopayment::ORDER_MANAGEMENT_FORM_END_FIELD, '1');
+        Tools::setTestValue(Twopayment::TAX_CODES_CLEAR_FIELD, '1');
+        Tools::setTestValue('PS_TWO_TAX_CODE_MAP_8101_NONE', 'ES_IVA_EXPORT');
+        TinyAssert::same([], self::save($module), 'Clear saves');
+        $html = (string) self::render($module);
+        TinyAssert::same(0, preg_match('#<option value="[^"]+" selected="selected">#', $html), 'no row shows a code Clear discarded');
+        $output = new ReflectionProperty(Twopayment::class, 'output');
+        TinyAssert::true(strpos((string) $output->getValue($module), 'Saved tax codes cleared; choose codes again.') !== false, 'the save confirms the Clear');
+        Tools::resetTestValues();
     }
 
     /** Render once, then save with Clear ticked. */
