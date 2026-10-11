@@ -3753,7 +3753,8 @@ class Twopayment extends PaymentModule
         $e = static function ($text) {
             return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
         };
-        // Columns size to their content, so no label or marker is clipped; a table wider than the panel scrolls.
+        // Auto layout: the columns share the panel by their content, so headers and rule labels wrap rather than clip,
+        // and a marker is named under its select. A table wider than the panel scrolls rather than overflowing it.
         $html = '<div class="table-responsive" style="overflow-x:auto;"><table id="two-tax-code-grid" class="table" style="width:100%;margin-bottom:0;"><thead><tr>'
             . '<th scope="col">' . $e($this->l('Tax rules group')) . '</th>'
             . '<th scope="col">' . $e($columns['exempt']) . '</th>'
