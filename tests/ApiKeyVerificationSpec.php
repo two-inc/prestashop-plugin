@@ -1233,6 +1233,10 @@ final class ApiKeyVerificationSpec
     {
         $module = self::module(self::okOutcome());
         $module->setPathForTest('/modules/twopayment/');
+        // A stored merchant id and short name, so the record refresh the hook makes
+        // is a record fetch and not a resolution of the merchant from the key.
+        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'm-123');
+        Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
 
         $controller = new class extends ModuleFrontController {
             public $php_self = '';

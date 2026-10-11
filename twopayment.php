@@ -373,6 +373,7 @@ class Twopayment extends PaymentModule
     const HTTP_STATUS_BAD_REQUEST = 400;
     const HTTP_STATUS_UNAUTHORIZED = 401;
     const HTTP_STATUS_FORBIDDEN = 403;
+    const HTTP_STATUS_NOT_FOUND = 404;
     const HTTP_STATUS_SERVER_ERROR = 500;
     
     // Constants for cookie/session expiry (seconds)
@@ -15357,23 +15358,41 @@ class Twopayment extends PaymentModule
         // Cast on read: an unwritten row is `false`, which Tools::isEmpty() calls non-empty.
         $merchant_id = (string) Configuration::get('PS_TWO_MERCHANT_ID');
         $api_key = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
-        if (self::isTwoConfigUnset($merchant_id) || self::isTwoConfigUnset($api_key)) {
+        if (self::isTwoConfigUnset($api_key)) {
             return false;
         }
 
-        // Clock bumped BEFORE the wire call so a concurrent read shares this
+        // Clock bumped BEFORE the wire calls so a concurrent read shares this
         // attempt instead of firing a second one (TWO-24859).
         $previous_checked_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
         Configuration::updateValue(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time());
-        $response = $this->setTwoPaymentRequest(
-            '/v1/merchant/' . rawurlencode($merchant_id),
-            array(),
-            'GET',
-            array(),
-            $timeout
-        );
+        $fetch = function ($id) use ($timeout) {
+            return $this->setTwoPaymentRequest('/v1/merchant/' . rawurlencode($id), array(), 'GET', array(), $timeout);
+        };
+        $response = self::isTwoConfigUnset($merchant_id) ? array() : $fetch($merchant_id);
         $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        // Only a verified General save writes PS_TWO_MERCHANT_ID and the short name, so
+        // a shop seeded, cloned or migrated without one holds an empty or stale id (Two
+        // answers 404 for an id the key does not own) and no short name. The key then
+        // says whose record it is; once both are stored this costs nothing.
+        if (self::isTwoConfigUnset($merchant_id)
+            || $http_status === self::HTTP_STATUS_NOT_FOUND
+            || self::isTwoConfigUnset((string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'))) {
+            $resolved = $this->resolveTwoMerchantIdForKey($api_key, $timeout);
+            if ($resolved !== '' && $resolved !== $merchant_id) {
+                $merchant_id = $resolved;
+                $response = $fetch($merchant_id);
+                $http_status = isset($response['http_status']) ? (int) $response['http_status'] : 0;
+            }
+        }
         if ($http_status !== self::HTTP_STATUS_OK || !self::isTwoMerchantRecordResponse($response)) {
+            if (!self::isTwoConfigUnset($merchant_id)) {
+                PrestaShopLogger::addLog(
+                    'TwoPayment: Merchant record refresh failed for merchant ' . $merchant_id
+                        . ' (HTTP ' . $http_status . '). The cached record stays in use.',
+                    2
+                );
+            }
             // Nothing cached is touched. The stamp is rolled back so it keeps
             // describing the record actually held - whichever key that record
             // belongs to; a shop holding none keeps the bumped stamp, which is its
@@ -15424,6 +15443,56 @@ class Twopayment extends PaymentModule
         Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_FOREIGN_TS, 0);
 
         return true;
+    }
+
+    /**
+     * The merchant $api_key belongs to, from GET /v1/merchant/verify_api_key, or
+     * '' when the key resolved none (verifyTwoApiKey() logs why, never the key).
+     * A stored PS_TWO_MERCHANT_ID or PS_TWO_MERCHANT_SHORT_NAME naming another
+     * merchant, or none, is brought into line: the General save writes the same
+     * values, and every reader of them means the key's merchant. An empty short
+     * name withholds Two at checkout, so a shop missing that save lacks both.
+     *
+     * @param string $api_key
+     * @param int    $timeout
+     * @return string
+     */
+    protected function resolveTwoMerchantIdForKey($api_key, $timeout)
+    {
+        $verify = $this->verifyTwoApiKey($api_key, Configuration::get('PS_TWO_ENVIRONMENT'), $timeout);
+        $merchant_id = $verify['status'] === self::API_KEY_STATUS_OK && isset($verify['body']['id'])
+            ? trim((string) $verify['body']['id'])
+            : '';
+        if ($merchant_id === '') {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Merchant record not refreshed - the stored API key resolved no merchant (' . $verify['status'] . ').',
+                2
+            );
+
+            return '';
+        }
+        $stored = (string) Configuration::get('PS_TWO_MERCHANT_ID');
+        if ($stored !== $merchant_id) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Stored merchant ID "' . $stored . '" is not the API key\'s merchant; updated to ' . $merchant_id . '.',
+                2
+            );
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', $merchant_id);
+        }
+        // A verified key with no short name keeps the stored one, as the save does.
+        $short_name = isset($verify['body']['short_name']) ? trim((string) $verify['body']['short_name']) : '';
+        $stored = (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
+        if ($short_name !== '' && $stored !== $short_name) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Stored merchant short name "' . $stored . '" is not the API key\'s merchant; updated to ' . $short_name . '.',
+                2
+            );
+            Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $short_name);
+            // The checkout guard and the order payload read the copy taken at construction.
+            $this->merchant_short_name = $short_name;
+        }
+
+        return $merchant_id;
     }
 
     /**
