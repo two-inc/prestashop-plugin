@@ -632,7 +632,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_b4352626601aa911b50972d37fd0564e'] 
 $_MODULE['<{twopayment}prestashop>twopayment_edc7ec878a918df62445b7f1a94d836c'] = 'Grupo de reglas de impuestos';
 $_MODULE['<{twopayment}prestashop>twopayment_31756cee7901c254e89f74a305641776'] = 'Comprador con NIF-IVA, otro estado de la UE';
 $_MODULE['<{twopayment}prestashop>twopayment_0fab2ef867430ec270d54230a7245897'] = 'Tus reglas de impuestos al 0 %';
-$_MODULE['<{twopayment}prestashop>twopayment_8998cca1abba4acd2003c93907968b1d'] = 'Ninguna regla de impuestos para la dirección del comprador (sin impuesto, p. ej. exportaciones)';
+$_MODULE['<{twopayment}prestashop>twopayment_83bf6ef9f911c87dba079c3e107340b2'] = 'La dirección del comprador no corresponde a ninguna regla de impuestos (sin impuesto, p. ej. exportaciones)';
 $_MODULE['<{twopayment}prestashop>twopayment_3441e44d9cb54213fa2153566371e20d'] = 'Este grupo no tiene reglas de impuestos al 0 %';
 $_MODULE['<{twopayment}prestashop>twopayment_d8b18f5a49707de0eee44ffc69ec5a7c'] = 'no válido en líneas al 0 %';
 $_MODULE['<{twopayment}prestashop>twopayment_3e54799b38ea681ce59a22cd976b2d61'] = 'la asignación de códigos fiscales guardada no se puede leer. Usa Borrar los códigos fiscales guardados en Gestión de pedidos.';
