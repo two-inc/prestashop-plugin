@@ -3740,8 +3740,8 @@ class Twopayment extends PaymentModule
         $e = static function ($text) {
             return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
         };
-        $html = '<table id="two-tax-code-grid" class="table" style="width:auto;margin-bottom:0;"><thead><tr>'
-            . '<th>' . $e($this->l('Tax rules group')) . '</th>'
+        $html = '<table id="two-tax-code-grid" class="table" style="width:100%;table-layout:fixed;margin-bottom:0;"><thead><tr>'
+            . '<th style="width:9em;">' . $e($this->l('Tax rules group')) . '</th>'
             . '<th>' . $e($this->l('VAT-registered buyer, other EU state')) . '</th>'
             . '<th>' . $e($this->l('Your 0% tax rules')) . '</th>'
             . '<th>' . $e($this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)')) . '</th>'
@@ -3770,12 +3770,13 @@ class Twopayment extends PaymentModule
     {
         $options = array('' => $this->l('(none)'));
         foreach ($zero as $code) {
-            $options[$code['code']] = $this->formatTwoTaxCodeOptionLabel($code);
+            // Every offered code is at 0%, so the label leaves the rate out.
+            $options[$code['code']] = $code['code'] . ' - ' . $code['display_name'];
         }
         if ($selected !== '' && !isset($options[$selected])) {
             $options[$selected] = $selected . ' (' . ($this->isTwoTaxCodeListed($codes, $selected) ? $this->l('not valid on 0% lines') : $this->l('no longer listed')) . ')';
         }
-        $html = '<select name="' . htmlspecialchars($field, ENT_QUOTES, 'UTF-8') . '" class="form-control" style="min-width:16em;">';
+        $html = '<select name="' . htmlspecialchars($field, ENT_QUOTES, 'UTF-8') . '" class="form-control">';
         foreach ($options as $value => $label) {
             $value = (string) $value;
             $html .= '<option value="' . htmlspecialchars($value, ENT_QUOTES, 'UTF-8') . '"' . ($value === $selected ? ' selected="selected"' : '') . '>'
