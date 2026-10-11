@@ -258,7 +258,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_736a2c997a0aeb75cd77b06f9a7b6934'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1ff8b74a865d866cf4175c96fb3a723d'] = 'Vilkår med slutten av måneden (f.eks. EOM + 30 dager)';
 $_MODULE['<{twopayment}prestashop>twopayment_75245db579ccec068538202def09f353'] = 'Selgerportal:';
 $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] = 'Produksjon';
-$_MODULE['<{twopayment}prestashop>twopayment_78ed75859c56af62c3804c75ca86d7d8'] = 'Kobling av %s-ordrestatuser';
+$_MODULE['<{twopayment}prestashop>twopayment_1b035ec3e94516c3bcb0e9cd5855abd5'] = 'Statuskobling';
 $_MODULE['<{twopayment}prestashop>twopayment_779cdd79fa95885841e60852c8d17b1f'] = 'Statuser som nå utløser oppfyllelse:';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Håndtere fulle refusjoner via PrestaShop-administrasjonen';
 $_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Sende delvise refusjoner (kreditnotaer) automatisk til %s – ikke refunder dem også i Selgerportalen';
@@ -461,7 +461,7 @@ $_MODULE['<{twopayment}prestashop>configuration_86c80b3438aaf080deed28e95023241c
 $_MODULE['<{twopayment}prestashop>configuration_d510626d757fd594c73232574fd56d64'] = 'Betalingsvilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_c3bcb4d75d3af37fe613c8077e38441d'] = 'Innstillingene for kassafelt er oppdatert.';
 $_MODULE['<{twopayment}prestashop>twopayment_23c8711f45541e10da6c1eb134fddeb2'] = 'Innstillingene for betalingsvilkår er oppdatert.';
-$_MODULE['<{twopayment}prestashop>twopayment_d4404362aa07bc22fd82bcfcfc7563d9'] = 'Ordrehåndtering';
+$_MODULE['<{twopayment}prestashop>twopayment_4b78ac8eb158840e9638a3aeb26c4a9d'] = 'Skatt';
 $_MODULE['<{twopayment}prestashop>configuration_d4404362aa07bc22fd82bcfcfc7563d9'] = 'Ordrehåndtering';
 $_MODULE['<{twopayment}prestashop>twopayment_36b64aad8a26246fe3ad4116a2b6f289'] = 'Diagnostikk';
 $_MODULE['<{twopayment}prestashop>configuration_36b64aad8a26246fe3ad4116a2b6f289'] = 'Diagnostikk';
