@@ -195,7 +195,7 @@ Two requires a `tax_code` on every line at a 0% rate for a Spanish merchant, on 
 
 - **VAT-registered buyer, other EU state.**
 - **Your 0% tax rules**: one dropdown per 0% tax rule of the group, labelled as the shop describes the rule: country, state, postcode range and tax, then the rule's own description, e.g. `Spain, 35000-35999 (No tax)`. A rule whose tax is 0% or "No tax" is a 0% rule; rules above 0% never give a 0% line and are not listed.
-- **No tax rule for the buyer's address (no tax charged, e.g. exports)**: none of the group's rules covers the tax address, so PrestaShop charges no tax on the line.
+- **Buyer's address does not map to a tax rule (no tax charged, e.g. exports)**: none of the group's rules covers the tax address, so PrestaShop charges no tax on the line.
 
 A saved code that is no longer listed, or listed at a rate other than 0%, still shows in its dropdown, marked, so nothing saved disappears unseen; Two refuses such a code on a 0% line.
 

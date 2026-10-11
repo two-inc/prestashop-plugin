@@ -750,7 +750,7 @@ final class TaxCodeSpec
             ['PS_TWO_TAX_CODE_MAP_8101_EXEMPT', '8101|exempt', 'VAT-registered buyer, other EU state'],
             ['PS_TWO_TAX_CODE_MAP_RULE_8203', 'rule:8203', 'US (IVA 0%) - Exports'],
             ['PS_TWO_TAX_CODE_MAP_RULE_8201', 'rule:8201', 'ES, 35000-35999 (No tax)'],
-            ['PS_TWO_TAX_CODE_MAP_8101_NONE', '8101|none', 'No tax rule for the buyer\'s address (no tax charged, e.g. exports)'],
+            ['PS_TWO_TAX_CODE_MAP_8101_NONE', '8101|none', 'Buyer\'s address does not map to a tax rule (no tax charged, e.g. exports)'],
         ], $got, 'rows for the group (got: ' . json_encode($got) . ')');
     }
 

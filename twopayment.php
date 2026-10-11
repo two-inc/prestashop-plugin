@@ -3525,7 +3525,7 @@ class Twopayment extends PaymentModule
             'name' => 'PS_TWO_TAX_CODES_SECTION',
             'html_content' => $this->renderTwoTaxCodeSection($state),
             // The module's form.tpl puts the label above and gives the section the panel's full width, so the
-            // table's four columns fit without scrolling.
+            // table's four columns fit on a wide screen; on a narrower one the table scrolls inside the panel.
             'two_full_width' => true,
         ));
     }
@@ -3736,7 +3736,7 @@ class Twopayment extends PaymentModule
         $columns = array(
             'exempt' => $this->l('VAT-registered buyer, other EU state'),
             'rules' => $this->l('Your 0% tax rules'),
-            'none' => $this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)'),
+            'none' => $this->l('Buyer\'s address does not map to a tax rule (no tax charged, e.g. exports)'),
         );
         $rows = $this->getTwoTaxCodeMapRows();
         $longest = 0;
@@ -3888,7 +3888,7 @@ class Twopayment extends PaymentModule
             $rows[] = $row + array(
                 'key' => TwoShopTaxCode::noRuleKey($groupId),
                 'field' => self::TAX_CODE_MAP_FIELD_PREFIX . $groupId . '_NONE',
-                'label' => $this->l('No tax rule for the buyer\'s address (no tax charged, e.g. exports)'),
+                'label' => $this->l('Buyer\'s address does not map to a tax rule (no tax charged, e.g. exports)'),
             );
         }
 

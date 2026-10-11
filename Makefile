@@ -42,7 +42,7 @@ TWO_ENVIRONMENT      ?= sandbox
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop carrierless-matrix bump patch minor major phpstan tax-admin-baseline order-time-guard bumpver-patch bumpver-minor bumpver-major
+.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop carrierless-matrix bump patch minor major phpstan tax-admin-baseline bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
@@ -202,10 +202,6 @@ test-integration:
 ## Compare the Order management render's Configuration writes with the base commit's (TWO-26153; host PHP)
 tax-admin-baseline:
 	dev/tax-admin-baseline.sh
-
-## Check the working tree leaves every order-time path untouched (TWO-26153; host PHP)
-order-time-guard:
-	dev/check-order-time-untouched.sh
 
 ## Run phpstan static analysis (same gate CI runs)
 phpstan:

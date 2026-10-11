@@ -551,10 +551,10 @@ final class TaxCodeAdminSpec
             ['US (IVA 0%) - Exports', true, 'a 0% rule is labelled as the shop describes it'],
             ['No 0% tax rule in this group', true, 'a group with no 0% rule says so'],
             ['<th scope="col">VAT-registered buyer, other EU state</th>', true, 'the exempt column'],
-            ['<th scope="col">No tax rule for the buyer&#039;s address (no tax charged, e.g. exports)</th>', true, 'the no-rule column'],
+            ['<th scope="col">Buyer&#039;s address does not map to a tax rule (no tax charged, e.g. exports)</th>', true, 'the no-rule column'],
             ['class="text-warning" style="font-size:90%;margin-top:2px;">ES_IVA_STANDARD: not valid on 0% lines</div>', true, 'the not-valid marker shows under its select, whatever the column width'],
             ['>ES_RETIRED: no longer listed</div>', true, 'the unlisted marker shows under its select'],
-            ['aria-label="Books: No tax rule for the buyer&#039;s address (no tax charged, e.g. exports)" aria-describedby="PS_TWO_TAX_CODE_MAP_8101_NONE_MARKER"', true, 'a select is named by group and column, and described by its marker'],
+            ['aria-label="Books: Buyer&#039;s address does not map to a tax rule (no tax charged, e.g. exports)" aria-describedby="PS_TWO_TAX_CODE_MAP_8101_NONE_MARKER"', true, 'a select is named by group and column, and described by its marker'],
             ['aria-label="Books: Your 0% tax rules: US (IVA 0%) - Exports"', true, 'a rule\'s select is named by its rule too'],
             ['table-layout:fixed', false, 'columns size to their content'],
         ];
