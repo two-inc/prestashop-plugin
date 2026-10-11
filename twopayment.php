@@ -1617,6 +1617,12 @@ class Twopayment extends PaymentModule
             : (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKeyToSave);
+        // The request headers and the checkout guard read the copies taken at
+        // construction, and getContent() renders every tab in this request:
+        // without this, its calls for the new merchant carry the old key and
+        // Two answers 404 (TWO-26304).
+        $this->merchant_short_name = $shortNameToSave;
+        $this->api_key = $apiKeyToSave;
         Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
         Configuration::updateValue('PS_TWO_ENVIRONMENT', $submittedEnv);
 

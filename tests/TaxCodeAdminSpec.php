@@ -38,6 +38,7 @@ final class TaxCodeAdminSpec
             'testEachShopResolvesItsOwnKey', 'testClearMakesAnUnreadableMapReadable', 'testTableOffersOnlyZeroRatedCodes', 'testSelectsFitTheLongestCode',
             'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap', 'testRefusedClearKeepsThePostedPicks',
             'testListFloorIsPerCountry', 'testFailedListForAnotherCountryKeepsTheLastGoodOne', 'testKeySwappedSaveUsesTheProfileCountry',
+            'testGeneralKeySaveRendersWithTheSavedKey',
         ];
         foreach ($tests as $test) {
             self::collect($failures, $test, function () use ($test) {
@@ -650,5 +651,63 @@ final class TaxCodeAdminSpec
         Tools::setTestValue(Twopayment::TAX_CODES_CLEAR_FIELD, '1');
         TinyAssert::same([], self::save($module), 'Clear saves');
         Tools::resetTestValues();
+    }
+
+    /**
+     * TWO-26304: a General save with a new key renders every tab in the same request. Two answers the new merchant's
+     * record only for its own key, so a call still carrying the old key gets the 404 the section then shows.
+     */
+    private static function testGeneralKeySaveRendersWithTheSavedKey(): void
+    {
+        [$setup] = self::fixture('es-mandatory');
+        $setup();
+        $module = new class extends TaxAdminFixtureModule {
+            /** @var string[] the X-API-Key each /v1/merchant/<id> call carried */
+            public $merchantKeys = array();
+
+            public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+            {
+                if (strpos($endpoint, '/v1/merchant/') === 0) {
+                    $sent = '';
+                    foreach ($this->getTwoRequestHeaders($endpoint) as $line) {
+                        if (stripos($line, 'X-API-Key:') === 0) {
+                            $sent = substr($line, strlen('X-API-Key:'));
+                        }
+                    }
+                    $this->merchantKeys[] = $sent;
+                    if ($sent !== 'key-2') {
+                        $this->requested[] = $method . ' ' . $endpoint;
+
+                        return array('http_status' => 404, 'error' => 'merchant not found');
+                    }
+                }
+
+                return parent::setTwoPaymentRequest($endpoint, $payload, $method, $additional_headers, $timeout);
+            }
+
+            public function refreshTwoFxRates()
+            {
+                return false;
+            }
+        };
+        $module->responses = TaxAdminCases::healthy('ES', 'merchant-2');
+        // The copy the constructor took before the save.
+        $module->api_key = 'key-1';
+        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'key-2');
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'staging');
+        foreach (array('validTwoGeneralFormValues', 'saveTwoGeneralFormValues') as $step) {
+            $method = new ReflectionMethod(Twopayment::class, $step);
+            $method->setAccessible(true);
+            $method->invoke($module);
+        }
+        $html = (string) self::render($module);
+        Tools::resetTestValues();
+
+        TinyAssert::same('key-2', (string) Configuration::get('PS_TWO_MERCHANT_API_KEY'), 'the save stores the new key');
+        TinyAssert::true($module->merchantKeys !== array(), 'the save and the render read the merchant record');
+        TinyAssert::same(array(), array_values(array_diff($module->merchantKeys, array('key-2'))), 'every merchant record call after the save carries the saved key');
+        TinyAssert::same(TwoTaxCodeSection::VIEW_ROWS, self::state($module)['view'], 'the tax code section renders its rows');
+        TinyAssert::false(strpos($html, 'HTTP 404') !== false, 'and no 404 notice (got: ' . $html . ')');
     }
 }
