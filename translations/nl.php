@@ -637,3 +637,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_3441e44d9cb54213fa2153566371e20d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d8b18f5a49707de0eee44ffc69ec5a7c'] = 'niet geldig op regels tegen 0%';
 $_MODULE['<{twopayment}prestashop>twopayment_3e54799b38ea681ce59a22cd976b2d61'] = 'de opgeslagen indeling van belastingcodes is onleesbaar. Gebruik Opgeslagen belastingcodes wissen onder Orderbeheer.';
 $_MODULE['<{twopayment}prestashop>twopayment_26972e4a497058079071603896510806'] = 'de opgeslagen indeling van belastingcodes is onleesbaar. Gebruik Opgeslagen belastingcodes wissen onder Orderbeheer (kies eerst de winkel).';
+$_MODULE['<{twopayment}prestashop>twopayment_550f3ff50a65127f476f5640546ea56a'] = 'Opgeslagen belastingcodes gewist; kies de codes opnieuw.';

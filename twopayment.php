@@ -3468,7 +3468,8 @@ class Twopayment extends PaymentModule
 
         // Clear wins over any posted row. Otherwise only when the mapping was on the form, which it is only while the
         // section shows its rows.
-        if ($this->isTwoTaxCodesClearPosted()) {
+        $cleared = $this->isTwoTaxCodesClearPosted();
+        if ($cleared) {
             $this->writeTwoTaxCodeShopValue(self::CONFIG_TAX_CODE_MAP, '{}');
         } else {
             $map = $this->getPostedTwoTaxCodeMap();
@@ -3496,6 +3497,9 @@ class Twopayment extends PaymentModule
         }
 
         $this->output .= $this->displayConfirmation($this->l('Order management settings are updated.'));
+        if ($cleared) {
+            $this->output .= $this->displayConfirmation($this->l('Saved tax codes cleared; choose codes again.'));
+        }
     }
 
     /**
@@ -3721,6 +3725,7 @@ class Twopayment extends PaymentModule
     private function renderTwoTaxCodeTable(array $codes)
     {
         $map = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
+        $cleared = $this->isTwoTaxCodesClearPosted();
         $zero = TwoTaxCodeSection::zeroRated($codes);
         $groups = array();
         foreach ($this->getTwoTaxCodeMapRows() as $row) {
@@ -3729,7 +3734,9 @@ class Twopayment extends PaymentModule
                 $groups[$row['group']] = array('name' => $row['group_name'], 'exempt' => '', 'rules' => array(), 'none' => '');
             }
             $saved = is_array($map) && isset($map[$row['key']]) ? $map[$row['key']] : '';
-            $select = $this->renderTwoTaxCodeSelect($row['field'], (string) Tools::getValue($row['field'], $saved), $zero, $codes);
+            // A post's picks are shown again (a refused save keeps them), except after Clear, which discarded them.
+            $selected = $cleared ? $saved : (string) Tools::getValue($row['field'], $saved);
+            $select = $this->renderTwoTaxCodeSelect($row['field'], $selected, $zero, $codes);
             if ($kind === 'rules') {
                 $groups[$row['group']]['rules'][] = '<div style="margin-bottom:6px;"><div class="text-muted" style="font-size:90%;">'
                     . htmlspecialchars($row['label'], ENT_QUOTES, 'UTF-8') . '</div>' . $select . '</div>';
