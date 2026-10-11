@@ -233,6 +233,8 @@ The cache is replaced only by a successful refresh, and only from one of these:
 - the scheduled refresh (below);
 - **Refresh merchant profile**, in **Module Configuration → Diagnostics**.
 
+A save of the API key or the environment runs the same refresh as **Refresh merchant profile**. Both also drop a failed tax code lookup and its 5-minute retry wait, so the "Tax codes for 0% lines" section looks the merchant up again on the next page load, and a successful **Refresh merchant profile** reloads the page to show the result.
+
 If the record is more than 26 hours old, the scheduled refresh is not running. A page read then refreshes it itself, at most once an hour and on a 2-second cap, and serves the record it already holds whichever way that goes. The Diagnostics tab reports when the record was last refreshed and whether page reads are having to stand in.
 
 **Multistore:** the cached record belongs to one shop, so **Refresh merchant profile** and the line above it appear only while the admin is scoped to a single shop.

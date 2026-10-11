@@ -1667,7 +1667,8 @@ class Twopayment extends PaymentModule
             // Refreshed, never cleared (ABN-519): a shop whose key was cycled
             // elsewhere and never updated here keeps every cached value the
             // admin controls are built from, and a failed refetch changes nothing.
-            $this->refreshMerchantRecord();
+            // The same refresh as the "Refresh merchant profile" button (TWO-26304).
+            $this->refreshTwoMerchantProfile();
         }
 
         $this->output .= $this->displayConfirmation($this->l('General settings are updated.'));
@@ -17067,6 +17068,28 @@ class Twopayment extends PaymentModule
      * The Diagnostics "Refresh merchant profile" button. A failed refetch leaves
      * the cached record in place rather than dropping the shop to nothing.
      */
+    /**
+     * "Refresh merchant profile", which a General save that changes the shop's identity runs too (TWO-26304): refresh
+     * the merchant record, and drop the tax code section's stored lookup failure and its retry floor so the next render
+     * looks the merchant up afresh instead of repeating an error for up to five minutes. A profile that resolved is
+     * kept. The section's row belongs to one shop, so outside a single shop's context only the record is refreshed.
+     *
+     * @return bool whether the merchant record was refreshed
+     */
+    protected function refreshTwoMerchantProfile()
+    {
+        if ($this->isTwoSingleShopContext()) {
+            $stored = json_decode((string) Configuration::get(self::CONFIG_TAX_CODE_PROFILE), true);
+            if (is_array($stored) && (!empty($stored['tried_at']) || !empty($stored['failure']))) {
+                $stored['tried_at'] = 0;
+                $stored['failure'] = null;
+                $this->writeTwoTaxCodeShopValue(self::CONFIG_TAX_CODE_PROFILE, json_encode($stored));
+            }
+        }
+
+        return $this->refreshMerchantRecord();
+    }
+
     public function ajaxProcessRefreshMerchantRecord()
     {
         if (!$this->isTwoSingleShopContext()) {
@@ -17078,7 +17101,7 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        $refreshed = $this->refreshMerchantRecord();
+        $refreshed = $this->refreshTwoMerchantProfile();
         $this->respondTwoRefreshMerchantRecord(array(
             'success' => $refreshed,
             'message' => $refreshed

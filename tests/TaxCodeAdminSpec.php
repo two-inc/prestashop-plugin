@@ -38,7 +38,7 @@ final class TaxCodeAdminSpec
             'testEachShopResolvesItsOwnKey', 'testClearMakesAnUnreadableMapReadable', 'testTableOffersOnlyZeroRatedCodes', 'testSelectsFitTheLongestCode',
             'testClearedPayloadEqualsTheUnmappedGolden', 'testMandatoryMeansANumericZeroRate', 'testClearRendersTheClearedMap', 'testRefusedClearKeepsThePostedPicks',
             'testListFloorIsPerCountry', 'testFailedListForAnotherCountryKeepsTheLastGoodOne', 'testKeySwappedSaveUsesTheProfileCountry',
-            'testGeneralKeySaveRendersWithTheSavedKey',
+            'testGeneralKeySaveRendersWithTheSavedKey', 'testRefreshButtonClearsAStoredLookupFailure', 'testGeneralKeySaveRunsTheButtonsRefresh',
         ];
         foreach ($tests as $test) {
             self::collect($failures, $test, function () use ($test) {
@@ -709,5 +709,70 @@ final class TaxCodeAdminSpec
         TinyAssert::same(array(), array_values(array_diff($module->merchantKeys, array('key-2'))), 'every merchant record call after the save carries the saved key');
         TinyAssert::same(TwoTaxCodeSection::VIEW_ROWS, self::state($module)['view'], 'the tax code section renders its rows');
         TinyAssert::false(strpos($html, 'HTTP 404') !== false, 'and no 404 notice (got: ' . $html . ')');
+    }
+
+    /** TWO-26304: "Refresh merchant profile" drops a stored lookup failure and its floor, so the next render asks again. */
+    private static function testRefreshButtonClearsAStoredLookupFailure(): void
+    {
+        [$setup, $responses] = self::fixture('verify-503');
+        $setup();
+        self::render(self::module($responses));
+        $module = new class extends TaxAdminFixtureModule {
+            /** @var array|null */
+            public $response = null;
+
+            protected function respondTwoRefreshMerchantRecord(array $payload)
+            {
+                $this->response = $payload;
+            }
+        };
+        $module->responses = TaxAdminCases::healthy('ES');
+        $html = (string) self::render($module);
+        TinyAssert::true(strpos($html, 'HTTP 503') !== false, 'inside the floor the stored failure is shown (got: ' . $html . ')');
+
+        $module->ajaxProcessRefreshMerchantRecord();
+        $stored = json_decode((string) Configuration::get('PS_TWO_TAX_CODE_PROFILE'), true);
+        $module->requested = array();
+        $html = (string) self::render($module);
+
+        TinyAssert::same(true, $module->response['success'] ?? null, 'the refresh succeeds');
+        TinyAssert::same(array(0, null), array($stored['tried_at'], $stored['failure']), 'the refresh drops the failure and the floor');
+        TinyAssert::same(1, self::requests($module, 'GET /v1/merchant/verify_api_key'), 'the next render looks the merchant up again');
+        TinyAssert::same(TwoTaxCodeSection::VIEW_ROWS, self::state($module)['view'], 'and shows the rows');
+    }
+
+    /** TWO-26304: a General save that changes the key runs the same refresh as the button. */
+    private static function testGeneralKeySaveRunsTheButtonsRefresh(): void
+    {
+        [$setup] = self::fixture('es-mandatory');
+        $setup();
+        $module = new class extends TaxAdminFixtureModule {
+            /** @var int */
+            public $profileRefreshes = 0;
+
+            protected function refreshTwoMerchantProfile()
+            {
+                $this->profileRefreshes++;
+
+                return parent::refreshTwoMerchantProfile();
+            }
+
+            public function refreshTwoFxRates()
+            {
+                return false;
+            }
+        };
+        $module->responses = TaxAdminCases::healthy('ES', 'merchant-2');
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'staging');
+        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'key-2');
+        foreach (array('validTwoGeneralFormValues', 'saveTwoGeneralFormValues') as $step) {
+            $method = new ReflectionMethod(Twopayment::class, $step);
+            $method->setAccessible(true);
+            $method->invoke($module);
+        }
+        Tools::resetTestValues();
+
+        TinyAssert::same(1, $module->profileRefreshes, 'the save refreshes through the button\'s function');
     }
 }

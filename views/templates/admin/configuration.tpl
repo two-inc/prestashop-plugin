@@ -100,6 +100,12 @@
                             .removeClass('text-muted text-success text-danger')
                             .addClass(ok ? 'text-success' : 'text-danger')
                             .text(response && response.message ? response.message : '');
+                        if (ok) {
+                            // Every tab is rendered by the server from the profile
+                            // (TWO-26304). A GET, so a page shown after a save is
+                            // not posted again.
+                            window.location.assign(window.location.href.split('#')[0]);
+                        }
                     })
                     .fail(function () {
                         result.removeClass('text-muted text-success').addClass('text-danger').text(twoRefreshMerchantFailedText);
