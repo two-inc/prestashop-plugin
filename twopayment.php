@@ -144,6 +144,9 @@ class Twopayment extends PaymentModule
     // minute rather than one per config-page render.
     const FEE_RATES_FAILURE_COOLDOWN = 60;
     const FEE_RATES_ERROR_UPSTREAM = 'upstream';
+    // A 4xx: the API understood the request and refused it, and its own
+    // message says why (TWO-26305).
+    const FEE_RATES_ERROR_REJECTED = 'rejected';
     const FEE_RATES_ERROR_NO_TERMS = 'no_terms';
 
     // Cached, categorised outcome of GET /v1/merchant/verify_api_key for the
@@ -16742,7 +16745,9 @@ class Twopayment extends PaymentModule
      * are not current, and only answers `success => false` when nothing was
      * ever stored for this identity. `error` carries the category the screen
      * explains: 'not_configured' is terminal (nothing changes until a key is
-     * saved), the rest are transient. Never throws and never blocks long
+     * saved), the rest are transient. 'rejected' (a 4xx) also carries the
+     * `http_status` and the API's own `message`, so the screen can say why
+     * (TWO-26305). Never throws and never blocks long
      * (tight timeout): it sits behind an AJAX call on a config-page render
      * path.
      *
@@ -16750,7 +16755,7 @@ class Twopayment extends PaymentModule
      * country): there is no cart/buyer context on a config page.
      *
      * @param array $days Requested term day-counts (raw, will be normalised).
-     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>,stale?:bool,fetched_at?:int,error?:string}
+     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>,stale?:bool,fetched_at?:int,error?:string,http_status?:int,message?:string}
      */
     public function fetchTwoMerchantFeeRates($days)
     {
@@ -16765,11 +16770,11 @@ class Twopayment extends PaymentModule
         $buyer_country = $this->getTwoAdminBuyerCountryCode();
         $slot = $this->twoMerchantFeeRatesSlot($net_terms, $buyer_country, (string) $api_key);
         $cooldown_key = self::CONFIG_FEE_RATES_COOLDOWN_PREFIX . $slot;
-        $cooling_since = (int) Configuration::get($cooldown_key);
-        $cooling = $cooling_since > 0 && ($cooling_since + self::FEE_RATES_FAILURE_COOLDOWN) > time();
+        $cooling_failure = $this->getTwoFeeRatesCoolingFailure($cooldown_key);
+        $cooling = $cooling_failure !== null;
 
         $fresh = $cooling
-            ? array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM)
+            ? $cooling_failure
             : $this->fetchTwoMerchantFeeRatesLive($net_terms, $buyer_country);
 
         if ($fresh['success']) {
@@ -16780,16 +16785,21 @@ class Twopayment extends PaymentModule
             return $fresh;
         }
 
+        $detail = isset($fresh['detail']) ? (string) $fresh['detail'] : '';
+        unset($fresh['detail']);
         if (!$cooling) {
-            Configuration::updateValue($cooldown_key, time());
+            // The failure itself is kept, so a render while cooling still says
+            // why rather than falling back to "could not be reached".
+            Configuration::updateValue($cooldown_key, json_encode(array('at' => time()) + $fresh));
         }
         $stored = $this->getTwoStoredMerchantFeeRates($slot);
         if (!$cooling) {
             // Cooling renders take this path too, and would fill the log.
             PrestaShopLogger::addLog(
-                $stored === null
+                ($stored === null
                     ? 'TwoPayment: merchant fee rates fetch failed - no figures held for this shop'
-                    : 'TwoPayment: merchant fee rates fetch failed - serving last-known-good figures',
+                    : 'TwoPayment: merchant fee rates fetch failed - serving last-known-good figures')
+                    . ($detail === '' ? '' : ' (' . $detail . ')'),
                 2
             );
         }
@@ -16801,13 +16811,42 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The failure a fee-rates slot is cooling down from, or null when it is
+     * not cooling. A bare timestamp is a cooldown written before the failure
+     * was kept with it, and reads as the generic upstream category.
+     *
+     * @param string $cooldown_key
+     * @return array{success:bool,error:string,http_status?:int,message?:string}|null
+     */
+    private function getTwoFeeRatesCoolingFailure($cooldown_key)
+    {
+        $raw = (string) Configuration::get($cooldown_key);
+        $decoded = is_numeric($raw) ? array('at' => (int) $raw) : json_decode($raw, true);
+        if (!is_array($decoded) || !isset($decoded['at'])
+            || (int) $decoded['at'] <= 0 || ((int) $decoded['at'] + self::FEE_RATES_FAILURE_COOLDOWN) <= time()) {
+            return null;
+        }
+        if (isset($decoded['error']) && $decoded['error'] === self::FEE_RATES_ERROR_REJECTED) {
+            return array(
+                'success' => false,
+                'error' => self::FEE_RATES_ERROR_REJECTED,
+                'http_status' => isset($decoded['http_status']) ? (int) $decoded['http_status'] : 0,
+                'message' => isset($decoded['message']) && is_string($decoded['message']) ? $decoded['message'] : '',
+            );
+        }
+        return array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM);
+    }
+
+    /**
      * One live rates call, normalised. A failed fetch is any of: a connection
      * error, a non-200, a malformed body, an answer that priced no term at
-     * all, or one carrying no currency to read the amounts in.
+     * all, or one carrying no currency to read the amounts in. A failure
+     * also carries `detail`, the log line's account of it, which the caller
+     * strips before answering.
      *
      * @param int[] $net_terms Already normalised: unique, sorted, positive.
      * @param string $buyer_country
-     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>,error?:string}
+     * @return array{success:bool,currency?:string,fees?:array<string,array{percentage:float,fixed:float}>,error?:string,http_status?:int,message?:string,detail?:string}
      */
     private function fetchTwoMerchantFeeRatesLive($net_terms, $buyer_country)
     {
@@ -16826,8 +16865,24 @@ class Twopayment extends PaymentModule
         );
 
         $http_status = (is_array($response) && isset($response['http_status'])) ? (int) $response['http_status'] : 0;
-        if ($http_status !== self::HTTP_STATUS_OK || !isset($response['rates']) || !is_array($response['rates'])) {
-            return array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM);
+        if ($http_status >= self::HTTP_STATUS_BAD_REQUEST && $http_status < self::HTTP_STATUS_SERVER_ERROR) {
+            return array(
+                'success' => false,
+                'error' => self::FEE_RATES_ERROR_REJECTED,
+                'http_status' => $http_status,
+                'message' => $this->getTwoApiOwnMessage($response),
+                'detail' => $this->getTwoApiErrorDetail($response),
+            );
+        }
+        if ($http_status !== self::HTTP_STATUS_OK) {
+            return array(
+                'success' => false,
+                'error' => self::FEE_RATES_ERROR_UPSTREAM,
+                'detail' => $this->getTwoApiErrorDetail($response),
+            );
+        }
+        if (!isset($response['rates']) || !is_array($response['rates'])) {
+            return array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM, 'detail' => 'HTTP 200 without a rates list');
         }
 
         $fees = array();
@@ -16853,7 +16908,7 @@ class Twopayment extends PaymentModule
             ? trim((string) $response['currency'])
             : '';
         if (empty($fees) || $currency === '') {
-            return array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM);
+            return array('success' => false, 'error' => self::FEE_RATES_ERROR_UPSTREAM, 'detail' => 'HTTP 200 with no priced term or no currency');
         }
 
         return array(
@@ -22010,6 +22065,36 @@ class Twopayment extends PaymentModule
         $detail = 'HTTP ' . $status . ($parts === array() ? '' : ' ' . implode(' | ', array_unique($parts)));
 
         return Tools::strlen($detail) > 1000 ? Tools::substr($detail, 0, 1000) . '...' : $detail;
+    }
+
+    /**
+     * The API's own one-line message from an error body, as sent, for the
+     * back office (TWO-26305). Unlike getTwoErrorMessage() it never rewrites
+     * the text into buyer advice; unlike getTwoApiErrorDetail() it carries no
+     * codes or trace ids. '' when the body names no message. Plain text: the
+     * caller escapes it for whatever it renders into.
+     *
+     * @param mixed $response setTwoPaymentRequest()
+     * @return string
+     */
+    public function getTwoApiOwnMessage($response)
+    {
+        if (!is_array($response)) {
+            return '';
+        }
+        $bodies = array($response);
+        if (isset($response['data']) && is_array($response['data'])) {
+            $bodies[] = $response['data'];
+        }
+        foreach ($bodies as $body) {
+            foreach (array('error_message', 'detail', 'message', 'error_details', 'error') as $key) {
+                if (isset($body[$key]) && is_scalar($body[$key]) && trim((string) $body[$key]) !== '') {
+                    $message = trim((string) $body[$key]);
+                    return Tools::strlen($message) > 500 ? Tools::substr($message, 0, 500) . '...' : $message;
+                }
+            }
+        }
+        return '';
     }
 
     /**
