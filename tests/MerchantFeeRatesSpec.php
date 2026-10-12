@@ -18,6 +18,9 @@ declare(strict_types=1);
  *    stamped with fetched_at; a failed fetch serves it back with
  *    stale => true, and a 60s cooldown suppresses the wire call meanwhile.
  *    {success: false} only when nothing was ever stored for that identity.
+ *  - A 4xx (TWO-26305) is 'rejected' and carries the status and the API's
+ *    own message, also while cooling; a network error or 5xx stays the
+ *    generic 'upstream'. The log line names the status and message.
  *  - An unrenderable answer (ABN-540) - no currency, or no term priced at
  *    all - is a failed fetch, so it can neither be drawn nor displace the
  *    stored set. A partial answer is renderable and stays a success.
@@ -38,6 +41,8 @@ final class MerchantFeeRatesSpec
         self::testLastKnownGoodLifecycle();
         self::testTerminalFailuresNeverReachTheWire();
         self::testStoredSetIsIdentityScoped();
+        self::testRejectionCarriesTheApiMessage();
+        self::testCoolingRendersKeepTheRejection();
     }
 
     /**
@@ -471,5 +476,78 @@ final class MerchantFeeRatesSpec
                 TinyAssert::same(false, isset($result['fees']), 'no borrowed figures: ' . $desc);
             }
         }
+    }
+    /**
+     * A 4xx is the API refusing the request, and its own words say why; a
+     * network error or a 5xx says nothing the merchant can act on.
+     */
+    private static function testRejectionCarriesTheApiMessage(): void
+    {
+        $payout = 'payout_schedule could not be inferred from the merchant\'s payee accounts';
+        // response, error, http_status (null = absent), message (null = absent), log must contain, desc
+        $cases = [
+            [['http_status' => 400, 'error_code' => 'VALIDATION', 'error_message' => $payout, 'error_trace_id' => 't-1'], Twopayment::FEE_RATES_ERROR_REJECTED, 400, $payout, 'VALIDATION | ' . $payout, 'a 400 answers the error_message as sent'],
+            [['http_status' => 422, 'data' => ['detail' => 'net_terms: field required']], Twopayment::FEE_RATES_ERROR_REJECTED, 422, 'net_terms: field required', 'HTTP 422', 'a 422 reads the FastAPI detail from the body'],
+            [['http_status' => 403, 'detail' => ['loc' => 'x']], Twopayment::FEE_RATES_ERROR_REJECTED, 403, '', 'HTTP 403', 'a 4xx naming no plain message answers an empty one'],
+            [['http_status' => 404, 'data' => null], Twopayment::FEE_RATES_ERROR_REJECTED, 404, '', 'HTTP 404', 'a 4xx with no body answers an empty message'],
+            [['http_status' => 400, 'error_message' => '<b>bad</b>'], Twopayment::FEE_RATES_ERROR_REJECTED, 400, '<b>bad</b>', 'HTTP 400', 'markup is passed on as text, for the screen to escape'],
+            [['http_status' => 500, 'error_message' => 'internal'], Twopayment::FEE_RATES_ERROR_UPSTREAM, null, null, 'HTTP 500 internal', 'a 5xx stays the generic category'],
+            [['http_status' => 0, 'error_message' => 'Unable to connect to Two API'], Twopayment::FEE_RATES_ERROR_UPSTREAM, null, null, 'HTTP 0', 'a network error stays the generic category'],
+        ];
+
+        foreach ($cases as $case) {
+            list($response, $error, $status, $message, $logged, $desc) = $case;
+            StubStore::reset();
+            PrestaShopLogger::reset();
+            self::configureMerchantIdentity();
+            $module = self::moduleWithRatesResponse($response);
+            $result = $module->fetchTwoMerchantFeeRates([30]);
+
+            TinyAssert::false($result['success'], 'success: ' . $desc);
+            TinyAssert::same($error, $result['error'], 'error category: ' . $desc);
+            TinyAssert::same($status, isset($result['http_status']) ? $result['http_status'] : null, 'http_status: ' . $desc);
+            TinyAssert::same($message, isset($result['message']) ? $result['message'] : null, 'message: ' . $desc);
+            TinyAssert::same(false, isset($result['detail']), 'the log detail is not answered: ' . $desc);
+            TinyAssert::count(1, PrestaShopLogger::$logs, 'one log line: ' . $desc);
+            TinyAssert::true(
+                strpos(PrestaShopLogger::$logs[0]['message'], $logged) !== false,
+                'log names the status and message: ' . $desc . ' (got: ' . PrestaShopLogger::$logs[0]['message'] . ')'
+            );
+        }
+    }
+
+    /**
+     * A render inside the cooldown makes no wire call, and still says why the
+     * last one failed rather than calling a refusal "could not be reached".
+     */
+    private static function testCoolingRendersKeepTheRejection(): void
+    {
+        StubStore::reset();
+        PrestaShopLogger::reset();
+        self::configureMerchantIdentity();
+        $module = self::scriptedModule();
+        $module->response = ['http_status' => 400, 'error_message' => 'payout_schedule could not be inferred'];
+        $first = $module->fetchTwoMerchantFeeRates([30]);
+
+        $module->response = self::okResponse();
+        $cooling = $module->fetchTwoMerchantFeeRates([30]);
+
+        TinyAssert::same(1, $module->fetchCount, 'no wire call while cooling');
+        TinyAssert::same($first, $cooling, 'the cooling answer is the rejection itself');
+        TinyAssert::count(1, PrestaShopLogger::$logs, 'a cooling render does not log again');
+
+        // A cooldown written before the failure was kept with it is a bare
+        // timestamp, and still cools as the generic category.
+        StubStore::reset();
+        self::configureMerchantIdentity();
+        $module = self::scriptedModule();
+        $module->response = ['http_status' => 500];
+        $module->fetchTwoMerchantFeeRates([30]);
+        foreach (self::cooldownKeys() as $key) {
+            Configuration::updateValue($key, time());
+        }
+        $legacy = $module->fetchTwoMerchantFeeRates([30]);
+        TinyAssert::same(1, $module->fetchCount, 'a legacy cooldown still suppresses the wire call');
+        TinyAssert::same(['success' => false, 'error' => Twopayment::FEE_RATES_ERROR_UPSTREAM], $legacy, 'legacy cooldown answer');
     }
 }

@@ -127,3 +127,102 @@ describe('inline merchant fee per payment term', () => {
         });
     });
 });
+
+/**
+ * TWO-26305: a fetch the API refused (4xx) says why, in the API's own words
+ * and drawn as text; anything else keeps the generic wording. The notice sits
+ * in the controls column, under the checkboxes, not after the label column.
+ */
+describe('fee notice for a failed fetch', () => {
+    const REJECTED = 'Refused with HTTP %1$s: %2$s. Missing, not zero.';
+    const REJECTED_BARE = 'Refused with HTTP %s. Missing, not zero.';
+    const PAYOUT = "payout_schedule could not be inferred from the merchant's payee accounts";
+
+    beforeEach(() => {
+        global.twoFeesRejectedText = REJECTED;
+        global.twoFeesRejectedBareText = REJECTED_BARE;
+    });
+
+    /** The core HelperForm checkbox group: label column, then controls column. */
+    function buildHelperFormTerms(terms) {
+        document.body.innerHTML = '<div class="form-group">'
+            + '<label class="control-label col-lg-3">Available Payment Terms</label>'
+            + '<div class="col-lg-9">'
+            + terms.map(function (days) {
+                return '<div class="checkbox"><label for="PS_TWO_PAYMENT_TERMS_' + days + '">'
+                    + '<input type="checkbox" name="PS_TWO_PAYMENT_TERMS_' + days + '" checked> ' + days + ' days'
+                    + ' <span class="two-term-fee text-muted" data-term="' + days + '"></span></label></div>';
+            }).join('')
+            + '</div></div>';
+    }
+
+    // description, answer, expected notice text
+    const cases = [
+        [
+            'a 4xx shows the status and the API message',
+            { success: false, error: 'rejected', http_status: 400, message: PAYOUT },
+            'Refused with HTTP 400: ' + PAYOUT + '. Missing, not zero.'
+        ],
+        [
+            'a trailing full stop in the API message is not doubled',
+            { success: false, error: 'rejected', http_status: 422, message: 'net_terms invalid. ' },
+            'Refused with HTTP 422: net_terms invalid. Missing, not zero.'
+        ],
+        [
+            'markup in the API message is drawn as text',
+            { success: false, error: 'rejected', http_status: 400, message: '<img src=x onerror=alert(1)>' },
+            'Refused with HTTP 400: <img src=x onerror=alert(1)>. Missing, not zero.'
+        ],
+        [
+            'replacement patterns in the API message are kept literally',
+            { success: false, error: 'rejected', http_status: 400, message: 'cost $& more' },
+            'Refused with HTTP 400: cost $& more. Missing, not zero.'
+        ],
+        [
+            'a 4xx with no message still names the status',
+            { success: false, error: 'rejected', http_status: 404, message: '' },
+            'Refused with HTTP 404. Missing, not zero.'
+        ],
+        [
+            'a network error or 5xx keeps the generic wording',
+            { success: false, error: 'upstream' },
+            'twoFeesUnavailableText'
+        ],
+        ['no API key keeps its own wording', { success: false, error: 'not_configured' }, 'twoFeesNoApiKeyText']
+    ];
+
+    test.each(cases)('%s', async (description, answer, expected) => {
+        buildHelperFormTerms([15, 30]);
+        loadAdminConfigScript();
+
+        const call = await awaitFeeRequest(ajax);
+        call.succeed(answer);
+
+        const notices = document.querySelectorAll('.two-term-fee-notice');
+        expect(notices.length).toBe(1);
+        expect(notices[0].textContent).toBe(expected);
+        expect(notices[0].querySelector('img')).toBeNull();
+    });
+
+    test('the notice sits in the controls column, under the checkboxes', async () => {
+        buildHelperFormTerms([15, 30]);
+        loadAdminConfigScript();
+
+        const call = await awaitFeeRequest(ajax);
+        call.succeed({ success: false, error: 'rejected', http_status: 400, message: PAYOUT });
+
+        const notice = document.querySelector('.two-term-fee-notice');
+        expect(notice.parentElement.className).toBe('col-lg-9');
+        expect(notice.previousElementSibling.className).toBe('checkbox');
+    });
+
+    test('an AJAX failure keeps the generic wording', async () => {
+        buildHelperFormTerms([15, 30]);
+        loadAdminConfigScript();
+
+        const call = await awaitFeeRequest(ajax);
+        call.fail('error');
+
+        expect(document.querySelector('.two-term-fee-notice').textContent).toBe('twoFeesUnavailableText');
+    });
+});
