@@ -98,7 +98,7 @@ prices an order under a configuration nobody chose, and nobody is told.
 
 ## A Failed Buyer Fee Quote Withholds Two At Checkout Only
 
-ABN-546. The same failure means different things on the two surfaces.
+The same failure means different things on the two surfaces.
 
 - **Checkout.** `isTwoSurchargeQuotableForCart()` is the ONE withholding gate, and
   `hookPaymentOptions()` returns `[]`, so the tile is absent from the list rather
@@ -137,7 +137,7 @@ ABN-546. The same failure means different things on the two surfaces.
 
 ## An Admin Save Stays Possible; The Buyer Path Fails Closed
 
-**No verdict from the save-time API-key check blocks the General save** (ABN-495).
+**No verdict from the save-time API-key check blocks the General save**.
 A connection failure, a timeout and a 5xx judge nothing about the key, and the form
 re-renders from POST, so a blocked save looks stored while nothing was written and
 leaves the merchant unable to store the replacement key that would fix the outage,
@@ -149,19 +149,19 @@ beside the save confirmation instead.
 - The merchant short name is derived from the verification response, never
   submitted, so a save that resolved no merchant keeps the stored one.
 - Storing a different key or environment refreshes the cached merchant record and
-  never clears it (ABN-519). A merchant with two shops who cycles their key and
+  never clears it. A merchant with two shops who cycles their key and
   updates only one must not have the other forget the terms, fees and minimum its
   admin controls are built from, and a typo saved during an outage must be
   recoverable by pasting the right key back. A record fetched for another key is
-  withheld (ABN-530), not dropped.
+  withheld, not dropped.
 - **A 200 carrying no merchant `id` is not a verified key** — a proxy, a captive
   portal or a maintenance page answers 200 too. It categorises as `error`, which
-  rejects no key, so it withholds nothing (ABN-533). A record with an `id` but no
+  rejects no key, so it withholds nothing. A record with an `id` but no
   short name IS verified; the empty short name withholds Two through its own gate.
 
 ## The Merchant Record Never Expires, And Only A Rejected Key Hides The Tile
 
-ABN-519. The cached record — offerable terms, default term, buyer surcharge, platform
+The cached record — offerable terms, default term, buyer surcharge, platform
 minimum, buyer countries, invoice-upload flag — has no expiry and is never evicted, on
 any failure path. Only a successful refresh replaces it, and only from an event: the
 API-key/environment save, `controllers/front/cron.php`, the Diagnostics button, or a
@@ -169,7 +169,7 @@ read standing in for a schedule that has stopped.
 
 - **Nothing but the API-key verdict may withhold Two from the buyer, and only its
   DEFINITIVE rejections do** — `isDefinitiveFailureStatus()`: `invalid_key` and
-  `not_configured` (ABN-533). An unresolvable record, a 500, an empty offer set, an
+  `not_configured`. An unresolvable record, a 500, an empty offer set, an
   unreachable or erroring key check: none of them hide the tile. That predicate is
   the one definition of the set; the payment POST's gate and the company-search
   affordance ask through it too, so nothing re-lists the categories.
@@ -182,7 +182,7 @@ read standing in for a schedule that has stopped.
   label is composed, and `controllers/front/payment.php` refuses the submission
   rather than book an order against a term nobody granted.
   `getDefaultPaymentTerm()` is null in that state and the browser seam publishes
-  0, so neither PHP nor the checkout JS can name a day count (ABN-544).
+  0, so neither PHP nor the checkout JS can name a day count.
 - **A record past `MERCHANT_RECORD_STALE_AFTER` (26h) says the schedule is not
   running.** A read then refreshes it itself, at most once an hour and on a 2-second
   cap, and serves the record it holds either way. Staleness withholds nothing.
@@ -286,7 +286,7 @@ having made it in each module that carries the behaviour.
 **The unsupported-country gate withdraws the SEARCH and nothing else.** It hides
 the Registered Company chip and the query row; the panel still opens and manual
 entry and the sole-trader route stay offered, because they are the only way a
-buyer in an uncovered country has to name their company at all (ABN-525). The
+buyer in an uncovered country has to name their company at all. The
 country it reads is the wider company-search coverage, one global list — not the
 Sole Trader chip's own per-country registry lookup, which is a different and
 smaller list.
@@ -313,12 +313,12 @@ manual entry and keeps the character.** The panel opens onto a chip there, a chi
 is a `<button>` that swallows text, and this field is a readonly search trigger
 until manual entry takes it over — so every character typed was lost with nothing
 on screen to say so. Manual entry is the only state this field accepts typing in,
-and in that country it is the only route to naming a company at all (ABN-554).
+and in that country it is the only route to naming a company at all.
 Space and Enter are excluded: both activate the focused chip.
 
 **Closing the panel puts focus back on the company-name field** — Escape, a
 pointer press outside it, a company adopted from the results, manual entry taking
-the field over, and a sole-trader signup that answers or is abandoned (ABN-554).
+the field over, and a sole-trader signup that answers or is abandoned.
 The field's own focus opener is held off for that one programmatic focus alone, so
 any keydown on the field, a pointer press on it, or focus arriving from anywhere
 else brings the popover straight back.
@@ -342,7 +342,7 @@ second half rather than against either name, so neither order changes which half
 spends the hold, and both halves carry the same guards, so neither can refuse a half
 the other armed. The hold outlives the flight settling; a `pointerdown`, `keydown`
 or `click` on the field ends it at once, and the pointer and keyboard openers are
-live throughout (ABN-554).
+live throughout.
 
 LIMITATION: focus moved by the theme or by PrestaShop itself - a re-render
 restoring focus, a validation handler - arrives with no window `focus` behind it,
@@ -366,8 +366,7 @@ blur the caret out of the query field, and the panel's `mouseup` reclaim — whi
 exists for a scrollbar drag, where the browser drops focus with no cancellable
 default — would then place focus the buyer never moved. So the press is
 cancelled, except on a control, which a press is entitled to focus, and except
-on a scrollbar, where cancelling would stop the drag scrolling the results
-(ABN-554).
+on a scrollbar, where cancelling would stop the drag scrolling the results.
 
 **A pointer press outside the popover takes focus back only where the press left
 it nowhere**, and one tick later rather than in the handler: the press's own
@@ -384,7 +383,7 @@ focus forward again, so the buyer cannot get back past the control (WCAG 2.1.2).
 **Only one popover is open, page-wide.** Opening one closes whichever other one
 was open, enforced at open time rather than inferred from focus leaving the
 first: a real pointer press on a second control need not deliver a focus event to
-what it hits (ABN-510). The popover that closes gives its own field's tab stop
+what it hits. The popover that closes gives its own field's tab stop
 back before the newly opened one takes its. A pointer press outside the open
 popover closes it too, with the company field counted as inside the control.
 Core renders one editable address form per step, so a shop cannot currently put
@@ -461,13 +460,13 @@ The two differ in both API surface and the markup a row is rendered with, so a s
 pinned to one says nothing about shops on the other — a spec written against 1.14 can
 pass with and without the fix it exists to hold. A new company-search spec passes on
 both projects, and a behaviour that differs between the versions is handled in the
-module rather than accommodated in the test (ABN-554).
+module rather than accommodated in the test.
 
 ## The Payment-Term Chips Owe The Radio-Group Keyboard Contract
 
 The chip row advertises itself as a radio group — a `radiogroup` container, `radio`
-chips, an `aria-checked` state — so it owes the W3C pattern's keyboard behaviour
-(ABN-554). Advertising the role without it is the defect: a screen-reader buyer is
+chips, an `aria-checked` state — so it owes the W3C pattern's keyboard behaviour.
+Advertising the role without it is the defect: a screen-reader buyer is
 told "radio group" and finds none of the interaction that implies.
 
 - **One tab stop, on the checked chip.** A roving `tabindex` keeps exactly one chip
@@ -492,7 +491,7 @@ told "radio group" and finds none of the interaction that implies.
 ## A Chip States Its Term Type, Not Just A Day Count
 
 An end-of-month term falls due that many days after the end of the month, so a chip
-reading "30 days" on a shop configured that way states the wrong due date (ABN-554).
+reading "30 days" on a shop configured that way states the wrong due date.
 The visible text is `30 days` under standard terms and `EOM+30` under end of month.
 
 Only the end-of-month chip carries a `title` and an `aria-label`, and both read

@@ -100,7 +100,7 @@ final class AjaxCheckoutFailureSpec
     }
 
     /**
-     * ABN-533. An unresolvable merchant record leaves the tile on offer with an
+     * An unresolvable merchant record leaves the tile on offer with an
      * empty term set, so a buyer can submit with nothing to book against. That
      * submission is refused here rather than booked under the historical 30-day
      * default, which is what aligns this with Magento.
@@ -359,7 +359,7 @@ final class AjaxCheckoutFailureSpec
         Tools::resetTestValues();
         Tools::setTestValue('token', Tools::getToken(false));
         // An offered term, or the controller refuses before reaching the
-        // payload build these specs are about (ABN-533).
+        // payload build these specs are about.
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . Twopayment::DEFAULT_PAYMENT_TERM_DAYS, 1);
 
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];

@@ -14,11 +14,11 @@ declare(strict_types=1);
  *    {percentage, fixed}}}.
  *  - Fail-soft: missing API key, empty term list, non-200, or malformed body
  *    never throw, so the admin page never breaks on an API outage.
- *  - Serve-stale (ABN-541): a successful set is stored per identity and
+ *  - Serve-stale: a successful set is stored per identity and
  *    stamped with fetched_at; a failed fetch serves it back with
  *    stale => true, and a 60s cooldown suppresses the wire call meanwhile.
  *    {success: false} only when nothing was ever stored for that identity.
- *  - An unrenderable answer (ABN-540) - no currency, or no term priced at
+ *  - An unrenderable answer - no currency, or no term priced at
  *    all - is a failed fetch, so it can neither be drawn nor displace the
  *    stored set. A partial answer is renderable and stays a success.
  */

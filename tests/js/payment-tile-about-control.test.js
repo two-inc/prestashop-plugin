@@ -1,5 +1,5 @@
 /**
- * ABN-554. The payment tile's "What is <brand>?" control is one icon wrapped in
+ * The payment tile's "What is <brand>?" control is one icon wrapped in
  * a link to the brand's about page (brands/two.php `about_url`); the tooltip is
  * the link's sibling and holds no anchor of its own. A brand declaring no about
  * URL renders no icon and no link at all, whatever the merchant explainer

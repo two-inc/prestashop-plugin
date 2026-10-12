@@ -345,7 +345,7 @@
             // Inline merchant fee beside each "Available Payment Terms"
             // checkbox, fetched from the module's admin AJAX endpoint. An
             // empty span reads as "this term carries no fee", so an answer
-            // that cannot be drawn says so in the notice instead (ABN-541).
+            // that cannot be drawn says so in the notice instead.
             var lastFeesKey = null;
 
             function formatTwoFeeAmount(n) {

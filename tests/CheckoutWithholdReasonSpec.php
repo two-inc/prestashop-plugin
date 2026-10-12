@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * ABN-518 - a payment option that is simply absent from checkout, with no log
+ * A payment option that is simply absent from checkout, with no log
  * line and nothing on the settings page, is diagnosable only by reading source.
  *
  * Two surfaces are pinned here: every branch of hookPaymentOptions that
@@ -79,7 +79,7 @@ final class CheckoutWithholdReasonSpec
     }
 
     /**
-     * ABN-533: only a definitive rejection earns "action required". A transient
+     * Only a definitive rejection earns "action required". A transient
      * verdict falls through to the cached record and withholds nothing, so the
      * panel must not tell the merchant to go and fix their key.
      */

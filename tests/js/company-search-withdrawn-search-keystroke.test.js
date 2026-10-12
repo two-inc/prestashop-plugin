@@ -1,8 +1,8 @@
 /**
- * ABN-554 - typing while the query row is withdrawn.
+ * Typing while the query row is withdrawn.
  *
  * Two modes withdraw it: a country the registry search does not cover
- * (ABN-525), and the sole-trader signup flight. The company-name field is a
+ *, and the sole-trader signup flight. The company-name field is a
  * readonly search trigger in both, and a mode chip is a `<button>`, which
  * swallows text - so every character the buyer typed was lost with nothing on
  * screen to say so.

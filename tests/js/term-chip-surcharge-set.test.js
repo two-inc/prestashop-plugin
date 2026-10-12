@@ -1,5 +1,5 @@
 /**
- * ABN-528: the term chips' fee amount is decided over the whole offered set.
+ * The term chips' fee amount is decided over the whole offered set.
  *
  * Any priced term puts an amount on every chip — a zero-fee chip then shows a
  * zero amount, not a blank — and every term ~zero shows none anywhere. Deciding
