@@ -1,5 +1,5 @@
 /**
- * ABN-540: the inline merchant fee beside each "Available Payment Terms"
+ * The inline merchant fee beside each "Available Payment Terms"
  * checkbox. An empty span reads as "this term carries no fee", so a term the
  * answer did not price must be labelled instead of left blank.
  */

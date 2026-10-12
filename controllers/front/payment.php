@@ -150,7 +150,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // No offered term, no order (ABN-533). The tile is offered with an empty
+        // No offered term, no order. The tile is offered with an empty
         // term set rather than withheld, so a submission can arrive with nothing
         // to book against; composing the historical 30-day default here would
         // price the order under a term the merchant may not hold and drop the

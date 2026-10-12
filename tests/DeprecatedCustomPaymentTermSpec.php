@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * ABN-522 - the custom payment term is deprecated. A stored value can be kept or removed, never
+ * The custom payment term is deprecated. A stored value can be kept or removed, never
  * changed; a value the merchant record offers as a standard term folds onto that term's checkbox
  * and says so; a value that is not a number of days blocks the section save while it stands.
  */
@@ -314,7 +314,7 @@ final class DeprecatedCustomPaymentTermSpec
     /**
      * The mandatory payment-term selection, and the fold-in itself. An unresolvable offered set
      * matches nothing rather than everything, so an API outage cannot clear a value carried in by
-     * an upgrade (ABN-493).
+     * an upgrade.
      */
     private static function testFoldsInOnlyAgainstAResolvedOfferedSet(): void
     {

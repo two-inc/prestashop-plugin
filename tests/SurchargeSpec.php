@@ -422,7 +422,7 @@ final class SurchargeSpec
     }
 
     /**
-     * ABN-554. Only the translated default names the basis - a merchant
+     * Only the translated default names the basis - a merchant
      * template and a brand label are the author's own wording.
      */
     private static function testSurchargeLineLabelTemplateBrandAndDefault(): void
@@ -476,7 +476,7 @@ final class SurchargeSpec
     }
 
     /**
-     * ABN-533. The label names a day count, and with no offered term there is
+     * The label names a day count, and with no offered term there is
      * no day count the merchant holds - so the buyer is shown none, whichever
      * of the three wordings would otherwise apply.
      */

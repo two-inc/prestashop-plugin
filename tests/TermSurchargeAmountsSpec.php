@@ -255,7 +255,7 @@ final class TermSurchargeAmountsSpec
         }
     }
     /**
-     * ABN-546: the chip loop quotes every offered term, so letting it write
+     * The chip loop quotes every offered term, so letting it write
      * the shared session cookie risks pushing the shopper's cookie past the
      * browser cap mid-checkout. Previews stay request-scoped; only the charge
      * paths cache across requests.

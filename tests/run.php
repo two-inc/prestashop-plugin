@@ -4970,7 +4970,7 @@ final class OrderBuilderSpec
     }
 
     /**
-     * ABN-533. An unresolved backend set offers the BUYER nothing: the
+     * An unresolved backend set offers the BUYER nothing: the
      * hardcoded option list keeps the admin screens usable and must never be
      * composed into a term a merchant may not hold. The admin-side set over
      * the same cold cache is the control, so this cannot pass by emptying both.
@@ -4998,7 +4998,7 @@ final class OrderBuilderSpec
     }
 
     /**
-     * ABN-533. Backend resolves a set but the admin ticks nothing offerable:
+     * Backend resolves a set but the admin ticks nothing offerable:
      * the buyer is offered NO term rather than the account default, which the
      * merchant may not hold. The admin screens keep a non-empty set, because
      * they render and save a row per term.
@@ -5033,7 +5033,7 @@ final class OrderBuilderSpec
     }
 
     /**
-     * ABN-519. Given a cached record and its stamp, When the seam is read, Then
+     * Given a cached record and its stamp, When the seam is read, Then
      * only two reads reach the wire: no record has ever been fetched, or the
      * held one is old enough to say the schedule has stopped.
      */

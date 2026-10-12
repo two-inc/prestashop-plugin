@@ -66,7 +66,7 @@ class TwoSoleTrader {
     /**
      * Where focusQuietly() last put focus. Chrome re-fires `focus`/`focusin` at
      * the already-focused element when the window comes back, so focus this
-     * module moved arrives a second time - still not the buyer (ABN-554).
+     * module moved arrives a second time - still not the buyer.
      * Cleared by the first focus that IS theirs.
      */
     static _quietFocusTarget = null;
@@ -2634,7 +2634,7 @@ class TwoSoleTrader {
         }
         this._returnHandler = (event) => {
             // Focus that LEAVES is what tells a re-fire apart from a genuine
-            // arrival back on the same control (ABN-554): a window return
+            // arrival back on the same control: a window return
             // re-fires `focusin` with no `focusout` before it.
             if (event.type === 'focusout') {
                 if (event.target === TwoSoleTrader._quietFocusTarget) {

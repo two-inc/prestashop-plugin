@@ -335,7 +335,7 @@ final class ConfirmationLegacyParitySpec
     }
 
     /**
-     * ABN-554: the verdict and the cart it was stamped for both go with the
+     * The verdict and the cart it was stamped for both go with the
      * order that consumed them, or they keep deciding the fee for a cart they
      * were never asked about.
      */

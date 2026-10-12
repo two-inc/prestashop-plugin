@@ -892,7 +892,7 @@ namespace {
         }
 
         // Core returns false for a key that was never written. Core's parameter
-        // order: arg 2 is the language id, the fallback is arg 5 (ABN-532).
+        // order: arg 2 is the language id, the fallback is arg 5.
         public static function get($key, $idLang = null, $idShopGroup = null, $idShop = null, $default = false)
         {
             if (self::isLangKey($key)) {
@@ -2684,7 +2684,7 @@ namespace {
             )) {
                 return isset(StubStore::$dbColumns[$m[1] . '.' . $m[2]]) ? '1' : '0';
             }
-            // Whether ANY country is enabled for the module and shop (ABN-518).
+            // Whether ANY country is enabled for the module and shop.
             if (preg_match(
                 '/SELECT COUNT\(\*\) FROM `' . _DB_PREFIX_ . 'module_country`'
                 . ' WHERE `id_module` = (\d+) AND `id_shop` = (\d+)/',
@@ -3285,7 +3285,7 @@ namespace {
                 : array('status' => (string) $status, 'code' => $code);
         }
 
-        /** The admin "Current configuration health" panel HTML (ABN-518). */
+        /** The admin "Current configuration health" panel HTML. */
         public function exposeTwoPluginHealthChecklist(): string
         {
             return $this->renderTwoPluginHealthChecklist();
@@ -3340,7 +3340,7 @@ namespace {
             return $this->getConfigurableTermSet();
         }
 
-        /** The identity the production write path stamps a merchant record with (ABN-530). */
+        /** The identity the production write path stamps a merchant record with. */
         public static function recordKeyStampForTest(string $apiKey): string
         {
             return static::verificationSlotKey($apiKey);

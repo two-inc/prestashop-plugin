@@ -164,7 +164,7 @@ describe('country gate', () => {
 });
 
 /**
- * ABN-525: an uncovered country withdraws the SEARCH and nothing else. The
+ * An uncovered country withdraws the SEARCH and nothing else. The
  * chip row is what carries manual entry, so a country that leaves one chip
  * standing must still render it.
  */
