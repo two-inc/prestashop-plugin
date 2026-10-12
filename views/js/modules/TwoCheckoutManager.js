@@ -1625,7 +1625,7 @@ class TwoCheckoutManager {
     // Tries several selectors in turn since the terms container's location
     // varies by theme/template version.
     showPaymentTerms() {
-        // ABN-533: revealing the block with no offered term shows its header and
+        // Revealing the block with no offered term shows its header and
         // the template's placeholder day count as though they were an offer.
         const offered = this.config.available_payment_terms;
         if (!Array.isArray(offered) || offered.length === 0) {
@@ -1744,7 +1744,7 @@ class TwoCheckoutManager {
 
         termsContainer.setAttribute('role', 'radiogroup');
         // A chip's text states only the term, so the strip's title is what names
-        // the group — one term or several (ABN-554). A theme-supplied container
+        // the group — one term or several. A theme-supplied container
         // may carry no title, hence the fallback to the same wording.
         if (document.getElementById('two-terms-title')) {
             termsContainer.setAttribute('aria-labelledby', 'two-terms-title');
@@ -1817,7 +1817,7 @@ class TwoCheckoutManager {
         let persistedTerm = activeTerm;
 
         // One predicate drives the tick, the programmatic state and the tab stop,
-        // so the three cannot drift apart (ABN-554).
+        // so the three cannot drift apart.
         const applySelection = (days) => {
             const chips = termsContainer.querySelectorAll('.two-term-chip');
             let selectedChip = null;
@@ -1944,8 +1944,8 @@ class TwoCheckoutManager {
         applySelection(activeTerm);
 
         // The keyboard contract the radiogroup and radio roles advertise: one tab
-        // stop, arrow keys moving the selection within it (W3C radio-group pattern,
-        // ABN-554). Modified arrow keys stay with the browser — swallowing Alt+Left
+        // stop, arrow keys moving the selection within it (W3C radio-group pattern).
+        // Modified arrow keys stay with the browser — swallowing Alt+Left
         // would break navigating back.
         termsContainer.addEventListener('keydown', (event) => {
             const chips = Array.prototype.slice.call(

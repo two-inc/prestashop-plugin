@@ -290,7 +290,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Only POST requests allowed')]));
             return;
         }
-        // ABN-554: a tile that has told this buyer it is refusing reconciles to
+        // A tile that has told this buyer it is refusing reconciles to
         // no fee line instead of adding one.
         $selected = (int) Tools::getValue('selected') === 1
             && $this->module->isTwoSurchargeAdmissibleForCart();
@@ -721,7 +721,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
         $this->context->cookie->two_order_intent_approved = $approved ? '1' : '0';
         $this->context->cookie->two_order_intent_timestamp = (string)$timestamp;
-        // ABN-554: the verdict is only about the cart it was asked for.
+        // The verdict is only about the cart it was asked for.
         $this->context->cookie->two_order_intent_cart_id = (string)(
             Validate::isLoadedObject($this->context->cart) ? (int)$this->context->cart->id : 0
         );

@@ -1,5 +1,5 @@
 /**
- * ABN-554: order create adds the buyer fee back regardless of what the browser
+ * Order create adds the buyer fee back regardless of what the browser
  * did, so the checkout may only withhold it from the summary where the tile has
  * told this buyer it is refusing - and it must say so to the server, since that
  * recorded refusal is the whole gate. Everything that is not an enumerated

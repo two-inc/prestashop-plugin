@@ -1,5 +1,5 @@
 /**
- * ABN-554. The subtitle element is emitted only when there is something to put
+ * The subtitle element is emitted only when there is something to put
  * in it: `.two-subtitle` carries a 12px bottom margin (views/css/two.css), so
  * an empty `<p>` still moves everything below it. What twopayment.php resolves
  * is already sanitised, and the template emits it unescaped, so the brand

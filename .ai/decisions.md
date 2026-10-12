@@ -2258,7 +2258,7 @@ through.
 Write the content match and the role predicate as the portable core, and keep the
 persistence and the reveal detection explicitly platform-local.
 
-# ABN-554 — the payment-term chip label
+# The payment-term chip label
 
 **A chip states its term type, not just a day count.** An end-of-month term falls due
 that many days after the end of the month, so a bare day count states the wrong due

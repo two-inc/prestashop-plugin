@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * The checkout tile's call-to-action text (ABN-514).
+ * The checkout tile's call-to-action text.
  *
  * PS_TWO_TITLE is stored per language, and a language with no row of its own
  * reads as `false` rather than an empty string, which core's emptiness test
