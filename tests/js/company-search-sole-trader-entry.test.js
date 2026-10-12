@@ -188,7 +188,7 @@ describe('activation', () => {
      * the launch parked focus on. jsdom fires nothing on a window return, so
      * the re-fire is dispatched here by hand.
      */
-    describe('the popup closing must not leave the popover open (ABN-554)', () => {
+    describe('the popup closing must not leave the popover open', () => {
         /** The enrolment up, its popup on screen, and focus parked on the name field. */
         function launched(instance, soleTrader, popupId) {
             openPanel();
