@@ -19,8 +19,8 @@ declare(strict_types=1);
  *    stale => true, and a 60s cooldown suppresses the wire call meanwhile.
  *    {success: false} only when nothing was ever stored for that identity.
  *  - A 4xx (TWO-26305) is 'rejected' and carries the status and the API's
- *    own message, also while cooling; a network error or 5xx stays the
- *    generic 'upstream'. The log line names the status and message.
+ *    own message, also while cooling; a network error, a 5xx or a
+ *    transient 408/429 stays the generic 'upstream'. The log line names the status and message.
  *  - An unrenderable answer (ABN-540) - no currency, or no term priced at
  *    all - is a failed fetch, so it can neither be drawn nor displace the
  *    stored set. A partial answer is renderable and stays a success.
@@ -492,6 +492,8 @@ final class MerchantFeeRatesSpec
             [['http_status' => 403, 'detail' => ['loc' => 'x']], Twopayment::FEE_RATES_ERROR_REJECTED, 403, '', 'HTTP 403', 'a 4xx naming no plain message answers an empty one'],
             [['http_status' => 404, 'data' => null], Twopayment::FEE_RATES_ERROR_REJECTED, 404, '', 'HTTP 404', 'a 4xx with no body answers an empty message'],
             [['http_status' => 400, 'error_message' => '<b>bad</b>'], Twopayment::FEE_RATES_ERROR_REJECTED, 400, '<b>bad</b>', 'HTTP 400', 'markup is passed on as text, for the screen to escape'],
+            [['http_status' => 408, 'error_message' => 'timed out'], Twopayment::FEE_RATES_ERROR_UPSTREAM, null, null, 'HTTP 408 timed out', 'a 408 is transient, so it stays the generic category'],
+            [['http_status' => 429, 'error_message' => 'slow down'], Twopayment::FEE_RATES_ERROR_UPSTREAM, null, null, 'HTTP 429 slow down', 'a 429 is transient, so it stays the generic category'],
             [['http_status' => 500, 'error_message' => 'internal'], Twopayment::FEE_RATES_ERROR_UPSTREAM, null, null, 'HTTP 500 internal', 'a 5xx stays the generic category'],
             [['http_status' => 0, 'error_message' => 'Unable to connect to Two API'], Twopayment::FEE_RATES_ERROR_UPSTREAM, null, null, 'HTTP 0', 'a network error stays the generic category'],
         ];
