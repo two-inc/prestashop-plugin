@@ -312,6 +312,10 @@ $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Cada tienda tiene su propia URL de actualización. Cambie a una tienda concreta para verla.';
 $_MODULE['<{twopayment}prestashop>twopayment_133bfd505abc3c26cf41129256a3c1ec'] = 'El perfil en caché se obtuvo para otra clave de API, por lo que no se usa. Se conserva hasta que una actualización con esta clave tenga éxito.';
 $_MODULE['<{twopayment}prestashop>configuration_06df3dcf3281499cc51356b8ea10c05b'] = 'No se han podido cargar las comisiones porque no se ha podido contactar con el servicio de precios. Las cifras junto a cada plazo faltan, no son cero.';
+$_MODULE['<{twopayment}prestashop>configuration_d0673ce8fdb507e4cbe0050e47d7e0ac'] = 'No se han podido cargar las comisiones. El servicio de precios ha rechazado la solicitud con HTTP %1$s: %2$s. Las cifras junto a cada plazo faltan, no son cero.';
+$_MODULE['<{twopayment}prestashop>configuration_67c32ee7d80c75397fa741d4f001b282'] = 'No se han podido cargar las comisiones. El servicio de precios ha rechazado la solicitud con HTTP %s. Las cifras junto a cada plazo faltan, no son cero.';
+$_MODULE['<{twopayment}prestashop>configuration_b6e5f9691bbc313eb24bcf951b2af1b7'] = 'El servicio de precios ha rechazado la solicitud con HTTP %1$s: %2$s.';
+$_MODULE['<{twopayment}prestashop>configuration_d2fac371a0f75be5bb31b1201b49988b'] = 'El servicio de precios ha rechazado la solicitud con HTTP %s.';
 $_MODULE['<{twopayment}prestashop>configuration_0db377921f4ce762c62526131097968f'] = 'General';
 $_MODULE['<{twopayment}prestashop>configuration_20b5fb4a29eee650e5632baf935b9baf'] = 'Comprobando la clave API…';
 $_MODULE['<{twopayment}prestashop>configuration_36b64aad8a26246fe3ad4116a2b6f289'] = 'Diagnóstico';

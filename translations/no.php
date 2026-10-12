@@ -532,6 +532,10 @@ $_MODULE['<{twopayment}prestashop>configuration_0a3ec356996cae21088be407cab8ec8c
 $_MODULE['<{twopayment}prestashop>configuration_50176febc840de876892956d58f9f60b'] = 'Gebyrene kunne ikke oppdateres, så de sist hentede beløpene vises.';
 $_MODULE['<{twopayment}prestashop>configuration_9ab5e860e0e28be037094acd09e148f2'] = 'Gebyrene kunne ikke oppdateres, så beløpene som ble hentet %s vises.';
 $_MODULE['<{twopayment}prestashop>configuration_06df3dcf3281499cc51356b8ea10c05b'] = 'Gebyrene kunne ikke lastes fordi pristjenesten ikke var tilgjengelig. Beløpene ved siden av hvert betalingsvilkår mangler, de er ikke null.';
+$_MODULE['<{twopayment}prestashop>configuration_d0673ce8fdb507e4cbe0050e47d7e0ac'] = 'Gebyrene kunne ikke lastes. Pristjenesten avviste forespørselen med HTTP %1$s: %2$s. Beløpene ved siden av hvert betalingsvilkår mangler, de er ikke null.';
+$_MODULE['<{twopayment}prestashop>configuration_67c32ee7d80c75397fa741d4f001b282'] = 'Gebyrene kunne ikke lastes. Pristjenesten avviste forespørselen med HTTP %s. Beløpene ved siden av hvert betalingsvilkår mangler, de er ikke null.';
+$_MODULE['<{twopayment}prestashop>configuration_b6e5f9691bbc313eb24bcf951b2af1b7'] = 'Pristjenesten avviste forespørselen med HTTP %1$s: %2$s.';
+$_MODULE['<{twopayment}prestashop>configuration_d2fac371a0f75be5bb31b1201b49988b'] = 'Pristjenesten avviste forespørselen med HTTP %s.';
 $_MODULE['<{twopayment}prestashop>configuration_ee619aca6b3894beb307b1b40c63d27d'] = 'Gebyrer kan ikke vises før en API-nøkkel er lagret på fanen Generelt.';
 $_MODULE['<{twopayment}prestashop>configuration_537cf2676b0429c81d86a016bc4da9f1'] = 'ikke oppgitt';
 $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] = 'Den mellomlagrede profilen hører til én butikk. Bytt til én enkelt butikk for å se eller oppdatere den.';
