@@ -16789,8 +16789,13 @@ class Twopayment extends PaymentModule
         unset($fresh['detail']);
         if (!$cooling) {
             // The failure itself is kept, so a render while cooling still says
-            // why rather than falling back to "could not be reached".
-            Configuration::updateValue($cooldown_key, json_encode(array('at' => time()) + $fresh));
+            // why rather than falling back to "could not be reached". The
+            // hex flags keep the API's text out of the strip_tags() that
+            // Configuration storage runs, which would otherwise cut the JSON.
+            Configuration::updateValue(
+                $cooldown_key,
+                json_encode(array('at' => time()) + $fresh, JSON_HEX_TAG | JSON_HEX_AMP)
+            );
         }
         $stored = $this->getTwoStoredMerchantFeeRates($slot);
         if (!$cooling) {

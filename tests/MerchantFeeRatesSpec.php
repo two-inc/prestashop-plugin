@@ -43,6 +43,7 @@ final class MerchantFeeRatesSpec
         self::testStoredSetIsIdentityScoped();
         self::testRejectionCarriesTheApiMessage();
         self::testCoolingRendersKeepTheRejection();
+        self::testCooldownSurvivesConfigurationStorage();
     }
 
     /**
@@ -549,5 +550,39 @@ final class MerchantFeeRatesSpec
         $legacy = $module->fetchTwoMerchantFeeRates([30]);
         TinyAssert::same(1, $module->fetchCount, 'a legacy cooldown still suppresses the wire call');
         TinyAssert::same(['success' => false, 'error' => Twopayment::FEE_RATES_ERROR_UPSTREAM], $legacy, 'legacy cooldown answer');
+    }
+    /**
+     * Configuration::updateValue() stores through pSQL() without html_ok,
+     * which runs strip_tags(nl2br()) on 1.7, 8 and 9. The cooldown JSON must
+     * come back intact through it, or a message holding "<" loses the
+     * cooldown (every render goes to the wire) and a tag changes the text.
+     */
+    private static function testCooldownSurvivesConfigurationStorage(): void
+    {
+        // message, desc
+        $cases = [
+            ['value<0 not allowed', 'a lone "<" does not truncate the JSON'],
+            ['<b>bad</b> & worse', 'a tag and an ampersand survive as sent'],
+            ["line one\nline two", 'a newline survives nl2br'],
+        ];
+        foreach ($cases as $case) {
+            list($message, $desc) = $case;
+            StubStore::reset();
+            self::configureMerchantIdentity();
+            $module = self::scriptedModule();
+            $module->response = ['http_status' => 400, 'error_message' => $message];
+            $first = $module->fetchTwoMerchantFeeRates([30]);
+            foreach (self::cooldownKeys() as $key) {
+                $stored = (string) Configuration::get($key);
+                Configuration::updateValue($key, strip_tags(str_replace(["\r\n", "\r", "\n"], '<br />', $stored)));
+            }
+
+            $module->response = self::okResponse();
+            $cooling = $module->fetchTwoMerchantFeeRates([30]);
+
+            TinyAssert::same(1, $module->fetchCount, 'still cooling after storage: ' . $desc);
+            TinyAssert::same($first, $cooling, 'the cooling answer is the first one: ' . $desc);
+            TinyAssert::same($message, $cooling['message'], 'message as sent: ' . $desc);
+        }
     }
 }
