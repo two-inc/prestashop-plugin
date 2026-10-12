@@ -144,8 +144,8 @@ class Twopayment extends PaymentModule
     // minute rather than one per config-page render.
     const FEE_RATES_FAILURE_COOLDOWN = 60;
     const FEE_RATES_ERROR_UPSTREAM = 'upstream';
-    // A 4xx: the API understood the request and refused it, and its own
-    // message says why (TWO-26305).
+    // A 4xx other than 408/429: the API understood the request and refused
+    // it, and its own message says why (TWO-26305).
     const FEE_RATES_ERROR_REJECTED = 'rejected';
     const FEE_RATES_ERROR_NO_TERMS = 'no_terms';
 
@@ -16870,7 +16870,10 @@ class Twopayment extends PaymentModule
         );
 
         $http_status = (is_array($response) && isset($response['http_status'])) ? (int) $response['http_status'] : 0;
-        if ($http_status >= self::HTTP_STATUS_BAD_REQUEST && $http_status < self::HTTP_STATUS_SERVER_ERROR) {
+        // 408 and 429 say "try again later", not "this request is wrong", so
+        // they read as the transient category.
+        if ($http_status >= self::HTTP_STATUS_BAD_REQUEST && $http_status < self::HTTP_STATUS_SERVER_ERROR
+            && !in_array($http_status, array(408, 429), true)) {
             return array(
                 'success' => false,
                 'error' => self::FEE_RATES_ERROR_REJECTED,
