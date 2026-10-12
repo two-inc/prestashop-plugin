@@ -389,8 +389,9 @@
                 }
                 if (error === 'rejected') {
                     var status = String(parseInt(response.http_status, 10) || '');
-                    // The sentence supplies its own full stop.
-                    var message = String(response.message || '').replace(/^\s+|[\s.]+$/g, '');
+                    // The sentence supplies its own full stop, so one is
+                    // dropped; a cut message keeps its "...".
+                    var message = String(response.message || '').replace(/^\s+/, '').replace(/\.?\s*$/, '');
                     return message === ''
                         ? twoFeesRejectedBareText.replace('%s', status)
                         : twoFeesRejectedText.replace('%1$s', status).replace('%2$s', function () { return message; });

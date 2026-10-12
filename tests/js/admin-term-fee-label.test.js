@@ -169,6 +169,11 @@ describe('fee notice for a failed fetch', () => {
             'Refused with HTTP 422: net_terms invalid. Missing, not zero.'
         ],
         [
+            'a message the server cut keeps its ellipsis',
+            { success: false, error: 'rejected', http_status: 400, message: 'a long message cut...' },
+            'Refused with HTTP 400: a long message cut... Missing, not zero.'
+        ],
+        [
             'markup in the API message is drawn as text',
             { success: false, error: 'rejected', http_status: 400, message: '<img src=x onerror=alert(1)>' },
             'Refused with HTTP 400: <img src=x onerror=alert(1)>. Missing, not zero.'
