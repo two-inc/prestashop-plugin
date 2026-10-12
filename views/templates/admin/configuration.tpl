@@ -76,6 +76,8 @@
     var twoFeesUnavailableText = '{l s='Fees could not be loaded because the pricing service could not be reached. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesRejectedText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %1$s: %2$s. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesRejectedBareText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %s. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleRejectedText = '{l s='The pricing service refused the request with HTTP %1$s: %2$s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleRejectedBareText = '{l s='The pricing service refused the request with HTTP %s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesNoApiKeyText = '{l s='Fees cannot be shown until an API key is saved on the General tab.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeeNoFigureText = '{l s='no figure' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoEomTermDays = {$two_eom_term_days nofilter};
@@ -381,20 +383,25 @@
             }
 
             // The notice is set with .text(), so the API's own message is
-            // drawn as text, never parsed as markup.
+            // drawn as text, never parsed as markup. `withMessage` and `bare`
+            // are the wordings with and without the API's message.
+            function twoFeesRefusal(response, withMessage, bare) {
+                var status = String(parseInt(response.http_status, 10) || '');
+                // The sentence supplies its own full stop, so one is
+                // dropped; a cut message keeps its "...".
+                var message = String(response.message || '').replace(/^\s+/, '').replace(/\.?\s*$/, '');
+                return message === ''
+                    ? bare.replace('%s', status)
+                    : withMessage.replace('%1$s', status).replace('%2$s', function () { return message; });
+            }
+
             function twoFeesUnavailableNotice(response) {
                 var error = response && response.error;
                 if (error === 'not_configured') {
                     return twoFeesNoApiKeyText;
                 }
                 if (error === 'rejected') {
-                    var status = String(parseInt(response.http_status, 10) || '');
-                    // The sentence supplies its own full stop, so one is
-                    // dropped; a cut message keeps its "...".
-                    var message = String(response.message || '').replace(/^\s+/, '').replace(/\.?\s*$/, '');
-                    return message === ''
-                        ? twoFeesRejectedBareText.replace('%s', status)
-                        : twoFeesRejectedText.replace('%1$s', status).replace('%2$s', function () { return message; });
+                    return twoFeesRefusal(response, twoFeesRejectedText, twoFeesRejectedBareText);
                 }
                 return twoFeesUnavailableText;
             }
@@ -447,11 +454,14 @@
                     }
                     if (response.stale) {
                         var retrieved = String(response.fetched_at_display || '');
-                        setTwoFeeNotice(
-                            retrieved === ''
-                                ? twoFeesStaleText
-                                : twoFeesStaleDatedText.replace('%s', retrieved)
-                        );
+                        var staleNotice = retrieved === ''
+                            ? twoFeesStaleText
+                            : twoFeesStaleDatedText.replace('%s', retrieved);
+                        // A refusal says why, figures or not (TWO-26305).
+                        if (response.error === 'rejected') {
+                            staleNotice += ' ' + twoFeesRefusal(response, twoFeesStaleRejectedText, twoFeesStaleRejectedBareText);
+                        }
+                        setTwoFeeNotice(staleNotice);
                     } else {
                         setTwoFeeNotice('');
                     }

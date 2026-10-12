@@ -209,6 +209,42 @@ describe('fee notice for a failed fetch', () => {
         expect(notices[0].querySelector('img')).toBeNull();
     });
 
+    // description, stale answer, expected notice text
+    const staleCases = [
+        [
+            'stored figures after a 4xx say why, dated',
+            { error: 'rejected', http_status: 400, message: PAYOUT, fetched_at_display: '2026-10-01 09:00' },
+            'Stale from 2026-10-01 09:00. Refused stale with HTTP 400: ' + PAYOUT + '.'
+        ],
+        [
+            'stored figures after a 4xx say why, undated',
+            { error: 'rejected', http_status: 403, message: 'not allowed.' },
+            'twoFeesStaleText Refused stale with HTTP 403: not allowed.'
+        ],
+        [
+            'stored figures after a 4xx with no message name the status',
+            { error: 'rejected', http_status: 404, message: '' },
+            'twoFeesStaleText Refused stale with HTTP 404.'
+        ],
+        ['stored figures after a generic failure add no reason', {}, 'twoFeesStaleText']
+    ];
+
+    test.each(staleCases)('%s', async (description, extra, expected) => {
+        global.twoFeesStaleDatedText = 'Stale from %s.';
+        global.twoFeesStaleRejectedText = 'Refused stale with HTTP %1$s: %2$s.';
+        global.twoFeesStaleRejectedBareText = 'Refused stale with HTTP %s.';
+        buildHelperFormTerms([15, 30]);
+        loadAdminConfigScript();
+
+        const call = await awaitFeeRequest(ajax);
+        call.succeed(Object.assign({
+            success: true, stale: true, currency: 'NOK', fees: { 15: { percentage: 1.5, fixed: 0 } }
+        }, extra));
+
+        expect(document.querySelector('.two-term-fee-notice').textContent).toBe(expected);
+        expect(feeText(15)).toBe('(1.50%)');
+    });
+
     test('the notice sits in the controls column, under the checkboxes', async () => {
         buildHelperFormTerms([15, 30]);
         loadAdminConfigScript();
