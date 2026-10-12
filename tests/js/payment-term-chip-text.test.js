@@ -1,5 +1,5 @@
 /**
- * ABN-554. What a payment-term chip says the term is. An end-of-month term
+ * What a payment-term chip says the term is. An end-of-month term
  * falls due that many days after the end of the month, so a chip carrying only
  * a day count states the wrong due date for it.
  *
@@ -269,7 +269,7 @@ describe("the surcharge in the chip name", () => {
 });
 
 /**
- * ABN-554. PrestaShop is the only checkout with a "Pay in N days" summary below
+ * PrestaShop is the only checkout with a "Pay in N days" summary below
  * the chip strip. It is ONE translated sentence with the day count substituted:
  * a sentence assembled from 'Pay in' + N + 'days' + 'from end of month' cannot
  * be reordered or word-agreed by a translator.
@@ -337,7 +337,7 @@ describe("the summary sentence below the chips", () => {
 });
 
 /**
- * ABN-554. A chip's visible text states only the term, so nothing inside the
+ * A chip's visible text states only the term, so nothing inside the
  * group names it — the strip's title does, one term or several.
  */
 describe("the chip group's accessible name", () => {

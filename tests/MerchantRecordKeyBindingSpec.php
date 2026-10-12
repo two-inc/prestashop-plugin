@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-// ABN-530 - the cached merchant record is bound to the API key it was fetched for, so a shop whose
+// The cached merchant record is bound to the API key it was fetched for, so a shop whose
 // own key row differs from the tier holding the record reads a cold cache rather than another
 // merchant's record.
 final class MerchantRecordKeyBindingSpec
@@ -104,7 +104,7 @@ final class MerchantRecordKeyBindingSpec
             TinyAssert::same($resolved, $read($module), 'served for its own key: ' . $description);
 
             Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key-b');
-            // The term read resolves the record for whatever key it finds (ABN-519), so the
+            // The term read resolves the record for whatever key it finds, so the
             // wire has to be down for this to be a read of what is cached.
             $module->response = ['http_status' => 0];
 
@@ -160,7 +160,7 @@ final class MerchantRecordKeyBindingSpec
     /**
      * Given a key swap whose refetch fails, When the record is read, Then the previous key's record
      * is not served, and the retry waits for the backoff instead of firing on every render. The
-     * record itself is kept: only a successful refetch replaces it (ABN-519).
+     * record itself is kept: only a successful refetch replaces it.
      */
     private static function testAForeignRecordIsNotServedWhenTheRefetchFails(): void
     {

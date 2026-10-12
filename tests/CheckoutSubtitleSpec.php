@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * The checkout tile's subtitle (ABN-554).
+ * The checkout tile's subtitle.
  *
  * The field is optional and per-language: a merchant who clears it gets an
  * empty stored row for every language, and the tile then falls back to the
@@ -85,7 +85,7 @@ final class CheckoutSubtitleSpec
     /**
      * Given a subtitle the escaper would rewrite; When the merchant saves;
      * Then the save is refused with a message naming the rendered form,
-     * rather than the copy vanishing silently at checkout (ABN-554).
+     * rather than the copy vanishing silently at checkout.
      */
     private static function testAdminSaveRejectsWhatTheTileWouldStrip(): void
     {

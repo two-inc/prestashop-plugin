@@ -390,7 +390,7 @@ final class ApiKeyVerificationSpec
 
     /**
      * A 200 carrying no id or short_name confirmed nothing, so it is not a
-     * verified key - the buyer gate must withhold Two on it (ABN-495).
+     * verified key - the buyer gate must withhold Two on it.
      */
     private static function testARecordlessHttp200IsNotAVerifiedKey(): void
     {
@@ -417,7 +417,7 @@ final class ApiKeyVerificationSpec
      * The record that resolves a merchant is its id; a short name is optional
      * on the wire and an empty one withholds Two through hookPaymentOptions()'s
      * own guard. Requiring it here instead reported a resolvable merchant as an
-     * error, and disagreed with the other platforms (ABN-495).
+     * error, and disagreed with the other platforms.
      */
     private static function testARecordWithNoShortNameStillVerifies(): void
     {
@@ -504,7 +504,7 @@ final class ApiKeyVerificationSpec
     }
 
     /**
-     * ABN-533. The notice names the withhold only where there is one. Telling a
+     * The notice names the withhold only where there is one. Telling a
      * merchant the tile is hidden while it is still selling sends them looking
      * for the wrong fix.
      */
@@ -626,7 +626,7 @@ final class ApiKeyVerificationSpec
     }
 
     /**
-     * The general save never blocks on the verification (ABN-495). The form
+     * The general save never blocks on the verification. The form
      * re-renders from POST, so a blocked save looks like a stored one while
      * leaving the merchant unable to store the key - or even the vendor name -
      * that would fix it. A key Two rejected is the one submitted value the save
@@ -702,7 +702,7 @@ final class ApiKeyVerificationSpec
     }
 
     /**
-     * The cached merchant record is NEVER cleared by a save (ABN-519). A merchant
+     * The cached merchant record is NEVER cleared by a save. A merchant
      * with two shops who cycles their key and updates only one must not have the
      * other quietly forget the terms, fees and minimum its admin controls are
      * built from; an identity change refreshes the record instead, and a refresh
@@ -724,7 +724,7 @@ final class ApiKeyVerificationSpec
             Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS => '30',
             Twopayment::CONFIG_PLATFORM_MIN_ORDER => '250',
             Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED => '1',
-            // Stamped for the key it was fetched with (ABN-530), which is the shape
+            // Stamped for the key it was fetched with, which is the shape
             // every record has once fetched: an unstamped one cannot be dropped at all.
             Twopayment::CONFIG_MERCHANT_RECORD_KEY => TwopaymentTestHarness::recordKeyStampForTest('stored-key'),
         );
@@ -758,7 +758,7 @@ final class ApiKeyVerificationSpec
     /**
      * Asserted against the source: getContent() cannot be reached without a
      * HelperForm, and this is the one-line wiring that turns the held warning
-     * into something the merchant sees (ABN-495).
+     * into something the merchant sees.
      */
     private static function testTheWarningIsRenderedAlongsideTheSaveConfirmation(): void
     {
@@ -814,7 +814,7 @@ final class ApiKeyVerificationSpec
      * =================================================================== */
 
     /**
-     * ABN-533. Only a definitive rejection - a key Two refused, or no key at
+     * Only a definitive rejection - a key Two refused, or no key at
      * all - withholds the payment option. Every other category is a statement
      * about the service, and taking Two off a correctly configured shop for one
      * costs the merchant every order for the length of the incident.
@@ -856,8 +856,8 @@ final class ApiKeyVerificationSpec
 
     /**
      * A 200 with no merchant record still categorises as 'error' rather than
-     * 'ok' (ABN-495) - a proxy or a maintenance page answers 200 too. ABN-533:
-     * that rejects no key, so it no longer withholds. Asserted through the
+     * 'ok' - a proxy or a maintenance page answers 200 too.
+     * That rejects no key, so it no longer withholds. Asserted through the
      * gate's own live check rather than a primed verdict.
      */
     private static function testARecordlessHttp200IsCategorisedButDoesNotWithhold(): void
@@ -1193,7 +1193,7 @@ final class ApiKeyVerificationSpec
             'the browser flag and the server-side affordance question must be the same question'
         );
 
-        // ABN-533: a transient failure keeps the affordance; only a rejection
+        // A transient failure keeps the affordance; only a rejection
         // takes it away, because only a rejection withholds Two itself.
         $affordanceByStatus = array(
             array(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503, true,

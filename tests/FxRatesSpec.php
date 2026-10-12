@@ -974,7 +974,7 @@ final class FxRatesSpec
 
     /**
      * gateModule's reachable-checkout fixture plus a stubbed pricing wire and
-     * a cart basis (ABN-546).
+     * a cart basis.
      *
      * @param mixed $feeResponse response array, or a callable given the payload
      */
@@ -1028,7 +1028,7 @@ final class FxRatesSpec
         return $module;
     }
 
-    /** ABN-546 - the charged term's quote decides the payment option. */
+    /** The charged term's quote decides the payment option. */
     private static function testChargedTermQuoteDecidesThePaymentOption(): void
     {
         $failFor = function (int $failingDays) {
@@ -1131,7 +1131,7 @@ final class FxRatesSpec
     }
 
     /**
-     * ABN-546 - gate and charge quote on the same ceiling, and neither falls
+     * Gate and charge quote on the same ceiling, and neither falls
      * through to the request adapter's own default.
      */
     private static function testSurchargePricingCeilingIsSharedByEveryPath(): void

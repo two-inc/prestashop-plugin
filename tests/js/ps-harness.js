@@ -801,7 +801,7 @@ function buildPaymentTileWithSoleTraderAnswer(answer, countryIso) {
 }
 
 /**
- * The same tile with the subtitle resolved (ABN-554), so a test can tell an
+ * The same tile with the subtitle resolved, so a test can tell an
  * empty subtitle apart from an unevaluated one.
  *
  * @param {string} subtitle the sanitised value twopayment.php assigned to
@@ -816,7 +816,7 @@ function buildPaymentTileWithSubtitle(subtitle) {
 const ABOUT_TOOLTIP_ID = 'two-about-tooltip-twopayment';
 
 /**
- * The same tile with the brand's about URL resolved (ABN-554), so a test can
+ * The same tile with the brand's about URL resolved, so a test can
  * tell a brand that declares no URL apart from an unevaluated block.
  *
  * @param {boolean} showAboutLink the merchant "explainer link" setting
