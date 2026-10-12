@@ -16747,9 +16747,9 @@ class Twopayment extends PaymentModule
      * explains: 'not_configured' is terminal (nothing changes until a key is
      * saved), the rest are transient. 'rejected' (a 4xx) also carries the
      * `http_status` and the API's own `message`, so the screen can say why
-     * (TWO-26305), and a stale set served after one carries all three. Never throws and never blocks long
-     * (tight timeout): it sits behind an AJAX call on a config-page render
-     * path.
+     * (TWO-26305), and a stale set served after one carries all three.
+     * Never throws and never blocks long (tight timeout): it sits behind an
+     * AJAX call on a config-page render path.
      *
      * The buyer_country_code is a best-effort stand-in (store default
      * country): there is no cart/buyer context on a config page.
