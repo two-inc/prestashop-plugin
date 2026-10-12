@@ -74,6 +74,10 @@
     var twoFeesStaleText = '{l s='Fees could not be refreshed, so the figures last retrieved are shown.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesStaleDatedText = '{l s='Fees could not be refreshed, so the figures retrieved on %s are shown.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesUnavailableText = '{l s='Fees could not be loaded because the pricing service could not be reached. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesRejectedText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %1$s: %2$s. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesRejectedBareText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %s. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleRejectedText = '{l s='The pricing service refused the request with HTTP %1$s: %2$s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleRejectedBareText = '{l s='The pricing service refused the request with HTTP %s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesNoApiKeyText = '{l s='Fees cannot be shown until an API key is saved on the General tab.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeeNoFigureText = '{l s='no figure' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoEomTermDays = {$two_eom_term_days nofilter};
@@ -354,11 +358,16 @@
 
             function setTwoFeeNotice(text) {
                 var $first = $('input[name^="PS_TWO_PAYMENT_TERMS_"]').first();
-                // The notice needs somewhere to go on a core version that does
-                // not wrap the checkbox group in .form-group.
-                var $anchor = $first.closest('.form-group');
+                // The notice goes in the controls column, under the checkboxes
+                // and where HelperForm puts a field's help text, not after the
+                // label column (TWO-26305): that column is the .form-group's
+                // child holding the checkboxes. The notice still needs
+                // somewhere to go on a core version that does not wrap the
+                // checkbox group in .form-group.
+                var $group = $first.closest('.form-group');
+                var $anchor = $group.length ? $first.parentsUntil($group).last() : $();
                 if (!$anchor.length) {
-                    $anchor = $first.parent();
+                    $anchor = $group.length ? $group : $first.parent();
                 }
                 if (!$anchor.length) {
                     return;
@@ -373,9 +382,33 @@
                 $notice.text(text || '');
             }
 
-            function showTwoFeesUnavailable(error) {
+            // The notice is set with .text(), so the API's own message is
+            // drawn as text, never parsed as markup. `withMessage` and `bare`
+            // are the wordings with and without the API's message.
+            function twoFeesRefusal(response, withMessage, bare) {
+                var status = String(parseInt(response.http_status, 10) || '');
+                // The sentence supplies its own full stop, so one is
+                // dropped; a cut message keeps its "...".
+                var message = String(response.message || '').replace(/^\s+/, '').replace(/\.?\s*$/, '');
+                return message === ''
+                    ? bare.replace('%s', status)
+                    : withMessage.replace('%1$s', status).replace('%2$s', function () { return message; });
+            }
+
+            function twoFeesUnavailableNotice(response) {
+                var error = response && response.error;
+                if (error === 'not_configured') {
+                    return twoFeesNoApiKeyText;
+                }
+                if (error === 'rejected') {
+                    return twoFeesRefusal(response, twoFeesRejectedText, twoFeesRejectedBareText);
+                }
+                return twoFeesUnavailableText;
+            }
+
+            function showTwoFeesUnavailable(response) {
                 $('.two-term-fee').text('');
-                setTwoFeeNotice(error === 'not_configured' ? twoFeesNoApiKeyText : twoFeesUnavailableText);
+                setTwoFeeNotice(twoFeesUnavailableNotice(response));
             }
 
             function loadTwoMerchantFees() {
@@ -416,16 +449,19 @@
                         lastFeesKey = null;
                     }
                     if (!response || !response.success || !response.fees) {
-                        showTwoFeesUnavailable(response && response.error);
+                        showTwoFeesUnavailable(response);
                         return;
                     }
                     if (response.stale) {
                         var retrieved = String(response.fetched_at_display || '');
-                        setTwoFeeNotice(
-                            retrieved === ''
-                                ? twoFeesStaleText
-                                : twoFeesStaleDatedText.replace('%s', retrieved)
-                        );
+                        var staleNotice = retrieved === ''
+                            ? twoFeesStaleText
+                            : twoFeesStaleDatedText.replace('%s', retrieved);
+                        // A refusal says why, figures or not (TWO-26305).
+                        if (response.error === 'rejected') {
+                            staleNotice += ' ' + twoFeesRefusal(response, twoFeesStaleRejectedText, twoFeesStaleRejectedBareText);
+                        }
+                        setTwoFeeNotice(staleNotice);
                     } else {
                         setTwoFeeNotice('');
                     }
