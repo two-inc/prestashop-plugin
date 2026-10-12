@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 /**
  * The reads whose intended fallback used to be passed as Configuration::get()'s
- * second argument, which is core's $id_lang and not a fallback (ABN-532):
+ * second argument, which is core's $id_lang and not a fallback:
  * `get($key, $idLang = null, $idShopGroup = null, $idShop = null, $default = false)`.
  * Core clamps $idLang to 0 for a key carrying no per-language row, so the reads
  * themselves always hit the right row and only the fallbacks were dead. Every

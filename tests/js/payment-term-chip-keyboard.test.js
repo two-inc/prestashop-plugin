@@ -1,5 +1,5 @@
 /**
- * ABN-554 (QA recommendation R9). The chip row advertises itself to assistive
+ * QA recommendation R9. The chip row advertises itself to assistive
  * technology as a radio group, so it owes the W3C radio-group keyboard
  * contract: one tab stop for the whole group, and arrow keys that move the
  * checked selection within it.

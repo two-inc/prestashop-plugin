@@ -7,7 +7,7 @@
  */
 
 /**
- * Scheduled merchant-record refresh (ABN-519), called by the shop's own crontab - see README.
+ * Scheduled merchant-record refresh, called by the shop's own crontab - see README.
  *
  * A shop in maintenance mode needs the calling IP in PS_MAINTENANCE_IP, or FrontController::init()
  * serves the maintenance page before this runs.

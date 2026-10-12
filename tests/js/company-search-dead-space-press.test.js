@@ -1,5 +1,5 @@
 /**
- * ABN-554 — a press on the popover's own dead space is a no-op: it leaves the
+ * A press on the popover's own dead space is a no-op: it leaves the
  * caret where the buyer put it, and it never closes the panel.
  *
  * jsdom CAVEAT: a press performs no default action, so each case asserts the

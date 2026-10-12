@@ -26,7 +26,7 @@ return array(
     // logo on an overlay's storefront the day one exists, and it would
     // disagree with the configurable product_name beside it.
     'logo' => 'views/img/TwoLogo.svg',
-    // Legal/company name the merchant is told to contact (ABN-518).
+    // Legal/company name the merchant is told to contact.
     'provider_full_name' => 'Two',
     // Increments the buyer surcharge line may be rounded to, offered in the
     // admin Rounding Step select. An overlay narrows the set.
@@ -66,7 +66,7 @@ return array(
     // 'intent_approved_notice_enabled' above and nothing else. An override
     // replaces the company variant only; the no-company copy stays default.
     'intent_approved_notice' => null,
-    // "What is <brand>?" explainer target for the payment tile (ABN-554), the
+    // "What is <brand>?" explainer target for the payment tile, the
     // same canonical URL the other platforms use. A brand declaring none (null,
     // absent, empty or a non-http(s) scheme) renders no icon and no link at all.
     // Resolved by Twopayment::getTwoAboutUrl().
@@ -75,7 +75,7 @@ return array(
     // specifies the matching, on the default branch. null renders no link.
     'tax_codes_help_url' => 'https://github.com/two-inc/prestashop-plugin#tax-codes-for-0-lines',
     // FAQ link target for the tile subtitle's brand fallback, used only when
-    // the merchant leaves the per-language Subtitle field blank (ABN-554). The
+    // the merchant leaves the per-language Subtitle field blank. The
     // sentence itself stays a translated string in twopayment.php - a brand
     // owns the URL only. null renders no fallback and so no subtitle at all,
     // which is what this brand does.

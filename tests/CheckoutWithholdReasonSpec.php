@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * ABN-518 - a payment option that is simply absent from checkout, with no log
+ * A payment option that is simply absent from checkout, with no log
  * line and nothing on the settings page, is diagnosable only by reading source.
  *
  * Two surfaces are pinned here: every branch of hookPaymentOptions that
@@ -79,7 +79,7 @@ final class CheckoutWithholdReasonSpec
     }
 
     /**
-     * ABN-533: only a definitive rejection earns "action required". A transient
+     * Only a definitive rejection earns "action required". A transient
      * verdict falls through to the cached record and withholds nothing, so the
      * panel must not tell the merchant to go and fix their key.
      */
@@ -206,7 +206,7 @@ final class CheckoutWithholdReasonSpec
                     $module->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_SERVICE_ERROR, 503);
                 },
                 'Shown at checkout',
-                'ABN-533: a transient verdict falls through to the cached record and withholds nothing',
+                'A transient verdict falls through to the cached record and withholds nothing',
             ],
             [
                 static function ($module): void {

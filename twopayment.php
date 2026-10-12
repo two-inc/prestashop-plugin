@@ -37,7 +37,7 @@ class Twopayment extends PaymentModule
     const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options (all > 0: getMerchantDueInDays() treats a cached 0 as "unset")
     // EOM (End-of-Month) terms are only offerable for these durations.
     const EOM_PAYMENT_TERMS_OPTIONS = [30, 45, 60];
-    // The cached GET /v1/merchant record has NO expiry and is never evicted (ABN-519).
+    // The cached GET /v1/merchant record has NO expiry and is never evicted.
     // Age at which a read stands in for the scheduled refresh.
     const MERCHANT_RECORD_STALE_AFTER = 93600; // 26 hours
     // Floor between stand-ins.
@@ -61,7 +61,7 @@ class Twopayment extends PaymentModule
     // The once-per-hour floor between stand-ins, rewritten by each one.
     const CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS = 'PS_TWO_MERCHANT_RECORD_STALE_TS';
     // The retry floor while the held record belongs to another key. Its own stamp cannot
-    // serve as one - a mismatch is a cold cache, not a young one (ABN-530).
+    // serve as one - a mismatch is a cold cache, not a young one.
     const CONFIG_MERCHANT_RECORD_FOREIGN_TS = 'PS_TWO_MERCHANT_RECORD_FOREIGN_TS';
     // Guards the refresh front controller, which the shop's own crontab calls.
     const CONFIG_CRON_TOKEN = 'PS_TWO_CRON_TOKEN';
@@ -104,7 +104,7 @@ class Twopayment extends PaymentModule
     const CONFIG_MERCHANT_BUYER_COUNTRIES = 'PS_TWO_MERCHANT_BUYER_COUNTRIES';
     // Which key the five cached values above were fetched for. Configuration resolves shop -> shop
     // group -> global, so without it a shop holding its own key row reads a wider tier's record,
-    // fetched for another merchant (ABN-530).
+    // fetched for another merchant.
     const CONFIG_MERCHANT_RECORD_KEY = 'PS_TWO_MERCHANT_RECORD_KEY';
     // Only ABSENT is unrestricted; the other three permit no buyer country.
     const BUYER_COUNTRIES_ABSENT = 'absent';
@@ -136,7 +136,7 @@ class Twopayment extends PaymentModule
     const FX_RATES_RETRY_BACKOFF = 300; // 5 minutes
 
     // Last-known-good merchant fee rates behind the admin inline fee display
-    // (ABN-541). Both keys take an identity hash suffix; the stored set never
+    //. Both keys take an identity hash suffix; the stored set never
     // expires, only a successful fetch replaces it.
     const CONFIG_FEE_RATES_PREFIX = 'PS_TWO_FEE_RATES_';
     const CONFIG_FEE_RATES_COOLDOWN_PREFIX = 'PS_TWO_FEE_COOLDOWN_';
@@ -213,7 +213,7 @@ class Twopayment extends PaymentModule
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
     const API_TIMEOUT_STATE_CHECK = 10; // Tight timeout for render-path fetches (invoice-download state check, merchant-record and FX-rate refreshes, admin fee-rate preview, the order state read before an admin edit)
     const API_TIMEOUT_PDF_FETCH = 10; // Tight timeout for synchronous invoice PDF fetches (buyer + admin download clicks)
-    const API_TIMEOUT_SURCHARGE_PRICING = 30; // Ceiling for every buyer surcharge quote, gate and charge alike (ABN-546)
+    const API_TIMEOUT_SURCHARGE_PRICING = 30; // Ceiling for every buyer surcharge quote, gate and charge alike
     const API_CONNECT_TIMEOUT = 5; // Connection-establishment timeout for all Two API calls
 
     // The order states and statuses in which the API accepts an edit; it refuses any other (TWO-26150).
@@ -1531,7 +1531,7 @@ class Twopayment extends PaymentModule
      * POST /pricing/v1/merchant/rates (fetchTwoMerchantFeeRates /
      * ajaxProcessFetchMerchantFeeRates): fees are never pre-fetched
      * synchronously on page render, and a failure serves the last-known-good
-     * figures under a notice saying they are not current (ABN-541). The raw
+     * figures under a notice saying they are not current. The raw
      * HTML is safe here: the core HelperForm checkbox template emits the
      * label name unescaped ({$value[$input.values.name]}).
      *
@@ -1601,7 +1601,7 @@ class Twopayment extends PaymentModule
                 // Category-specific, so the merchant is not left choosing
                 // between "my key is wrong" and "Two is down" (TWO-25326).
                 // Never blocking, a rejection included: refusing the save
-                // discards the values submitted beside the key (ABN-495).
+                // discards the values submitted beside the key.
                 $this->apiKeyVerificationWarning = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
                 if ($verify['status'] === self::API_KEY_STATUS_INVALID) {
                     $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key was kept.');
@@ -1627,7 +1627,7 @@ class Twopayment extends PaymentModule
         $apiKeyToSave = $rejected ? (string) Configuration::get('PS_TWO_MERCHANT_API_KEY') : $submittedApiKey;
         // Keyed on what is stored, not what was submitted: a reverted key
         // leaves the shop on the identity the cached record describes
-        // (TWO-24813 / ABN-495).
+        // (TWO-24813).
         $identityChanged = $apiKeyToSave !== (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
             || (string) $submittedEnv !== (string) Configuration::get('PS_TWO_ENVIRONMENT')
             // An unchanged key can still resolve a different merchant.
@@ -1689,7 +1689,7 @@ class Twopayment extends PaymentModule
         $this->refreshTwoFxRates();
 
         if ($identityChanged) {
-            // Refreshed, never cleared (ABN-519): a shop whose key was cycled
+            // Refreshed, never cleared: a shop whose key was cycled
             // elsewhere and never updated here keeps every cached value the
             // admin controls are built from, and a failed refetch changes nothing.
             // The same refresh as the "Refresh merchant profile" button (TWO-26304).
@@ -2073,7 +2073,7 @@ class Twopayment extends PaymentModule
             ),
         ));
 
-        // Deprecated custom term (ABN-522): rendered only while a value worth
+        // Deprecated custom term: rendered only while a value worth
         // showing is stored, and then only as keep-or-remove.
         $legacy_custom_term = $this->getTwoLegacyCustomTermInput();
         if ($legacy_custom_term !== null) {
@@ -2497,7 +2497,7 @@ class Twopayment extends PaymentModule
     /**
      * The offered term a stored custom value names, or null where it names none.
      * An unresolved offered set matches nothing, so an API outage cannot delete a
-     * migration value (ABN-522) - and the read resolving the record here cannot
+     * migration value - and the read resolving the record here cannot
      * either, since every way that resolution fails leaves the set unresolved.
      *
      * @return int|null
@@ -2527,7 +2527,7 @@ class Twopayment extends PaymentModule
     /**
      * The deprecated custom-term row, or null where there is nothing worth
      * showing. Keep-or-remove only: the sole edit offered is the only one the
-     * save accepts (ABN-522).
+     * save accepts.
      *
      * @return array|null
      */
@@ -2672,7 +2672,7 @@ class Twopayment extends PaymentModule
             }
         }
 
-        // Deprecated custom term (ABN-522). The row is absent from the form
+        // Deprecated custom term. The row is absent from the form
         // whenever it holds nothing worth showing, so an unposted field means
         // "leave the stored value alone", not "clear it".
         $stored_custom = $this->getTwoStoredCustomTerm();
@@ -2723,7 +2723,7 @@ class Twopayment extends PaymentModule
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $term, Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $term) ? 1 : 0);
         }
 
-        // Deprecated custom term (ABN-522): the post can only clear it, and
+        // Deprecated custom term: the post can only clear it, and
         // validTwoPaymentTermsFormValues has already refused anything else.
         if ($this->getTwoPostedCustomTerm() === '') {
             Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', '');
@@ -2758,7 +2758,7 @@ class Twopayment extends PaymentModule
     /**
      * Moves a stored custom term the merchant record offers onto that term's
      * checkbox, and says so - the merchant's offered set changed under them, so
-     * a silent move would look like a lost setting (ABN-522).
+     * a silent move would look like a lost setting.
      */
     protected function foldInTwoLegacyCustomTerm()
     {
@@ -4447,7 +4447,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Why the payment option is absent from checkout (ABN-518). Only reasons
+     * Why the payment option is absent from checkout. Only reasons
      * decidable without a cart are judged; a cart-dependent one is named as a
      * constraint instead.
      *
@@ -4734,11 +4734,11 @@ class Twopayment extends PaymentModule
     protected function renderTwoPluginHealthChecklist()
     {
         // Lowered as every runtime read of this key lowers it, so the row, the host
-        // map and the production warning below all judge the same value (ABN-532).
+        // map and the production warning below all judge the same value.
         $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
         // Same live verdict the checkout gate uses (TWO-25326).
         $api_verified = $this->isTwoApiKeyVerified();
-        // Only a definitive rejection withholds (ABN-533), so only that earns
+        // Only a definitive rejection withholds, so only that earns
         // "action required"; a transient verdict falls through to the record.
         $api_key_rejected = self::isDefinitiveFailureStatus($this->getTwoApiKeyVerificationStatus()['status']);
         $ssl_disabled = (bool) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY');
@@ -4755,7 +4755,7 @@ class Twopayment extends PaymentModule
             array(
                 'label' => $this->l('Environment'),
                 // Anything outside ENVIRONMENT_HOSTS silently resolves to the sandbox, so
-                // reporting it as healthy is the same untruth as inventing one (ABN-532).
+                // reporting it as healthy is the same untruth as inventing one.
                 'value' => $environment === ''
                     ? $this->l('Not configured')
                     : htmlspecialchars(strtoupper($environment), ENT_QUOTES, 'UTF-8'),
@@ -7602,7 +7602,7 @@ class Twopayment extends PaymentModule
 
         // Resolve the record before the reads in getAvailablePaymentTerms /
         // getDefaultPaymentTerm below. Fetches only when there is nothing to
-        // serve or the cron has stopped running (ABN-519).
+        // serve or the cron has stopped running.
         $this->refreshMerchantRecordIfDue();
         // Same sanctioned refresh point keeps the FX table warm (TTL-gated
         // 6h, TWO-25105) so cross-currency conversions on the checkout hot
@@ -7713,7 +7713,7 @@ class Twopayment extends PaymentModule
                 'client_version' => $client_params['client_v'],
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
-                // 0, not a day count, when no term is offered (ABN-544).
+                // 0, not a day count, when no term is offered.
                 'default_payment_term' => (int) $this->getDefaultPaymentTerm(),
                 // The term the order will actually be booked on, which the
                 // picker selects: a re-entered checkout must never show a term
@@ -7913,7 +7913,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * One "payment option hidden" line per reason per request (ABN-518).
+     * One "payment option hidden" line per reason per request.
      *
      * @param string $reason
      * @return void
@@ -7944,8 +7944,8 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        // The ONLY upstream failure that may withhold Two (TWO-25326, ABN-519),
-        // and only on a DEFINITIVE rejection (ABN-533) - an unreachable or
+        // The ONLY upstream failure that may withhold Two (TWO-25326),
+        // and only on a DEFINITIVE rejection - an unreachable or
         // erroring Two falls through to the cached merchant record instead of
         // emptying checkout minutes into every incident.
         $apiKeyStatus = $this->getTwoApiKeyVerificationStatus();
@@ -8200,10 +8200,10 @@ class Twopayment extends PaymentModule
             // suppressed client-side.
             'company_search_tile' => $this->isCompanySearchInAddressArea() !== '1',
             'two_product_name' => $this->getTwoBrandConfig('product_name'),
-            // Gates the "What is <brand>?" control entirely (ABN-554).
+            // Gates the "What is <brand>?" control entirely.
             'about_url' => $this->getTwoAboutUrl(),
             // Keyed by module so a second tile on the page cannot claim the
-            // id its own aria-describedby points at (ABN-554).
+            // id its own aria-describedby points at.
             'about_tooltip_id' => 'two-about-tooltip-' . $this->name,
         ));
 
@@ -8730,7 +8730,7 @@ class Twopayment extends PaymentModule
         // reconcile the cart's surcharge line with the fee this payload will
         // carry BEFORE totals are read, so a missed/failed frontend sync
         // (broken theme JS, raced AJAX) cannot ship a PrestaShop total that
-        // diverges from the Two invoice. ABN-554: on the same predicate the
+        // diverges from the Two invoice. On the same predicate the
         // buyer's own sync obeys, so where it refuses the parity gate below
         // throws rather than charge a fee the buyer's summary never showed.
         if ($syncSurchargeCartLine) {
@@ -8887,7 +8887,7 @@ class Twopayment extends PaymentModule
             $payloadFeeGrossCents = $line !== null ? $this->convertAmountToCents($line['gross_amount']) : 0;
             $payloadFeeNetCents = $line !== null ? $this->convertAmountToCents($line['net_amount']) : 0;
             $diffCents = max(abs($payloadFeeGrossCents - $fee['gross_cents']), abs($payloadFeeNetCents - $fee['net_cents']));
-            // An unavailable quote is a parity failure in its own right (ABN-546):
+            // An unavailable quote is a parity failure in its own right:
             // the buyer can switch term after the payment-options gate ran, and a
             // pre-switch term that quoted zero leaves zero on both sides, which the
             // cents comparison reads as agreement.
@@ -13777,7 +13777,7 @@ class Twopayment extends PaymentModule
     private function shouldIncludeTaxSubtotals()
     {
         // Default-ON: an absent row is never-configured, not off, and has to
-        // agree with the install() seed (ABN-532).
+        // agree with the install() seed.
         return $this->isTwoBooleanConfigEnabledByDefault('PS_TWO_ENABLE_TAX_SUBTOTALS') === '1';
     }
 
@@ -15097,7 +15097,7 @@ class Twopayment extends PaymentModule
      *
      * Warranted means "a captured company can still be used for something",
      * which only a definitively rejected key rules out - Two is withheld from
-     * checkout in exactly that state and nowhere else (ABN-533). It does NOT
+     * checkout in exactly that state and nowhere else. It does NOT
      * mean "the search would work": that endpoint is called unauthenticated and
      * works regardless of the key.
      *
@@ -15320,7 +15320,7 @@ class Twopayment extends PaymentModule
     /**
      * Config-page notice for a stored key that does not currently verify
      * (TWO-25326), or '' when there is nothing to say. It names the withhold
-     * only where there is one, which is a definitive rejection (ABN-533).
+     * only where there is one, which is a definitive rejection.
      *
      * @return string
      */
@@ -15558,7 +15558,7 @@ class Twopayment extends PaymentModule
      * The read never blocks on HTTP beyond the two bounded cases in
      * refreshMerchantRecordIfDue(): no fetch has ever succeeded, or the held
      * record is stale enough to say the cron is not running. An unresolved list
-     * decides nothing on its own - it withholds nothing from the buyer (ABN-519).
+     * decides nothing on its own - it withholds nothing from the buyer.
      *
      * The cache lives in dedicated Configuration keys, NOT the general settings
      * blob, so a refresh from a render can never race a concurrent admin save.
@@ -15584,7 +15584,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The two cases in which a READ refreshes the record (ABN-519): nothing has
+     * The two cases in which a READ refreshes the record: nothing has
      * ever been fetched, so there is nothing to serve; or the held record has
      * reached MERCHANT_RECORD_STALE_AFTER, which says the scheduled refresh is
      * not running. Neither case ever clears the cache, and the caller proceeds
@@ -15599,7 +15599,7 @@ class Twopayment extends PaymentModule
     {
         // A record fetched for another key is unservable and its stamp says nothing
         // about this shop, so it gets a floor of its own. It is NOT dropped: only a
-        // successful refetch replaces it (ABN-519).
+        // successful refetch replaces it.
         if (!self::isMerchantRecordSlotForCurrentKey()) {
             $tried_on = (int) Configuration::get(self::CONFIG_MERCHANT_RECORD_FOREIGN_TS);
             if ($tried_on > 0 && ($tried_on + self::MERCHANT_RECORD_RETRY_BACKOFF) > time()) {
@@ -15693,7 +15693,7 @@ class Twopayment extends PaymentModule
     /**
      * One fetch of GET /v1/merchant feeding every cache sourced from that record,
      * on no clock of its own. A FAILED fetch leaves every cached value in place:
-     * the record is never evicted, on any failure path (ABN-519).
+     * the record is never evicted, on any failure path.
      *
      * @param int $timeout Wire cap for this fetch.
      * @return bool Whether the record was replaced.
@@ -15783,7 +15783,7 @@ class Twopayment extends PaymentModule
         // The country Two checks a line's tax code against (TWO-24877); absent is unknown, which derives nothing.
         $country = isset($response['country_code']) && is_string($response['country_code']) ? strtoupper(trim($response['country_code'])) : '';
         Configuration::updateValue(self::CONFIG_MERCHANT_COUNTRY, preg_match('/^[A-Z]{2}$/', $country) === 1 ? $country : '');
-        // Written last: every slot above now belongs to this key (ABN-530).
+        // Written last: every slot above now belongs to this key.
         Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_KEY, self::verificationSlotKey($api_key));
         Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_FOREIGN_TS, 0);
 
@@ -15919,7 +15919,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The scheduled refresh (ABN-519): replace the cached merchant record and
+     * The scheduled refresh: replace the cached merchant record and
      * keep the FX table warm. Both keep last-known-good on failure.
      *
      * @return string One of the CRON_STATUS_* values.
@@ -16000,7 +16000,7 @@ class Twopayment extends PaymentModule
     /**
      * Whether the cached merchant record was fetched for the key this context resolves. A mismatch
      * reads as a cold cache: every slot degrades to its own unresolved answer and the next read
-     * drops the foreign record and refetches for the key this shop holds (ABN-530).
+     * drops the foreign record and refetches for the key this shop holds.
      *
      * @return bool
      */
@@ -16739,7 +16739,7 @@ class Twopayment extends PaymentModule
      * inline fee display beside each "Available Payment Terms" checkbox on
      * the admin config page.
      *
-     * Serve-stale contract (ABN-541): a successful fetch is stored as the
+     * Serve-stale contract: a successful fetch is stored as the
      * last-known-good set and stamped with `fetched_at`; a failed one serves
      * that stored set with `stale => true` so the screen can say the figures
      * are not current, and only answers `success => false` when nothing was
@@ -16917,7 +16917,7 @@ class Twopayment extends PaymentModule
 
         // Nothing priced, and amounts with no currency to read them in, both
         // draw as "this term carries no fee", and storing either would
-        // displace figures that were once real (ABN-540).
+        // displace figures that were once real.
         $currency = isset($response['currency']) && is_string($response['currency'])
             ? trim((string) $response['currency'])
             : '';
@@ -16971,7 +16971,7 @@ class Twopayment extends PaymentModule
             return null;
         }
         // A set stored by a version that accepted a currency-less answer holds
-        // amounts nobody can read (ABN-540).
+        // amounts nobody can read.
         if (!isset($decoded['currency']) || !is_string($decoded['currency'])
             || trim((string) $decoded['currency']) === '') {
             return null;
@@ -17285,7 +17285,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Non-blocking wording for a general-form verification that did not come
-     * back OK (ABN-495). Null when there is none.
+     * back OK. Null when there is none.
      *
      * @var string|null
      */
@@ -17301,7 +17301,7 @@ class Twopayment extends PaymentModule
     protected $twoApiKeyWithholdLogged = false;
 
     /**
-     * Reasons already logged this request, keyed by reason (ABN-518).
+     * Reasons already logged this request, keyed by reason.
      *
      * @var array<string, bool>
      */
@@ -17324,7 +17324,7 @@ class Twopayment extends PaymentModule
     /** @var bool Logged the unresolvable-checkout-country withhold reason yet? */
     protected $twoSearchCountryWithholdLogged = false;
 
-    /** @var bool Logged the failed-buyer-fee-quote withhold reason yet (ABN-546)? */
+    /** @var bool Logged the failed-buyer-fee-quote withhold reason yet? */
     protected $twoFeeQuoteWithholdLogged = false;
 
     /**
@@ -17366,8 +17366,8 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The brand's "What is <brand>?" link target (brands/two.php 'about_url',
-     * ABN-554), or '' when the brand declares none - which suppresses the icon
+     * The brand's "What is <brand>?" link target (brands/two.php 'about_url'),
+     * or '' when the brand declares none - which suppresses the icon
      * and its link entirely, whatever the merchant setting says.
      *
      * @return string
@@ -17861,7 +17861,7 @@ class Twopayment extends PaymentModule
      * service's is not.)
      *
      * The second condition is a FAILED FEE QUOTE for the term the checkout
-     * would charge for (ABN-546) - the selected term, else the merchant
+     * would charge for - the selected term, else the merchant
      * default - judged after the loop by isTwoChargedTermFeeQuotable(). A term
      * charging nothing is never quoted. Checkout only: hookPaymentOptions is
      * the sole caller and never runs in admin, so a pricing outage cannot
@@ -17919,7 +17919,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Whether one term prices a surcharge at all (ABN-546). The ONE definition
+     * Whether one term prices a surcharge at all. The ONE definition
      * shared by the payment-options gate and the line builder: a term that
      * prices nothing must be skipped by both, or the gate offers Two and the
      * builder then refuses the order over a fee of zero.
@@ -17956,7 +17956,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Whether the fee quote for the term this checkout would be charged for
-     * resolves at all (ABN-546). ONE term - the selected one, else the
+     * resolves at all. ONE term - the selected one, else the
      * merchant default - deliberately outside the caller's FX loop, which
      * must stay term-independent.
      *
@@ -18037,7 +18037,7 @@ class Twopayment extends PaymentModule
      * @param string $currency_iso  store currency
      * @param bool $cacheAcrossRequests whether this quote may use the session
      *   cookie cache - the charge paths only, never the chip previews, whose
-     *   per-term loop would fill the shared cookie (ABN-546).
+     *   per-term loop would fill the shared cookie.
      * @return array|null {buyer_fee_share, total_fee_tax_rate, currency}
      */
     public function fetchTwoTermFee($days, $gross_amount, $buyer_country, $currency_iso, $cacheAcrossRequests = false)
@@ -18088,7 +18088,7 @@ class Twopayment extends PaymentModule
 
         // One ceiling for every surcharge quote: a gate that gave up sooner
         // than the charge path withheld a method the charge path could price
-        // (ABN-546).
+        //.
         $response = $this->setTwoPaymentRequest(
             '/v1/pricing/order/fee',
             $payload,
@@ -18136,7 +18136,7 @@ class Twopayment extends PaymentModule
      * country or currency invalidates the cache immediately regardless of TTL.
      * Fail-soft: any malformed/missing cache data is treated as a miss.
      *
-     * ONE slot, holding the CHARGED term's quote only (ABN-546): the whole
+     * ONE slot, holding the CHARGED term's quote only: the whole
      * cookie shares a 4KB browser cap, and a slot per offered term would let a
      * chip-preview render push the shopper's session over it. Successes only -
      * a null lives in the request-scoped cache and no longer.
@@ -18489,7 +18489,7 @@ class Twopayment extends PaymentModule
         if (!$this->doesTwoTermPriceASurcharge($days)) {
             // No line, and NOT an unavailable quote: the gate concedes this
             // term on the same predicate, so a pricing outage must not refuse
-            // the order over a fee of zero (ABN-546).
+            // the order over a fee of zero.
             return null;
         }
         $currencyIso = '';
@@ -19653,8 +19653,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Does the cart's persisted checkout state still describe this cart
-     * (ABN-554)?
+     * Does the cart's persisted checkout state still describe this cart?
      *
      * A mismatch is drift the fee line did not cause, which is core's to
      * invalidate on rather than this module's to bless.
@@ -19736,7 +19735,7 @@ class Twopayment extends PaymentModule
 
     /**
      * Bring the cart's persisted checkout-step state back in step with the
-     * cart the module just mutated (ABN-554).
+     * cart the module just mutated.
      *
      * Core restores completed steps only while the stored checksum matches the
      * cart's product lines, so leaving it to invalidate on the module's own fee
@@ -20318,7 +20317,7 @@ class Twopayment extends PaymentModule
      */
     public function getTwoSurchargeLineLabel($days)
     {
-        // ABN-533: the label names a day count, so with no offered term there
+        // The label names a day count, so with no offered term there
         // is no honest label - and no fee line for it to sit on either.
         if (empty($this->getAvailablePaymentTerms())) {
             return '';
@@ -21077,7 +21076,7 @@ class Twopayment extends PaymentModule
      * CACHE-ONLY - never blocks on HTTP. The value is primed by the SAME fetch
      * as the available_terms list, through refreshMerchantRecord(). A cold
      * cache returns null here and, with nothing offered either, leaves
-     * getDefaultPaymentTerm() with no default at all (ABN-544).
+     * getDefaultPaymentTerm() with no default at all.
      *
      * `due_in_days` is NOT guaranteed to be a member of the offered term set -
      * callers must honour it only when it is an available term (see
@@ -21100,11 +21099,11 @@ class Twopayment extends PaymentModule
      *      TWO-25386) when it is offered;
      *   2. the merchant's API default term (due_in_days) when it is offered;
      *   3. DEFAULT_PAYMENT_TERM_DAYS (30) when it is offered - the preference
-     *      every platform shares (ABN-548);
+     *      every platform shares;
      *   4. the lowest offered term.
      * A single offered term always wins outright. With nothing offered there is
      * no default at all: a substituted day count would offer the buyer a term
-     * the merchant's account cannot honour (ABN-544).
+     * the merchant's account cannot honour.
      *
      * This is the ONLY function that resolves "the default term" - callers
      * that need it (checkout render, and buildTwoBuyerFeeShare() for the
@@ -22706,7 +22705,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * May a buyer fee line enter this cart (ABN-554)?
+     * May a buyer fee line enter this cart?
      *
      * Availability, not the presence of an approval: a shop with the intent
      * preview switched off records no verdict at all, and withholding the fee
@@ -22738,7 +22737,7 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Forget the session's order-intent verdict (ABN-554).
+     * Forget the session's order-intent verdict.
      *
      * @return void
      */

@@ -1,5 +1,5 @@
 /**
- * ABN-533: with no offered payment term the term block never opens.
+ * With no offered payment term the term block never opens.
  *
  * The template ships the block hidden, with a placeholder day count inside it.
  * showPaymentTerms() used to reveal it before initializePaymentTerms() had
@@ -69,7 +69,7 @@ describe('the config the checkout manager is built with', () => {
         expect(config.available_payment_terms).toEqual(expected);
     });
 
-    // ABN-544: same seam for the default term.
+    // Same seam for the default term.
     test.each([
         ['an absent default stays absent', undefined, 0],
         ['a zero default stays zero', 0, 0],

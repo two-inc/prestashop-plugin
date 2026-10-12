@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-// ABN-519. The cached merchant record never expires and is never evicted; only
+// The cached merchant record never expires and is never evicted; only
 // the API-key check verdict may hide the payment tile.
 final class MerchantRecordPolicySpec
 {
@@ -242,8 +242,8 @@ final class MerchantRecordPolicySpec
 
     /**
      * Given a verified key, When the merchant record cannot be resolved, Then the
-     * tile is still offered: only the key verdict may withhold it (ABN-519), and
-     * only its definitive-rejection categories do (ABN-533). The record read runs
+     * tile is still offered: only the key verdict may withhold it, and
+     * only its definitive-rejection categories do. The record read runs
      * first in each case, so a failing fetch is what the tile decision is
      * actually made over.
      */
@@ -270,7 +270,7 @@ final class MerchantRecordPolicySpec
             $module = self::harness(array($response));
             if ($fetched) {
                 // No minimum and no country allowlist: this test is about the two
-                // gates ABN-519 rules on, not the ones the merchant configures.
+                // gates the merchant-record policy rules on, not the ones the merchant configures.
                 Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30]');
                 Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, '1');
                 Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 10);
@@ -500,7 +500,7 @@ final class MerchantRecordPolicySpec
     /**
      * The record survives a key change whose refetch cannot succeed, so a merchant who
      * saved a typo during an outage gets everything back by pasting the right key again.
-     * A foreign record is withheld, never dropped (ABN-519).
+     * A foreign record is withheld, never dropped.
      */
     private static function testAKeyChangeDuringAnOutageIsRecoverableByRevertingTheKey(): void
     {
@@ -561,7 +561,7 @@ final class MerchantRecordPolicySpec
     }
 
     /**
-     * A record fetched for another key is not this shop's (ABN-530), so a read holds
+     * A record fetched for another key is not this shop's, so a read holds
      * nothing: it fetches on the ordinary render cap and records no stand-in, rather
      * than treating a foreign stamp as a schedule that has stopped.
      */
