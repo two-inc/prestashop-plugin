@@ -432,7 +432,7 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * ABN-546: zero on both sides is not agreement. The payment-options gate
+     * Zero on both sides is not agreement. The payment-options gate
      * judges the term selected at render; the buyer can switch term inside the
      * rendered tile, and where the pre-switch term quoted zero there is no
      * cart line at all - so an unresolvable quote for the term actually being
@@ -464,7 +464,7 @@ final class SurchargeCartLineSpec
 
     /**
      * TWO-26274: the fee parity check compares the payload with the cart, so it
-     * is a shop-match check, the module's default handler. The ABN-546 case
+     * is a shop-match check, the module's default handler. The surcharge parity case
      * above, with a merchant handler on the hook: one that changes nothing owns
      * the check and the order is built; one that opts back in gets the refusal.
      * Columns: handler mode (null: none), expected refusal (null: built), description.
@@ -583,7 +583,7 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * ABN-546: the gate and the line builder share one predicate, so every
+     * The gate and the line builder share one predicate, so every
      * shape that prices nothing is skipped by BOTH. Without that, the gate
      * offered Two and the builder then refused the order over a fee of zero -
      * after the buyer had approved, which cancels the Two order and shows a
@@ -638,7 +638,7 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * ABN-546: the admin order-update path never refuses, so an unresolvable
+     * The admin order-update path never refuses, so an unresolvable
      * quote there is not a parity event to report - only the enforcing paths
      * treat it as one.
      */
@@ -1338,7 +1338,7 @@ final class SurchargeCartLineSpec
         }
     }
 
-    /* ---- ABN-554: the fee line must not invalidate the buyer's checkout steps ---- */
+    /* ---- The fee line must not invalidate the buyer's checkout steps ---- */
 
     /**
      * OrderController restores the buyer's completed steps only while the
@@ -1394,7 +1394,7 @@ final class SurchargeCartLineSpec
         );
     }
 
-    /* ---- ABN-554: the summary's fee and the charged fee are one decision ---- */
+    /* ---- The summary's fee and the charged fee are one decision ---- */
 
     /**
      * Every reachable state of the session's order-intent record, and whether a

@@ -183,7 +183,7 @@ describe('activation', () => {
     });
 
     /**
-     * ABN-554: a browser re-fires `focus` on the control the opener window
+     * A browser re-fires `focus` on the control the opener window
      * still holds the moment the popup closes, which is the company-name field
      * the launch parked focus on. jsdom fires nothing on a window return, so
      * the re-fire is dispatched here by hand.

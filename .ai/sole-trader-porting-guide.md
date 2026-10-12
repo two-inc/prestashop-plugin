@@ -512,7 +512,7 @@ is not persisted here", never to a dropped payment record.
       both live, or the panel and spinner die at open. **The capture then parks that focus
       on its own company-name field**, one tick later so the popup module's open-time focus
       judgement has already run: a panel left on screen with focus on nothing reaches no
-      keystroke (ABN-554).
+      keystroke.
     - **Focus the plugin moves itself goes through one quiet helper** (panel open, Escape,
       a re-render restore, validation, the launch park) so the watch does not read it as
       the buyer — including the window-return re-fire of it, until focus leaves that

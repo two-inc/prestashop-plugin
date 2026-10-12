@@ -10,7 +10,7 @@
  * The one normalisation of a stored custom payment term, shared by the admin
  * field's visibility gate, its renderer and every reader of the stored value -
  * two readings would disagree on a hand-edited row and one of them would then
- * delete it (ABN-522).
+ * delete it.
  */
 class TwoStoredTerm
 {

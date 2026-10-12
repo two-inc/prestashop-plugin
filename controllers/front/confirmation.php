@@ -458,7 +458,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         }
 
         $this->module->changeOrderStatus($order->id, $this->getVerifiedStatus());
-        // ABN-554: this order consumed the verdict; nothing after it may be
+        // This order consumed the verdict; nothing after it may be
         // priced against an approval the buyer got for a cart now placed.
         $this->module->clearTwoOrderIntentSession();
         $this->module->clearTwoCartRecords((int) $cart->id);

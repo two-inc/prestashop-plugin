@@ -158,7 +158,7 @@ final class TwoAnchorOnlyHtmlSpec
      * with display_errors on.
      */
     /**
-     * The admin save gate (ABN-554). A value is rejected exactly when escaping
+     * The admin save gate. A value is rejected exactly when escaping
      * would change what the buyer sees - entity-encoding plain text is not a
      * change, so apostrophes and ampersands are not markup.
      */

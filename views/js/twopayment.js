@@ -39,7 +39,7 @@
             checkoutHost: config.checkout_host,
             orderIntentUrl: config.order_intent_url,
             ajaxToken: config.ajax_token,
-            // ABN-533: no default. An absent list means no term is offered, and
+            // No default. An absent list means no term is offered, and
             // substituting one offers the buyer a term the merchant may not hold.
             available_payment_terms: config.available_payment_terms || [],
             default_payment_term: config.default_payment_term || 0,

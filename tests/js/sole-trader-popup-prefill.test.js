@@ -1,5 +1,5 @@
 /**
- * ABN-554: what openPopup() puts in the hosted signup's `autofillData`.
+ * What openPopup() puts in the hosted signup's `autofillData`.
  *
  * The hosted page reads `email`, `first_name`, `last_name`, `phone_number`,
  * `company_name`, a TOP-LEVEL `country_code`, and

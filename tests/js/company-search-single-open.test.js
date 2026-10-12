@@ -1,5 +1,5 @@
 /**
- * ABN-510 — only one company-search popover may be open at a time, and the
+ * Only one company-search popover may be open at a time, and the
  * popover that closes gives its field's tab stop back.
  *
  * Core renders one editable address form per step, so a shop cannot currently

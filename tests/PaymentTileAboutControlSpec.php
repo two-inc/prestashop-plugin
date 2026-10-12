@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * ABN-554: the payment-tile "What is <brand>?" icon link is brand-configured
+ * The payment-tile "What is <brand>?" icon link is brand-configured
  * through brands/two.php 'about_url'.
  *
  * The key carries the link TARGET only - the copy stays translated strings in
@@ -26,7 +26,7 @@ final class PaymentTileAboutControlSpec
     }
 
     /**
-     * ABN-554: the "What is <brand>?" icon link has its own brand key, the
+     * The "What is <brand>?" icon link has its own brand key, the
      * canonical /what-is-two target the other platforms use, and a brand
      * declaring none leaves the template nothing to render.
      */

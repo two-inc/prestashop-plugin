@@ -1,5 +1,5 @@
 /**
- * ABN-554: the company-search results must reach assistive technology as a
+ * The company-search results must reach assistive technology as a
  * listbox of options, matching the WooCommerce panel's contract.
  *
  * jQuery UI's autocomplete builds its menu with `role: null` and re-renders

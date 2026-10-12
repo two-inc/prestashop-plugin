@@ -294,7 +294,7 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
         if (state === 'popup closed') {
             closeFromInside();
         }
-        // The launch parks focus on the company field (ABN-554), and a row whose own target is it fires no focusin.
+        // The launch parks focus on the company field, and a row whose own target is it fires no focusin.
         parkFocus(document.activeElement);
         const generation = soleTrader._enrollGeneration;
 
@@ -346,7 +346,7 @@ describe('focus on a checkout control settles the open signup popup (TWO-25658)'
         await launchWithPopupOpen();
         const mintsBefore = tokenMints;
 
-        // Off the field the launch parked focus on, so focusing it back is an arrival (ABN-554).
+        // Off the field the launch parked focus on, so focusing it back is an arrival.
         parkFocus(document.activeElement);
         panelParts().nameField.get(0).focus();
         expect(popup.closed).toBe(true);
@@ -974,7 +974,7 @@ describe('two captures on one page', () => {
         firstAgain.restorePanelAfterRerender();
         secondAgain.restorePanelAfterRerender();
 
-        // The sibling's restore took the single open slot (ABN-510).
+        // The sibling's restore took the single open slot.
         expect(firstAgain._dropdownOpen).toBe(false);
         expect(secondAgain._dropdownOpen).toBe(true);
         expect(firstAgain._soleTraderLoading).toBe(false);

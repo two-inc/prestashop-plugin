@@ -1,5 +1,5 @@
 /**
- * ABN-554: a row that carries a message instead of a company must reach the
+ * A row that carries a message instead of a company must reach the
  * buyer as a disabled row, on every jQuery UI a PrestaShop theme may ship.
  *
  * These drive the REAL widget render path rather than calling a renderer

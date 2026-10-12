@@ -125,7 +125,7 @@ class TwoCompanySearch {
      * The one popover that may be open, page-wide. Class-scoped for the same
      * reason as the cookie mutex above: the invariant spans instances.
      *
-     * ABN-510: a pointer click on another mount need not deliver a focus event
+     * A pointer click on another mount need not deliver a focus event
      * to the control it hits, so the first popover never sees focus leave it.
      * Enforced at open time rather than inferred from a focus signal.
      */
@@ -308,7 +308,7 @@ class TwoCompanySearch {
         this._soleTraderLoading = false;
         // Set while a flight is live once the buyer came back into the panel from its popup (TWO-25658).
         this._panelKeptPastPopup = false;
-        // Suppresses the field's own focus opener until the window return spends its focus pair (ABN-554).
+        // Suppresses the field's own focus opener until the window return spends its focus pair.
         this._openerHeld = false;
         this._heldFocusSeen = false;
         this._arrivalFocusSeen = false;
@@ -1076,7 +1076,7 @@ class TwoCompanySearch {
                 return;
             }
             // A chip is a `<button>`, which swallows typing, and a withdrawn
-            // query row leaves nothing else in the panel to hold the caret (ABN-554).
+            // query row leaves nothing else in the panel to hold the caret.
             if (this.isPrintableCapture(event) && this.queryRowIsHidden()) {
                 event.preventDefault();
                 this.captureKeyForWithdrawnRow(event.key);
@@ -1129,8 +1129,7 @@ class TwoCompanySearch {
             this._pointerInPanel = true;
             // A press on the panel's own dead space is not a gesture: its
             // default action would blur the caret out of the query field, and
-            // the mouseup below would then place focus the buyer never moved
-            // (ABN-554).
+            // the mouseup below would then place focus the buyer never moved.
             if (pressIsDeadSpace(event)) {
                 event.preventDefault();
             }
@@ -1176,7 +1175,7 @@ class TwoCompanySearch {
 
         // A pointer press outside the panel is a leave, treated exactly as focus
         // moving outside it is: a real click need not fire a focus event on what
-        // it hits, so the focus-out close alone can leave this panel up (ABN-510).
+        // it hits, so the focus-out close alone can leave this panel up.
         $(document).off('mousedown.twoOutside' + this._instanceNs)
             .on('mousedown.twoOutside' + this._instanceNs, (event) => {
                 if (this._destroyed || !this._dropdownOpen) {
@@ -1328,7 +1327,7 @@ class TwoCompanySearch {
         // Cleared by the call above; a resumed flight has its popup in front of the buyer already.
         this._popupSeenThisFlight = true;
         // Without it the window return's re-fire reads to this replacement as the
-        // buyer coming back, and reopens the popover (ABN-554).
+        // buyer coming back, and reopens the popover.
         this.holdCompanyFieldOpener();
         const soleTrader = this.soleTrader();
         if (soleTrader && typeof soleTrader.readoptEnrollment === 'function') {
@@ -1378,7 +1377,7 @@ class TwoCompanySearch {
 
     /**
      * Suppress the company field's focus opener until a `focus`+`focusin` pair
-     * lands on the parked field, or the buyer works the field (ABN-554).
+     * lands on the parked field, or the buyer works the field.
      *
      * Unbounded: the browser sends the window return's own pair when the buyer
      * comes back to this tab, which may be a minute after the popup closed, or
@@ -1559,7 +1558,7 @@ class TwoCompanySearch {
 
     /**
      * @param {boolean} returnFocus Put focus back on the company-name field -
-     *   what every close the buyer reaches does (ABN-554). False where
+     *   what every close the buyer reaches does. False where
      *   something else already owns focus: a re-render, a country change
      *   mid-select, another popover claiming the open slot, manual entry,
      *   and the focus-leave close, which fires only once focus has landed
@@ -1649,7 +1648,7 @@ class TwoCompanySearch {
      *
      * openPopup() blurs the control that launched the flight so a window return
      * cannot re-focus it (TWO-25658), which left focus on nothing at all while
-     * this panel stayed on screen: no keystroke reached any control (ABN-554).
+     * this panel stayed on screen: no keystroke reached any control.
      * The company-name field is where every other close of this panel puts it.
      *
      * Deferred one tick because openPopup() judges `document.activeElement` on
@@ -1833,7 +1832,7 @@ class TwoCompanySearch {
      * in. A lone chip for the current mode offers no choice; a lone chip for a
      * DIFFERENT mode is the buyer's whole way out - in a country company search
      * does not cover, the surviving "Enter Manually" chip is the only route to
-     * naming a company at all, and hiding it strands the buyer (ABN-525).
+     * naming a company at all, and hiding it strands the buyer.
      *
      * The row is HIDDEN, never removed: `.two-company-dropdown` is contracted to
      * hold search row, results host and chip row as its three children in that
@@ -1867,7 +1866,7 @@ class TwoCompanySearch {
     /**
      * Withdraw the free-text query row in a country company search does not
      * cover, so the only affordance an uncovered country takes away is the
-     * search itself (ABN-525).
+     * search itself.
      *
      * Only ever HIDES here: syncQueryFieldSuppression() is the single authority
      * on SHOWING that row, so a supported country delegates back to it rather
@@ -1957,7 +1956,7 @@ class TwoCompanySearch {
         if (suppressed) {
             searchRow.hide().attr('hidden', 'hidden');
             // Only on the withdrawal itself: a later sync would drop the keys
-            // captureKeyIntoHiddenQuery() has parked here (ABN-554).
+            // captureKeyIntoHiddenQuery() has parked here.
             if (wasHidden) {
                 return;
             }
@@ -1969,7 +1968,7 @@ class TwoCompanySearch {
             this.openSearchForCurrentTerm();
         } else {
             searchRow.removeAttr('hidden').show();
-            // Keys parked while the row was withdrawn have never been searched for (ABN-554).
+            // Keys parked while the row was withdrawn have never been searched for.
             if (wasHidden && String(this._queryField.val() || '') !== '') {
                 this.openSearchForCurrentTerm();
             }
@@ -1994,7 +1993,7 @@ class TwoCompanySearch {
 
     /**
      * Park a printable key in the withdrawn query row, so the row a mode change
-     * reveals carries it with the caret behind it (ABN-554). The company-name
+     * reveals carries it with the caret behind it. The company-name
      * field cannot hold it instead: it is PrestaShop's own address value,
      * `readonly` outside manual entry, and text parked there would be painted
      * on screen and submitted as part of the buyer's address.
@@ -2085,14 +2084,14 @@ class TwoCompanySearch {
                 // No panel to close, or the buyer came back to it; closeDropdown() would also blank the query and move focus.
                 this.endSoleTraderLoading();
                 // The hold outlives the flight: the window return that re-fires focus
-                // on the parked field can be minutes away (ABN-554).
+                // on the parked field can be minutes away.
             })
             // Rule 3 (TWO-25658): focus outside the panel closes it; back inside from a popup that just closed, it stays for good.
             // The company field counts as inside - its own focus opener would otherwise race this on event order.
             .on('two:sole-trader-focus-settled.twoSoleTraderFlight' + this._instanceNs, (event) => {
                 const detail = (event.originalEvent || event).detail || {};
                 // Focus on the parked field while the opener is held is the window
-                // return, not the buyer choosing this panel (ABN-554).
+                // return, not the buyer choosing this panel.
                 const refire = this._openerHeld && detail.target === this.companyFieldNode();
                 if (!this._dropdownOpen) {
                     return;
@@ -2108,7 +2107,7 @@ class TwoCompanySearch {
                 // closes the popup and touches nothing gets the settle's ordinary close -
                 // panel gone, focus on the company field.
                 // Never on the window-return re-fire: it lands on the parked field with the
-                // popup already gone, and is not the buyer coming back (ABN-554).
+                // popup already gone, and is not the buyer coming back.
                 if (!refire
                     && this._popupSeenThisFlight
                     && (detail.popupClosed || !this.isSoleTraderPopupOpen())) {
@@ -2122,7 +2121,7 @@ class TwoCompanySearch {
                     this._popupSeenThisFlight = true;
                     // Beside the flag it is read against: the park below has early
                     // returns, and a flight held on one but not the other treats the
-                    // window return as the buyer (ABN-554).
+                    // window return as the buyer.
                     this.holdCompanyFieldOpener();
                     this._reopenMemory.soleTraderPopup = detail.id;
                     this.parkFocusDroppedByPopup();
@@ -2224,7 +2223,7 @@ class TwoCompanySearch {
                 this._windowReturned = !this._destroyed;
             });
 
-        // A gesture ON this field is the buyer whatever else is in flight (ABN-554).
+        // A gesture ON this field is the buyer whatever else is in flight.
         this.companyField.on(
             'pointerdown.twoCompanyOpen keydown.twoCompanyOpen click.twoCompanyOpen',
             () => {
@@ -2235,8 +2234,7 @@ class TwoCompanySearch {
         // jQuery simulates `focusin` from a capture-phase `focus` listener on the document,
         // so a real focus reaches these handlers as `focusin` then `focus`; a jQuery trigger
         // on the already-focused field reverses them. Written against the pair's SECOND half
-        // rather than against either name, so neither order changes which one spends the hold
-        // (ABN-554).
+        // rather than against either name, so neither order changes which one spends the hold.
         const spendHeldFocusPair = () => {
             if (!this._heldFocusSeen) {
                 // The window's return state at the pair's first half is what tells the
@@ -2254,7 +2252,7 @@ class TwoCompanySearch {
         };
 
         // Both halves of the pair carry the same guards: one that refuses a half the other
-        // arms leaves it standing for the window return to spend as an arrival (ABN-554).
+        // arms leaves it standing for the window return to spend as an arrival.
         const focusIsNotTheBuyerArriving = () => {
             if (!this._manualEntry && !this._closingSelf) {
                 return false;
@@ -2304,7 +2302,7 @@ class TwoCompanySearch {
             }
             // Bound here as well: the panel's own Escape sits on a node this
             // field is only a sibling of, and the signup launch parks focus
-            // here (ABN-554).
+            // here.
             if (event.key === 'Escape' || event.key === 'Esc') {
                 if (!this._dropdownOpen) {
                     return;
@@ -2315,7 +2313,7 @@ class TwoCompanySearch {
             }
             if (this._dropdownOpen) {
                 // This field is `readonly` in search mode, so a key it takes with
-                // the query row withdrawn is destroyed outright (ABN-554).
+                // the query row withdrawn is destroyed outright.
                 if (this.isPrintableCapture(event) && this.queryRowIsHidden()) {
                     event.preventDefault();
                     this.captureKeyForWithdrawnRow(event.key);
@@ -2334,7 +2332,7 @@ class TwoCompanySearch {
             // A country the registry search does not cover renders no query
             // field for the character to open into, and this field is a
             // readonly search trigger until manual entry takes it over, so
-            // anything typed here is otherwise lost (ABN-554).
+            // anything typed here is otherwise lost.
             if (key && key.length === 1 && !this.isCurrentCountrySupportedForSearch()) {
                 this.captureKeyIntoManualEntry(key);
                 return;
@@ -2345,7 +2343,7 @@ class TwoCompanySearch {
             // exactly when the keypress produced text.
             if (key && key.length === 1 && this._queryField && this._queryField.length) {
                 // An adopted sole trader opens into a withdrawn row, where a
-                // search would paint under markup the buyer cannot see (ABN-554).
+                // search would paint under markup the buyer cannot see.
                 if (this.queryRowIsHidden()) {
                     this.captureKeyIntoHiddenQuery(key);
                     return;
@@ -2373,8 +2371,8 @@ class TwoCompanySearch {
     /**
      * Where a printable key goes while the query row is withdrawn: manual entry
      * in a country the registry search does not cover, which is the only route
-     * to naming a company there (ABN-525); the parked query otherwise, which the
-     * next mode change reveals (ABN-554).
+     * to naming a company there; the parked query otherwise, which the
+     * next mode change reveals.
      *
      * @param {string} key a single code point
      */
@@ -2390,7 +2388,7 @@ class TwoCompanySearch {
      * Take the buyer into manual entry and keep the character that asked for
      * it. Manual entry is the only state where this field accepts typing at
      * all, and in a country the registry search does not cover it is the only
-     * route to naming a company (ABN-525).
+     * route to naming a company.
      *
      * @param {string} key a single code point
      * @returns {void}
@@ -4606,7 +4604,7 @@ class TwoCompanySearch {
 
         this.renderBackToSearchLink();
 
-        // The invariant `_manualEntry` above does not excuse: every focus this module moves itself is inside `_closingSelf` (ABN-554).
+        // The invariant `_manualEntry` above does not excuse: every focus this module moves itself is inside `_closingSelf`.
         this._closingSelf = true;
         try {
             this.focusQuietly(this.companyField);
