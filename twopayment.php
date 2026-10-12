@@ -16747,7 +16747,7 @@ class Twopayment extends PaymentModule
      * explains: 'not_configured' is terminal (nothing changes until a key is
      * saved), the rest are transient. 'rejected' (a 4xx) also carries the
      * `http_status` and the API's own `message`, so the screen can say why
-     * (TWO-26305). Never throws and never blocks long
+     * (TWO-26305), and a stale set served after one carries all three. Never throws and never blocks long
      * (tight timeout): it sits behind an AJAX call on a config-page render
      * path.
      *
@@ -16812,6 +16812,12 @@ class Twopayment extends PaymentModule
             return $fresh;
         }
         $stored['stale'] = true;
+        // A refusal is reported with or without figures to fall back on.
+        if ($fresh['error'] === self::FEE_RATES_ERROR_REJECTED) {
+            $stored['error'] = $fresh['error'];
+            $stored['http_status'] = $fresh['http_status'];
+            $stored['message'] = $fresh['message'];
+        }
         return $stored;
     }
 

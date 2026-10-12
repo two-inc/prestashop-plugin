@@ -44,6 +44,7 @@ final class MerchantFeeRatesSpec
         self::testRejectionCarriesTheApiMessage();
         self::testCoolingRendersKeepTheRejection();
         self::testCooldownSurvivesConfigurationStorage();
+        self::testStaleAnswerCarriesTheRejection();
     }
 
     /**
@@ -585,6 +586,44 @@ final class MerchantFeeRatesSpec
             TinyAssert::same(1, $module->fetchCount, 'still cooling after storage: ' . $desc);
             TinyAssert::same($first, $cooling, 'the cooling answer is the first one: ' . $desc);
             TinyAssert::same($message, $cooling['message'], 'message as sent: ' . $desc);
+        }
+    }
+    /**
+     * A refusal is reported whether or not figures were stored before: the
+     * stale answer carries the status and message, also while cooling, and a
+     * stale answer after a generic failure carries none.
+     */
+    private static function testStaleAnswerCarriesTheRejection(): void
+    {
+        $payout = 'payout_schedule could not be inferred';
+        // failure response, error (null = absent), http_status, message, desc
+        $cases = [
+            [['http_status' => 400, 'error_message' => $payout], Twopayment::FEE_RATES_ERROR_REJECTED, 400, $payout, 'a 400 with stored figures says why'],
+            [['http_status' => 500, 'error_message' => 'internal'], null, null, null, 'a 500 with stored figures adds no reason'],
+        ];
+        foreach ($cases as $case) {
+            list($failure, $error, $status, $message, $desc) = $case;
+            StubStore::reset();
+            self::configureMerchantIdentity();
+            $module = self::scriptedModule();
+            $module->response = self::okResponse();
+            $good = $module->fetchTwoMerchantFeeRates([15, 30]);
+
+            $module->response = $failure;
+            foreach (['live' => 2, 'cooling' => 2] as $when => $fetches) {
+                $result = $module->fetchTwoMerchantFeeRates([15, 30]);
+                TinyAssert::same($fetches, $module->fetchCount, 'wire calls (' . $when . '): ' . $desc);
+                TinyAssert::true($result['stale'], 'stale (' . $when . '): ' . $desc);
+                TinyAssert::same($good['fees'], $result['fees'], 'stored figures served (' . $when . '): ' . $desc);
+                TinyAssert::same($error, isset($result['error']) ? $result['error'] : null, 'error (' . $when . '): ' . $desc);
+                TinyAssert::same($status, isset($result['http_status']) ? $result['http_status'] : null, 'http_status (' . $when . '): ' . $desc);
+                TinyAssert::same($message, isset($result['message']) ? $result['message'] : null, 'message (' . $when . '): ' . $desc);
+            }
+            // The stored set itself is not rewritten with the failure.
+            $module->response = self::okResponse();
+            self::expireCooldowns();
+            $fresh = $module->fetchTwoMerchantFeeRates([15, 30]);
+            TinyAssert::same(false, isset($fresh['error']), 'a later success carries no error: ' . $desc);
         }
     }
 }
