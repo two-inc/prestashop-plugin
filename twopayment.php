@@ -3029,7 +3029,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Enable debug logging'),
                         'name' => 'PS_TWO_DEBUG_MODE',
                         'is_bool' => true,
-                        'desc' => sprintf($this->l('Enable detailed logging for troubleshooting. Logs each API request and response, bodies included (the API key and custom header values redacted), tax calculations and other diagnostic data. Only enable when requested by %s support.'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('Enable detailed logging for troubleshooting. Logs each API request and response, bodies included (the API key and custom header values redacted), except the invoice PDF download, the invoice upload and the sole-trader signup, plus tax calculations and other diagnostic data. Only enable when requested by %s support.'), $this->getTwoBrandConfig('product_name')),
                         'required' => false,
                         'values' => array(
                             array(

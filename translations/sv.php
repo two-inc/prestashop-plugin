@@ -186,7 +186,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4296fd320beaf61dcf979ff634cf2f2d'] = 'Åtgärd krävs:';
 $_MODULE['<{twopayment}prestashop>twopayment_43183e955e3019bf7f8c942e016b7b13'] = 'Moms';
 $_MODULE['<{twopayment}prestashop>twopayment_406bab31038584c0e3135767eb91cf3c'] = '%s kunde inte ta emot denna order eftersom varukorgens totalsumma inte stämmer med summan av orderraderna.';
-$_MODULE['<{twopayment}prestashop>twopayment_6b2f9f64677090f94b0c86dc0a41af43'] = 'Aktivera detaljerad loggning för felsökning. Loggar varje API-anrop och API-svar, med innehåll (API-nyckeln och värdena i anpassade rubriker döljs), momsberäkningar och andra diagnostikdata. Aktivera endast när %ss support ber om det.';
+$_MODULE['<{twopayment}prestashop>twopayment_82004772fbc02229be8a067f017b6770'] = 'Aktivera detaljerad loggning för felsökning. Loggar varje API-anrop och API-svar, med innehåll (API-nyckeln och värdena i anpassade rubriker döljs), utom nedladdningen av fakturans PDF, uppladdningen av fakturan och registreringen som enskild firma, samt momsberäkningar och andra diagnostikdata. Aktivera endast när %ss support ber om det.';
 $_MODULE['<{twopayment}prestashop>twopayment_44fdec47036f482b68b748f9d786801b'] = 'dagar';
 $_MODULE['<{twopayment}prestashop>twopayment_484f5a79672cebe198ebdde45a1d672f'] = 'Presentinslagning';
 $_MODULE['<{twopayment}prestashop>twopayment_8f81441778b6e1fb85956f2a908ae8a7'] = 'Att flytta en order till denna status återbetalar den i sin helhet via %s och utfärdar en kreditnota till köparen. Standard: Återbetalad';

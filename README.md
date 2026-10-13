@@ -1457,7 +1457,8 @@ An update to a placed order is priced from that order, not its cart, so it write
      baseline discrepancy snapshot (see above)
   6. Disable Debug Mode when done
 
-While it is on, every call to Two's API is logged, as the WooCommerce plugin logs it: one
+While it is on, each call to Two's API is logged, as the WooCommerce plugin logs it,
+except the invoice PDF download, the invoice upload and the sole-trader signup: one
 line naming the method and endpoint, with the request's body, headers and query
 parameters and the response's body, headers and status code, at error severity for a
 connection error or HTTP 400 and above and informative otherwise. The API key and every

@@ -186,7 +186,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4296fd320beaf61dcf979ff634cf2f2d'] = 'Handling påkrevd:';
 $_MODULE['<{twopayment}prestashop>twopayment_43183e955e3019bf7f8c942e016b7b13'] = 'MVA';
 $_MODULE['<{twopayment}prestashop>twopayment_406bab31038584c0e3135767eb91cf3c'] = '%s kunne ikke ta imot denne ordren fordi totalen i handlekurven ikke stemmer med summen av ordrelinjene.';
-$_MODULE['<{twopayment}prestashop>twopayment_6b2f9f64677090f94b0c86dc0a41af43'] = 'Slå på detaljert logging for feilsøking. Logger hver API-forespørsel og hvert API-svar, med innhold (API-nøkkelen og verdiene i egendefinerte overskrifter skjules), avgiftsberegninger og andre diagnosedata. Slå det bare på når %s-støtte ber om det.';
+$_MODULE['<{twopayment}prestashop>twopayment_82004772fbc02229be8a067f017b6770'] = 'Slå på detaljert logging for feilsøking. Logger hver API-forespørsel og hvert API-svar, med innhold (API-nøkkelen og verdiene i egendefinerte overskrifter skjules), unntatt nedlastingen av faktura-PDF-en, opplastingen av fakturaen og registreringen som enkeltpersonforetak, samt avgiftsberegninger og andre diagnosedata. Slå det bare på når %s-støtte ber om det.';
 $_MODULE['<{twopayment}prestashop>twopayment_44fdec47036f482b68b748f9d786801b'] = 'dager';
 $_MODULE['<{twopayment}prestashop>twopayment_484f5a79672cebe198ebdde45a1d672f'] = 'Gaveinnpakning';
 $_MODULE['<{twopayment}prestashop>twopayment_8f81441778b6e1fb85956f2a908ae8a7'] = 'Å flytte en ordre til denne statusen refunderer den i sin helhet via %s og utsteder en kreditnota til kjøperen. Standard: Refundert';
