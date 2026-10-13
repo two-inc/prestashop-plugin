@@ -31,6 +31,9 @@ class TwoOrderPostprocessing
     const REQUEST_REFUND = 'refund';
     const REQUEST_CANCEL = 'cancel';
 
+    // Requests Two's API takes no body for: the hook runs on them, but they are always sent empty.
+    const BODYLESS = array(self::REQUEST_ORDER_CONFIRM, self::REQUEST_CANCEL);
+
     const CODE_HOOK_FAILED = 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED';
 
     const MAX_STRING = 120;
@@ -67,6 +70,34 @@ class TwoOrderPostprocessing
         self::diffInto($out, '', $before, $after, true, true);
 
         return $out;
+    }
+
+    /**
+     * Whether a request is sent with no body, whatever the subscribers return.
+     *
+     * @param string $requestType
+     * @return bool
+     */
+    public static function isBodyless($requestType)
+    {
+        return in_array($requestType, self::BODYLESS, true);
+    }
+
+    /**
+     * The paths a subscriber changed, never their values, cut to MAX_DIFF_ENTRIES.
+     *
+     * @param array $before
+     * @param array $after
+     * @return string[]
+     */
+    public static function diffPaths(array $before, array $after)
+    {
+        $paths = array();
+        foreach (array_slice(self::diff($before, $after), 0, self::MAX_DIFF_ENTRIES) as $entry) {
+            $paths[] = self::cut($entry['path']);
+        }
+
+        return $paths;
     }
 
     /**
