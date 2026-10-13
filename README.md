@@ -1461,7 +1461,8 @@ While it is on, every call to Two's API is logged, as the WooCommerce plugin log
 line naming the method and endpoint, with the request's body, headers and query
 parameters and the response's body, headers and status code, at error severity for a
 connection error or HTTP 400 and above and informative otherwise. The API key and every
-custom header value are redacted. The bodies carry buyer details, so none of this is
+custom header value are redacted, and a line longer than the log can store (about 32KB)
+is cut. The bodies carry buyer details, so none of this is
 logged with Debug Mode off; refusals and connection errors are still logged then, with the
 API's reason but no request body.
 

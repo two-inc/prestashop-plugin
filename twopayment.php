@@ -21839,17 +21839,29 @@ class Twopayment extends PaymentModule
             'response' => array('body' => null, 'headers' => null, 'status_code' => null),
         );
         $message = 'TwoPayment: ' . $method . ' ' . $endpoint;
+        $severity = 3;
         if ($response_body === false || !empty($curl_error)) {
-            PrestaShopLogger::addLog($message . ': cURL error: ' . $curl_error . ' - ' . json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 3);
-            return;
+            $message .= ': cURL error: ' . $curl_error;
+        } else {
+            $decoded = json_decode((string)$response_body, true);
+            $context['response'] = array(
+                'body' => json_last_error() === JSON_ERROR_NONE ? $decoded : $response_body,
+                'headers' => is_array($response_headers) ? $response_headers : iterator_to_array($response_headers),
+                'status_code' => (int)$http_status,
+            );
+            $severity = (int)$http_status >= 400 ? 3 : 1;
         }
-        $decoded = json_decode((string)$response_body, true);
-        $context['response'] = array(
-            'body' => json_last_error() === JSON_ERROR_NONE ? $decoded : $response_body,
-            'headers' => is_array($response_headers) ? $response_headers : iterator_to_array($response_headers),
-            'status_code' => (int)$http_status,
-        );
-        PrestaShopLogger::addLog($message . ' - ' . json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), (int)$http_status >= 400 ? 3 : 1);
+        // Core strips tags from every log message, so no raw < or > may reach it; ps_log.message is a 64KB TEXT,
+        // stored addslashes()-escaped on 1.7, so a long call is cut, as the discrepancy snapshot is.
+        $message .= ' - ' . json_encode($context, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        if (strlen(addslashes($message)) > TwoDiscrepancySnapshot::MAX_BYTES) {
+            $message = mb_strcut($message, 0, (int)(TwoDiscrepancySnapshot::MAX_BYTES / 2), 'UTF-8') . ' [cut]';
+        }
+        try {
+            PrestaShopLogger::addLog($message, $severity);
+        } catch (Throwable $e) {
+            // The log never fails the call it describes.
+        }
     }
 
     /**
