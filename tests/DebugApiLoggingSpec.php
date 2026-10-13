@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * TWO-26340: Debug Mode logs each API call as the WooCommerce plugin does. With Debug Mode on, one log line per call
+ * TWO-26340: Debug Mode logs the API calls made through setTwoPaymentRequest() as the WooCommerce plugin does. With Debug Mode on, one log line per call
  * names the method and endpoint and carries the request's body, headers and query parameters and the response's
  * body, headers and status code, at error severity for a connection error or HTTP 400 and above. The API key and
  * the custom header values are redacted. With Debug Mode off nothing is logged, since the bodies carry buyer data.
