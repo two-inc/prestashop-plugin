@@ -8818,7 +8818,7 @@ class Twopayment extends PaymentModule
                 function ($id_tax_rules_group) use ($cart) {
                     return $this->getTwoConfiguredTaxRateDecimalForGroup($id_tax_rules_group, $cart);
                 },
-                $this->getTwoDefaultShippingTaxRulesGroupId()
+                $this->getTwoDefaultShippingTaxRulesGroupId($cart)
             );
             PrestaShopLogger::addLog(
                 TwoDiscrepancySnapshot::encode($snapshot),
@@ -9891,7 +9891,7 @@ class Twopayment extends PaymentModule
             return null;
         }
         try {
-            $group = $this->getTwoDefaultShippingTaxRulesGroupId();
+            $group = $this->getTwoDefaultShippingTaxRulesGroupId($cart);
 
             return $group === null ? null : (float) $this->getTwoConfiguredTaxRateDecimalForGroup($group, $cart);
         } catch (Throwable $e) {
