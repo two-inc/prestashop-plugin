@@ -561,7 +561,7 @@ function oppRunScenario($name, &$detail)
                 $module->cancelTwoOrderBestEffort(OPP_TWO_ORDER, 'attempt_persist_failed');
             }),
         );
-        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'fallback_shipping_tax_code', 'contract_version', 'order_lines', 'order_refunds');
+        $keys = array('request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'fallback_shipping_tax_code', 'contract_version', 'order_lines', 'order_refunds', 'order_tenders');
         // Loads the fixture's class, whose static records the calls.
         Module::getInstanceByName('twoorderpostprocessingtest');
         foreach ($drivers as $driver) {
@@ -587,6 +587,8 @@ function oppRunScenario($name, &$detail)
             $checks[] = array($context['order_lines'], $placed, $label . ': order_lines');
             // The refunds Two holds come from the same read, verbatim (TWO-26287).
             $checks[] = array($context['order_refunds'], $placed === null ? null : $module->twoRefunds, $label . ': order_refunds');
+            // No module declares tenders here, so every request sees none (TWO-26326).
+            $checks[] = array($context['order_tenders'], array(), $label . ': order_tenders');
             if ($placed !== null && $module->twoRefunds !== array()) {
                 $checks[] = array(Twoorderpostprocessingtest::leftToRefund($context, 'line-1'), 108.9, $label . ': the README left to refund on line-1');
             }
