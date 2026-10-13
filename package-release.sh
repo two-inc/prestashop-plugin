@@ -97,6 +97,7 @@ if command -v rsync &> /dev/null; then
         --exclude='/tests' \
         --exclude='/dev' \
         --exclude='CLAUDE.md' \
+        --exclude='AGENTS.md' \
         --exclude='PRODUCTION_REVIEW.md' \
         --exclude='package-release.sh' \
         --exclude='*.log' \
@@ -126,6 +127,7 @@ else
         ! -name '.gitattributes' \
         ! -name '.DS_Store' \
         ! -name 'CLAUDE.md' \
+        ! -name 'AGENTS.md' \
         ! -name 'PRODUCTION_REVIEW.md' \
         ! -name 'package-release.sh' \
         ! -name '*.log' \
@@ -193,6 +195,7 @@ echo "  ✗ .git directory"
 echo "  ✗ .cursor directory (IDE config)"
 echo "  ✗ .ai directory (AI context files)"
 echo "  ✗ CLAUDE.md (AI context file)"
+echo "  ✗ AGENTS.md (agent instructions; links into .ai/)"
 echo "  ✗ PRODUCTION_REVIEW.md (internal docs)"
 echo "  ✗ tests/ and dev/ (test suite and development tooling)"
 echo "  ✗ Development files (.DS_Store, logs, etc.)"
