@@ -9664,7 +9664,7 @@ class Twopayment extends PaymentModule
             'contract_version' => TwoOrderPostprocessing::CONTRACT_VERSION,
             'order_lines' => $this->getTwoOrderLinesAtTwo($twoOrder),
             'order_refunds' => $this->getTwoOrderRefundsAtTwo($twoOrder),
-            'order_tenders' => is_array($tenders) ? $tenders : $this->getTwoOrderTenders($cart, $order),
+            'order_tenders' => is_array($tenders) ? $tenders : $this->readTwoOrderTenders($cart, $order, false),
         );
     }
 
@@ -9680,6 +9680,35 @@ class Twopayment extends PaymentModule
     public function getTwoOrderTenders($cart, $order, $slip = null)
     {
         return TwoOrderTenders::collect($cart, $order, $slip);
+    }
+
+    /**
+     * getTwoOrderTenders() for a request that does not send them (TWO-26326). A tender module that throws is logged;
+     * with $required the request is refused, otherwise it goes on with no tenders.
+     *
+     * @param Cart|null $cart
+     * @param Order|null $order
+     * @param bool $required whether the body declares them, so that going on without them would change what Two holds
+     * @return array
+     * @throws Exception with $required, when a tender module threw
+     */
+    private function readTwoOrderTenders($cart, $order, $required)
+    {
+        try {
+            return $this->getTwoOrderTenders($cart, $order);
+        } catch (Throwable $e) {
+            $subject = $order !== null ? 'order ' . (int) $order->id : ($cart !== null ? 'cart ' . (int) $cart->id : 'no cart');
+            PrestaShopLogger::addLog(
+                'TwoPayment: A tender module threw ' . get_class($e) . ' at ' . TwoDiscrepancySnapshot::throwSite($e) . ' for ' . $subject . ': '
+                . ($required ? 'the request was not sent, as without its tenders it would reset the prepaid amount at Two.' : 'the request goes on with no tenders.'),
+                $required ? 3 : 2
+            );
+            if ($required) {
+                throw new Exception('The order\'s tenders could not be read, so the request was not sent');
+            }
+
+            return array();
+        }
     }
 
     /**
@@ -11262,7 +11291,7 @@ class Twopayment extends PaymentModule
 
         // An edit that leaves the prepaid amount out resets it to zero at Two, so an order placed with tenders always
         // declares them (TWO-26326). One placed with none, or before they were declared, is sent as it always was.
-        $tenders = $this->getTwoOrderTenders($cart, $order);
+        $tenders = $this->readTwoOrderTenders($cart, $order, $declaredRates['prepaid'] > 0);
         if ($declaredRates['prepaid'] > 0) {
             $request_data = $this->withTwoPrepaid($request_data, $tenders, true);
         }
