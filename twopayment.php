@@ -11292,7 +11292,8 @@ class Twopayment extends PaymentModule
 
         // An edit that leaves the prepaid amount out resets it to zero at Two, so an order placed with tenders always
         // declares them (TWO-26326). One placed with none, or before they were declared, is sent as it always was.
-        $tenders = $this->readTwoOrderTenders($cart, $order, $declaredRates['prepaid'] > 0);
+        // The remainder's rebuild is never sent and reads only the tax split, which tenders do not change.
+        $tenders = $this->readTwoOrderTenders($cart, $order, $declaredRates['prepaid'] > 0 && $trigger !== self::TRIGGER_REFUND_REMAINDER);
         if ($declaredRates['prepaid'] > 0) {
             $request_data = $this->withTwoPrepaid($request_data, $tenders, true);
         }
