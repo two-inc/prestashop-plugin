@@ -29,6 +29,42 @@ final class OrderTendersSpec
         self::testPlacementRecordsThePrepaidTwoHolds();
         self::testRefundedAfterAWhollyPrepaidRefundSendsTheRest();
         self::testSlipsInARowDrawDownTheTenders();
+        self::testThrowingTenderModule();
+    }
+
+    /**
+     * A tender module that throws: an order placed with prepaid is not edited (its edit would reset the prepaid amount
+     * at Two); any other edit, and every other request's context, goes on with no tenders and a log line.
+     */
+    private static function testThrowingTenderModule(): void
+    {
+        $golden = json_decode((string) file_get_contents(__DIR__ . '/fixtures/order-postprocessing-golden.json'), true);
+        $throws = static function (): array {
+            throw new RuntimeException('tender store down');
+        };
+        $logged = static function (): int {
+            return count(array_filter(PrestaShopLogger::$logs, static function (array $log): bool {
+                return strpos($log['message'], 'A tender module threw RuntimeException') !== false;
+            }));
+        };
+
+        $cart = OrderPostprocessingSpec::seed(true);
+        $module = new TwopaymentTestHarness();
+        OrderPostprocessingSpec::harnessAsInstance($module);
+        self::declare($throws);
+        $body = self::updateFor($module, null);
+        $body['shipping_details']['expected_delivery_date'] = 'PINNED';
+        TinyAssert::same(md5($golden['update']), md5((string) json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION)), 'legacy edit goes on as before');
+        TinyAssert::same(1, $logged(), 'legacy edit: logged');
+
+        TinyAssert::same([], $module->buildTwoOrderPostprocessingContext('capture', 'status_change', '/v1/order/x/fulfillments', $cart, OrderPostprocessingSpec::order())['order_tenders'], 'another request: no tenders');
+
+        PrestaShopLogger::$logs = [];
+        TinyAssert::throws(static function () use ($module): void {
+            self::updateFor($module, '{"prepaid":"30.00"}');
+        }, 'tenders could not be read');
+        TinyAssert::same(1, $logged(), 'edit with prepaid: logged');
+        unset(Hook::$subscribers[TwoOrderTenders::HOOK]);
     }
 
     /**
