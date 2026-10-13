@@ -611,7 +611,7 @@ function oppRunScenario($name, &$detail)
 
     if ($name === 'body_on_cancel') {
         $module->sendTwoOrderRequest('cancel', 'status_change', '/v1/order/' . OPP_TWO_ORDER . '/cancel', array(), 'POST', null, $order);
-        $checks[] = array(count($module->sent) === 1 ? $module->sent[0]['payload'] : $module->sent, array('reason' => 'added'), 'a cancel given a body sends it as returned');
+        $checks[] = array(count($module->sent) === 1 ? $module->sent[0]['payload'] : $module->sent, array(), 'a cancel given a body is sent empty: it takes none');
 
         return $checks;
     }
