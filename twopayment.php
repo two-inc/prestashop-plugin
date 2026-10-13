@@ -2933,7 +2933,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Validate tax subtotals'),
                         'name' => 'PS_TWO_ENABLE_TAX_SUBTOTALS',
                         'is_bool' => true,
-                        'desc' => $this->l('If you choose YES, a per-tax-rate tax_subtotals breakdown is sent in /v1/order and /v1/order_intent payloads for validation against the order lines. If you choose NO, tax_subtotals is omitted from those payloads.'),
+                        'desc' => $this->l('If you choose YES, a per-tax-rate tax_subtotals breakdown is sent with order intents, orders, order updates and refunds, for validation against the order lines. If you choose NO, tax_subtotals is omitted from all of them.'),
                         'required' => true,
                         'values' => array(
                             array(
@@ -5989,7 +5989,7 @@ class Twopayment extends PaymentModule
      * @param object $slip OrderSlip
      * @param Order $order
      * @param array $orderpaymentdata the order's Two row
-     * @param array|null $sent set to the payload sent, on success
+     * @param array|null $sent set to the payload sent, on success, as getTwoRefundRecord() records it
      * @return string|null null when Two accepted it; otherwise why not, for the merchant ('' when nothing was due)
      */
     protected function sendTwoCreditSlipRefund($slip, $order, $orderpaymentdata, &$sent = null)
@@ -6070,7 +6070,7 @@ class Twopayment extends PaymentModule
             return $this->l('the order currency could not be resolved');
         }
 
-        // Two's partial-refund contract requires tax_subtotals.
+        // The refund is split by rate whether or not tax_subtotals is sent: its lines are spread from the split.
         $kind_gross = array();
         $this->twoDeferredShopMatch = array();
         try {
@@ -6142,7 +6142,7 @@ class Twopayment extends PaymentModule
         PrestaShopLogger::addLog('TwoPayment: Partial refund successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id . ', Idempotency Key: ' . $idempotency_key, 1);
         // Two has accepted it: from here nothing may turn this into a not-sent slip (see the hook's invariants).
         // What Two received is the post-hook payload, which the Refunded remainder is later computed from.
-        $sent = $sent_payload;
+        $sent = $this->getTwoRefundRecord($sent_payload, $tax_subtotals);
         $this->noteTwoRefundSentWithoutLines($id_order, $sent_payload);
         $this->refreshTwoOrderPaymentDataAfterRefund($id_order, $two_order_id, $orderpaymentdata);
 
@@ -6509,7 +6509,7 @@ class Twopayment extends PaymentModule
             return;
         }
         PrestaShopLogger::addLog('TwoPayment: Full refund remainder successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Amount: ' . $payload['amount'] . ', Idempotency Key: ' . $idempotency_key, 1);
-        $this->recordTwoRefundOutcome($id_order, null, 'SENT', $sent_payload, null);
+        $this->recordTwoRefundOutcome($id_order, null, 'SENT', $this->getTwoRefundRecord($sent_payload, $tax_subtotals), null);
         $this->noteTwoRefundSentWithoutLines($id_order, $sent_payload);
         $this->refreshTwoOrderPaymentDataAfterRefund($id_order, $two_order_id, $orderpaymentdata);
     }
@@ -6536,7 +6536,11 @@ class Twopayment extends PaymentModule
             return array();
         }
         $buckets = array();
-        foreach (isset($placed['tax_subtotals']) && is_array($placed['tax_subtotals']) ? $placed['tax_subtotals'] : array() as $subtotal) {
+        // With Validate tax subtotals off the rebuilt order carries none, so its split is taken from its lines.
+        if (!isset($placed['tax_subtotals']) || !is_array($placed['tax_subtotals'])) {
+            $placed['tax_subtotals'] = $this->getTwoTaxSubtotals($this->getTwoPayloadLines($placed));
+        }
+        foreach ($placed['tax_subtotals'] as $subtotal) {
             $taxable = (float)$subtotal['taxable_amount'];
             $this->addTwoTaxBucket($buckets, (float)$subtotal['tax_rate'] * 100, $taxable, $taxable + (float)$subtotal['tax_amount']);
         }
@@ -6743,7 +6747,8 @@ class Twopayment extends PaymentModule
     /**
      * Build the {amount, currency, line_items, tax_subtotals} partial-refund
      * payload for Two. Amount is a 2dp decimal string, matching Two's Money
-     * format. line_items is left out when the refund could not be itemised.
+     * format. line_items is left out when the refund could not be itemised, and
+     * tax_subtotals while Validate tax subtotals is off.
      *
      * @param float $amount Gross refund amount
      * @param string $currency ISO currency code
@@ -6764,9 +6769,29 @@ class Twopayment extends PaymentModule
                 return round((float)$subtotal['taxable_amount'] + (float)$subtotal['tax_amount'], 2) != 0.0;
             }));
         }
-        $payload['tax_subtotals'] = $tax_subtotals;
+        // Validate tax subtotals governs refunds as it does order intents, creates and updates (TWO-26340).
+        if ($this->shouldIncludeTaxSubtotals()) {
+            $payload['tax_subtotals'] = $tax_subtotals;
+        }
 
         return $payload;
+    }
+
+    /**
+     * A refund Two accepted, as its row records it: the payload sent, and where Validate tax subtotals kept the
+     * module's split off the wire, that split, so the Refunded remainder still knows what each rate has refunded.
+     *
+     * @param array $sent_payload the payload as the subscribers returned it
+     * @param array $tax_subtotals the module's split of the refund
+     * @return array
+     */
+    private function getTwoRefundRecord(array $sent_payload, array $tax_subtotals)
+    {
+        if (!$this->shouldIncludeTaxSubtotals() && !array_key_exists('tax_subtotals', $sent_payload)) {
+            $sent_payload['tax_subtotals'] = $tax_subtotals;
+        }
+
+        return $sent_payload;
     }
 
     /**

@@ -6,7 +6,8 @@ declare(strict_types=1);
  * Coverage for the "Validate tax subtotals" toggle - TWO-25502.
  *
  * PS_TWO_ENABLE_TAX_SUBTOTALS gates whether the per-tax-rate `tax_subtotals`
- * breakdown reaches /v1/order and /v1/order_intent. The breakdown itself is
+ * breakdown reaches order intents, creates, updates and refunds (refunds since
+ * TWO-26340). The breakdown itself is
  * computed unconditionally and reconciled against the order lines before any
  * payload is built, so this key controls transmission only, never the internal
  * gate.

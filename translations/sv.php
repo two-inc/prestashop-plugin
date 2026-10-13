@@ -370,7 +370,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Välj vilken %s-API-miljö som ska användas. Produktion för skarpa transaktioner, Staging för test.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Villkor';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Inga träffar hittades';
-$_MODULE['<{twopayment}prestashop>twopayment_f563791313af7708a2964e6c5f813c2a'] = 'Om du väljer JA skickas en tax_subtotals-uppdelning per momssats i nyttolasten för /v1/order och /v1/order_intent, för validering mot orderraderna. Om du väljer NEJ utesluts tax_subtotals från dessa nyttolaster.';
+$_MODULE['<{twopayment}prestashop>twopayment_b4c08ff047c09729b6bf028ef6a7a388'] = 'Om du väljer JA skickas en tax_subtotals-uppdelning per momssats med orderavsikter, ordrar, orderändringar och återbetalningar, för validering mot orderraderna. Om du väljer NEJ utesluts tax_subtotals från alla dessa.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf08ddca9326ba095dbdd77a10b9f121'] = '%s kunde inte verifiera API-nyckeln just nu (HTTP %d). Det är oftast tillfälligt - försök igen om en stund.';
 $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] = 'Betalningen är godkänd! Välj dina betalningsvillkor nedan.';
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Några av uppgifterna som angetts är ogiltiga. Kontrollera uppgifterna i din fakturaadress och försök igen.';
