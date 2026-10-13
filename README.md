@@ -1396,8 +1396,7 @@ An update to a placed order is priced from that order, not its cart, so it write
   `{error, code}`: the exception class and code, never its message.
 - **Size**: products, cart rules, delivery options, sent lines and each hook's and class's
   list keep their first 40 rows; `truncated` counts the rows cut from each, including a
-  whole section shed to fit the size limit. The hook's `diff` keeps its first 40 entries
-  and gives way, entry by entry, before any section is shed.
+  whole section shed to fit the size limit.
 - **Cost**: once one `Cart` pricing read throws, the remaining ones are recorded as
   `{error: "skipped"}` rather than re-run, since core does not cache a failed price.
   `products` is read first, so a carrier that throws never skips it.
@@ -1424,15 +1423,9 @@ An update to a placed order is priced from that order, not its cart, so it write
   `delta` (which already allows for ecotax taxed under its own group) are read directly,
   beside the overrides and hooks sections.
 
-  The `order_postprocessing` block (schema `v` 2) records the order postprocessing hook
-  when it ran for the request: `request_type`, `trigger`, the `subscribers` registered on
-  it, whether they `changed` the payload, the `outcome` (`unchanged`, `changed` or
-  `refused:<code>`), `cart_reconciliation` and a `diff` of `{path, before, after}` entries
-  keyed by JSON pointer (buyer and address fields by path only). A `changed` outcome
-  explains figures that differ from the shop's own records, and
-  `cart_reconciliation: skipped_payload_changed` explains why no cart comparison ran.
-  `sent_line_items` are always the post-hook lines. See "Stable extension contract:
-  order postprocessing".
+  The snapshot (schema `v` 1) does not record the order postprocessing hook. With Debug
+  Mode on, what the hook's subscribers changed is logged on its own line, naming the
+  request and its trigger (see "Stable extension contract: order postprocessing").
 
 #### Snapshot invariants
 - The snapshot never changes, fails or slows a checkout. Every one of its own failures is
