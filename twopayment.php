@@ -8944,7 +8944,7 @@ class Twopayment extends PaymentModule
             $totals = $this->calculateTwoLineItemTotals($lines);
             $maxDiffCents = 0;
             $drift = '';
-            if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $totals, $contextLabel, $maxDiffCents, $drift, $placedTotals)) {
+            if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $totals, $contextLabel, $maxDiffCents, $drift, $placedTotals, count($lines))) {
                 $this->enforceTwoReconciliation($contextLabel, $maxDiffCents, $drift, $strict, $lines);
             }
         });
@@ -9991,9 +9991,10 @@ class Twopayment extends PaymentModule
      * @param int $maxDiffCents Set to the largest net/tax/gross drift, in cents
      * @param string $driftDetail Set to the figures that drifted, e.g. "net cart 60.00 vs order lines 64.00 (difference 4.00)"
      * @param array|null $placedTotals the placed order's own gross/net, fee excluded, in place of the cart's
+     * @param int $lineCount how many lines $lineTotals sums, for getTwoWholeOrderToleranceCents()
      * @return bool
      */
-    private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, &$maxDiffCents = 0, &$driftDetail = '', $placedTotals = null)
+    private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, &$maxDiffCents = 0, &$driftDetail = '', $placedTotals = null, $lineCount = 1)
     {
         $maxDiffCents = 0;
         $driftDetail = '';
@@ -10025,7 +10026,7 @@ class Twopayment extends PaymentModule
         $taxDiff = abs($lineTax - $cartTax);
 
         // Compare in cents to avoid float boundary artifacts (e.g. visible 0.02 diff treated as 0.0200000001).
-        $toleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
+        $toleranceCents = $this->getTwoWholeOrderToleranceCents($lineCount);
         $grossDiffCents = $this->convertAmountToCents($grossDiff);
         $netDiffCents = $this->convertAmountToCents($netDiff);
         $taxDiffCents = $this->convertAmountToCents($taxDiff);
@@ -10069,20 +10070,21 @@ class Twopayment extends PaymentModule
      * @param int $maxDiffCents the largest drift, in cents
      * @param string $driftDetail
      * @param bool $strictReconciliation
-     * @param array $lineItems the lines checked, for the discrepancy snapshot
+     * @param array $lineItems the lines checked, for the discrepancy snapshot and the tolerance
      * @return void
      * @throws TwoCheckoutAmountException
      */
     private function enforceTwoReconciliation($contextLabel, $maxDiffCents, $driftDetail, $strictReconciliation, array $lineItems)
     {
-        if ($this->shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, (bool)$strictReconciliation)) {
+        $toleranceCents = $this->getTwoWholeOrderToleranceCents(count($lineItems));
+        if ($this->shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, (bool)$strictReconciliation, $toleranceCents)) {
             if ($this->twoDiscrepancyGate !== null) {
                 $this->twoDiscrepancyGate['line_items'] = $lineItems;
             }
             PrestaShopLogger::addLog(
                 'TwoPayment: ' . $contextLabel . ' blocked by reconciliation policy. ' .
                 'Max drift=' . $this->getTwoRoundAmount($maxDiffCents / 100) .
-                ', Tolerance=' . $this->getTwoRoundAmount(self::ORDER_RECONCILIATION_TOLERANCE),
+                ', Tolerance=' . $this->getTwoRoundAmount($toleranceCents / 100),
                 3
             );
             // Carry the numbers in the exception, not just the log: this
@@ -10107,22 +10109,35 @@ class Twopayment extends PaymentModule
      *
      * @param string $contextLabel
      * @param int $maxDiffCents
+     * @param bool $strictReconciliation
+     * @param float $toleranceCents getTwoWholeOrderToleranceCents()
      * @return bool
      */
-    private function shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, $strictReconciliation = false)
+    private function shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, $strictReconciliation, $toleranceCents)
     {
         if ((bool)$strictReconciliation) {
-            $strictToleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
-            return (int)$maxDiffCents > $strictToleranceCents;
+            return (int)$maxDiffCents > $toleranceCents;
         }
 
         if (strpos($contextLabel, 'order intent') !== false) {
             return false;
         }
 
-        // Create/update payloads must fail-closed when drift exceeds default tolerance.
-        $createToleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
-        return (int)$maxDiffCents > $createToleranceCents;
+        // Create/update payloads must fail-closed when drift exceeds the tolerance.
+        return (int)$maxDiffCents > $toleranceCents;
+    }
+
+    /**
+     * The whole-order check's tolerance, in cents, as the WooCommerce and Magento plugins have it: each line is
+     * rounded on its own, by up to half a cent, and the order once more, so the lines may drift from the order's
+     * totals by up to half a cent per line plus half for the order; never less than ORDER_RECONCILIATION_TOLERANCE.
+     *
+     * @param int $lineCount how many lines are summed
+     * @return float
+     */
+    private function getTwoWholeOrderToleranceCents($lineCount)
+    {
+        return max($this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE), ((int)$lineCount + 1) * 0.5);
     }
 
     /**

@@ -805,7 +805,9 @@ The module checks every order payload it builds against the shop.
 - each line's declared tax rate against the amounts PrestaShop stored: products, gift
   wrapping, shipping at a populated Default shipping tax code, and on an order update
   the placed gift wrapping;
-- the lines against the cart's totals (on an update, the placed order's);
+- the lines against the cart's totals (on an update, the placed order's), gross, net and
+  tax each within the larger of 0.02 and half a cent per line plus half a cent for the
+  order, since each line and the order round on their own;
 - the buyer fee line against the cart's fee line;
 - on a credit slip, the refunded shipping against the Default shipping tax code the
   order was placed at.
