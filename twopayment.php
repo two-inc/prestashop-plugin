@@ -22254,7 +22254,7 @@ class Twopayment extends PaymentModule
     /**
      * Secure by default, with fallback for corporate networks
      * 
-     * @param mixed $ch a curl handle cURL handle
+     * @param resource|CurlHandle $ch cURL handle
      * @return void
      */
     public function configureSslVerification($ch)
