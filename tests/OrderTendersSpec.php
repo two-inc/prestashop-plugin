@@ -26,6 +26,47 @@ final class OrderTendersSpec
         self::testCreditSlipSplitsAmountAndPrepaid();
         self::testRefundedRemainderCarriesThePrepaidLeft();
         self::testRecomputeHelperKeepsThePrepaidAmount();
+        self::testPlacementRecordsThePrepaidTwoHolds();
+    }
+
+    /**
+     * The row records the prepaid amount Two holds at confirmation, else the one the body sent after the subscribers,
+     * never the one the module built before them; none when it is zero.
+     */
+    private static function testPlacementRecordsThePrepaidTwoHolds(): void
+    {
+        $strip = static function (array $params): array {
+            return array_diff_key($params['payload'], array_flip(['invoice_amount', 'prepaid_amount', 'payable_amount']));
+        };
+        $add = static function (array $params): array {
+            return $params['payload'] + ['prepaid_amount' => '30.00'];
+        };
+        // [tender, subscriber edit, Two's response, expected prepaid recorded (null: none), description]
+        $cases = [
+            [30.00, null, ['prepaid_amount' => '30.00'], '30.00', 'Two holds the tenders'],
+            [30.00, null, ['data' => ['prepaid_amount' => '25.00']], '25.00', 'Two holds another amount, nested'],
+            [30.00, null, ['prepaid_amount' => '0.00'], null, 'Two holds none'],
+            [0.0, $add, [], '30.00', 'a subscriber added prepaid, Two says nothing'],
+            [30.00, $strip, [], null, 'a subscriber stripped prepaid, Two says nothing'],
+        ];
+        foreach ($cases as [$tender, $edit, $response, $expected, $description]) {
+            $cart = OrderPostprocessingSpec::seed(true);
+            $module = new TwopaymentTestHarness();
+            OrderPostprocessingSpec::harnessAsInstance($module);
+            self::declare(static function () use ($tender): array {
+                return [self::giftCard($tender)];
+            });
+            if ($edit !== null) {
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK]['twoorderpostprocessingtest'] = static function (array $params) use ($edit): void {
+                    $params['payload'] = $edit($params);
+                };
+            }
+            self::createFor($module, $cart);
+            Hook::$subscribers = [];
+            $record = json_decode((string) $module->getTwoDeclaredChargeRates($response), true);
+            TinyAssert::same($expected, is_array($record) ? ($record['prepaid'] ?? null) : null, $description);
+        }
+        TinyAssert::true(strpos((string) file_get_contents(__DIR__ . '/../controllers/front/confirmation.php'), 'getTwoDeclaredChargeRates($response)') !== false, 'the confirmation writes the row from Two\'s response');
     }
 
     /**
@@ -123,7 +164,7 @@ final class OrderTendersSpec
             ['type' => 'gift_card', 'label' => 'Card 1234', 'amount' => 30.0, 'source' => 'tendertest'],
             ['type' => 'store_credit', 'label' => 'Credit', 'amount' => 5.5, 'source' => 'tendertest'],
         ], $seen, 'create: the subscribers see the tenders in order_tenders');
-        TinyAssert::same('35.50', json_decode((string) $module->getTwoDeclaredChargeRates(), true)['prepaid'] ?? null, 'create: the row records the prepaid amount');
+        TinyAssert::same('35.50', json_decode((string) $module->getTwoDeclaredChargeRates(['gross_amount' => '114.50']), true)['prepaid'] ?? null, 'create: the row records the prepaid amount sent');
     }
 
     /**
