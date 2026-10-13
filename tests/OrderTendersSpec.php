@@ -28,6 +28,39 @@ final class OrderTendersSpec
         self::testRecomputeHelperKeepsThePrepaidAmount();
         self::testPlacementRecordsThePrepaidTwoHolds();
         self::testRefundedAfterAWhollyPrepaidRefundSendsTheRest();
+        self::testSlipsInARowDrawDownTheTenders();
+    }
+
+    /**
+     * Slips one after another: each prepaid part comes off what Two still holds of the tenders, and a slip returning
+     * more than is left is refused before it is sent.
+     */
+    private static function testSlipsInARowDrawDownTheTenders(): void
+    {
+        $held = [];
+        // [slip, returned, expected [amount, prepaid] or null when refused]
+        foreach ([[50.00, 20.00, ['30.00', '20.00']], [50.00, 10.00, ['40.00', '10.00']], [20.00, 5.00, null]] as $i => [$slip, $returned, $expected]) {
+            StubStore::reset();
+            PrestaShopLogger::$logs = [];
+            Hook::$subscribers = [];
+            $twoOrder = RefundSpec::fulfilledOrder(120.00, $held);
+            $twoOrder['prepaid_amount'] = '30.00';
+            $module = RefundSpec::makeModule($twoOrder, ['two_order_id' => 'two-order-uuid', 'two_declared_rates' => '{"prepaid":"30.00"}']);
+            self::declare(static function (array $params) use ($returned): array {
+                return $params['order_slip'] !== null ? [self::giftCard($returned)] : [];
+            });
+            $module->hookActionOrderSlipAdd(['order' => RefundSpec::makeOrder(), 'order_slip' => RefundSpec::makeSlip(700 + $i, $slip)]);
+            $refunds = $module->refundCalls();
+            if ($expected === null) {
+                TinyAssert::count(0, $refunds);
+                TinyAssert::count(1, $module->notSent);
+                continue;
+            }
+            TinyAssert::same($expected, [$refunds[0]['payload']['amount'], $refunds[0]['payload']['prepaid_amount']], 'slip ' . ($i + 1));
+            $refund = RefundSpec::twoRefund('-' . number_format($slip, 2, '.', ''), []);
+            $refund['prepaid_amount'] = '-' . $expected[1];
+            $held[] = $refund;
+        }
     }
 
     /**
@@ -349,8 +382,10 @@ final class OrderTendersSpec
         // [placed prepaid, Two's refunds, slip, returned to tenders, expected [amount, prepaid] or null when unchanged, description]
         $cases = [
             ['30.00', [], 50.00, 20.00, ['30.00', '20.00'], 'partial refund'],
+            ['30.00', [], 50.00, 35.00, 'refused', 'returns more than the tenders paid: refused'],
+            ['30.00', [$earlier], 50.00, 6.00, 'refused', 'returns more than is left at Two: refused'],
             ['30.00', [], 150.00, 30.00, ['120.00', '30.00'], 'full refund'],
-            ['30.00', [$earlier], 50.00, 20.00, ['30.00', '5.00'], 'after a refund that used the tenders: prepaid capped, guard counts amounts'],
+            ['30.00', [$earlier], 50.00, 5.00, ['45.00', '5.00'], 'after a refund that used the tenders: the guard counts amounts'],
             [null, [], 50.00, 20.00, null, 'placed before tenders: unchanged'],
         ];
         foreach ($cases as [$placed, $refunds, $slip, $returned, $expected, $description]) {
@@ -365,6 +400,11 @@ final class OrderTendersSpec
             });
             $module->hookActionOrderSlipAdd(['order' => RefundSpec::makeOrder(), 'order_slip' => RefundSpec::makeSlip(601, $slip)]);
             $refunds = $module->refundCalls();
+            if ($expected === 'refused') {
+                TinyAssert::count(0, $refunds);
+                TinyAssert::same([[5100, 601, 'it returns more to gift cards or store credit than is left of what they paid']], $module->notSent, $description . ': the order says why');
+                continue;
+            }
             TinyAssert::count(1, $refunds);
             $payload = $refunds[0]['payload'];
             if ($expected === null) {

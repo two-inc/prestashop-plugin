@@ -1012,7 +1012,9 @@ Every update of an order placed with tenders declares them, even once they are z
 an update without `prepaid_amount` resets it to zero at Two. A credit slip's refund
 carries `amount`, what the shop refunded through Two (the slip less what the
 modules declare it returned to the tenders), and `prepaid_amount`, the rest of its
-lines, up to what of the tenders Two still holds. Marking the order Refunded after
+lines. A slip that returns more to the tenders than the slip itself, or than Two
+still holds of them (after earlier refunds), is not sent: Two would refuse it, so the
+order gets a private note saying why, to refund it in the Merchant Portal. Marking the order Refunded after
 credit slips refunds what is outstanding as `amount` and what is left of the tenders
 as `prepaid_amount`. A capture fulfils the whole order and carries no amounts, and the
 `order_intent` body is unchanged.

@@ -6041,8 +6041,15 @@ class Twopayment extends PaymentModule
         $refund_prepaid = null;
         $placed_prepaid = $this->getTwoPlacedPrepaid($orderpaymentdata);
         if ($placed_prepaid > 0) {
-            $returned = min($slip_amount, TwoOrderTenders::total($this->getTwoOrderTenders(isset($order->id_cart) ? new Cart((int)$order->id_cart) : null, $order, $slip)));
-            list($refund_amount, $refund_prepaid) = self::splitTwoRefund($slip_amount, round($slip_amount - $returned, 2), $this->getTwoPrepaidLeft($current_two_order, $placed_prepaid));
+            $returned = TwoOrderTenders::total($this->getTwoOrderTenders(isset($order->id_cart) ? new Cart((int)$order->id_cart) : null, $order, $slip));
+            $prepaid_left = $this->getTwoPrepaidLeft($current_two_order, $placed_prepaid);
+            // Two refuses a refund returning more to the tenders than the slip, or than it still holds of them, and one
+            // with nothing in it: said plainly instead of sent.
+            if ($returned > min($slip_amount, $prepaid_left) + 0.005) {
+                PrestaShopLogger::addLog('TwoPayment: Partial refund not sent - slip ' . $slip_id . ' returns ' . $returned . ' to the tenders, more than the slip (' . $slip_amount . ') or the prepaid amount left at Two (' . $prepaid_left . '). Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order, 2);
+                return $this->l('it returns more to gift cards or store credit than is left of what they paid');
+            }
+            list($refund_amount, $refund_prepaid) = self::splitTwoRefund($slip_amount, round($slip_amount - $returned, 2), $prepaid_left);
         }
 
         // Reject if this slip would push total refunds past the order gross.
