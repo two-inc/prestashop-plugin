@@ -753,6 +753,13 @@ subtotals" setting sends them), the order-level `net_amount` / `tax_amount` /
 passes an empty array. Any part of it may be changed, including gross amounts, lines,
 totals and fields the module does not itself send.
 
+`order_confirm` and `cancel` take no body at Two's API, so they are always sent empty,
+as the Magento plugin sends them. The hook still runs on them, with an empty `payload`
+and the usual `context`. A body a subscriber returns there is ignored and logged with
+the paths it set, never their values; a subscriber that throws is logged with its
+exception's class and where it was thrown, never the message, and the request is still
+sent: by then PrestaShop has already confirmed or cancelled the order.
+
 `context` (array):
 
 | Key | Type | Meaning |
@@ -790,10 +797,10 @@ Once per outbound order request, immediately before it is sent:
 | `order_intent` | The checkout's order-intent pre-check (`precheck`), both when it is built for the checkout and when the module sends it to Two, which it rebuilds from the cart rather than take from the browser; and the authoritative check at payment submit (`strict_intent`) |
 | `order_create` | Order creation at checkout (`checkout`), and the rebuild the confirmation step hashes to detect a cart changed during payment (`snapshot_hash`, not sent) |
 | `order_update` | An admin order edit, a tracking number, the merchant order id sync after confirmation, and the rebuild that splits a Refunded remainder by tax rate after credit slips (`refund_remainder`, not sent). An admin edit or tracking number Two would refuse is built, so the hook runs, but not sent |
-| `order_confirm` | The buyer's return from verification |
+| `order_confirm` | The buyer's return from verification. Sent with no body |
 | `capture` | The fulfilment status |
 | `refund` | The refunded status (a full refund with no body; after credit slips, what is left, as `{amount, currency, line_items, tax_subtotals}`) and a credit slip (a partial refund, `{amount, currency, line_items, tax_subtotals}`), `tax_subtotals` only while the "Validate tax subtotals" setting is on. Each line is `{id, quantity, unit_price, discount_amount, net_amount, tax_amount, gross_amount}`, where `id` is the Two order line it refunds; `line_items` is absent when the refund could not be matched to the order's lines |
-| `cancel` | The cancelled status, a buyer cancel, and the module's own clean-up cancels |
+| `cancel` | The cancelled status, a buyer cancel, and the module's own clean-up cancels. Sent with no body |
 
 The hook also runs on every order-intent pre-check during checkout, so keep
 subscribers cheap.
@@ -921,7 +928,8 @@ by tax rate against the order rebuilt through the hook (`order_update`,
 remainder, and the order's note says the hook stopped it.
 
 A subscriber that throws, or leaves something that is not an array or cannot be
-JSON-encoded, has a bug rather than a declaration. That request is not sent: the
+JSON-encoded, has a bug rather than a declaration. On any request but `order_confirm`
+and `cancel`, which are sent empty regardless, that request is not sent: the
 module log gets `TWO_ORDER_POSTPROCESSING_HOOK_FAILED` with the request type, the
 back office shows a notice on admin actions, and the buyer sees the module's existing
 generic refusal. It never falls back to the unedited payload.

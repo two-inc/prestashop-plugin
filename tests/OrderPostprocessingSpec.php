@@ -49,6 +49,7 @@ final class OrderPostprocessingSpec
         self::testSubscriberThrowingGetsTheGenericCheckoutMessage();
         self::testDispatchKeepsCoreSemanticsButNotItsSwallow();
         self::testAdminEditSurvivesAThrowingSubscriber();
+        self::testBodylessRequestsAreSentEmpty();
         self::testApiRejectionReachesTheLogAndTheOrder();
         self::testOrderIntentRelayBuildsThePayloadItself();
         self::testEachRequestTypeFiresExactlyOnce();
@@ -343,6 +344,11 @@ final class OrderPostprocessingSpec
                 return;
             case 'not_json':
                 $params['payload']['order_note'] = "\xB1\x31";
+
+                return;
+            case 'body':
+                $params['payload']['reason'] = 'buyer@example.com lives at Calle Uno 1';
+                $params['payload']['buyer']['email'] = 'buyer@example.com';
 
                 return;
             case 'body_on_cancel':
@@ -1069,8 +1075,51 @@ final class OrderPostprocessingSpec
         self::harnessAsInstance($module);
         $broken();
         $response = $module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/x/cancel', [], 'POST');
-        TinyAssert::same([0, TwoOrderPostprocessing::CODE_HOOK_FAILED], [$response['http_status'], $response['error_code']], 'a cancel is refused unsent with the code');
-        TinyAssert::same([], $module->sent, 'nothing is sent');
+        TinyAssert::same(200, $response['http_status'], 'a cancel, which takes no body, is still sent');
+        TinyAssert::same([['endpoint' => '/v1/order/x/cancel', 'payload' => [], 'method' => 'POST']], $module->sent, 'sent empty');
+    }
+
+    /**
+     * Confirm and cancel take no body at Two's API, so they are sent empty whatever the subscribers do, as the Magento
+     * plugin sends them: the hook still runs, with an empty payload and the usual context. A body it returns is logged
+     * by its paths, a throw or a non-array by its type, never a value or a message, and neither stops the request.
+     */
+    private static function testBodylessRequestsAreSentEmpty(): void
+    {
+        $drivers = [];
+        foreach (self::requestDrivers() as [$type, $trigger, , $driver]) {
+            $drivers[$type . '/' . $trigger] = $driver;
+        }
+        // [driver, endpoint suffix, subscriber mode, expected log fragment, description]
+        $cases = [];
+        foreach (['order_confirm/payment_return' => ['/confirm', 'confirm'], 'cancel/status_change' => ['/cancel', 'cancel']] as $key => [$suffix, $label]) {
+            $type = explode('/', $key)[0];
+            $trigger = explode('/', $key)[1];
+            $prefix = 'The ' . $type . ' request (' . $trigger . ') takes no body, so it was sent empty: ';
+            $cases[] = [$drivers[$key], $suffix, 'body', $prefix . 'the body the order postprocessing hook returned was ignored. Paths: /reason, /buyer', 'a ' . $label . ' given a body'];
+            $cases[] = [$drivers[$key], $suffix, 'throws', $prefix . 'the order postprocessing hook threw RuntimeException at ', 'a ' . $label . ' whose subscriber throws'];
+            $cases[] = [$drivers[$key], $suffix, 'non_array', $prefix . 'the order postprocessing hook left NULL, which was ignored.', 'a ' . $label . ' whose subscriber leaves a non-array'];
+        }
+        foreach ($cases as [$driver, $suffix, $mode, $log, $description]) {
+            $cart = self::seed(true);
+            $module = self::module();
+            self::harnessAsInstance($module);
+            $calls = [];
+            self::subscribe($mode, $calls);
+            $driver($module, $cart);
+
+            TinyAssert::count(1, $calls, $description . ': the hook runs once');
+            TinyAssert::same([], $calls[0]['payload_in'], $description . ': with an empty payload');
+            $sent = array_values(array_filter($module->sent, static function ($r) use ($suffix) {
+                return substr($r['endpoint'], -strlen($suffix)) === $suffix;
+            }));
+            TinyAssert::count(1, $sent, $description . ': sent');
+            TinyAssert::same([], $sent[0]['payload'], $description . ': sent empty');
+            TinyAssert::true(self::logged($log), $description . ': logged (' . $log . ')');
+            TinyAssert::false(self::logged('Calle Uno') || self::logged('buyer@example.com'), $description . ': no value or message is logged');
+            TinyAssert::false(self::logged(TwoOrderPostprocessing::CODE_HOOK_FAILED), $description . ': not a hook failure');
+            TinyAssert::same([], $module->warnings, $description . ': no back-office notice');
+        }
     }
 
     /**
@@ -1543,15 +1592,6 @@ final class OrderPostprocessingSpec
                 TinyAssert::true($context['cart'] instanceof Cart, $description . ': the cart');
             }
         }
-
-        // A body a subscriber gives a body-less request goes out too: Two's API judges it.
-        self::seed(true);
-        $module = self::module();
-        self::harnessAsInstance($module);
-        $calls = [];
-        self::subscribe('body_on_cancel', $calls);
-        $module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/x/cancel', [], 'POST');
-        TinyAssert::same([['endpoint' => '/v1/order/x/cancel', 'payload' => ['reason' => 'added'], 'method' => 'POST']], $module->sent, 'a cancel given a body sends it as returned');
 
         // The default shipping tax code is the fallback rate; unset, it is null.
         $cart = self::seed(true);

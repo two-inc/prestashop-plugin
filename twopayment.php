@@ -9571,6 +9571,8 @@ class Twopayment extends PaymentModule
      * runTwoShopMatchChecks(). Whether the payload adds up by itself is left
      * to Two's API (TWO-26283).
      *
+     * Confirm and cancel take no body: they go to postprocessTwoBodylessRequest(), and always return an empty payload.
+     *
      * @param string $requestType a TwoOrderPostprocessing::REQUEST_* value
      * @param array $payload the complete request body; empty for a request with none
      * @param array $context buildTwoOrderPostprocessingContext()
@@ -9581,6 +9583,11 @@ class Twopayment extends PaymentModule
      */
     public function postprocessOrderRequest($requestType, array $payload, array $context, $checks = null)
     {
+        if (TwoOrderPostprocessing::isBodyless($requestType)) {
+            $this->postprocessTwoBodylessRequest($requestType, $context);
+
+            return array();
+        }
         $before = $payload;
         $handlers = array();
         $outerChecks = self::$twoActiveOrderChecks;
@@ -9639,6 +9646,42 @@ class Twopayment extends PaymentModule
         }
 
         return $payload;
+    }
+
+    /**
+     * The hook on a request Two's API takes no body for (confirm and cancel), as the Magento plugin runs it: the
+     * subscribers see an empty payload and the usual context, and the request is sent empty whatever they do. A body
+     * they return is logged by its paths, a throw by its class and throw site, and neither stops the request: by now
+     * PrestaShop has already confirmed or cancelled the order.
+     *
+     * @param string $requestType
+     * @param array $context
+     * @return void
+     */
+    private function postprocessTwoBodylessRequest($requestType, array $context)
+    {
+        $payload = array();
+        $outerChecks = self::$twoActiveOrderChecks;
+        $outerRefusal = self::$twoShopMatchRefusal;
+        self::$twoActiveOrderChecks = null;
+        self::$twoShopMatchRefusal = null;
+        $prefix = 'TwoPayment: The ' . $requestType . ' request (' . $context['trigger'] . ') takes no body, so it was sent empty: ';
+        try {
+            TwoOrderPostprocessing::dispatch($payload, $context);
+        } catch (Throwable $e) {
+            // Never the exception's message, which can carry buyer data.
+            PrestaShopLogger::addLog($prefix . 'the order postprocessing hook threw ' . get_class($e) . ' at ' . TwoDiscrepancySnapshot::throwSite($e) . ', which was ignored.', 2);
+
+            return;
+        } finally {
+            self::$twoActiveOrderChecks = $outerChecks;
+            self::$twoShopMatchRefusal = $outerRefusal;
+        }
+        if (!is_array($payload)) {
+            PrestaShopLogger::addLog($prefix . 'the order postprocessing hook left ' . gettype($payload) . ', which was ignored.', 2);
+        } elseif ($payload !== array()) {
+            PrestaShopLogger::addLog($prefix . 'the body the order postprocessing hook returned was ignored. Paths: ' . implode(', ', TwoOrderPostprocessing::diffPaths(array(), $payload)), 2);
+        }
     }
 
     /**
@@ -9937,7 +9980,8 @@ class Twopayment extends PaymentModule
      * @param Cart|null $cart
      * @param Order|null $order
      * @param array $headers
-     * @param array|null $sentPayload set to the payload as the subscribers returned it, which is what is sent; null when refused
+     * @param array|null $sentPayload set to the payload as the subscribers returned it, which is what is sent (always empty
+     *   for confirm and cancel); null when refused
      * @param array|null $checks the request's shop-match checks, see postprocessOrderRequest()
      * @param array|null $twoOrder the order as Two's GET returned it, for the context's order_lines
      * @return array the API response; a refusal returns http_status 0 and the code, unsent
