@@ -64,6 +64,11 @@ final class OrderTendersSpec
             self::updateFor($module, '{"prepaid":"30.00"}');
         }, 'tenders could not be read');
         TinyAssert::same(1, $logged(), 'edit with prepaid: logged');
+
+        // The Refunded remainder's rebuild of an order placed with prepaid is never sent, so it goes on.
+        $row = ['two_order_id' => 'two-order-9731', 'two_order_reference' => 'ref', 'two_day_on_invoice' => '30', 'two_declared_rates' => '{"prepaid":"30.00"}'];
+        $rebuilt = $module->getTwoUpdateOrderData(OrderPostprocessingSpec::order(), $row, Twopayment::TRIGGER_REFUND_REMAINDER);
+        TinyAssert::true(!empty($rebuilt['tax_subtotals']) || !empty($rebuilt['line_items']), 'remainder rebuild goes on with no tenders');
         unset(Hook::$subscribers[TwoOrderTenders::HOOK]);
     }
 
