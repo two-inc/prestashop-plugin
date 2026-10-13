@@ -230,6 +230,15 @@ TWO-26274, TWO-26283. The README section "The module's checks" is the specificat
 - Never put a check back in the builder before the hook: a payload the module cannot build
   at all (empty cart, bad address, failed split) is the only refusal there.
 
+## Tenders Go As prepaid_amount; Only An Order Placed With One Declares It Later
+
+TWO-26326. The README section "Tenders" is the specification. Tenders come only from the
+`actionTwoOrderTenders` hook (`classes/TwoOrderTenders.php`); a cart rule is a discount line,
+never a tender. The prepaid amount an order was placed with is recorded under `prepaid` in
+`two_declared_rates`, written only when it is above zero, so every other row and body stays
+byte-identical; only an order with that record declares prepaid on its updates and refunds.
+Two's GET order reports a refund's `total_amount` as its `amount` plus its `prepaid_amount`.
+
 ## Tax Codes On 0% Lines Are An Aid, Never A Gate
 
 TWO-24877, TWO-26153. Two requires a `tax_code` on every 0% line of a Spanish merchant's order.

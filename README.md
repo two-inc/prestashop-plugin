@@ -766,6 +766,7 @@ totals and fields the module does not itself send.
 | `contract_version` | int | `1` |
 | `order_lines` | array or null | Two's lines for the order, not PrestaShop's `order_detail` rows (those are on `order`): the order's line items as Two holds them, with Two's line ids. They are the lines of the last create or update Two accepted, after the subscribers' edits, as Two's `GET /v1/order/{id}` returns them. Each carries its `id`, `type`, `gross_amount`, `net_amount`, `tax_amount`, `tax_rate`, `tax_code` and the other line fields. Given on `refund` and `order_update`. Null on the other request types, when the module could not read the order from Two, and on the merchant order id sync of a repeated confirmation callback, which reads no order. Read-only: changing it changes nothing |
 | `order_refunds` | array or null | Two's refunds for the order: every refund Two already holds for it, from the same `GET /v1/order/{id}` response as `order_lines`. Each carries its `id`, its `total_amount` (Two records refunds as negative amounts) and its `line_items`, and each refund line names the order line it credited in `prototype_id`, with the amounts refunded on it, `gross_amount` among them. A refund line has its own `id` and the name, description, type, rate and tax code of the order line it was made from, and Two's responses leave its `prototype_id` empty, so where Two leaves it empty the module fills in its best match by name, description, type, rate and tax code: this is the module's inference, not Two's record. Where several order lines match, a refund's matching lines go to different order lines, the largest to the one with the most left to refund. A refund line that matches none keeps it empty, so a line renamed or re-rated by an update after a refund no longer matches its earlier refunds and reads as unrefunded. Everything else is as Two returned it. Given on `refund` and `order_update`, on the same requests and with the same null rules as `order_lines`. On a refund it holds the earlier refunds, not the one being sent. Read-only: changing it changes nothing |
+| `order_tenders` | array | The order's tenders (see [Tenders](#tenders)): what has already paid part of the order without being an order line, as the modules on `actionTwoOrderTenders` declare them for the cart or order. Each is `{type, label, amount, source}`, `type` being `gift_card`, `store_credit` or `other` and `amount` a positive float in the order currency. Empty on a shop with no such module, which is every shop on core PrestaShop alone. Given on every request. Read-only: changing it changes nothing |
 
 As on every hook, `$params` also carries core's `cookie`, `cart` and `altern`.
 `$params['cart']` is the visitor's cart from `Context`, which on an admin edit, a
@@ -939,6 +940,96 @@ changes nothing else. Each total, and each per-rate subtotal, is the sum of its 
 plus any residual it carried before the hook; the module's own payloads carry none, so
 it is the sum of the lines. Its result replaces whatever the payload held, hand edits
 included, and it never writes `-0.00`. It is opt-in and part of this contract.
+
+### Tenders
+
+A tender is anything that has already paid part of the order without being an order
+line, such as a gift card or store credit. Two needs to know about it because Two only
+funds what is still outstanding: the tender's part of the order was paid by the buyer
+some other way.
+
+Core PrestaShop has no tenders. Its vouchers are cart rules, and a cart rule is a
+discount line on the order already, so it is never a tender. A module that takes part
+of the payment outside the cart (a gift card or store credit it keeps itself, with
+the cart total PrestaShop works out still including that part) declares it on the
+`actionTwoOrderTenders` hook. The hook is normally empty.
+
+| | |
+| --- | --- |
+| Name | `actionTwoOrderTenders` |
+| Subscribe | `$this->registerHook('actionTwoOrderTenders')` and a `hookActionTwoOrderTenders($params)` method |
+| Arguments | `$params['cart']` (`Cart` or null), `$params['order']` (`Order` or null, before the order exists), `$params['order_slip']` (a credit slip, or null) and `$params['tenders']`, a list bound by reference that the method appends to |
+| Entry | `type` (`gift_card`, `store_credit` or `other`), `label` (a name for logs and display, never a redeemable card code), `amount` (what it paid, positive, in the order currency) and `source` (your module) |
+
+With no `order_slip`, declare what the cart or order was paid with. With an
+`order_slip`, declare what that credit slip returned to the tenders.
+
+```php
+public function hookActionTwoOrderTenders($params)
+{
+    $cart = $params['cart'];
+    if ($cart === null) {
+        return;
+    }
+    if ($params['order_slip'] !== null) {
+        $amount = $this->amountReturnedToCard($params['order_slip']);
+    } else {
+        $amount = $this->amountPaidByCard((int) $cart->id);
+    }
+    if ($amount > 0) {
+        $params['tenders'][] = array(
+            'type' => 'gift_card',
+            'label' => 'Gift card',
+            'amount' => $amount,
+            'source' => $this->name,
+        );
+    }
+}
+```
+
+An entry whose `amount` is zero is skipped. One that is not an array, or whose
+`amount` is missing, negative or not a number, is refused and logged with its type,
+source and amount, never its label. An unknown `type` is reported as `other`. An
+exception from a subscriber stops the request, so an order is never sent as if it had
+no tenders because their module failed.
+
+**Never declare a tender for something you also apply as a cart rule.** The cart rule
+is already a discount line, so the amount would be counted twice.
+
+**What reaches Two's API.** Tenders reach the API as `prepaid_amount`. An order with
+tenders is sent as an invoice for its full lines with the tenders declared as already
+paid. Its `order_create` and `order_update` bodies carry:
+
+| Field | Value |
+| --- | --- |
+| `net_amount`, `tax_amount`, lines | The full order, as without tenders |
+| `invoice_amount` | `net_amount` plus `tax_amount` |
+| `prepaid_amount` | The sum of the tenders |
+| `payable_amount` | `invoice_amount` less `prepaid_amount`: the outstanding amount, which Two funds |
+| `gross_amount` | Equal to `payable_amount` |
+
+Every update of an order placed with tenders declares them, even once they are zero:
+an update without `prepaid_amount` resets it to zero at Two. A credit slip's refund
+carries `amount`, what the shop refunded through Two (the slip less what the
+modules declare it returned to the tenders), and `prepaid_amount`, the rest of its
+lines, up to what of the tenders Two still holds. Marking the order Refunded after
+credit slips refunds what is outstanding as `amount` and what is left of the tenders
+as `prepaid_amount`. A capture fulfils the whole order and carries no amounts, and the
+`order_intent` body is unchanged.
+
+An order with no tenders carries none of `invoice_amount`, `prepaid_amount` and
+`payable_amount`, and its bodies are as they always were. So are the updates and
+refunds of an order placed with none, or placed before tenders were sent: the module
+records the prepaid amount an order was placed with, and only an order placed with one
+declares it later.
+
+**The order in PrestaShop.** PrestaShop checks the payment against the cart total,
+which includes the tenders, so the module records the order's Two payment at the full
+cart total rather than at what Two funds. A tender module that wants its own payment
+row on the order records it itself.
+
+`recomputeTwoOrderTotals()` keeps the `prepaid_amount` a body carries and sets
+`invoice_amount`, `payable_amount` and `gross_amount` from the lines.
 
 ### The buyer fee is priced before the hook
 
