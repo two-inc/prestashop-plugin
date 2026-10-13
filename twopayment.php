@@ -21855,7 +21855,9 @@ class Twopayment extends PaymentModule
         // stored addslashes()-escaped on 1.7, so a long call is cut, as the discrepancy snapshot is.
         $message .= ' - ' . json_encode($context, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
         if (strlen(addslashes($message)) > TwoDiscrepancySnapshot::MAX_BYTES) {
-            $message = mb_strcut($message, 0, (int)(TwoDiscrepancySnapshot::MAX_BYTES / 2), 'UTF-8') . ' [cut]';
+            // addslashes() at most doubles the kept bytes, so this fits MAX_BYTES with the marker.
+            $marker = ' [cut]';
+            $message = mb_strcut($message, 0, (int)((TwoDiscrepancySnapshot::MAX_BYTES - strlen($marker)) / 2), 'UTF-8') . $marker;
         }
         try {
             PrestaShopLogger::addLog($message, $severity);
