@@ -11403,7 +11403,7 @@ class Twopayment extends PaymentModule
 
         foreach ($line_items as $line_item) {
             // The hidden surcharge product is NOT merchandise: the Two payload
-            // carries the fee as its own appended SERVICE line
+            // carries the fee as its own appended BUYER_FEE line
             // (buildTwoSurchargeLineItemForCart), and the fee basis must never
             // include the fee itself. Skip it here; reconciliation subtracts
             // its cart totals symmetrically.
@@ -18895,7 +18895,7 @@ class Twopayment extends PaymentModule
             'unit_price' => (string) $this->getTwoRoundAmount($net),
             'quantity' => 1,
             'quantity_unit' => 'item',
-            'type' => 'SERVICE',
+            'type' => 'BUYER_FEE',
         );
     }
 

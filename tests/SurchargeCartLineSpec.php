@@ -365,7 +365,7 @@ final class SurchargeCartLineSpec
         ]);
 
         $feeLines = array_values(array_filter($payload['line_items'], static function ($item) {
-            return isset($item['type']) && $item['type'] === 'SERVICE';
+            return isset($item['type']) && $item['type'] === 'BUYER_FEE';
         }));
         TinyAssert::count(1, $feeLines);
         TinyAssert::same(round((float) $cartLine['total'], 2), round((float) $feeLines[0]['net_amount'], 2));
@@ -551,13 +551,13 @@ final class SurchargeCartLineSpec
             Hook::$subscribers[TwoOrderPostprocessing::HOOK]['merchanthandler'] = static function (array $params) use ($mode, $gatedModule): void {
                 if ($mode === 'removes') {
                     $params['payload']['line_items'] = array_values(array_filter($params['payload']['line_items'], static function ($line) {
-                        return $line['type'] !== 'SERVICE';
+                        return $line['type'] !== 'BUYER_FEE';
                     }));
                     $params['payload'] = $gatedModule->recomputeTwoOrderTotals($params['payload']);
                 }
                 if ($mode === 'changes') {
                     foreach ($params['payload']['line_items'] as $i => $line) {
-                        if ($line['type'] === 'SERVICE') {
+                        if ($line['type'] === 'BUYER_FEE') {
                             $params['payload']['line_items'][$i]['name'] = 'Invoice fee';
                         }
                     }
@@ -630,7 +630,7 @@ final class SurchargeCartLineSpec
 
             TinyAssert::same(null, $threw, 'order create must complete during an outage: ' . $description);
             $feeLines = array_values(array_filter($payload['line_items'], static function ($item) {
-                return isset($item['type']) && $item['type'] === 'SERVICE';
+                return isset($item['type']) && $item['type'] === 'BUYER_FEE';
             }));
             TinyAssert::count(0, $feeLines, 'no fee line for a term pricing nothing: ' . $description);
             TinyAssert::count(0, $module->feeRequests, 'and never quoted, so an outage cannot refuse it: ' . $description);

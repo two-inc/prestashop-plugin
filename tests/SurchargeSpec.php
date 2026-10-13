@@ -1332,7 +1332,7 @@ final class SurchargeSpec
         $cart->id_currency = 978;
         $cart->id_address_invoice = 900;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 100.0);
-        TinyAssert::same('SERVICE', $line['type']);
+        TinyAssert::same('BUYER_FEE', $line['type']);
         TinyAssert::same('Payment terms fee - 30 days', $line['name']);
         TinyAssert::same('5.00', $line['net_amount']);
         TinyAssert::same('0.25', $line['tax_rate'], 'tax rate comes from the selected group, never the pricing response');
@@ -1473,7 +1473,7 @@ final class SurchargeSpec
         $cart->id_currency = 978;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 100.0, 60);
         TinyAssert::same(60, $module->capturedDays, 'explicit term override must reach the fee quote, not the default term');
-        TinyAssert::same('SERVICE', $line['type']);
+        TinyAssert::same('BUYER_FEE', $line['type']);
     }
 
     private static function testOrderPayloadInjectsSurchargeLineAndBumpsTotals(): void
@@ -1576,7 +1576,7 @@ final class SurchargeSpec
         TinyAssert::same('6.75', $payload['tax_amount']);
 
         $feeLines = array_values(array_filter($payload['line_items'], function ($item) {
-            return isset($item['type']) && $item['type'] === 'SERVICE' && $item['name'] === 'Payment terms fee - 30 days';
+            return isset($item['type']) && $item['type'] === 'BUYER_FEE' && $item['name'] === 'Payment terms fee - 30 days';
         }));
         TinyAssert::count(1, $feeLines);
         TinyAssert::same('5.00', $feeLines[0]['net_amount']);
@@ -1687,7 +1687,7 @@ final class SurchargeSpec
             ];
             try {
                 $payload = $module->getTwoUpdateOrderData($order, ['two_order_reference' => 'ref-8001', 'two_day_on_invoice' => '30']);
-                $feeLines = array_values(array_filter($payload['line_items'], fn ($item) => ($item['type'] ?? '') === 'SERVICE'));
+                $feeLines = array_values(array_filter($payload['line_items'], fn ($item) => ($item['type'] ?? '') === 'BUYER_FEE'));
                 $line = $feeLines[0] ?? [];
                 $actual = implode('/', [count($feeLines), $line['net_amount'] ?? '-', $line['tax_amount'] ?? '-', $line['gross_amount'] ?? '-', $line['tax_rate'] ?? '-', $line['name'] ?? '-', $payload['gross_amount']]);
             } catch (Exception $e) {
