@@ -6036,7 +6036,7 @@ class Twopayment extends PaymentModule
         $refund_prepaid = null;
         $placed_prepaid = $this->getTwoPlacedPrepaid($orderpaymentdata);
         if ($placed_prepaid > 0) {
-            $returned = min($slip_amount, TwoOrderTenders::total($this->getTwoOrderTenders(new Cart((int)$order->id_cart), $order, $slip)));
+            $returned = min($slip_amount, TwoOrderTenders::total($this->getTwoOrderTenders(isset($order->id_cart) ? new Cart((int)$order->id_cart) : null, $order, $slip)));
             list($refund_amount, $refund_prepaid) = self::splitTwoRefund($slip_amount, round($slip_amount - $returned, 2), $this->getTwoPrepaidLeft($current_two_order, $placed_prepaid));
         }
 
@@ -6716,6 +6716,11 @@ class Twopayment extends PaymentModule
             foreach ($two_order['refunds'] as $refund) {
                 if (isset($refund['total_amount'])) {
                     $total += abs((float)$refund['total_amount']);
+                    // Two's total_amount is the refund's amount plus its prepaid part (TWO-26326): only the amount
+                    // was refunded out of what Two funded. Zero, so unchanged, on an order with no tenders.
+                    if (isset($refund['prepaid_amount']) && is_numeric($refund['prepaid_amount'])) {
+                        $total -= abs((float)$refund['prepaid_amount']);
+                    }
                 }
             }
         }
@@ -9902,6 +9907,10 @@ class Twopayment extends PaymentModule
         $payload['gross_amount'] = (string) $this->getTwoRoundAmount($totals['gross']);
         if (array_key_exists('tax_subtotals', $payload)) {
             $payload['tax_subtotals'] = $subtotals;
+        }
+        // An order body with tenders (TWO-26326) keeps the prepaid amount it declares: invoice, payable and gross follow the lines.
+        if (isset($payload['prepaid_amount']) && is_numeric($payload['prepaid_amount']) && !array_key_exists('amount', $payload)) {
+            $payload = $this->withTwoPrepaid($payload, array(array('amount' => (float) $payload['prepaid_amount'])), true);
         }
 
         return $payload;
