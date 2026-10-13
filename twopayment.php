@@ -3343,7 +3343,7 @@ class Twopayment extends PaymentModule
     protected function getTwoDefaultShippingTaxRulesGroupOptions()
     {
         $options = array(
-            array('id' => '', 'name' => $this->l('-- Not set: refuse the order instead --')),
+            array('id' => '', 'name' => $this->l('-- Not set: send shipping as charged, unchecked --')),
             array('id' => '0', 'name' => $this->l('No tax')),
         );
         $seen = array(0 => true);
@@ -3469,8 +3469,8 @@ class Twopayment extends PaymentModule
         }
         $trimmed = is_string($raw) ? trim($raw) : '';
         if ($trimmed === '') {
-            // Unselected is a legitimate, and the shipped, state: it means
-            // "keep refusing". Nothing to validate.
+            // Unselected is a legitimate, and the shipped, state: shipping goes
+            // out as charged, with no module check. Nothing to validate.
             return;
         }
         $group_id = ctype_digit($trimmed) ? (int) $trimmed : -1;
