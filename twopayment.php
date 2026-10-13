@@ -6674,13 +6674,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Sum the absolute value of every existing Two refund total on an order
-     * response. Two records refund total_amount as a negative number.
-     *
-     * @param array $two_order Two order API response
-     * @return float
-     */
-    /**
      * The prepaid part of a refund on an order with tenders (TWO-26326). `amount` is always what the shop refunded
      * through Two: Two buys only the receivable the merchant defined. The lines beyond it are the prepaid part, up to
      * what of the tenders is left at Two, so the two sum to the lines; a gap beyond that is sent as it is, for Two's
@@ -6721,6 +6714,14 @@ class Twopayment extends PaymentModule
         return round(max(0.0, $prepaid), 2);
     }
 
+    /**
+     * Sum the absolute value of every existing Two refund total on an order
+     * response, less each refund's prepaid part (TWO-26326). Two records refund
+     * total_amount as a negative number.
+     *
+     * @param array $two_order Two order API response
+     * @return float
+     */
     public function getTwoOrderRefundedTotal($two_order)
     {
         $total = 0.0;
