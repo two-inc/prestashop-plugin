@@ -442,6 +442,9 @@ class Twopayment extends PaymentModule
     /** @var array|null the charge rates the last create payload declared, persisted on the Two row for updates (TWO-26085) */
     private $twoDeclaredChargeRates = null;
 
+    /** @var float|null the prepaid_amount of the last create payload built in this request, as the hook returned it (TWO-26326) */
+    private $twoSentPrepaid = null;
+
     /** @var bool the unreadable tax code mapping is logged once per request */
     private $twoTaxCodeMapLogged = false;
 
@@ -10659,19 +10662,20 @@ class Twopayment extends PaymentModule
 
         PrestaShopLogger::addLog('TwoPayment: Order creation with terms - ' . json_encode($request_data['terms']), 1);
 
-        // Tenders go as already paid (TWO-26326); the row records it, so the order's edits and refunds declare it too.
+        // Tenders go as already paid (TWO-26326).
         $tenders = $this->getTwoOrderTenders($cart, null);
         $request_data = $this->withTwoPrepaid($request_data, $tenders);
-        if (isset($request_data['prepaid_amount']) && is_array($this->twoDeclaredChargeRates)) {
-            $this->twoDeclaredChargeRates['prepaid'] = $request_data['prepaid_amount'];
-        }
 
-        return $this->postprocessOrderRequest(
+        $sent = $this->postprocessOrderRequest(
             TwoOrderPostprocessing::REQUEST_ORDER_CREATE,
             $request_data,
             $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_CREATE, $trigger, '/v1/order', $cart, null, null, $tenders),
             $pricingData['checks']
         );
+        // What the body sent declares, after the subscribers: the placement record falls back to it (TWO-26326).
+        $this->twoSentPrepaid = isset($sent['prepaid_amount']) && is_numeric($sent['prepaid_amount']) ? round((float) $sent['prepaid_amount'], 2) : 0.0;
+
+        return $sent;
     }
 
     /**
@@ -11035,11 +11039,24 @@ class Twopayment extends PaymentModule
     /**
      * The shipping classes and wrapping rate the last create payload built in this request declared, for the Two row.
      *
-     * @return string|null JSON; null when no create payload was built
+     * With $twoOrder, Two's record of the order at confirmation, the row also records the prepaid amount the order is
+     * placed with (TWO-26326): what Two holds, else what the body sent after the subscribers declared. Only an amount
+     * above zero is written, so an order with none keeps its row as it was.
+     *
+     * @param array|null $twoOrder the order as Two returned it
+     * @return string|null JSON; null when no create payload was built and nothing is prepaid
      */
-    public function getTwoDeclaredChargeRates()
+    public function getTwoDeclaredChargeRates($twoOrder = null)
     {
-        return $this->twoDeclaredChargeRates === null ? null : json_encode($this->twoDeclaredChargeRates);
+        $record = $this->twoDeclaredChargeRates;
+        $held = is_array($twoOrder) && !isset($twoOrder['prepaid_amount']) && isset($twoOrder['data']) && is_array($twoOrder['data']) ? $twoOrder['data'] : $twoOrder;
+        $prepaid = is_array($held) && isset($held['prepaid_amount']) && is_numeric($held['prepaid_amount'])
+            ? round((float) $held['prepaid_amount'], 2) : $this->twoSentPrepaid;
+        if ($twoOrder !== null && $prepaid !== null && $prepaid > 0) {
+            $record = (is_array($record) ? $record : array()) + array('prepaid' => number_format($prepaid, 2, '.', ''));
+        }
+
+        return $record === null ? null : json_encode($record);
     }
 
     /**
