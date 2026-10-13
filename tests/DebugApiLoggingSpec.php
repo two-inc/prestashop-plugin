@@ -14,6 +14,33 @@ final class DebugApiLoggingSpec
     {
         self::testExchangeLog();
         self::testEveryCallIsLogged();
+        self::testLogSurvivesCoreStorage();
+    }
+
+    /**
+     * Core strips tags from a log message and ps_log.message is a 64KB TEXT: a body with markup keeps it, escaped,
+     * and a long call is cut to fit. Columns: response body, whether the line is cut, a fragment it must keep.
+     */
+    private static function testLogSurvivesCoreStorage(): void
+    {
+        $cases = [
+            ['{"message":"<b>bad</b> request"}', false, '\\u003Cb\\u003Ebad', 'markup survives the stripping, escaped'],
+            [json_encode(['lines' => str_repeat('é', 40000)]), true, 'TwoPayment: POST /v1/order - ', 'a long call is cut to fit'],
+        ];
+        foreach ($cases as [$body, $cut, $kept, $desc]) {
+            StubStore::reset();
+            PrestaShopLogger::reset();
+            StubStore::$configuration['PS_TWO_DEBUG_MODE'] = 1;
+            $method = new ReflectionMethod(Twopayment::class, 'logTwoApiExchange');
+            $method->invoke(new TwopaymentTestHarness(), 'POST', '/v1/order', [], [], $body, 400, [], '');
+
+            TinyAssert::count(1, PrestaShopLogger::$logs, $desc . ': one log line');
+            $message = PrestaShopLogger::$logs[0]['message'];
+            TinyAssert::true(strpos($message, $kept) !== false, $desc . ': keeps ' . $kept);
+            TinyAssert::same($cut, substr($message, -6) === ' [cut]', $desc . ': cut');
+            TinyAssert::true(strlen(addslashes($message)) <= TwoDiscrepancySnapshot::MAX_BYTES, $desc . ': fits the log');
+            TinyAssert::true(mb_check_encoding($message, 'UTF-8'), $desc . ': still UTF-8');
+        }
     }
 
     private static function testExchangeLog(): void
