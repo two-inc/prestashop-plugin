@@ -37,7 +37,7 @@ class TwoOrderPostprocessing
     const MAX_DIFF_ENTRIES = 40;
 
     // Diff values outside these paths can carry buyer data, so only their path is kept.
-    const VALUE_PATHS = '#^/(line_items|tax_subtotals)(/|$)|^/(gross_amount|net_amount|tax_amount|discount_amount|discount_rate|amount|currency)$#';
+    const VALUE_PATHS = '#^/(line_items|tax_subtotals)(/|$)|^/(gross_amount|net_amount|tax_amount|discount_amount|discount_rate|amount|invoice_amount|payable_amount|prepaid_amount|currency)$#';
 
     /**
      * The payload with every object key sorted, as one string: equal strings mean an unchanged payload.
@@ -138,22 +138,23 @@ class TwoOrderPostprocessing
      * The merchant handlers dispatch() would call, in hook-position order: every
      * runnable module on the hook except the module's own default handler.
      *
+     * @param string $hook another of the module's hooks, such as TwoOrderTenders::HOOK
      * @return Module[]
      */
-    public static function runnableSubscribers()
+    public static function runnableSubscribers($hook = self::HOOK)
     {
         if (defined('PS_INSTALLATION_IN_PROGRESS')
             // 8.0+ only; 1.7 has no per-hook active flag.
-            || (method_exists('Hook', 'getHookStatusByName') && !call_user_func(array('Hook', 'getHookStatusByName'), self::HOOK))) {
+            || (method_exists('Hook', 'getHookStatusByName') && !call_user_func(array('Hook', 'getHookStatusByName'), $hook))) {
             return array();
         }
-        $list = Hook::getHookModuleExecList(self::HOOK);
+        $list = Hook::getHookModuleExecList($hook);
         if (!is_array($list)) {
             return array();
         }
         $nativeOnly = (bool) Configuration::get('PS_DISABLE_NON_NATIVE_MODULE');
         $native = $nativeOnly ? Module::getNativeModuleList() : array();
-        $method = 'hook' . ucfirst(self::HOOK);
+        $method = 'hook' . ucfirst($hook);
         $out = array();
         foreach ($list as $row) {
             $name = isset($row['module']) ? (string) $row['module'] : '';

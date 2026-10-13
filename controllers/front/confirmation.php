@@ -427,7 +427,8 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             'two_organization_number' => $company_snapshot['two_organization_number'],
         );
         // The rates the pre-order re-check just declared for this cart; an update falls back to them (TWO-26085).
-        $declared_rates = $this->module->getTwoDeclaredChargeRates();
+        // With the prepaid amount Two holds for the order, which its later edits and refunds declare (TWO-26326).
+        $declared_rates = $this->module->getTwoDeclaredChargeRates($response);
         if ($declared_rates !== null) {
             $payment_data['two_declared_rates'] = $declared_rates;
         }

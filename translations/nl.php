@@ -588,6 +588,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'de bestelling nog niet is afgehandeld';
 $_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] = 'het totaal van de bestelling niet bij de aanbieder kon worden opgehaald';
 $_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'het meer is dan er van de bestelling nog terug te betalen is';
+$_MODULE['<{twopayment}prestashop>twopayment_233dfb36989b17ae864c3c6ea327d258'] = 'het meer teruggeeft aan cadeaukaarten of tegoed dan er over is van wat zij betaalden';
 $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'de valuta van de bestelling niet kon worden bepaald';
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'de aanbieder het niet heeft geaccepteerd (HTTP %s)';
 $_MODULE['<{twopayment}prestashop>twopayment_d9fc87827359830e1eb23b712a935d76'] = 'de hook voor naverwerking van de bestelling het heeft tegengehouden';

@@ -588,6 +588,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'el pedido aún no se ha completado';
 $_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] = 'no se ha podido leer el total del pedido del proveedor';
 $_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'supera lo que queda por reembolsar del pedido';
+$_MODULE['<{twopayment}prestashop>twopayment_233dfb36989b17ae864c3c6ea327d258'] = 'devuelve a tarjetas regalo o saldo a favor más de lo que queda de lo que pagaron';
 $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'no se ha podido determinar la moneda del pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'el proveedor no lo ha aceptado (HTTP %s)';
 $_MODULE['<{twopayment}prestashop>twopayment_d9fc87827359830e1eb23b712a935d76'] = 'el hook de posprocesamiento del pedido lo detuvo';

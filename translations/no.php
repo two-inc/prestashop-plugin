@@ -588,6 +588,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_fc2b03f78ae4f468fef7e96862a9f2bb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6d31a504da6725579db8ae4171b134b9'] = 'ordren ikke er levert ennå';
 $_MODULE['<{twopayment}prestashop>twopayment_05102cb5235e2758a5b423ac01486c09'] = 'ordretotalen ikke kunne leses fra leverandøren';
 $_MODULE['<{twopayment}prestashop>twopayment_d16f5742da9a26f701b3495f35aad4fa'] = 'den er mer enn det som gjenstår å refundere på ordren';
+$_MODULE['<{twopayment}prestashop>twopayment_233dfb36989b17ae864c3c6ea327d258'] = 'den gir mer tilbake til gavekort eller tilgodehavende enn det som er igjen av det de betalte';
 $_MODULE['<{twopayment}prestashop>twopayment_ca0cec6c968f493730131810c92122e8'] = 'ordrens valuta ikke kunne fastslås';
 $_MODULE['<{twopayment}prestashop>twopayment_513f085fdb62e2ae59218f96a87df8cf'] = 'leverandøren ikke godtok den (HTTP %s)';
 $_MODULE['<{twopayment}prestashop>twopayment_d9fc87827359830e1eb23b712a935d76'] = 'kroken for etterbehandling av ordren stoppet den';

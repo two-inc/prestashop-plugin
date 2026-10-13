@@ -142,7 +142,7 @@ final class OrderPostprocessingSpec
         return new Cart(self::CART);
     }
 
-    private static function merchantUrls(): array
+    public static function merchantUrls(): array
     {
         return [
             'merchant_confirmation_url' => 'https://shop.local/confirm',
@@ -166,7 +166,7 @@ final class OrderPostprocessingSpec
         Context::getContext()->cookie->two_payment_term = 30;
     }
 
-    private static function order(): PlacedOrderStub
+    public static function order(): PlacedOrderStub
     {
         $order = PlacedOrderStub::fromCart(self::ORDER, self::CART);
         $order->reference = 'HOOKREF';
@@ -178,7 +178,7 @@ final class OrderPostprocessingSpec
     /**
      * A harness recording each send. GET answers a CONFIRMED-then-FULFILLED Two order.
      */
-    private static function module(): TwopaymentTestHarness
+    public static function module(): TwopaymentTestHarness
     {
         return new class extends TwopaymentTestHarness {
             /** @var array<int,array{endpoint:string,payload:mixed,method:string}> */
@@ -394,7 +394,7 @@ final class OrderPostprocessingSpec
         Twoorderpostprocessingtest::breakOnPurpose($mode, $params['payload'], $before);
     }
 
-    private static function harnessAsInstance(TwopaymentTestHarness $module): void
+    public static function harnessAsInstance(TwopaymentTestHarness $module): void
     {
         StubStore::$moduleInstances['twopayment'] = $module;
     }
@@ -1517,7 +1517,7 @@ final class OrderPostprocessingSpec
     private static function testEachRequestTypeFiresExactlyOnce(): void
     {
         $cases = self::requestDrivers();
-        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'fallback_shipping_tax_code', 'contract_version', 'order_lines', 'order_refunds'];
+        $keys = ['request_type', 'trigger', 'endpoint', 'cart', 'order', 'shipping_tax_rate', 'fallback_shipping_tax_rate', 'fallback_shipping_tax_code', 'contract_version', 'order_lines', 'order_refunds', 'order_tenders'];
         foreach ($cases as [$type, $trigger, $sends, $driver, $description]) {
             $cart = self::seed(true);
             $module = self::module();
