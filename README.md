@@ -446,7 +446,7 @@ Retired ids are recorded whenever the fee product is replaced. Ids from before t
 **Partial Refunds (Credit Slips):**
 - Partial refunds created as credit slips in PrestaShop are sent to Two automatically
 - When you issue a partial refund from the order page in PrestaShop admin, PrestaShop creates a credit slip and the module:
-  - Calls Two's refund API endpoint (`/v1/order/{id}/refund`) with the slip's amount, currency, per-rate tax subtotals and line items
+  - Calls Two's refund API endpoint (`/v1/order/{id}/refund`) with the slip's amount, currency, line items and, while the "Validate tax subtotals" setting is on, per-rate tax subtotals
   - Uses an idempotency key derived from the credit slip, so two slips of the same amount on one order are separate refunds
   - Refuses to send more than the order's remaining refundable balance
 - A specific-amount refund sends the amount you chose, and a refund excluding the voucher sends the products less the voucher
@@ -790,7 +790,7 @@ Once per outbound order request, immediately before it is sent:
 | `order_update` | An admin order edit, a tracking number, the merchant order id sync after confirmation, and the rebuild that splits a Refunded remainder by tax rate after credit slips (`refund_remainder`, not sent). An admin edit or tracking number Two would refuse is built, so the hook runs, but not sent |
 | `order_confirm` | The buyer's return from verification |
 | `capture` | The fulfilment status |
-| `refund` | The refunded status (a full refund with no body; after credit slips, what is left, as `{amount, currency, line_items, tax_subtotals}`) and a credit slip (a partial refund, `{amount, currency, line_items, tax_subtotals}`). Each line is `{id, quantity, unit_price, discount_amount, net_amount, tax_amount, gross_amount}`, where `id` is the Two order line it refunds; `line_items` is absent when the refund could not be matched to the order's lines |
+| `refund` | The refunded status (a full refund with no body; after credit slips, what is left, as `{amount, currency, line_items, tax_subtotals}`) and a credit slip (a partial refund, `{amount, currency, line_items, tax_subtotals}`), `tax_subtotals` only while the "Validate tax subtotals" setting is on. Each line is `{id, quantity, unit_price, discount_amount, net_amount, tax_amount, gross_amount}`, where `id` is the Two order line it refunds; `line_items` is absent when the refund could not be matched to the order's lines |
 | `cancel` | The cancelled status, a buyer cancel, and the module's own clean-up cancels |
 
 The hook also runs on every order-intent pre-check during checkout, so keep
