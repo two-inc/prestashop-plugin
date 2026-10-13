@@ -40,7 +40,7 @@ final class TaxCodeAdminSpec
             'testListFloorIsPerCountry', 'testFailedListForAnotherCountryKeepsTheLastGoodOne', 'testKeySwappedSaveUsesTheProfileCountry',
             'testGeneralKeySaveRendersWithTheSavedKey', 'testRefreshButtonClearsAStoredLookupFailure', 'testGeneralKeySaveRunsTheButtonsRefresh',
             'testGeneralKeySaveSyncsTheShortNameCopy', 'testRefreshLooksUpAResolvedProfileAgain', 'testFailedLookupAfterRefreshKeepsTheHeldProfile',
-            'testRefreshedParameterOpensDiagnostics',
+            'testRefreshedParameterOpensDiagnostics', 'testUncheckedEditIsReported',
         ];
         foreach ($tests as $test) {
             self::collect($failures, $test, function () use ($test) {
@@ -456,6 +456,33 @@ final class TaxCodeAdminSpec
         Tools::setTestValue('PS_TWO_TAX_CODE_MAP_8102_NONE', 'ES_IVA_EXPORT');
         TinyAssert::same([], self::save($module), 'rows are not validated');
         TinyAssert::same('{}', Configuration::get('PS_TWO_TAX_CODE_MAP'), 'the map is {}');
+    }
+
+    /**
+     * TWO-26340: a save whose rows change a code while the merchant's details or the code list cannot be read is
+     * refused with an error, rather than dropping the edit silently. Unchanged rows, or rows a hidden section no longer
+     * shows, save as before. Columns: fixture, the posted code, expected errors, description.
+     */
+    private static function testUncheckedEditIsReported(): void
+    {
+        $error = 'Your tax codes could not be checked with Two, so nothing was saved. Try again in a few minutes.';
+        $cases = [
+            ['list-outage-cold', 'ES_IVA_EXPORT', [$error], 'code list unreadable, a code changed: refused with an error'],
+            ['verify-503', 'ES_IVA_EXPORT', [$error], 'merchant details unreadable, a code changed: refused with an error'],
+            ['list-outage-cold', '', [], 'code list unreadable, nothing changed: saved'],
+            ['gb-zero-codes', 'NOT_A_CODE', [], 'section hidden: the rows are ignored, as before'],
+        ];
+        foreach ($cases as [$fixture, $code, $errors, $desc]) {
+            [$setup, $responses] = self::fixture($fixture);
+            $setup();
+            $stored = Configuration::get('PS_TWO_TAX_CODE_MAP');
+            $module = self::module($responses);
+            Tools::resetTestValues();
+            Tools::setTestValue(Twopayment::ORDER_MANAGEMENT_FORM_END_FIELD, '1');
+            Tools::setTestValue('PS_TWO_TAX_CODE_MAP_8102_NONE', $code);
+            TinyAssert::same($errors, self::save($module), $desc . ': errors');
+            TinyAssert::same($stored, Configuration::get('PS_TWO_TAX_CODE_MAP'), $desc . ': the map is untouched');
+        }
     }
 
     private static function testHiddenSectionIgnoresPostedRows(): void

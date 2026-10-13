@@ -199,6 +199,8 @@ Two requires a `tax_code` on every line at a 0% rate for a Spanish merchant, on 
 
 A saved code that is no longer listed, or listed at a rate other than 0%, still shows in its dropdown, marked, so nothing saved disappears unseen; Two refuses such a code on a 0% line.
 
+A save checks each changed code against the list again. When the merchant details or the code list cannot be read at that moment, a save that changes a code is refused with an error and nothing on the tab is saved; a save that changes no code goes ahead.
+
 While the section is hidden a saved mapping keeps applying at checkout, and the section shows a notice with **Clear saved tax codes**: that the codes still apply though the country does not require them, that some are not valid on 0% lines for the country, or that the mapping cannot be read. Clear stores an empty mapping (`{}`) for the shop being edited, so on a multistore install select the shop first. If the merchant details or the code list cannot be read, the section says why and retries at most every five minutes, and saved mappings keep working at checkout.
 
 For each 0% line the first match wins:

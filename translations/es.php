@@ -601,6 +601,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'El hook de posprocesamiento de pedidos ha detenido esta solicitud %1$s, así que no se ha enviado a %2$s (%3$s). Consulta el registro del módulo para ver los detalles.';
 $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Esta modificación del pedido se ha guardado en PrestaShop, pero no se ha enviado al proveedor de facturas. No repitas la modificación. Ponte en contacto con el soporte.';
 $_MODULE['<{twopayment}prestashop>twopayment_dcb0def10517a229ffca62e41a4eed87'] = 'Cada código fiscal debe ser (ninguno) o uno de los códigos de la lista.';
+$_MODULE['<{twopayment}prestashop>twopayment_641d2b3250173bda95cbc7ea5cf1de3b'] = 'No se han podido comprobar tus códigos de impuesto con %s, así que no se ha guardado nada. Inténtalo de nuevo en unos minutos.';
 $_MODULE['<{twopayment}prestashop>twopayment_36bf39087971bbc808165c5286ebab04'] = 'Códigos fiscales para líneas al 0 %';
 $_MODULE['<{twopayment}prestashop>twopayment_113da06fcd71bbcf55d6b5ef943dec01'] = 'Algunos campos del formulario no han llegado (este servidor acepta como máximo %d por petición, su ajuste max_input_vars), así que no se ha guardado nada. Vuelve a cargar la página y guarda de nuevo; si el mensaje vuelve a aparecer, pide a tu proveedor de alojamiento que aumente max_input_vars.';
 $_MODULE['<{twopayment}prestashop>twopayment_97139627c126d86a74d8ab820ad756d6'] = '(ninguno)';

@@ -601,6 +601,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'Etterbehandlingskroken for ordrer stoppet denne %1$s-forespørselen, så den ble ikke sendt til %2$s (%3$s). Se modulloggen for detaljer.';
 $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Denne endringen av bestillingen ble lagret i PrestaShop, men ble ikke sendt til fakturaleverandøren. Ikke gjenta endringen. Kontakt kundestøtte.';
 $_MODULE['<{twopayment}prestashop>twopayment_dcb0def10517a229ffca62e41a4eed87'] = 'Hver avgiftskode må være (ingen) eller en av kodene som er oppført.';
+$_MODULE['<{twopayment}prestashop>twopayment_641d2b3250173bda95cbc7ea5cf1de3b'] = 'Avgiftskodene dine kunne ikke kontrolleres hos %s, så ingenting ble lagret. Prøv igjen om noen minutter.';
 $_MODULE['<{twopayment}prestashop>twopayment_36bf39087971bbc808165c5286ebab04'] = 'Avgiftskoder for linjer med 0 %';
 $_MODULE['<{twopayment}prestashop>twopayment_113da06fcd71bbcf55d6b5ef943dec01'] = 'Noen av skjemaets felt kom ikke fram (denne serveren tar imot høyst %d per forespørsel, innstillingen max_input_vars), så ingenting ble lagret. Last inn siden på nytt og lagre igjen; hvis meldingen kommer tilbake, be vertsleverandøren din om å øke max_input_vars.';
 $_MODULE['<{twopayment}prestashop>twopayment_97139627c126d86a74d8ab820ad756d6'] = '(ingen)';
