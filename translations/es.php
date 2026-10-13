@@ -564,7 +564,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_f33c826a5480001b5a31da2bb38d7959'] 
 $_MODULE['<{twopayment}prestashop>twopayment_f590f4b8e9044ac1bbe4ae9785b105cf'] = 'Dónde debe %s enviar la factura de este pedido, si es distinta del correo electrónico de tu cuenta.';
 $_MODULE['<{twopayment}prestashop>twopayment_fa24a3fec77d9e03aadbda8138637fce'] = 'Tratamiento fiscal del recargo';
 $_MODULE['<{twopayment}prestashop>twopayment_fb3ff8dd49a6e7ecf023f6941320801c'] = 'No se ha podido procesar tu pedido con el pago %s. Elige otro método de pago o ponte en contacto con la tienda.';
-$_MODULE['<{twopayment}prestashop>twopayment_fe24567972432f23380c0c9ced6566a4'] = '-- Sin definir: rechazar el pedido --';
+$_MODULE['<{twopayment}prestashop>twopayment_cffedb3973b157414f98925d6f1e82cf'] = '-- Sin definir: enviar el envío tal como se cobró, sin comprobar --';
 $_MODULE['<{twopayment}prestashop>twopayment_c9a4942151f3f04aca175871bc85f862'] = 'Compra ahora, recibe tus productos y paga tu factura más tarde.';
 $_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] = 'Mostrar mensaje en las páginas de producto';
 $_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] = 'Mensaje de la página de producto';
