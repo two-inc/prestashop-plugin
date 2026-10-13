@@ -27,6 +27,34 @@ final class OrderTendersSpec
         self::testRefundedRemainderCarriesThePrepaidLeft();
         self::testRecomputeHelperKeepsThePrepaidAmount();
         self::testPlacementRecordsThePrepaidTwoHolds();
+        self::testRefundedAfterAWhollyPrepaidRefundSendsTheRest();
+    }
+
+    /**
+     * A portal refund made wholly from the prepaid part leaves no refunded amount, but Two's state reads REFUNDED:
+     * marking the order Refunded still refunds what is outstanding.
+     */
+    private static function testRefundedAfterAWhollyPrepaidRefundSendsTheRest(): void
+    {
+        StubStore::reset();
+        PrestaShopLogger::$logs = [];
+        Hook::$subscribers = [];
+        StubStore::$orders[5100] = ['module' => 'twopayment'];
+        StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+        $portal = RefundSpec::twoRefund('-30.00', ['p1' => '-30.00']);
+        $portal['prepaid_amount'] = '-30.00';
+        $twoOrder = RefundSpec::fulfilledOrder(120.00, [$portal]);
+        $twoOrder['prepaid_amount'] = '30.00';
+        $twoOrder['state'] = 'REFUNDED';
+        $module = RefundSpec::makeModule($twoOrder, ['two_order_id' => 'two-order-uuid', 'two_declared_rates' => '{"prepaid":"30.00"}']);
+        $module->placedSubtotals = [['taxable_amount' => '150.00', 'tax_amount' => '0.00', 'tax_rate' => '0.000000']];
+        $status = new OrderState();
+        $status->id = 7;
+        $status->name = 'Refunded';
+        $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+        $refunds = $module->refundCalls();
+        TinyAssert::count(1, $refunds);
+        TinyAssert::same(['120.00', '0.00'], [$refunds[0]['payload']['amount'], $refunds[0]['payload']['prepaid_amount'] ?? null], 'the outstanding amount is refunded');
     }
 
     /**

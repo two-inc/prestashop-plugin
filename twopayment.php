@@ -5762,7 +5762,9 @@ class Twopayment extends PaymentModule
                         
                         // Partial refunds already made, from credit slips or in the portal: refund only what is left (TWO-26093).
                         $sent = $this->getTwoSentRefunds((int)$order->id);
-                        if (!empty($sent) || $this->getTwoOrderRefundedTotal($current_two_order) > 0) {
+                        // Any refund Two holds counts, one wholly from the prepaid part too, which leaves the refunded total at
+                        // zero while the order's state reads REFUNDED (TWO-26326).
+                        if (!empty($sent) || $this->getTwoOrderRefundedTotal($current_two_order) > 0 || !empty($current_two_order['refunds'])) {
                             // The remainder owns its notices: never flag the full refund for it, and never say
                             // a remainder Two accepted was not sent.
                             $remainder_accepted = false;
