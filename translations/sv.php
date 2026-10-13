@@ -601,6 +601,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'Efterbearbetningskroken för ordrar stoppade den här %1$s-begäran, så den skickades inte till %2$s (%3$s). Se modulloggen för mer information.';
 $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Ändringen av ordern sparades i PrestaShop men skickades inte till fakturaleverantören. Upprepa inte ändringen. Kontakta support.';
 $_MODULE['<{twopayment}prestashop>twopayment_dcb0def10517a229ffca62e41a4eed87'] = 'Varje skattekod måste vara (ingen) eller en av de listade koderna.';
+$_MODULE['<{twopayment}prestashop>twopayment_641d2b3250173bda95cbc7ea5cf1de3b'] = 'Dina skattekoder kunde inte kontrolleras hos %s, så inget sparades. Försök igen om några minuter.';
 $_MODULE['<{twopayment}prestashop>twopayment_36bf39087971bbc808165c5286ebab04'] = 'Skattekoder för rader med 0 %';
 $_MODULE['<{twopayment}prestashop>twopayment_113da06fcd71bbcf55d6b5ef943dec01'] = 'Några av formulärets fält kom inte fram (den här servern tar emot högst %d per begäran, inställningen max_input_vars), så ingenting sparades. Ladda om sidan och spara igen; om meddelandet kommer tillbaka, be ditt webbhotell att höja max_input_vars.';
 $_MODULE['<{twopayment}prestashop>twopayment_97139627c126d86a74d8ab820ad756d6'] = '(ingen)';

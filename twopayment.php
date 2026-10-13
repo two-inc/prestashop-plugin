@@ -3460,8 +3460,11 @@ class Twopayment extends PaymentModule
 
             return;
         }
-        if ($this->getPostedTwoTaxCodeMap() === null) {
+        $unchecked = false;
+        if ($this->getPostedTwoTaxCodeMap($unchecked) === null) {
             $this->errors[] = $this->l('Each tax code must be (none) or one of the codes listed.');
+        } elseif ($unchecked) {
+            $this->errors[] = sprintf($this->l('Your tax codes could not be checked with %s, so nothing was saved. Try again in a few minutes.'), $this->getTwoBrandConfig('product_name'));
         }
         $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
         if ($raw === false || !TwoShippingTaxFallbackGate::isEnabled()) {
@@ -3979,11 +3982,15 @@ class Twopayment extends PaymentModule
      * only while the section shows them, so a stale tab posting rows the section no longer shows changes nothing, and
      * a save carrying Clear reads none.
      *
+     * @param bool $unchecked set to true when posted rows change a code but the merchant's details or the code list
+     *                        could not be read to check them (TWO-26340), so they are not saved; the caller tells the
+     *                        merchant
      * @return array<string,string>|false|null the map; false when the form carried no mapping; null when a posted code
      *                                         is neither listed at rate 0 nor the one already stored for that row
      */
-    protected function getPostedTwoTaxCodeMap()
+    protected function getPostedTwoTaxCodeMap(&$unchecked = false)
     {
+        $unchecked = false;
         $posted = array();
         foreach ($this->getTwoTaxCodeMapRows() as $row) {
             $raw = Tools::getValue($row['field'], false);
@@ -3995,11 +4002,18 @@ class Twopayment extends PaymentModule
             return false;
         }
         $state = $this->getTwoTaxCodeSectionState(true);
-        if ($state['view'] !== TwoTaxCodeSection::VIEW_ROWS) {
-            return false;
-        }
         $stored = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
         $map = is_array($stored) ? $stored : array();
+        if ($state['view'] !== TwoTaxCodeSection::VIEW_ROWS) {
+            // Rows that could not be checked are not saved; that is an error only where they change a code.
+            if (in_array($state['view'], array(TwoTaxCodeSection::VIEW_PROFILE_ERROR, TwoTaxCodeSection::VIEW_LIST_ERROR), true)) {
+                foreach ($posted as $pair) {
+                    $unchecked = $unchecked || $pair[1] !== (isset($map[$pair[0]]) ? $map[$pair[0]] : '');
+                }
+            }
+
+            return false;
+        }
         $codes = TwoTaxCodeSection::zeroRated($state['codes']);
         $asked = false;
         foreach ($posted as $pair) {

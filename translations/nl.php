@@ -601,6 +601,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'De order-postprocessing-hook heeft dit %1$s-verzoek tegengehouden, dus het is niet naar %2$s verstuurd (%3$s). Bekijk het modulelogboek voor de details.';
 $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Deze wijziging van de bestelling is opgeslagen in PrestaShop, maar niet naar de factuurprovider verzonden. Voer de wijziging niet opnieuw uit. Neem contact op met support.';
 $_MODULE['<{twopayment}prestashop>twopayment_dcb0def10517a229ffca62e41a4eed87'] = 'Elke belastingcode moet (geen) zijn of een van de vermelde codes.';
+$_MODULE['<{twopayment}prestashop>twopayment_641d2b3250173bda95cbc7ea5cf1de3b'] = 'Je belastingcodes konden niet worden gecontroleerd bij %s, dus er is niets opgeslagen. Probeer het over een paar minuten opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_36bf39087971bbc808165c5286ebab04'] = 'Belastingcodes voor regels tegen 0%';
 $_MODULE['<{twopayment}prestashop>twopayment_113da06fcd71bbcf55d6b5ef943dec01'] = 'Sommige velden van het formulier zijn niet aangekomen (deze server accepteert er hoogstens %d per verzoek, de instelling max_input_vars), dus er is niets opgeslagen. Laad de pagina opnieuw en sla nogmaals op; komt deze melding terug, vraag je hostingprovider dan om max_input_vars te verhogen.';
 $_MODULE['<{twopayment}prestashop>twopayment_97139627c126d86a74d8ab820ad756d6'] = '(geen)';
