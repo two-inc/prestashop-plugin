@@ -186,7 +186,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4296fd320beaf61dcf979ff634cf2f2d'] = 'Åtgärd krävs:';
 $_MODULE['<{twopayment}prestashop>twopayment_43183e955e3019bf7f8c942e016b7b13'] = 'Moms';
 $_MODULE['<{twopayment}prestashop>twopayment_406bab31038584c0e3135767eb91cf3c'] = '%s kunde inte ta emot denna order eftersom varukorgens totalsumma inte stämmer med summan av orderraderna.';
-$_MODULE['<{twopayment}prestashop>twopayment_32ef340374cbaf110f944895c6a6f7d8'] = 'Aktivera detaljerad loggning för felsökning. Loggar momsberäkningar och andra diagnostikdata. Aktivera endast när %ss support ber om det.';
+$_MODULE['<{twopayment}prestashop>twopayment_82004772fbc02229be8a067f017b6770'] = 'Aktivera detaljerad loggning för felsökning. Loggar varje API-anrop och API-svar, med innehåll (API-nyckeln och värdena i anpassade rubriker döljs), utom nedladdningen av fakturans PDF, uppladdningen av fakturan och registreringen som enskild firma, samt momsberäkningar och andra diagnostikdata. Aktivera endast när %ss support ber om det.';
 $_MODULE['<{twopayment}prestashop>twopayment_44fdec47036f482b68b748f9d786801b'] = 'dagar';
 $_MODULE['<{twopayment}prestashop>twopayment_484f5a79672cebe198ebdde45a1d672f'] = 'Presentinslagning';
 $_MODULE['<{twopayment}prestashop>twopayment_8f81441778b6e1fb85956f2a908ae8a7'] = 'Att flytta en order till denna status återbetalar den i sin helhet via %s och utfärdar en kreditnota till köparen. Standard: Återbetalad';
@@ -370,7 +370,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Välj vilken %s-API-miljö som ska användas. Produktion för skarpa transaktioner, Staging för test.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Villkor';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Inga träffar hittades';
-$_MODULE['<{twopayment}prestashop>twopayment_f563791313af7708a2964e6c5f813c2a'] = 'Om du väljer JA skickas en tax_subtotals-uppdelning per momssats i nyttolasten för /v1/order och /v1/order_intent, för validering mot orderraderna. Om du väljer NEJ utesluts tax_subtotals från dessa nyttolaster.';
+$_MODULE['<{twopayment}prestashop>twopayment_b4c08ff047c09729b6bf028ef6a7a388'] = 'Om du väljer JA skickas en tax_subtotals-uppdelning per momssats med orderavsikter, ordrar, orderändringar och återbetalningar, för validering mot orderraderna. Om du väljer NEJ utesluts tax_subtotals från alla dessa.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf08ddca9326ba095dbdd77a10b9f121'] = '%s kunde inte verifiera API-nyckeln just nu (HTTP %d). Det är oftast tillfälligt - försök igen om en stund.';
 $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] = 'Betalningen är godkänd! Välj dina betalningsvillkor nedan.';
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Några av uppgifterna som angetts är ogiltiga. Kontrollera uppgifterna i din fakturaadress och försök igen.';
@@ -417,7 +417,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_adc5d048be9b3dee0f30fc0001a9cd1f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_fa2ec5f818605595f78e7fc164a772be'] = 'Vi hittade ditt företagsnamn men behöver att du verifierar det. Gå tillbaka till din fakturaadress och välj ditt företag bland sökresultaten.';
 $_MODULE['<{twopayment}prestashop>twopayment_fa8a347b2b0ab6e45116e184b464fe5c'] = 'Företagsuppgifterna kunde inte verifieras. Gå tillbaka till din fakturaadress och välj ditt företag bland sökresultaten.';
 $_MODULE['<{twopayment}prestashop>twopayment_db5339c11ff939031a0d03b4025af52e'] = 'Modulversion:';
-$_MODULE['<{twopayment}prestashop>twopayment_fe24567972432f23380c0c9ced6566a4'] = '-- Inte angivet: neka ordern i stället --';
+$_MODULE['<{twopayment}prestashop>twopayment_cffedb3973b157414f98925d6f1e82cf'] = '-- Inte angivet: skicka frakten som den debiterades, utan kontroll --';
 $_MODULE['<{twopayment}prestashop>twopayment_3085278a4e70f18075d01514a5041c33'] = 'Aktivera företagssökning i adressregistrering';
 $_MODULE['<{twopayment}prestashop>twopayment_2852c6fd4acf9a38f0ec0510586926d1'] = 'Om aktiverad kan köparen söka efter sitt företag inom adressregistreringsdelen av kassan. Annars kommer företagssökningen att visas inom betalningsmetoden.';
 $_MODULE['<{twopayment}prestashop>twopayment_43f2572bf11ce1ba8dc804e2cb83a0f3'] = 'Styr uppslaget av företagsadressen endast i ADRESS-steget av kassan. Om aktiverad skriver ett val av företag från företagssökningen över adressfälten (gata, postnummer, stad) och organisationsnummerfälten (DNI / momsregistreringsnummer) med registerdata för det företaget - även vid en ny sökning, där val av ett annat företag ersätter det tidigare företagets värden. Om inaktiverad fungerar företagssökningen fortfarande och registrerar fortfarande företagsnamnet och organisationsnumret, men ingenting skrivs till adress- eller identifieringsfälten, och kunden fyller i dem själv. Den här inställningen är otillgänglig och tvingas av när "Aktivera företagssökning i adressregistrering" är satt till "Nej" - det finns inget adressområde-uppslag att styra när sökningen själv har flyttat till betalningsrutan.';
@@ -601,6 +601,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'Efterbearbetningskroken för ordrar stoppade den här %1$s-begäran, så den skickades inte till %2$s (%3$s). Se modulloggen för mer information.';
 $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Ändringen av ordern sparades i PrestaShop men skickades inte till fakturaleverantören. Upprepa inte ändringen. Kontakta support.';
 $_MODULE['<{twopayment}prestashop>twopayment_dcb0def10517a229ffca62e41a4eed87'] = 'Varje skattekod måste vara (ingen) eller en av de listade koderna.';
+$_MODULE['<{twopayment}prestashop>twopayment_641d2b3250173bda95cbc7ea5cf1de3b'] = 'Dina skattekoder kunde inte kontrolleras hos %s, så inget sparades. Försök igen om några minuter.';
 $_MODULE['<{twopayment}prestashop>twopayment_36bf39087971bbc808165c5286ebab04'] = 'Skattekoder för rader med 0 %';
 $_MODULE['<{twopayment}prestashop>twopayment_113da06fcd71bbcf55d6b5ef943dec01'] = 'Några av formulärets fält kom inte fram (den här servern tar emot högst %d per begäran, inställningen max_input_vars), så ingenting sparades. Ladda om sidan och spara igen; om meddelandet kommer tillbaka, be ditt webbhotell att höja max_input_vars.';
 $_MODULE['<{twopayment}prestashop>twopayment_97139627c126d86a74d8ab820ad756d6'] = '(ingen)';

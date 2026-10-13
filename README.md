@@ -199,6 +199,8 @@ Two requires a `tax_code` on every line at a 0% rate for a Spanish merchant, on 
 
 A saved code that is no longer listed, or listed at a rate other than 0%, still shows in its dropdown, marked, so nothing saved disappears unseen; Two refuses such a code on a 0% line.
 
+A save checks each changed code against the list again. When the merchant details or the code list cannot be read at that moment, a save that changes a code is refused with an error and nothing on the tab is saved; a save that changes no code goes ahead.
+
 While the section is hidden a saved mapping keeps applying at checkout, and the section shows a notice with **Clear saved tax codes**: that the codes still apply though the country does not require them, that some are not valid on 0% lines for the country, or that the mapping cannot be read. Clear stores an empty mapping (`{}`) for the shop being edited, so on a multistore install select the shop first. If the merchant details or the code list cannot be read, the section says why and retries at most every five minutes, and saved mappings keep working at checkout.
 
 For each 0% line the first match wins:
@@ -446,7 +448,7 @@ Retired ids are recorded whenever the fee product is replaced. Ids from before t
 **Partial Refunds (Credit Slips):**
 - Partial refunds created as credit slips in PrestaShop are sent to Two automatically
 - When you issue a partial refund from the order page in PrestaShop admin, PrestaShop creates a credit slip and the module:
-  - Calls Two's refund API endpoint (`/v1/order/{id}/refund`) with the slip's amount, currency, per-rate tax subtotals and line items
+  - Calls Two's refund API endpoint (`/v1/order/{id}/refund`) with the slip's amount, currency, line items and, while the "Validate tax subtotals" setting is on, per-rate tax subtotals
   - Uses an idempotency key derived from the credit slip, so two slips of the same amount on one order are separate refunds
   - Refuses to send more than the order's remaining refundable balance
 - A specific-amount refund sends the amount you chose, and a refund excluding the voucher sends the products less the voucher
@@ -790,7 +792,7 @@ Once per outbound order request, immediately before it is sent:
 | `order_update` | An admin order edit, a tracking number, the merchant order id sync after confirmation, and the rebuild that splits a Refunded remainder by tax rate after credit slips (`refund_remainder`, not sent). An admin edit or tracking number Two would refuse is built, so the hook runs, but not sent |
 | `order_confirm` | The buyer's return from verification |
 | `capture` | The fulfilment status |
-| `refund` | The refunded status (a full refund with no body; after credit slips, what is left, as `{amount, currency, line_items, tax_subtotals}`) and a credit slip (a partial refund, `{amount, currency, line_items, tax_subtotals}`). Each line is `{id, quantity, unit_price, discount_amount, net_amount, tax_amount, gross_amount}`, where `id` is the Two order line it refunds; `line_items` is absent when the refund could not be matched to the order's lines |
+| `refund` | The refunded status (a full refund with no body; after credit slips, what is left, as `{amount, currency, line_items, tax_subtotals}`) and a credit slip (a partial refund, `{amount, currency, line_items, tax_subtotals}`), `tax_subtotals` only while the "Validate tax subtotals" setting is on. Each line is `{id, quantity, unit_price, discount_amount, net_amount, tax_amount, gross_amount}`, where `id` is the Two order line it refunds; `line_items` is absent when the refund could not be matched to the order's lines |
 | `cancel` | The cancelled status, a buyer cancel, and the module's own clean-up cancels |
 
 The hook also runs on every order-intent pre-check during checkout, so keep
@@ -805,7 +807,9 @@ The module checks every order payload it builds against the shop.
 - each line's declared tax rate against the amounts PrestaShop stored: products, gift
   wrapping, shipping at a populated Default shipping tax code, and on an order update
   the placed gift wrapping;
-- the lines against the cart's totals (on an update, the placed order's);
+- the lines against the cart's totals (on an update, the placed order's), gross, net and
+  tax each within the larger of 0.02 and half a cent per line plus half a cent for the
+  order, since each line and the order round on their own;
 - the buyer fee line against the cart's fee line;
 - on a credit slip, the refunded shipping against the Default shipping tax code the
   order was placed at.
@@ -1394,8 +1398,7 @@ An update to a placed order is priced from that order, not its cart, so it write
   `{error, code}`: the exception class and code, never its message.
 - **Size**: products, cart rules, delivery options, sent lines and each hook's and class's
   list keep their first 40 rows; `truncated` counts the rows cut from each, including a
-  whole section shed to fit the size limit. The hook's `diff` keeps its first 40 entries
-  and gives way, entry by entry, before any section is shed.
+  whole section shed to fit the size limit.
 - **Cost**: once one `Cart` pricing read throws, the remaining ones are recorded as
   `{error: "skipped"}` rather than re-run, since core does not cache a failed price.
   `products` is read first, so a carrier that throws never skips it.
@@ -1422,15 +1425,9 @@ An update to a placed order is priced from that order, not its cart, so it write
   `delta` (which already allows for ecotax taxed under its own group) are read directly,
   beside the overrides and hooks sections.
 
-  The `order_postprocessing` block (schema `v` 2) records the order postprocessing hook
-  when it ran for the request: `request_type`, `trigger`, the `subscribers` registered on
-  it, whether they `changed` the payload, the `outcome` (`unchanged`, `changed` or
-  `refused:<code>`), `cart_reconciliation` and a `diff` of `{path, before, after}` entries
-  keyed by JSON pointer (buyer and address fields by path only). A `changed` outcome
-  explains figures that differ from the shop's own records, and
-  `cart_reconciliation: skipped_payload_changed` explains why no cart comparison ran.
-  `sent_line_items` are always the post-hook lines. See "Stable extension contract:
-  order postprocessing".
+  The snapshot (schema `v` 1) does not record the order postprocessing hook. With Debug
+  Mode on, what the hook's subscribers changed is logged on its own line, naming the
+  request and its trigger (see "Stable extension contract: order postprocessing").
 
 #### Snapshot invariants
 - The snapshot never changes, fails or slows a checkout. Every one of its own failures is
@@ -1459,6 +1456,16 @@ An update to a placed order is priced from that order, not its cart, so it write
   5. Check PrestaShop logs (`var/logs/`); each cart priced while it is on also leaves a
      baseline discrepancy snapshot (see above)
   6. Disable Debug Mode when done
+
+While it is on, each call to Two's API is logged, as the WooCommerce plugin logs it,
+except the invoice PDF download, the invoice upload and the sole-trader signup: one
+line naming the method and endpoint, with the request's body, headers and query
+parameters and the response's body, headers and status code, at error severity for a
+connection error or HTTP 400 and above and informative otherwise. The API key and every
+custom header value are redacted, and a line longer than the log can store (about 32KB)
+is cut. The bodies carry buyer details, so none of this is
+logged with Debug Mode off; refusals and connection errors are still logged then, with the
+API's reason but no request body.
 
 ## Security
 

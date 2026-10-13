@@ -34,6 +34,67 @@ final class RefundSpec
         self::testSubtotalsThatCannotBeItemised();
         self::testSlipShippingCheckIsTheDefaultHandlers();
         self::testUnitemisedLogFollowsWhatIsSent();
+        self::testTaxSubtotalsSwitchGovernsRefunds();
+    }
+
+    /**
+     * TWO-26340: Validate tax subtotals governs refunds as it does order intents, creates and updates: on, a credit
+     * slip and the Refunded remainder send tax_subtotals; off, neither does. Either way the refund's row records the
+     * module's split, so a later remainder is split by rate. Columns: switch, the refund, expected payload keys,
+     * expected recorded split, description.
+     */
+    private static function testTaxSubtotalsSwitchGovernsRefunds(): void
+    {
+        $sub = static function (string $rate, string $taxable, string $tax): array {
+            return ['tax_rate' => $rate, 'taxable_amount' => $taxable, 'tax_amount' => $tax];
+        };
+        $cases = [
+            [1, 'slip', ['amount', 'currency', 'tax_subtotals'], [$sub('0.200000', '25.00', '5.00')], 'on: a credit slip sends tax_subtotals'],
+            [0, 'slip', ['amount', 'currency'], [$sub('0.200000', '25.00', '5.00')], 'off: a credit slip sends none, and records its split'],
+            [1, 'remainder', ['amount', 'currency', 'tax_subtotals'], [$sub('0.150000', '20.00', '3.00')], 'on: the Refunded remainder sends tax_subtotals'],
+            [0, 'remainder', ['amount', 'currency'], [$sub('0.150000', '20.00', '3.00')], 'off: the Refunded remainder sends none, split from the rebuilt order\'s lines'],
+        ];
+
+        foreach ($cases as [$switch, $refund, $keys, $recorded, $desc]) {
+            StubStore::reset();
+            StubStore::$configuration['PS_TWO_ENABLE_TAX_SUBTOTALS'] = $switch;
+            if ($refund === 'slip') {
+                StubStore::$dbExecuteSResponses = [[self::line(25.00, 30.00, '20.000')]];
+                $module = self::makeModule(self::fulfilledOrder(500.00));
+                $module->readSlipLinesFromDb = true;
+                $module->hookActionOrderSlipAdd(['order' => self::makeOrder(), 'order_slip' => self::makeSlip(700, 30.00)]);
+                $row = $module->refundRows[700] ?? null;
+            } else {
+                StubStore::$orders[5100] = ['module' => 'twopayment'];
+                StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+                $twoOrder = self::fulfilledOrder(148.00, [['total_amount' => '-125.00']]);
+                $twoOrder['state'] = 'REFUNDED';
+                $module = self::makeModule($twoOrder);
+                $line = static function (string $rate, string $net, string $tax): array {
+                    return ['tax_rate' => $rate, 'net_amount' => $net, 'tax_amount' => $tax, 'gross_amount' => number_format((float)$net + (float)$tax, 2, '.', '')];
+                };
+                if ($switch === 1) {
+                    $module->placedSubtotals = [$sub('0.250000', '100.00', '25.00'), $sub('0.150000', '20.00', '3.00')];
+                } else {
+                    $module->placedLines = [$line('0.25', '100.00', '25.00'), $line('0.15', '20.00', '3.00')];
+                }
+                $module->refundRows[1] = ['id_order_slip' => 1, 'status' => 'SENT', 'amount' => '125.00', 'tax_subtotals' => [$sub('0.250000', '100.00', '25.00')]];
+                $status = new OrderState();
+                $status->id = 7;
+                $status->name = 'Refunded';
+                $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+                $row = $module->refundRows['r1'] ?? null;
+            }
+
+            $calls = $module->refundCalls();
+            TinyAssert::count(1, $calls, $desc . ': one refund sent');
+            TinyAssert::same($keys, array_keys($calls[0]['payload']), $desc . ': payload keys, got ' . json_encode($calls[0]['payload']));
+            TinyAssert::same('SENT', $row['status'] ?? null, $desc . ': recorded as sent');
+            $got = array_map(static function (array $t) use ($sub): array {
+                return $sub(number_format((float)$t['tax_rate'], 6, '.', ''), (string)$t['taxable_amount'], (string)$t['tax_amount']);
+            }, $row['tax_subtotals']);
+            TinyAssert::same($recorded, $got, $desc . ': recorded split, got ' . json_encode($row['tax_subtotals']));
+        }
     }
 
     /**
@@ -650,6 +711,8 @@ final class RefundSpec
             public bool $throwOnRecord = false;
             /** What getTwoUpdateOrderData() reports as the order's tax_subtotals. */
             public array $placedSubtotals = [];
+            /** The rebuilt order's lines, sent in place of placedSubtotals as an order rebuilt with Validate tax subtotals off. */
+            public ?array $placedLines = null;
             private array $twoOrder;
             private $paymentData;
 
@@ -752,7 +815,7 @@ final class RefundSpec
                 if ($this->throwOnRebuild) {
                     throw new Error('rebuild failed');
                 }
-                return ['tax_subtotals' => $this->placedSubtotals];
+                return $this->placedLines !== null ? ['line_items' => $this->placedLines] : ['tax_subtotals' => $this->placedSubtotals];
             }
 
             public function getTwoCreditSlipTaxLines($slip)
