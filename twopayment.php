@@ -3029,7 +3029,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Enable debug logging'),
                         'name' => 'PS_TWO_DEBUG_MODE',
                         'is_bool' => true,
-                        'desc' => sprintf($this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by %s support.'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('Enable detailed logging for troubleshooting. Logs each API request and response, bodies included (the API key and custom header values redacted), tax calculations and other diagnostic data. Only enable when requested by %s support.'), $this->getTwoBrandConfig('product_name')),
                         'required' => false,
                         'values' => array(
                             array(
@@ -15181,10 +15181,12 @@ class Twopayment extends PaymentModule
         $this->configureSslVerification($ch);
 
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
+        $responseHeaders = $this->collectTwoResponseHeaders($ch);
         $response = curl_exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError = (string) curl_error($ch);
         curl_close($ch);
+        $this->logTwoApiExchange('GET', '/v1/merchant/verify_api_key', array(), $headers, $response, $httpCode, $responseHeaders, $curlError);
 
         return array('response' => $response, 'code' => $httpCode, 'error' => $curlError);
     }
@@ -21674,11 +21676,13 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_POST, 1);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            $response_headers = $this->collectTwoResponseHeaders($ch);
             
             $response_body = curl_exec($ch);
             $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curl_error = curl_error($ch);
             curl_close($ch);
+            $this->logTwoApiExchange($method, $endpoint, $payload, $headers, $response_body, (int)$http_status, $response_headers, $curl_error);
             
             if ($response_body === false || !empty($curl_error)) {
                 PrestaShopLogger::addLog(
@@ -21720,11 +21724,13 @@ class Twopayment extends PaymentModule
             $this->configureSslVerification($ch);
             
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            $response_headers = $this->collectTwoResponseHeaders($ch);
             
             $response_body = curl_exec($ch);
             $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curl_error = curl_error($ch);
             curl_close($ch);
+            $this->logTwoApiExchange($method, $endpoint, $payload, $headers, $response_body, (int)$http_status, $response_headers, $curl_error);
             
             if ($response_body === false || !empty($curl_error)) {
                 PrestaShopLogger::addLog(
@@ -21753,6 +21759,83 @@ class Twopayment extends PaymentModule
                 'data' => $response_data,
             ], is_array($response_data) ? $response_data : []);
         }
+    }
+
+    /**
+     * With Debug Mode on, collect the response's headers for logTwoApiExchange(); with it off, collect nothing.
+     *
+     * @param mixed $ch a curl handle
+     * @return ArrayObject name => value, filled as curl reads the response
+     */
+    private function collectTwoResponseHeaders($ch)
+    {
+        $collected = new ArrayObject();
+        if (Configuration::get('PS_TWO_DEBUG_MODE')) {
+            curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($handle, $line) use ($collected) {
+                $parts = explode(':', $line, 2);
+                if (count($parts) === 2) {
+                    $collected[trim($parts[0])] = trim($parts[1]);
+                }
+
+                return strlen($line);
+            });
+        }
+
+        return $collected;
+    }
+
+    /**
+     * Debug Mode's log of one API call, as the WooCommerce plugin logs it (TWO-26340): the method and endpoint, then
+     * the request's body, headers and query parameters and the response's body, headers and status code. The bodies
+     * carry buyer data, so nothing is logged with Debug Mode off; refusals and connection errors are logged by their
+     * callers either way. The API key and every custom header value are redacted. Severity 3 (error) for a
+     * connection error or HTTP 400 and above, else 1 (informative).
+     *
+     * @param string $method
+     * @param string $endpoint
+     * @param mixed $payload the request body as an array
+     * @param array $headers the request's header lines, "Name:value"
+     * @param string|false $response_body
+     * @param int $http_status
+     * @param iterable $response_headers name => value
+     * @param string $curl_error
+     * @return void
+     */
+    protected function logTwoApiExchange($method, $endpoint, $payload, array $headers, $response_body, $http_status, $response_headers, $curl_error)
+    {
+        if (!Configuration::get('PS_TWO_DEBUG_MODE')) {
+            return;
+        }
+        $redacted = array('x-api-key' => true, 'authorization' => true, 'proxy-authorization' => true);
+        foreach (self::getTwoCustomHeaders() as $row) {
+            $redacted[strtolower($row['name'])] = true;
+        }
+        $request_headers = array();
+        foreach ($headers as $line) {
+            $parts = explode(':', (string)$line, 2);
+            $name = trim($parts[0]);
+            $request_headers[$name] = isset($redacted[strtolower($name)]) ? '[REDACTED]' : (isset($parts[1]) ? trim($parts[1]) : '');
+        }
+        $context = array(
+            'request' => array(
+                'body' => $payload,
+                'headers' => $request_headers,
+                'params' => $this->getTwoClientParams(),
+            ),
+            'response' => array('body' => null, 'headers' => null, 'status_code' => null),
+        );
+        $message = 'TwoPayment: ' . $method . ' ' . $endpoint;
+        if ($response_body === false || !empty($curl_error)) {
+            PrestaShopLogger::addLog($message . ': cURL error: ' . $curl_error . ' - ' . json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 3);
+            return;
+        }
+        $decoded = json_decode((string)$response_body, true);
+        $context['response'] = array(
+            'body' => json_last_error() === JSON_ERROR_NONE ? $decoded : $response_body,
+            'headers' => is_array($response_headers) ? $response_headers : iterator_to_array($response_headers),
+            'status_code' => (int)$http_status,
+        );
+        PrestaShopLogger::addLog($message . ' - ' . json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), (int)$http_status >= 400 ? 3 : 1);
     }
 
     /**
@@ -22145,7 +22228,7 @@ class Twopayment extends PaymentModule
     /**
      * Secure by default, with fallback for corporate networks
      * 
-     * @param resource|CurlHandle $ch cURL handle
+     * @param mixed $ch a curl handle cURL handle
      * @return void
      */
     public function configureSslVerification($ch)
