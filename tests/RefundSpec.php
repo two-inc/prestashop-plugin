@@ -219,7 +219,7 @@ final class RefundSpec
     }
 
     /** A Two order line as the order GET returns it; a null code is a line placed without one. */
-    private static function twoLine(string $id, string $type, string $rate, string $net, ?string $code = 'default'): array
+    public static function twoLine(string $id, string $type, string $rate, string $net, ?string $code = 'default'): array
     {
         $line = ['id' => $id, 'type' => $type, 'tax_rate' => $rate, 'net_amount' => $net, 'gross_amount' => number_format((float)$net * (1 + (float)$rate), 2, '.', '')];
         if ($code !== null) {
@@ -229,7 +229,7 @@ final class RefundSpec
     }
 
     /** A refund Two reports, crediting order lines: [line id => gross]. */
-    private static function twoRefund(string $total, array $lines): array
+    public static function twoRefund(string $total, array $lines): array
     {
         $refund = ['total_amount' => $total, 'line_items' => []];
         foreach ($lines as $id => $gross) {
@@ -576,7 +576,7 @@ final class RefundSpec
      * Order stub: the hook only touches id, module, id_currency and the
      * Validate::isLoadedObject 'loaded' flag.
      */
-    private static function makeOrder(int $id = 5100, string $module = 'twopayment'): object
+    public static function makeOrder(int $id = 5100, string $module = 'twopayment'): object
     {
         return new class ($id, $module) {
             public bool $loaded = true;
@@ -604,7 +604,7 @@ final class RefundSpec
     /**
      * Credit-slip stub carrying the tax-inclusive totals the hook reads.
      */
-    private static function makeSlip(int $id, float $products, float $shipping = 0.0, int $idOrder = 5100): object
+    public static function makeSlip(int $id, float $products, float $shipping = 0.0, int $idOrder = 5100): object
     {
         return new class ($id, $products, $shipping, $idOrder) {
             public int $id;
@@ -631,7 +631,7 @@ final class RefundSpec
      * Harness recording every setTwoPaymentRequest call. GET returns the
      * supplied Two-order snapshot; POST /refund returns a 201 success.
      */
-    private static function makeModule(array $twoOrder, ?array $paymentData = ['two_order_id' => 'two-order-uuid']): object
+    public static function makeModule(array $twoOrder, ?array $paymentData = ['two_order_id' => 'two-order-uuid']): object
     {
         return new class ($twoOrder, $paymentData) extends TwopaymentTestHarness {
             public array $requests = [];
@@ -797,7 +797,7 @@ final class RefundSpec
         };
     }
 
-    private static function fulfilledOrder(float $gross, array $refunds = [], string $currency = 'GBP'): array
+    public static function fulfilledOrder(float $gross, array $refunds = [], string $currency = 'GBP'): array
     {
         return [
             'id' => 'two-order-uuid',
