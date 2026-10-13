@@ -1077,6 +1077,8 @@ final class OrderPostprocessingSpec
         $response = $module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/x/cancel', [], 'POST');
         TinyAssert::same(200, $response['http_status'], 'a cancel, which takes no body, is still sent');
         TinyAssert::same([['endpoint' => '/v1/order/x/cancel', 'payload' => [], 'method' => 'POST']], $module->sent, 'sent empty');
+        TinyAssert::true(self::logged('The cancel request (status_change) takes no body, so it was sent empty: the order postprocessing hook threw RuntimeException at '), 'the module that failed to load is logged by class and throw site');
+        TinyAssert::false(self::logged('the module failed to load'), 'never its message');
     }
 
     /**
