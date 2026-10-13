@@ -24,6 +24,7 @@ require_once dirname(__FILE__) . '/classes/TwoDiscrepancySnapshot.php';
 require_once dirname(__FILE__) . '/classes/TwoPostcodeFormat.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessing.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessingException.php';
+require_once dirname(__FILE__) . '/classes/TwoOrderTenders.php';
 require_once dirname(__FILE__) . '/classes/TwoShopTaxCode.php';
 require_once dirname(__FILE__) . '/classes/TwoTaxCodeSection.php';
 
@@ -6029,11 +6030,21 @@ class Twopayment extends PaymentModule
             return $this->l('the order total could not be read from the provider');
         }
 
+        // On an order placed with tenders (TWO-26326) the slip's lines are the full order's, and what the slip
+        // returned to the tenders, as the modules declare it, was never Two's: the amount is the rest.
+        $refund_amount = $slip_amount;
+        $refund_prepaid = null;
+        $placed_prepaid = $this->getTwoPlacedPrepaid($orderpaymentdata);
+        if ($placed_prepaid > 0) {
+            $returned = min($slip_amount, TwoOrderTenders::total($this->getTwoOrderTenders(new Cart((int)$order->id_cart), $order, $slip)));
+            list($refund_amount, $refund_prepaid) = self::splitTwoRefund($slip_amount, round($slip_amount - $returned, 2), $this->getTwoPrepaidLeft($current_two_order, $placed_prepaid));
+        }
+
         // Reject if this slip would push total refunds past the order gross.
         // The 0.01 tolerance absorbs 2dp rounding. This blocks over-refunding
         // and the full-amount-slip + status-change double-refund race.
-        if ($slip_amount > ($remaining + 0.01)) {
-            PrestaShopLogger::addLog('TwoPayment: Partial refund rejected - amount ' . $slip_amount . ' exceeds remaining refundable balance ' . $remaining . ' (gross: ' . $gross_amount . ', already refunded: ' . $already_refunded . '). Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 2);
+        if ($refund_amount > ($remaining + 0.01)) {
+            PrestaShopLogger::addLog('TwoPayment: Partial refund rejected - amount ' . $refund_amount . ' exceeds remaining refundable balance ' . $remaining . ' (gross: ' . $gross_amount . ', already refunded: ' . $already_refunded . '). Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 2);
             return $this->l('it is more than the order has left to refund');
         }
 
@@ -6077,6 +6088,10 @@ class Twopayment extends PaymentModule
 
         $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $current_two_order, $kind_gross, 'Credit slip ' . $slip_id . ' on order ' . $id_order, $unitemised);
         $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency, $tax_subtotals, $line_items);
+        if ($refund_prepaid !== null) {
+            $payload['amount'] = number_format($refund_amount, 2, '.', '');
+            $payload['prepaid_amount'] = number_format($refund_prepaid, 2, '.', '');
+        }
 
         // Idempotency key derived from the credit slip ID (NOT amount) so two
         // same-amount partial refunds on one order don't collide, and scoped by
@@ -6441,9 +6456,15 @@ class Twopayment extends PaymentModule
             return;
         }
 
+        // On an order placed with tenders (TWO-26326) gross is what Two funds: what is left of the tenders is refunded
+        // beside it as the prepaid part, and the lines cover both.
+        $placed_prepaid = $this->getTwoPlacedPrepaid($orderpaymentdata);
+        $remainder_prepaid = $placed_prepaid > 0 ? $this->getTwoPrepaidLeft($two_order, $placed_prepaid) : null;
+        $remainder_lines = round($remainder + (float) $remainder_prepaid, 2);
+
         $currency = !empty($two_order['currency']) ? $two_order['currency'] : $this->getTwoOrderCurrencyIso($order);
         try {
-            $tax_subtotals = $this->buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, $sent, $remainder, $two_order);
+            $tax_subtotals = $this->buildTwoRemainderTaxSubtotals($order, $orderpaymentdata, $sent, $remainder_lines, $two_order);
         } catch (TwoOrderPostprocessingException $e) {
             $this->flagTwoRefundRemainderNotSent($id_order, $this->getTwoRefundNotSentReason(array('error_code' => $e->getTwoCode())));
             return;
@@ -6455,7 +6476,11 @@ class Twopayment extends PaymentModule
         }
 
         $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $two_order, array(), 'Refund remainder on order ' . $id_order, $unitemised);
-        $payload = $this->buildTwoPartialRefundPayload($remainder, $currency, $tax_subtotals, $line_items);
+        $payload = $this->buildTwoPartialRefundPayload($remainder_lines, $currency, $tax_subtotals, $line_items);
+        if ($remainder_prepaid !== null) {
+            $payload['amount'] = number_format($remainder, 2, '.', '');
+            $payload['prepaid_amount'] = number_format($remainder_prepaid, 2, '.', '');
+        }
         $slip_ids = array_map(function ($row) {
             return (int)$row['id_order_slip'];
         }, $sent);
@@ -6643,6 +6668,47 @@ class Twopayment extends PaymentModule
      * @param array $two_order Two order API response
      * @return float
      */
+    /**
+     * The prepaid part of a refund on an order with tenders (TWO-26326). `amount` is always what the shop refunded
+     * through Two: Two buys only the receivable the merchant defined. The lines beyond it are the prepaid part, up to
+     * what of the tenders is left at Two, so the two sum to the lines; a gap beyond that is sent as it is, for Two's
+     * API to judge.
+     *
+     * @param float $lines the refund's lines, gross
+     * @param float $amount what the shop refunded through Two
+     * @param float $left getTwoPrepaidLeft()
+     * @return float[] [amount, prepaid]
+     */
+    public static function splitTwoRefund($lines, $amount, $left)
+    {
+        $amount = round(max(0.0, (float) $amount), 2);
+        $gap = round((float) $lines - $amount, 2);
+
+        return array($amount, round($gap > 0 ? min(max((float) $left, 0.0), $gap) : 0.0, 2));
+    }
+
+    /**
+     * What of an order's tenders is left to refund, from Two's own record of the order (TWO-26326): its prepaid
+     * amount less the prepaid part of every refund it holds. The placement record stands in when the read carries
+     * no prepaid amount.
+     *
+     * @param array|null $two_order the order as just read from Two
+     * @param float $placed_prepaid getTwoPlacedPrepaid()
+     * @return float
+     */
+    public function getTwoPrepaidLeft($two_order, $placed_prepaid)
+    {
+        $prepaid = is_array($two_order) && isset($two_order['prepaid_amount']) && is_numeric($two_order['prepaid_amount'])
+            ? (float) $two_order['prepaid_amount'] : (float) $placed_prepaid;
+        foreach (is_array($two_order) && isset($two_order['refunds']) && is_array($two_order['refunds']) ? $two_order['refunds'] : array() as $refund) {
+            if (is_array($refund) && isset($refund['prepaid_amount']) && is_numeric($refund['prepaid_amount'])) {
+                $prepaid -= abs((float) $refund['prepaid_amount']);
+            }
+        }
+
+        return round(max(0.0, $prepaid), 2);
+    }
+
     public function getTwoOrderRefundedTotal($two_order)
     {
         $total = 0.0;
@@ -9558,9 +9624,10 @@ class Twopayment extends PaymentModule
      * @param Cart|null $cart
      * @param Order|null $order
      * @param array|null $twoOrder the order as Two's GET /v1/order/{id} returned it, when the caller has it (TWO-26282)
+     * @param array|null $tenders getTwoOrderTenders(), when the caller has already read them; null reads them here
      * @return array
      */
-    public function buildTwoOrderPostprocessingContext($requestType, $trigger, $endpoint, $cart = null, $order = null, $twoOrder = null)
+    public function buildTwoOrderPostprocessingContext($requestType, $trigger, $endpoint, $cart = null, $order = null, $twoOrder = null, $tenders = null)
     {
         $order = $order !== null && Validate::isLoadedObject($order) ? $order : null;
         if (($cart === null || !Validate::isLoadedObject($cart)) && $order !== null && isset($order->id_cart)) {
@@ -9580,7 +9647,63 @@ class Twopayment extends PaymentModule
             'contract_version' => TwoOrderPostprocessing::CONTRACT_VERSION,
             'order_lines' => $this->getTwoOrderLinesAtTwo($twoOrder),
             'order_refunds' => $this->getTwoOrderRefundsAtTwo($twoOrder),
+            'order_tenders' => is_array($tenders) ? $tenders : $this->getTwoOrderTenders($cart, $order),
         );
+    }
+
+    /**
+     * The tenders of a cart or order (TWO-26326): what has already paid part of it without being an order line, as
+     * the modules on actionTwoOrderTenders declare them. Empty on a shop with no such module.
+     *
+     * @param Cart|null $cart
+     * @param Order|null $order
+     * @param object|null $slip a credit slip: what it returned to the tenders
+     * @return array<int,array{type:string,label:string,amount:float,source:string}>
+     */
+    public function getTwoOrderTenders($cart, $order, $slip = null)
+    {
+        return TwoOrderTenders::collect($cart, $order, $slip);
+    }
+
+    /**
+     * An order body with tenders declared as already paid (TWO-26326): its lines, net and tax stay the full order,
+     * invoice_amount is net plus tax, prepaid_amount the tenders and payable_amount the rest, what Two funds, which
+     * gross_amount then equals. Two's API looks only at what is outstanding. With $always false and no tenders the
+     * body is returned unchanged.
+     *
+     * @param array $body a create or update body
+     * @param array $tenders getTwoOrderTenders()
+     * @param bool $always whether to declare the prepaid fields with no tenders: an order placed with them, whose
+     *   edit would otherwise reset Two's prepaid amount to zero
+     * @return array
+     */
+    public function withTwoPrepaid(array $body, array $tenders, $always = false)
+    {
+        $prepaid = TwoOrderTenders::total($tenders);
+        if ($prepaid <= 0 && !$always) {
+            return $body;
+        }
+        $invoice = round((float) $body['net_amount'] + (float) $body['tax_amount'], 2);
+        $body['invoice_amount'] = (string) $this->getTwoRoundAmount($invoice);
+        $body['prepaid_amount'] = (string) $this->getTwoRoundAmount($prepaid);
+        $body['payable_amount'] = (string) $this->getTwoRoundAmount($invoice - $prepaid);
+        $body['gross_amount'] = $body['payable_amount'];
+
+        return $body;
+    }
+
+    /**
+     * The prepaid amount the order was placed with Two with (TWO-26326); 0.0 for an order placed with none, or
+     * before tenders were declared, whose later requests are sent as they always were.
+     *
+     * @param array|null $orderpaymentdata the order's Two row
+     * @return float
+     */
+    public function getTwoPlacedPrepaid($orderpaymentdata)
+    {
+        $declared = $this->decodeTwoDeclaredChargeRates(is_array($orderpaymentdata) ? $orderpaymentdata : array());
+
+        return $declared['prepaid'];
     }
 
     /**
@@ -10370,6 +10493,11 @@ class Twopayment extends PaymentModule
         if (!is_finite($gross_amount) || $gross_amount < 0) {
             return null;
         }
+        // An order with tenders (TWO-26326): gross_amount is what Two funds, and the cart total PrestaShop checks the
+        // payment against also holds what the tenders paid, so the order is not recorded as a payment error.
+        if (isset($payload['prepaid_amount']) && is_numeric($payload['prepaid_amount']) && (float)$payload['prepaid_amount'] > 0) {
+            $gross_amount += (float)$payload['prepaid_amount'];
+        }
 
         return round($gross_amount, 2);
     }
@@ -10522,10 +10650,17 @@ class Twopayment extends PaymentModule
 
         PrestaShopLogger::addLog('TwoPayment: Order creation with terms - ' . json_encode($request_data['terms']), 1);
 
+        // Tenders go as already paid (TWO-26326); the row records it, so the order's edits and refunds declare it too.
+        $tenders = $this->getTwoOrderTenders($cart, null);
+        $request_data = $this->withTwoPrepaid($request_data, $tenders);
+        if (isset($request_data['prepaid_amount']) && is_array($this->twoDeclaredChargeRates)) {
+            $this->twoDeclaredChargeRates['prepaid'] = $request_data['prepaid_amount'];
+        }
+
         return $this->postprocessOrderRequest(
             TwoOrderPostprocessing::REQUEST_ORDER_CREATE,
             $request_data,
-            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_CREATE, $trigger, '/v1/order', $cart),
+            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_CREATE, $trigger, '/v1/order', $cart, null, null, $tenders),
             $pricingData['checks']
         );
     }
@@ -10882,7 +11017,10 @@ class Twopayment extends PaymentModule
             $mapped = array_values(array_map('strval', array_filter($decoded['tax_codes_mapped'], 'is_scalar')));
         }
 
-        return array('shipping' => $shipping, 'wrapping' => $wrapping, 'shipping_rate_provided' => $provided, 'tax_codes' => $taxCodes, 'tax_codes_mapped' => $mapped);
+        // Written only for an order placed with tenders (TWO-26326), so every other row is as it was.
+        $prepaid = is_array($decoded) && isset($decoded['prepaid']) && is_numeric($decoded['prepaid']) ? max(0.0, round((float) $decoded['prepaid'], 2)) : 0.0;
+
+        return array('shipping' => $shipping, 'wrapping' => $wrapping, 'shipping_rate_provided' => $provided, 'tax_codes' => $taxCodes, 'tax_codes_mapped' => $mapped, 'prepaid' => $prepaid);
     }
 
     /**
@@ -11087,10 +11225,17 @@ class Twopayment extends PaymentModule
 
         $endpoint = '/v1/order/' . (isset($orderpaymentdata['two_order_id']) ? (string) $orderpaymentdata['two_order_id'] : '');
 
+        // An edit that leaves the prepaid amount out resets it to zero at Two, so an order placed with tenders always
+        // declares them (TWO-26326). One placed with none, or before they were declared, is sent as it always was.
+        $tenders = $this->getTwoOrderTenders($cart, $order);
+        if ($declaredRates['prepaid'] > 0) {
+            $request_data = $this->withTwoPrepaid($request_data, $tenders, true);
+        }
+
         return $this->postprocessOrderRequest(
             TwoOrderPostprocessing::REQUEST_ORDER_UPDATE,
             $request_data,
-            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_UPDATE, $trigger, $endpoint, $cart, $order, $twoOrder),
+            $this->buildTwoOrderPostprocessingContext(TwoOrderPostprocessing::REQUEST_ORDER_UPDATE, $trigger, $endpoint, $cart, $order, $twoOrder, $tenders),
             $pricingData['checks']
         );
     }
