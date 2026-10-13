@@ -63,6 +63,11 @@ final class ShippingTaxFallbackGateSpec
                 self::assertMultishopCommand(...$row);
             };
         }
+        foreach (self::crossShopRows() as $row) {
+            $checks[] = static function () use ($row): void {
+                self::assertCrossShopContext(...$row);
+            };
+        }
 
         return $checks;
     }
@@ -129,6 +134,16 @@ final class ShippingTaxFallbackGateSpec
             ['0', '1', 2, true, 'multishop, shop 2 on with global off: shop 2 cart resolved'],
             ['0', '1', 1, false, 'multishop, shop 2 on with global off: shop 1 cart sent at 0%'],
             ['1', '0', 2, false, 'multishop, global on with shop 2 off: shop 2 cart sent at 0%'],
+        ];
+    }
+
+    // context shop's [enabled, group], cart shop's [enabled, group], expected [fallback rate, snapshot group], description
+    private static function crossShopRows(): array
+    {
+        return [
+            [['1', '4210'], ['1', '4100'], [0.1, 4100], 'context shop at 21%, cart shop at 10%: the cart shop\'s rate and group'],
+            [['1', '4210'], ['0', '4210'], [null, null], 'context shop on, cart shop off: none'],
+            [['0', null], ['1', '4210'], [0.21, 4210], 'context shop off, cart shop on: the cart shop\'s rate and group'],
         ];
     }
 
@@ -258,6 +273,39 @@ final class ShippingTaxFallbackGateSpec
         }
 
         TinyAssert::same($resolved ? 'resolved at rate 0.21' : 'resolved at rate 0', $outcome, $description . ' (got: ' . $outcome . ')');
+    }
+
+    /**
+     * A back-office edit of a shop 2 order from shop 1's context: the hook context's fallback rate and the discrepancy
+     * snapshot read the Default shipping tax code of the cart's shop, as fallback_shipping_tax_code does.
+     */
+    private static function assertCrossShopContext(array $contextShop, array $cartShop, array $expected, string $description): void
+    {
+        self::seedMultishop(null, null);
+        StubStore::$taxRuleRates[4100] = 10.0;
+        foreach ([1 => $contextShop, 2 => $cartShop] as $shop => [$enabled, $group]) {
+            StubStore::$configurationShop[$shop][self::ENABLED_KEY] = $enabled;
+            if ($group !== null) {
+                StubStore::$configurationShop[$shop][self::GROUP_KEY] = $group;
+            }
+        }
+        $cart = self::seedCarrierlessCart(9403);
+        $cart->id_shop = 2;
+        $cart->id_shop_group = 1;
+        $module = new TwopaymentTestHarness();
+
+        $context = $module->buildTwoOrderPostprocessingContext('order_update', 'admin_edit', '/v1/order/x', $cart);
+        TinyAssert::same($expected[0], $context['fallback_shipping_tax_rate'], $description . ': fallback_shipping_tax_rate');
+
+        $log = new ReflectionMethod(Twopayment::class, 'logTwoDiscrepancySnapshot');
+        $log->setAccessible(true);
+        $log->invoke($module, $cart, null);
+        $rows = array_values(array_filter(PrestaShopLogger::$logs, static function (array $entry): bool {
+            return ($entry['object_type'] ?? null) === TwoDiscrepancySnapshot::LOG_OBJECT_TYPE;
+        }));
+        TinyAssert::count(1, $rows, $description . ': one snapshot');
+        $snapshot = json_decode((string) $rows[0]['message'], true);
+        TinyAssert::same($expected[1], array_key_exists('default_shipping_tax_rules_group', $snapshot['config'] ?? []) ? $snapshot['config']['default_shipping_tax_rules_group'] : 'missing', $description . ': the snapshot\'s Default shipping tax code');
     }
 
     private static function assertMultishopCommand(?string $globalBefore, ?string $shop2Before, array $input, int $exitCode, ?string $globalAfter, ?string $shop2After, array $fragments, string $description): void
