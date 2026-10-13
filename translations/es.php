@@ -36,9 +36,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_85925e31c13734f285ce48920c8120b9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_93cba07454f06a4a960172bbd6e2a435'] = 'Si';
 $_MODULE['<{twopayment}prestashop>twopayment_bafd7322c6e97d25b6299b5d6fe8920b'] = 'No';
 $_MODULE['<{twopayment}prestashop>twopayment_02a611f10e0d4c434cc07c1b8e2cff4a'] = 'Validar subtotales de impuestos';
-$_MODULE['<{twopayment}prestashop>twopayment_f563791313af7708a2964e6c5f813c2a'] = 'Si seleccionas SÍ, se enviará un desglose de tax_subtotals por tipo de impuesto en las cargas útiles de /v1/order y /v1/order_intent, para su validación frente a las líneas del pedido. Si seleccionas NO, tax_subtotals se omitirá en esas cargas útiles.';
+$_MODULE['<{twopayment}prestashop>twopayment_b4c08ff047c09729b6bf028ef6a7a388'] = 'Si seleccionas SÍ, se enviará un desglose de tax_subtotals por tipo de impuesto con las intenciones de pedido, los pedidos, las modificaciones de pedidos y los reembolsos, para su validación frente a las líneas del pedido. Si seleccionas NO, tax_subtotals se omitirá en todos ellos.';
 $_MODULE['<{twopayment}prestashop>twopayment_980d43b4b58ff388e0f1c3c5ff253d1d'] = 'ADVERTENCIA: Activa esto únicamente si estás detrás de un proxy corporativo con certificados SSL personalizados. Esto desactiva la verificación de certificados SSL y es un riesgo de seguridad. NO RECOMENDADO para producción.';
-$_MODULE['<{twopayment}prestashop>twopayment_32ef340374cbaf110f944895c6a6f7d8'] = 'Activar el registro detallado para resolución de problemas. Registra cálculos de impuestos y otros datos de diagnóstico. Solo actívalo cuando lo solicite el soporte de %s.';
+$_MODULE['<{twopayment}prestashop>twopayment_82004772fbc02229be8a067f017b6770'] = 'Activar el registro detallado para resolución de problemas. Registra cada solicitud y respuesta de la API, con su contenido (la clave de API y los valores de las cabeceras personalizadas se ocultan), salvo la descarga del PDF de la factura, la subida de la factura y el alta de autónomos, además de cálculos de impuestos y otros datos de diagnóstico. Solo actívalo cuando lo solicite el soporte de %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_268080635e4033e05865df7fdd177b8e'] = '%s es una solución B2B de Compra ahora, paga después';
 $_MODULE['<{twopayment}prestashop>twopayment_07b18d92f97de5262310e8d5493d05a9'] = 'Este plugin permite a clientes empresariales pagar con factura con decisiones de crédito instantáneas.';
 $_MODULE['<{twopayment}prestashop>twopayment_99315aa41524d1a9a67fb031b473be73'] = 'Lo que el plugin SÍ puede hacer';
@@ -564,7 +564,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_f33c826a5480001b5a31da2bb38d7959'] 
 $_MODULE['<{twopayment}prestashop>twopayment_f590f4b8e9044ac1bbe4ae9785b105cf'] = 'Dónde debe %s enviar la factura de este pedido, si es distinta del correo electrónico de tu cuenta.';
 $_MODULE['<{twopayment}prestashop>twopayment_fa24a3fec77d9e03aadbda8138637fce'] = 'Tratamiento fiscal del recargo';
 $_MODULE['<{twopayment}prestashop>twopayment_fb3ff8dd49a6e7ecf023f6941320801c'] = 'No se ha podido procesar tu pedido con el pago %s. Elige otro método de pago o ponte en contacto con la tienda.';
-$_MODULE['<{twopayment}prestashop>twopayment_fe24567972432f23380c0c9ced6566a4'] = '-- Sin definir: rechazar el pedido --';
+$_MODULE['<{twopayment}prestashop>twopayment_cffedb3973b157414f98925d6f1e82cf'] = '-- Sin definir: enviar el envío tal como se cobró, sin comprobar --';
 $_MODULE['<{twopayment}prestashop>twopayment_c9a4942151f3f04aca175871bc85f862'] = 'Compra ahora, recibe tus productos y paga tu factura más tarde.';
 $_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] = 'Mostrar mensaje en las páginas de producto';
 $_MODULE['<{twopayment}prestashop>twopayment_9fb821e9212ba21a9dd94767c1032e3a'] = 'Mensaje de la página de producto';
@@ -601,6 +601,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'El hook de posprocesamiento de pedidos ha detenido esta solicitud %1$s, así que no se ha enviado a %2$s (%3$s). Consulta el registro del módulo para ver los detalles.';
 $_MODULE['<{twopayment}prestashop>twopayment_34806171bf43ac13965588a850c90f24'] = 'Esta modificación del pedido se ha guardado en PrestaShop, pero no se ha enviado al proveedor de facturas. No repitas la modificación. Ponte en contacto con el soporte.';
 $_MODULE['<{twopayment}prestashop>twopayment_dcb0def10517a229ffca62e41a4eed87'] = 'Cada código fiscal debe ser (ninguno) o uno de los códigos de la lista.';
+$_MODULE['<{twopayment}prestashop>twopayment_641d2b3250173bda95cbc7ea5cf1de3b'] = 'No se han podido comprobar tus códigos de impuesto con %s, así que no se ha guardado nada. Inténtalo de nuevo en unos minutos.';
 $_MODULE['<{twopayment}prestashop>twopayment_36bf39087971bbc808165c5286ebab04'] = 'Códigos fiscales para líneas al 0 %';
 $_MODULE['<{twopayment}prestashop>twopayment_113da06fcd71bbcf55d6b5ef943dec01'] = 'Algunos campos del formulario no han llegado (este servidor acepta como máximo %d por petición, su ajuste max_input_vars), así que no se ha guardado nada. Vuelve a cargar la página y guarda de nuevo; si el mensaje vuelve a aparecer, pide a tu proveedor de alojamiento que aumente max_input_vars.';
 $_MODULE['<{twopayment}prestashop>twopayment_97139627c126d86a74d8ab820ad756d6'] = '(ninguno)';

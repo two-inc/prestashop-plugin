@@ -869,7 +869,7 @@ function oppSurchargeChecks(OppProbeTwopayment $module, $handled, Cart $cart, Or
 
             return $checks;
         }
-        $fee = is_array($payload) ? oppLine($payload, 'SERVICE') : null;
+        $fee = is_array($payload) ? oppLine($payload, 'BUYER_FEE') : null;
         $checks[] = array($error, null, 'a handler: the create is sent');
         $checks[] = array($fee, array('5.00', '1.05', '6.05'), 'a handler: the create sends the quoted fee');
         $checks[] = array($row === null ? null : array(number_format((float) $row['net'], 2, '.', ''), number_format((float) $row['gross'], 2, '.', '')), is_array($fee) ? array($fee[0], $fee[2]) : $fee, 'a handler: the cart carries the fee the create sends');
@@ -908,7 +908,7 @@ function oppSurchargeChecks(OppProbeTwopayment $module, $handled, Cart $cart, Or
         } catch (Exception $e) {
             $error = get_class($e) . ': ' . $e->getMessage();
         }
-        $checks[] = array(array($error, is_array($updated) ? oppLine($updated, 'SERVICE') : null), array(null, $fee), 'a handler: the update sends the same fee');
+        $checks[] = array(array($error, is_array($updated) ? oppLine($updated, 'BUYER_FEE') : null), array(null, $fee), 'a handler: the update sends the same fee');
     } finally {
         if ($detail > 0) {
             Db::getInstance()->delete('order_detail_tax', 'id_order_detail = ' . $detail);

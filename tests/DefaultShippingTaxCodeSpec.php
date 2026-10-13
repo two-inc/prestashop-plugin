@@ -262,6 +262,8 @@ final class DefaultShippingTaxCodeSpec
         // unselected placeholder with "No tax".
         TinyAssert::same('', $ids[0]);
         TinyAssert::same('0', $ids[1]);
+        // Blank never refuses an order (TWO-26117), so the placeholder says what it does (TWO-26340).
+        TinyAssert::same('-- Not set: send shipping as charged, unchecked --', $input['options']['query'][0]['name']);
         TinyAssert::true(in_array('4210', $ids, true));
         TinyAssert::true(in_array('4100', $ids, true));
         foreach ($ids as $id) {

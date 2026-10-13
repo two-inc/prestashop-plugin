@@ -5955,6 +5955,7 @@ require __DIR__ . '/DiscrepancySnapshotSpec.php';
 require __DIR__ . '/TaxCodeSpec.php';
 require __DIR__ . '/TaxCodeAdminSpec.php';
 require __DIR__ . '/OrderTendersSpec.php';
+require __DIR__ . '/DebugApiLoggingSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -6038,6 +6039,7 @@ $tests = [
     'ShippingRateControlSpec::runAll' => [ShippingRateControlSpec::class, 'runAll'],
     'PostcodeFormatSpec::runAll' => [PostcodeFormatSpec::class, 'runAll'],
     'OrderTendersSpec::runAll' => [OrderTendersSpec::class, 'runAll'],
+    'DebugApiLoggingSpec::runAll' => [DebugApiLoggingSpec::class, 'runAll'],
 ];
 
 $failed = 0;

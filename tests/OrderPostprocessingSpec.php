@@ -922,7 +922,7 @@ final class OrderPostprocessingSpec
             }));
             $fee = static function (array $payload): array {
                 $lines = array_values(array_filter($payload['line_items'], static function (array $line): bool {
-                    return $line['type'] === 'SERVICE';
+                    return $line['type'] === 'BUYER_FEE';
                 }));
 
                 return array_map(static function (array $line): array {

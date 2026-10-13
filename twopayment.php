@@ -2933,7 +2933,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Validate tax subtotals'),
                         'name' => 'PS_TWO_ENABLE_TAX_SUBTOTALS',
                         'is_bool' => true,
-                        'desc' => $this->l('If you choose YES, a per-tax-rate tax_subtotals breakdown is sent in /v1/order and /v1/order_intent payloads for validation against the order lines. If you choose NO, tax_subtotals is omitted from those payloads.'),
+                        'desc' => $this->l('If you choose YES, a per-tax-rate tax_subtotals breakdown is sent with order intents, orders, order updates and refunds, for validation against the order lines. If you choose NO, tax_subtotals is omitted from all of them.'),
                         'required' => true,
                         'values' => array(
                             array(
@@ -3029,7 +3029,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('Enable debug logging'),
                         'name' => 'PS_TWO_DEBUG_MODE',
                         'is_bool' => true,
-                        'desc' => sprintf($this->l('Enable detailed logging for troubleshooting. Logs tax calculations and other diagnostic data. Only enable when requested by %s support.'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('Enable detailed logging for troubleshooting. Logs each API request and response, bodies included (the API key and custom header values redacted), except the invoice PDF download, the invoice upload and the sole-trader signup, plus tax calculations and other diagnostic data. Only enable when requested by %s support.'), $this->getTwoBrandConfig('product_name')),
                         'required' => false,
                         'values' => array(
                             array(
@@ -3343,7 +3343,7 @@ class Twopayment extends PaymentModule
     protected function getTwoDefaultShippingTaxRulesGroupOptions()
     {
         $options = array(
-            array('id' => '', 'name' => $this->l('-- Not set: refuse the order instead --')),
+            array('id' => '', 'name' => $this->l('-- Not set: send shipping as charged, unchecked --')),
             array('id' => '0', 'name' => $this->l('No tax')),
         );
         $seen = array(0 => true);
@@ -3460,8 +3460,11 @@ class Twopayment extends PaymentModule
 
             return;
         }
-        if ($this->getPostedTwoTaxCodeMap() === null) {
+        $unchecked = false;
+        if ($this->getPostedTwoTaxCodeMap($unchecked) === null) {
             $this->errors[] = $this->l('Each tax code must be (none) or one of the codes listed.');
+        } elseif ($unchecked) {
+            $this->errors[] = sprintf($this->l('Your tax codes could not be checked with %s, so nothing was saved. Try again in a few minutes.'), $this->getTwoBrandConfig('product_name'));
         }
         $raw = Tools::getValue(self::CONFIG_DEFAULT_SHIPPING_TAX_RULES_GROUP, false);
         if ($raw === false || !TwoShippingTaxFallbackGate::isEnabled()) {
@@ -3469,8 +3472,8 @@ class Twopayment extends PaymentModule
         }
         $trimmed = is_string($raw) ? trim($raw) : '';
         if ($trimmed === '') {
-            // Unselected is a legitimate, and the shipped, state: it means
-            // "keep refusing". Nothing to validate.
+            // Unselected is a legitimate, and the shipped, state: shipping goes
+            // out as charged, with no module check. Nothing to validate.
             return;
         }
         $group_id = ctype_digit($trimmed) ? (int) $trimmed : -1;
@@ -3979,11 +3982,15 @@ class Twopayment extends PaymentModule
      * only while the section shows them, so a stale tab posting rows the section no longer shows changes nothing, and
      * a save carrying Clear reads none.
      *
+     * @param bool $unchecked set to true when posted rows change a code but the merchant's details or the code list
+     *                        could not be read to check them (TWO-26340), so they are not saved; the caller tells the
+     *                        merchant
      * @return array<string,string>|false|null the map; false when the form carried no mapping; null when a posted code
      *                                         is neither listed at rate 0 nor the one already stored for that row
      */
-    protected function getPostedTwoTaxCodeMap()
+    protected function getPostedTwoTaxCodeMap(&$unchecked = false)
     {
+        $unchecked = false;
         $posted = array();
         foreach ($this->getTwoTaxCodeMapRows() as $row) {
             $raw = Tools::getValue($row['field'], false);
@@ -3995,11 +4002,18 @@ class Twopayment extends PaymentModule
             return false;
         }
         $state = $this->getTwoTaxCodeSectionState(true);
-        if ($state['view'] !== TwoTaxCodeSection::VIEW_ROWS) {
-            return false;
-        }
         $stored = $this->readTwoTaxCodeMap(Configuration::get(self::CONFIG_TAX_CODE_MAP));
         $map = is_array($stored) ? $stored : array();
+        if ($state['view'] !== TwoTaxCodeSection::VIEW_ROWS) {
+            // Rows that could not be checked are not saved; that is an error only where they change a code.
+            if (in_array($state['view'], array(TwoTaxCodeSection::VIEW_PROFILE_ERROR, TwoTaxCodeSection::VIEW_LIST_ERROR), true)) {
+                foreach ($posted as $pair) {
+                    $unchecked = $unchecked || $pair[1] !== (isset($map[$pair[0]]) ? $map[$pair[0]] : '');
+                }
+            }
+
+            return false;
+        }
         $codes = TwoTaxCodeSection::zeroRated($state['codes']);
         $asked = false;
         foreach ($posted as $pair) {
@@ -5989,7 +6003,7 @@ class Twopayment extends PaymentModule
      * @param object $slip OrderSlip
      * @param Order $order
      * @param array $orderpaymentdata the order's Two row
-     * @param array|null $sent set to the payload sent, on success
+     * @param array|null $sent set to the payload sent, on success, as getTwoRefundRecord() records it
      * @return string|null null when Two accepted it; otherwise why not, for the merchant ('' when nothing was due)
      */
     protected function sendTwoCreditSlipRefund($slip, $order, $orderpaymentdata, &$sent = null)
@@ -6070,7 +6084,7 @@ class Twopayment extends PaymentModule
             return $this->l('the order currency could not be resolved');
         }
 
-        // Two's partial-refund contract requires tax_subtotals.
+        // The refund is split by rate whether or not tax_subtotals is sent: its lines are spread from the split.
         $kind_gross = array();
         $this->twoDeferredShopMatch = array();
         try {
@@ -6142,7 +6156,7 @@ class Twopayment extends PaymentModule
         PrestaShopLogger::addLog('TwoPayment: Partial refund successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id . ', Idempotency Key: ' . $idempotency_key, 1);
         // Two has accepted it: from here nothing may turn this into a not-sent slip (see the hook's invariants).
         // What Two received is the post-hook payload, which the Refunded remainder is later computed from.
-        $sent = $sent_payload;
+        $sent = $this->getTwoRefundRecord($sent_payload, $tax_subtotals);
         $this->noteTwoRefundSentWithoutLines($id_order, $sent_payload);
         $this->refreshTwoOrderPaymentDataAfterRefund($id_order, $two_order_id, $orderpaymentdata);
 
@@ -6509,7 +6523,7 @@ class Twopayment extends PaymentModule
             return;
         }
         PrestaShopLogger::addLog('TwoPayment: Full refund remainder successful (HTTP ' . self::HTTP_STATUS_CREATED . ') for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Amount: ' . $payload['amount'] . ', Idempotency Key: ' . $idempotency_key, 1);
-        $this->recordTwoRefundOutcome($id_order, null, 'SENT', $sent_payload, null);
+        $this->recordTwoRefundOutcome($id_order, null, 'SENT', $this->getTwoRefundRecord($sent_payload, $tax_subtotals), null);
         $this->noteTwoRefundSentWithoutLines($id_order, $sent_payload);
         $this->refreshTwoOrderPaymentDataAfterRefund($id_order, $two_order_id, $orderpaymentdata);
     }
@@ -6536,7 +6550,11 @@ class Twopayment extends PaymentModule
             return array();
         }
         $buckets = array();
-        foreach (isset($placed['tax_subtotals']) && is_array($placed['tax_subtotals']) ? $placed['tax_subtotals'] : array() as $subtotal) {
+        // With Validate tax subtotals off the rebuilt order carries none, so its split is taken from its lines.
+        if (!isset($placed['tax_subtotals']) || !is_array($placed['tax_subtotals'])) {
+            $placed['tax_subtotals'] = $this->getTwoTaxSubtotals($this->getTwoPayloadLines($placed));
+        }
+        foreach ($placed['tax_subtotals'] as $subtotal) {
             $taxable = (float)$subtotal['taxable_amount'];
             $this->addTwoTaxBucket($buckets, (float)$subtotal['tax_rate'] * 100, $taxable, $taxable + (float)$subtotal['tax_amount']);
         }
@@ -6743,7 +6761,8 @@ class Twopayment extends PaymentModule
     /**
      * Build the {amount, currency, line_items, tax_subtotals} partial-refund
      * payload for Two. Amount is a 2dp decimal string, matching Two's Money
-     * format. line_items is left out when the refund could not be itemised.
+     * format. line_items is left out when the refund could not be itemised, and
+     * tax_subtotals while Validate tax subtotals is off.
      *
      * @param float $amount Gross refund amount
      * @param string $currency ISO currency code
@@ -6764,9 +6783,29 @@ class Twopayment extends PaymentModule
                 return round((float)$subtotal['taxable_amount'] + (float)$subtotal['tax_amount'], 2) != 0.0;
             }));
         }
-        $payload['tax_subtotals'] = $tax_subtotals;
+        // Validate tax subtotals governs refunds as it does order intents, creates and updates (TWO-26340).
+        if ($this->shouldIncludeTaxSubtotals()) {
+            $payload['tax_subtotals'] = $tax_subtotals;
+        }
 
         return $payload;
+    }
+
+    /**
+     * A refund Two accepted, as its row records it: the payload sent, and where Validate tax subtotals kept the
+     * module's split off the wire, that split, so the Refunded remainder still knows what each rate has refunded.
+     *
+     * @param array $sent_payload the payload as the subscribers returned it
+     * @param array $tax_subtotals the module's split of the refund
+     * @return array
+     */
+    private function getTwoRefundRecord(array $sent_payload, array $tax_subtotals)
+    {
+        if (!$this->shouldIncludeTaxSubtotals() && !array_key_exists('tax_subtotals', $sent_payload)) {
+            $sent_payload['tax_subtotals'] = $tax_subtotals;
+        }
+
+        return $sent_payload;
     }
 
     /**
@@ -8944,7 +8983,7 @@ class Twopayment extends PaymentModule
             $totals = $this->calculateTwoLineItemTotals($lines);
             $maxDiffCents = 0;
             $drift = '';
-            if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $totals, $contextLabel, $maxDiffCents, $drift, $placedTotals)) {
+            if (!$this->validateTwoOrderReconciliationAgainstCart($cart, $totals, $contextLabel, $maxDiffCents, $drift, $placedTotals, count($lines))) {
                 $this->enforceTwoReconciliation($contextLabel, $maxDiffCents, $drift, $strict, $lines);
             }
         });
@@ -9991,9 +10030,10 @@ class Twopayment extends PaymentModule
      * @param int $maxDiffCents Set to the largest net/tax/gross drift, in cents
      * @param string $driftDetail Set to the figures that drifted, e.g. "net cart 60.00 vs order lines 64.00 (difference 4.00)"
      * @param array|null $placedTotals the placed order's own gross/net, fee excluded, in place of the cart's
+     * @param int $lineCount how many lines $lineTotals sums, for getTwoWholeOrderToleranceCents()
      * @return bool
      */
-    private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, &$maxDiffCents = 0, &$driftDetail = '', $placedTotals = null)
+    private function validateTwoOrderReconciliationAgainstCart($cart, $lineTotals, $contextLabel, &$maxDiffCents = 0, &$driftDetail = '', $placedTotals = null, $lineCount = 1)
     {
         $maxDiffCents = 0;
         $driftDetail = '';
@@ -10025,7 +10065,7 @@ class Twopayment extends PaymentModule
         $taxDiff = abs($lineTax - $cartTax);
 
         // Compare in cents to avoid float boundary artifacts (e.g. visible 0.02 diff treated as 0.0200000001).
-        $toleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
+        $toleranceCents = $this->getTwoWholeOrderToleranceCents($lineCount);
         $grossDiffCents = $this->convertAmountToCents($grossDiff);
         $netDiffCents = $this->convertAmountToCents($netDiff);
         $taxDiffCents = $this->convertAmountToCents($taxDiff);
@@ -10069,20 +10109,21 @@ class Twopayment extends PaymentModule
      * @param int $maxDiffCents the largest drift, in cents
      * @param string $driftDetail
      * @param bool $strictReconciliation
-     * @param array $lineItems the lines checked, for the discrepancy snapshot
+     * @param array $lineItems the lines checked, for the discrepancy snapshot and the tolerance
      * @return void
      * @throws TwoCheckoutAmountException
      */
     private function enforceTwoReconciliation($contextLabel, $maxDiffCents, $driftDetail, $strictReconciliation, array $lineItems)
     {
-        if ($this->shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, (bool)$strictReconciliation)) {
+        $toleranceCents = $this->getTwoWholeOrderToleranceCents(count($lineItems));
+        if ($this->shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, (bool)$strictReconciliation, $toleranceCents)) {
             if ($this->twoDiscrepancyGate !== null) {
                 $this->twoDiscrepancyGate['line_items'] = $lineItems;
             }
             PrestaShopLogger::addLog(
                 'TwoPayment: ' . $contextLabel . ' blocked by reconciliation policy. ' .
                 'Max drift=' . $this->getTwoRoundAmount($maxDiffCents / 100) .
-                ', Tolerance=' . $this->getTwoRoundAmount(self::ORDER_RECONCILIATION_TOLERANCE),
+                ', Tolerance=' . $this->getTwoRoundAmount($toleranceCents / 100),
                 3
             );
             // Carry the numbers in the exception, not just the log: this
@@ -10107,22 +10148,35 @@ class Twopayment extends PaymentModule
      *
      * @param string $contextLabel
      * @param int $maxDiffCents
+     * @param bool $strictReconciliation
+     * @param float $toleranceCents getTwoWholeOrderToleranceCents()
      * @return bool
      */
-    private function shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, $strictReconciliation = false)
+    private function shouldBlockOnReconciliationDrift($contextLabel, $maxDiffCents, $strictReconciliation, $toleranceCents)
     {
         if ((bool)$strictReconciliation) {
-            $strictToleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
-            return (int)$maxDiffCents > $strictToleranceCents;
+            return (int)$maxDiffCents > $toleranceCents;
         }
 
         if (strpos($contextLabel, 'order intent') !== false) {
             return false;
         }
 
-        // Create/update payloads must fail-closed when drift exceeds default tolerance.
-        $createToleranceCents = $this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE);
-        return (int)$maxDiffCents > $createToleranceCents;
+        // Create/update payloads must fail-closed when drift exceeds the tolerance.
+        return (int)$maxDiffCents > $toleranceCents;
+    }
+
+    /**
+     * The whole-order check's tolerance, in cents, as the WooCommerce and Magento plugins have it: each line is
+     * rounded on its own, by up to half a cent, and the order once more, so the lines may drift from the order's
+     * totals by up to half a cent per line plus half for the order; never less than ORDER_RECONCILIATION_TOLERANCE.
+     *
+     * @param int $lineCount how many lines are summed
+     * @return float
+     */
+    private function getTwoWholeOrderToleranceCents($lineCount)
+    {
+        return max($this->convertAmountToCents(self::ORDER_RECONCILIATION_TOLERANCE), ((int)$lineCount + 1) * 0.5);
     }
 
     /**
@@ -11388,7 +11442,7 @@ class Twopayment extends PaymentModule
 
         foreach ($line_items as $line_item) {
             // The hidden surcharge product is NOT merchandise: the Two payload
-            // carries the fee as its own appended SERVICE line
+            // carries the fee as its own appended BUYER_FEE line
             // (buildTwoSurchargeLineItemForCart), and the fee basis must never
             // include the fee itself. Skip it here; reconciliation subtracts
             // its cart totals symmetrically.
@@ -15141,10 +15195,12 @@ class Twopayment extends PaymentModule
         $this->configureSslVerification($ch);
 
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'GET');
+        $responseHeaders = $this->collectTwoResponseHeaders($ch);
         $response = curl_exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError = (string) curl_error($ch);
         curl_close($ch);
+        $this->logTwoApiExchange('GET', '/v1/merchant/verify_api_key', array(), $headers, $response, $httpCode, $responseHeaders, $curlError);
 
         return array('response' => $response, 'code' => $httpCode, 'error' => $curlError);
     }
@@ -18880,7 +18936,7 @@ class Twopayment extends PaymentModule
             'unit_price' => (string) $this->getTwoRoundAmount($net),
             'quantity' => 1,
             'quantity_unit' => 'item',
-            'type' => 'SERVICE',
+            'type' => 'BUYER_FEE',
         );
     }
 
@@ -21634,11 +21690,13 @@ class Twopayment extends PaymentModule
             curl_setopt($ch, CURLOPT_POST, 1);
             curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            $response_headers = $this->collectTwoResponseHeaders($ch);
             
             $response_body = curl_exec($ch);
             $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curl_error = curl_error($ch);
             curl_close($ch);
+            $this->logTwoApiExchange($method, $endpoint, $payload, $headers, $response_body, (int)$http_status, $response_headers, $curl_error);
             
             if ($response_body === false || !empty($curl_error)) {
                 PrestaShopLogger::addLog(
@@ -21680,11 +21738,13 @@ class Twopayment extends PaymentModule
             $this->configureSslVerification($ch);
             
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+            $response_headers = $this->collectTwoResponseHeaders($ch);
             
             $response_body = curl_exec($ch);
             $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curl_error = curl_error($ch);
             curl_close($ch);
+            $this->logTwoApiExchange($method, $endpoint, $payload, $headers, $response_body, (int)$http_status, $response_headers, $curl_error);
             
             if ($response_body === false || !empty($curl_error)) {
                 PrestaShopLogger::addLog(
@@ -21712,6 +21772,97 @@ class Twopayment extends PaymentModule
                 'http_status' => (int)$http_status,
                 'data' => $response_data,
             ], is_array($response_data) ? $response_data : []);
+        }
+    }
+
+    /**
+     * With Debug Mode on, collect the response's headers for logTwoApiExchange(); with it off, collect nothing.
+     *
+     * @param mixed $ch a curl handle
+     * @return ArrayObject name => value, filled as curl reads the response
+     */
+    private function collectTwoResponseHeaders($ch)
+    {
+        $collected = new ArrayObject();
+        if (Configuration::get('PS_TWO_DEBUG_MODE')) {
+            curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($handle, $line) use ($collected) {
+                $parts = explode(':', $line, 2);
+                if (count($parts) === 2) {
+                    $collected[trim($parts[0])] = trim($parts[1]);
+                }
+
+                return strlen($line);
+            });
+        }
+
+        return $collected;
+    }
+
+    /**
+     * Debug Mode's log of one API call, as the WooCommerce plugin logs it (TWO-26340): the method and endpoint, then
+     * the request's body, headers and query parameters and the response's body, headers and status code. The bodies
+     * carry buyer data, so nothing is logged with Debug Mode off; refusals and connection errors are logged by their
+     * callers either way. The API key and every custom header value are redacted. Severity 3 (error) for a
+     * connection error or HTTP 400 and above, else 1 (informative).
+     *
+     * @param string $method
+     * @param string $endpoint
+     * @param mixed $payload the request body as an array
+     * @param array $headers the request's header lines, "Name:value"
+     * @param string|false $response_body
+     * @param int $http_status
+     * @param iterable $response_headers name => value
+     * @param string $curl_error
+     * @return void
+     */
+    protected function logTwoApiExchange($method, $endpoint, $payload, array $headers, $response_body, $http_status, $response_headers, $curl_error)
+    {
+        if (!Configuration::get('PS_TWO_DEBUG_MODE')) {
+            return;
+        }
+        $redacted = array('x-api-key' => true, 'authorization' => true, 'proxy-authorization' => true);
+        foreach (self::getTwoCustomHeaders() as $row) {
+            $redacted[strtolower($row['name'])] = true;
+        }
+        $request_headers = array();
+        foreach ($headers as $line) {
+            $parts = explode(':', (string)$line, 2);
+            $name = trim($parts[0]);
+            $request_headers[$name] = isset($redacted[strtolower($name)]) ? '[REDACTED]' : (isset($parts[1]) ? trim($parts[1]) : '');
+        }
+        $context = array(
+            'request' => array(
+                'body' => $payload,
+                'headers' => $request_headers,
+                'params' => $this->getTwoClientParams(),
+            ),
+            'response' => array('body' => null, 'headers' => null, 'status_code' => null),
+        );
+        $message = 'TwoPayment: ' . $method . ' ' . $endpoint;
+        $severity = 3;
+        if ($response_body === false || !empty($curl_error)) {
+            $message .= ': cURL error: ' . $curl_error;
+        } else {
+            $decoded = json_decode((string)$response_body, true);
+            $context['response'] = array(
+                'body' => json_last_error() === JSON_ERROR_NONE ? $decoded : $response_body,
+                'headers' => is_array($response_headers) ? $response_headers : iterator_to_array($response_headers),
+                'status_code' => (int)$http_status,
+            );
+            $severity = (int)$http_status >= 400 ? 3 : 1;
+        }
+        // Core strips tags from every log message, so no raw < or > may reach it; ps_log.message is a 64KB TEXT,
+        // stored addslashes()-escaped on 1.7, so a long call is cut, as the discrepancy snapshot is.
+        $message .= ' - ' . json_encode($context, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        if (strlen(addslashes($message)) > TwoDiscrepancySnapshot::MAX_BYTES) {
+            // addslashes() at most doubles the kept bytes, so this fits MAX_BYTES with the marker.
+            $marker = ' [cut]';
+            $message = mb_strcut($message, 0, (int)((TwoDiscrepancySnapshot::MAX_BYTES - strlen($marker)) / 2), 'UTF-8') . $marker;
+        }
+        try {
+            PrestaShopLogger::addLog($message, $severity);
+        } catch (Throwable $e) {
+            // The log never fails the call it describes.
         }
     }
 
