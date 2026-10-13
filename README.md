@@ -751,14 +751,15 @@ validates whatever arrives.
 subtotals" setting sends them), the order-level `net_amount` / `tax_amount` /
 `gross_amount`, buyer, addresses and everything else. A request that has no body
 passes an empty array. Any part of it may be changed, including gross amounts, lines,
-totals and fields the module does not itself send.
+totals and fields the module does not itself send, except on `order_confirm` and
+`cancel` (below).
 
 `order_confirm` and `cancel` take no body at Two's API, so they are always sent empty,
 as the Magento plugin sends them. The hook still runs on them, with an empty `payload`
 and the usual `context`. A body a subscriber returns there is ignored and logged with
 the paths it set, never their values; a subscriber that throws is logged with its
 exception's class and where it was thrown, never the message, and the request is still
-sent: by then PrestaShop has already confirmed or cancelled the order.
+sent: a subscriber must never block a confirm or a cancel.
 
 `context` (array):
 
@@ -849,7 +850,8 @@ with the cart. An enabled handler stands the default handler down even when it c
 nothing.
 
 **Nothing else is checked after the hook.** With a merchant handler registered, the
-payload it returns is sent as it is, even one that does not add up, or a line the module
+payload it returns is sent as it is (except on `order_confirm` and `cancel`, which are
+sent empty), even one that does not add up, or a line the module
 built whose declared rate its amounts contradict, which the handler left unchanged. Two's
 API judges it.
 

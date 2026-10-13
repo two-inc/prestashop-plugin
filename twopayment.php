@@ -9651,8 +9651,8 @@ class Twopayment extends PaymentModule
     /**
      * The hook on a request Two's API takes no body for (confirm and cancel), as the Magento plugin runs it: the
      * subscribers see an empty payload and the usual context, and the request is sent empty whatever they do. A body
-     * they return is logged by its paths, a throw by its class and throw site, and neither stops the request: by now
-     * PrestaShop has already confirmed or cancelled the order.
+     * they return is logged by its paths, a throw by its class and throw site, and neither stops the request: a
+     * subscriber must never block a confirm or a cancel.
      *
      * @param string $requestType
      * @param array $context
