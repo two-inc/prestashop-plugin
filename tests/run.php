@@ -5948,6 +5948,7 @@ require __DIR__ . '/IntentDeclinedNoticeSpec.php';
 require __DIR__ . '/DeprecatedCustomPaymentTermSpec.php';
 require __DIR__ . '/CheckoutWithholdReasonSpec.php';
 require __DIR__ . '/PaymentTileAboutControlSpec.php';
+require __DIR__ . '/PaymentOptionLogoSpec.php';
 require __DIR__ . '/ReconciliationDriftMessageSpec.php';
 require __DIR__ . '/OrderPostprocessingSpec.php';
 require __DIR__ . '/ShippingRateControlSpec.php';
@@ -6010,6 +6011,7 @@ $tests = [
     'ProductButtonSpec::runAll' => [ProductButtonSpec::class, 'runAll'],
     'TwoAnchorOnlyHtmlSpec::runAll' => [TwoAnchorOnlyHtmlSpec::class, 'runAll'],
     'PaymentTileAboutControlSpec::runAll' => [PaymentTileAboutControlSpec::class, 'runAll'],
+    'PaymentOptionLogoSpec::runAll' => [PaymentOptionLogoSpec::class, 'runAll'],
     'DiscrepancySnapshotSpec::runAll' => [DiscrepancySnapshotSpec::class, 'runAll'],
     'TaxCodeSpec::runAll' => [TaxCodeSpec::class, 'runAll'],
     'TaxCodeAdminSpec::runAll' => [TaxCodeAdminSpec::class, 'runAll'],
