@@ -1264,6 +1264,9 @@ class Twopayment extends PaymentModule
                 if ($this->apiKeyVerificationWarning !== null) {
                     $this->output .= $this->displayWarning($this->apiKeyVerificationWarning);
                 }
+                if ($this->environmentRefused) {
+                    $this->output .= $this->displayError($this->l('Select a valid environment.'));
+                }
             } else {
                 foreach ($this->errors as $err) {
                     $this->output .= $this->displayError($err);
@@ -1598,16 +1601,18 @@ class Twopayment extends PaymentModule
         }
         
         // Validate environment
-        $environment = Tools::getValue('PS_TWO_ENVIRONMENT');
-        $environmentValid = self::isTwoEnvironmentSaveAllowed($environment, Configuration::get('PS_TWO_ENVIRONMENT'));
-        if (!$environmentValid) {
-            $this->errors[] = $this->l('Select a valid environment.');
-        }
+        // Refused field by field, as the WooCommerce and Magento plugins do
+        // (TWO-26604): the stored environment stays, every other field saves,
+        // and the key is verified against the environment that will be stored.
+        $this->environmentRefused = !self::isTwoEnvironmentSaveAllowed(
+            Tools::getValue('PS_TWO_ENVIRONMENT'),
+            Configuration::get('PS_TWO_ENVIRONMENT')
+        );
         
         // Verify API key with Two against selected environment and capture merchant id and short name
         $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
-        $env = $environment;
-        if (!empty($apiKey) && $environmentValid) {
+        $env = $this->getTwoEnvironmentToSave();
+        if (!empty($apiKey)) {
             $verify = $this->verifyTwoApiKey($apiKey, $env);
             // Held for the SAVE to publish, not published here (TWO-25326).
             // Validation can still fail on an unrelated field - an empty title,
@@ -1640,10 +1645,18 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /** The submitted environment, or the stored one when the submission was refused (TWO-26604). */
+    protected function getTwoEnvironmentToSave()
+    {
+        return $this->environmentRefused
+            ? Configuration::get('PS_TWO_ENVIRONMENT')
+            : Tools::getValue('PS_TWO_ENVIRONMENT');
+    }
+
     protected function saveTwoGeneralFormValues()
     {
         $submittedApiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
-        $submittedEnv = Tools::getValue('PS_TWO_ENVIRONMENT');
+        $submittedEnv = $this->getTwoEnvironmentToSave();
         // The one submitted value a save may not commit: it would take Two off
         // a checkout the stored key still serves.
         $rejected = is_array($this->verifiedApiKeyResult)
@@ -17673,6 +17686,9 @@ class Twopayment extends PaymentModule
      * @var string|null
      */
     protected $apiKeyVerificationWarning = null;
+
+    /** Whether the submitted Environment was refused, so the stored one is kept (TWO-26604). */
+    protected $environmentRefused = false;
 
     /**
      * Whether this instance has already logged that it is withholding Two over
