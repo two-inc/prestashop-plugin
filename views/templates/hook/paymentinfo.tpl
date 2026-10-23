@@ -34,6 +34,10 @@
         <span class="two-sole-trader__error" style="display: none;">{l s='Something went wrong setting up sole trader checkout. Please try again.' mod='twopayment'}</span>
     </div>
 
+    {* The header holds only the about control, so it renders only with it:
+       an empty header would leave a blank ruled strip atop the tile. *}
+    {if $show_about_link}
+    {if $about_url != ''}
     <div class="two-header">
         <div class="two-logo-container">
             {* The icon IS the link - the tooltip is its sibling and
@@ -45,8 +49,6 @@
                referenced node.
                noopener without noreferrer: the Referer is how the brand's own
                about page attributes the visit. *}
-            {if $show_about_link}
-            {if $about_url != ''}
             <span class="two-info-tooltip">
                 <a class="two-info-link"
                    href="{$about_url|escape:'html':'UTF-8'}"
@@ -60,10 +62,10 @@
                     <span class="two-tooltip-text">{l s='Click to find out more' mod='twopayment'}</span>
                 </span>
             </span>
-            {/if}
-            {/if}
         </div>
     </div>
+    {/if}
+    {/if}
 
     <div class="two-benefits">
         <div class="two-benefit-item">
