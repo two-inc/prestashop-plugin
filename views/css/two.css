@@ -187,8 +187,10 @@
 .two-tooltip-content {
     position: absolute;
     top: 100%;
-    left: 50%;
-    transform: translateX(-50%) translateY(-10px);
+    /* Anchored at the icon's left edge: the icon now opens the header, so a
+       box centred on it would hang past the tile's left edge (TWO-26609). */
+    left: 0;
+    transform: translateY(-10px);
     background: #fff;
     border: 1px solid #e9ecef;
     border-radius: 8px;
@@ -206,7 +208,7 @@
 .two-info-tooltip:hover .two-tooltip-content,
 .two-info-tooltip:focus-within .two-tooltip-content {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateY(0);
     pointer-events: auto;
 }
 
@@ -227,12 +229,12 @@
     margin-bottom: 0;
 }
 
-/* Tooltip Arrow - Centered */
+/* Tooltip Arrow - over the icon's centre (20px wide), as the box is anchored at its left edge */
 .two-tooltip-content::before {
     content: '';
     position: absolute;
     top: -6px;
-    left: 50%;
+    left: 10px;
     transform: translateX(-50%);
     width: 0;
     height: 0;
@@ -245,7 +247,7 @@
     content: '';
     position: absolute;
     top: -5px;
-    left: 50%;
+    left: 10px;
     transform: translateX(-50%);
     width: 0;
     height: 0;
@@ -490,19 +492,6 @@
     /* Mobile tooltip adjustments */
     .two-tooltip-content {
         width: 260px;
-        left: -120px; /* Adjust positioning for smaller screens */
-        transform: translateY(-10px); /* Remove translateX for mobile */
-    }
-    
-    .two-info-tooltip:hover .two-tooltip-content,
-    .two-info-tooltip:focus-within .two-tooltip-content {
-        transform: translateY(0); /* Remove translateX for mobile */
-    }
-    
-    .two-tooltip-content::before,
-    .two-tooltip-content::after {
-        left: 130px; /* Position arrow relative to smaller width */
-        transform: none;
     }
     
     /* Adjust header padding for mobile */
