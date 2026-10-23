@@ -58,7 +58,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 ### Back Office Setup
 
 1. **Install and Enable**: Install the module from Module Manager
-2. **Environment Selection**: Choose Production or Sandbox (testing, no real money moves). Staging is offered only on Two's own infrastructure, where the server sets `TWO_INTERNAL_ENVIRONMENTS=1`
+2. **Environment Selection**: Choose Production or Sandbox (testing, no real money moves). Sandbox is the default, and an unrecognised stored value resolves to Sandbox
 3. **API Key**: Enter your Two API key for the selected environment
    - The module validates the API key on save
    - A key that does not verify is reported by category, so a rejected key, a Two service error and a shop that cannot reach Two at all read differently. The HTTP status is shown; the response body is only ever logged
@@ -85,7 +85,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| Environment | Production or Sandbox (Staging on Two's infrastructure only) | Sandbox |
+| Environment | Production or Sandbox | Sandbox |
 | API Key | Two merchant API key | Required |
 | Payment Term Type | Standard or End-of-Month (EOM) | Standard |
 | Payment terms | Available terms based on type | 30 days enabled |

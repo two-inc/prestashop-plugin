@@ -19,13 +19,13 @@
 
 ---
 
-## [2026-10-23] Environment Options Match The Other Plugins; Staging Only On Two Infrastructure (TWO-26604)
+## [2026-10-23] Environment Options Match The Other Plugins (TWO-26604)
 
-**Context**: PrestaShop offered Staging to every merchant and hid Sandbox, while WooCommerce and Magento offer Production and Sandbox. The unreleased 2.7.8 upgrade rewrote the released default `development` (always sandbox hosts) to `staging`, which would have moved live merchants onto the staging API.
-**Decision**: One rule on all three plugins. Options Production, Sandbox, and Staging only when `TWO_INTERNAL_ENVIRONMENTS` is exactly `1` or `staging` is already stored. Stored values `production`, `sandbox`, `staging`; fresh install `sandbox`; reads trimmed, lowercased, `prod` aliased, anything else resolves to `sandbox`. The helpers are `Twopayment::isTwoInternalEnvironmentsEnabled()`, `recogniseTwoEnvironment()`, `normaliseTwoEnvironment()`, `getTwoEnvironmentOptions()`, `isTwoEnvironmentSaveAllowed()` and `isTwoEnvironmentHealthy()`. `upgrade-2.7.8.php` rewrites legacy values in place, `development` to `sandbox`.
+**Context**: PrestaShop hid Sandbox from merchants, while WooCommerce and Magento offer Production and Sandbox. The unreleased 2.7.8 upgrade rewrote the released default `development` (always sandbox hosts) away from sandbox, which would have moved live merchants onto a different API.
+**Decision**: One rule on all three plugins. Merchants are offered Production and Sandbox. There are also internal environments for the use of Two employees only, offered only on Two's own servers. Fresh install `sandbox`; reads trimmed, lowercased, `prod` aliased, anything unrecognised resolves to `sandbox`. The helpers are `Twopayment::isTwoInternalEnvironmentsEnabled()`, `recogniseTwoEnvironment()`, `normaliseTwoEnvironment()`, `getTwoEnvironmentOptions()`, `isTwoEnvironmentSaveAllowed()` and `isTwoEnvironmentHealthy()`. `upgrade-2.7.8.php` rewrites legacy values in place, `development` to `sandbox`.
 **Alternatives Considered**: Hostname detection (WooCommerce's old approach): implicit, and tied to the two.inc domain that brand overlays do not share.
-**Rationale**: Identical behaviour across plugins; the flag is explicit and set only in Two's helm values and local docker stacks. It is not a security gate: Staging needs a staging key.
-**Consequences**: `tests/fixtures/environment-cases.json` is byte-identical in the three plugin repos and drives `EnvironmentOptionsSpec`. A shop that loses the flag keeps a stored `staging`, and the health checklist reports it.
+**Rationale**: Identical behaviour across plugins, gated explicitly rather than inferred. It is not a security gate: each environment needs its own key.
+**Consequences**: `tests/fixtures/environment-cases.json` is byte-identical in the three plugin repos and drives `EnvironmentOptionsSpec`. A shop with an internal environment stored where it is not offered keeps the stored value, and the health checklist reports it.
 
 ---
 
