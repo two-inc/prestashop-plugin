@@ -155,6 +155,16 @@
     gap: 12px;
 }
 
+/* The brand's mark in the payment step's radio label (TWO-26609). Neither
+   classic nor Hummingbird sizes a payment option's logo, so the artwork would
+   render at its intrinsic size. Matched on the module's own asset path, which
+   every brand's logo resolves under. */
+.payment-option label img[src*="/twopayment/"] {
+    height: 1.5em;
+    width: auto;
+    vertical-align: middle;
+}
+
 /* Info Tooltip - Inline Style */
 .two-info-tooltip {
     position: relative;
