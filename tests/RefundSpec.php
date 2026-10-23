@@ -32,6 +32,9 @@ final class RefundSpec
         self::testRemainderCreditsOnlyWhatIsLeftOnEachLine();
         self::testTheHookSeesAndCanEditTheLines();
         self::testSubtotalsThatCannotBeItemised();
+        self::testRefundLinesOfNetOrTaxAloneAreRefused();
+        self::testSlipWithARefusedLineIsNotSent();
+        self::testRemainderOfAFewCentsKeepsItsTax();
         self::testSlipShippingCheckIsTheDefaultHandlers();
         self::testUnitemisedLogFollowsWhatIsSent();
         self::testTaxSubtotalsSwitchGovernsRefunds();
@@ -260,6 +263,103 @@ final class RefundSpec
      * TWO-26143: subtotals lines cannot describe go without lines, so the lines never disagree with the amount.
      * Columns: tax subtotals, expected [id, net, tax, gross] lines (null: none), description.
      */
+    /**
+     * TWO-26638: a refund line Two would take as tax alone, or as a net amount with no tax at a rate that levies some,
+     * is refused before anything is sent, read as the payload rounds it at its order line's rate. A net-only line is
+     * refused only when its tax due at the rate rounds to at least 0.01. Columns: the line's net, tax and order line
+     * rate; expected refusal (null: sent; 'tax' or 'net': which message); description.
+     */
+    private static function testRefundLinesOfNetOrTaxAloneAreRefused(): void
+    {
+        $tax = '"Mug" cannot be refunded as tax alone: Two refunds a line\'s tax only together with its net amount. To correct the tax charged, refund the whole order and rebook it with the correct tax rates.';
+        $net = '"Mug" has no tax entered: Two refunds a line\'s net amount only together with its tax. Enter the tax refunded for this line as well.';
+        $cases = [
+            ['10.00', '2.10', '0.21', null, 'net and tax at the rate: sent'],
+            ['0.00', '2.10', '0.21', $tax, 'tax alone: refused'],
+            ['0.00', '0.50', '0', $tax, 'tax alone on a 0% line: refused'],
+            ['0.004', '0.50', '0.21', $tax, 'a net that rounds to nothing is no net'],
+            ['0.00', '0.004', '0.21', null, 'a tax that rounds to nothing is no tax: nothing to refuse'],
+            ['10.00', '0.00', '0.21', $net, 'a net with no tax at 21%: refused'],
+            ['-10.00', '0.00', '0.21', $net, 'a negative net with no tax: refused'],
+            ['10.00', '0.004', '0.21', $net, 'a tax that rounds to nothing is no tax'],
+            ['10.00', '0.00', '0', null, 'a 0% line with no tax: sent'],
+            ['0.01', '0.00', '0.21', null, 'a cent at 21%: its tax due, 0.0021, rounds to nothing, so it is sent'],
+            ['0.02', '0.00', '0.21', null, 'two cents at 21%: tax due 0.0042 rounds to nothing'],
+            ['0.03', '0.00', '0.20', $net, 'three cents at 20%: tax due 0.006 rounds to a cent, refused'],
+            ['0.04', '0.00', '0.25', $net, 'four cents at 25%: tax due 0.01, refused'],
+            ['0.00', '0.00', '0.21', null, 'nothing at all: nothing to refuse'],
+            ['10.00', '1.00', '0.21', null, 'mismatched non-zero tax is left to the API'],
+        ];
+        $twoOrder = static function (string $rate): array {
+            return ['line_items' => [['id' => 'p0', 'name' => 'Other', 'tax_rate' => '0'], ['id' => 'p1', 'name' => 'Mug', 'tax_rate' => $rate]]];
+        };
+        foreach ($cases as [$n, $t, $rate, $expected, $desc]) {
+            StubStore::reset();
+            PrestaShopLogger::$logs = [];
+            $module = self::makeModule(self::fulfilledOrder(500.00));
+            $lines = [['id' => 'p0', 'net_amount' => '5.00', 'tax_amount' => '0.00'], ['id' => 'p1', 'net_amount' => $n, 'tax_amount' => $t]];
+            $got = $module->getTwoRefundLineRefusal($lines, $twoOrder($rate), 'Spec');
+            TinyAssert::same($expected, $got, $desc);
+            TinyAssert::same($expected !== null, self::logged('order line p1 (Mug)'), $desc . ': a refusal is logged');
+        }
+        $module = self::makeModule(self::fulfilledOrder(500.00));
+        TinyAssert::same(str_replace('"Mug"', '"p9"', $tax), $module->getTwoRefundLineRefusal([['id' => 'p9', 'net_amount' => '0.00', 'tax_amount' => '1.00']], [], 'Spec'), 'a line with no order line is named by its id');
+    }
+
+    /**
+     * TWO-26638: a credit slip with a line the guard refuses is not sent. PrestaShop has already saved the slip (the
+     * hook runs after it), so the order page and its private notes say so, with the refusal and nothing else to do;
+     * the slip is recorded not sent. A cent at 50% is the only such line the module itself builds.
+     */
+    private static function testSlipWithARefusedLineIsNotSent(): void
+    {
+        StubStore::reset();
+        PrestaShopLogger::$logs = [];
+        StubStore::$dbExecuteSResponses = [[self::line(0.01, 0.01, '50.000')]];
+        $twoOrder = self::fulfilledOrder(1000.00, [], 'EUR');
+        $twoOrder['line_items'] = [self::twoLine('p1', 'PHYSICAL', '0.5', '100.00') + ['name' => 'Mug']];
+        $module = self::makeModule($twoOrder);
+        $module->merchantCountry = 'NO';
+        $module->readSlipLinesFromDb = true;
+
+        $module->hookActionOrderSlipAdd(['order' => self::makeOrder(), 'order_slip' => self::makeSlip(670, 0.01)]);
+
+        TinyAssert::count(0, $module->refundCalls(), 'nothing is sent');
+        TinyAssert::count(0, $module->notSent, 'not told to refund it in the portal');
+        TinyAssert::same(['Credit slip #670 was saved in PrestaShop but was not sent to Two. "Mug" has no tax entered: Two refunds a line\'s net amount only together with its tax. Enter the tax refunded for this line as well.'], $module->privateNotes, 'the order notes the refusal');
+        TinyAssert::same('NOT_SENT', $module->refundRows[670]['status'] ?? null, 'recorded not sent');
+        TinyAssert::true(self::logged('Partial refund not sent - credit slip 670'), 'logged');
+    }
+
+    /**
+     * TWO-26638: a line of a few cents can round to no tax (0.03 at 20%), which the guard refuses, so the module puts
+     * that cent in the tax. Here the Refunded remainder is the 0.03 an earlier refund left on a line.
+     */
+    private static function testRemainderOfAFewCentsKeepsItsTax(): void
+    {
+        $sub = static function (string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => '0.200000'];
+        };
+        StubStore::reset();
+        StubStore::$orders[5100] = ['module' => 'twopayment'];
+        StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+        $twoOrder = self::fulfilledOrder(120.00, [self::twoRefund('-119.97', ['p1' => '-119.97'])]);
+        $twoOrder['state'] = 'REFUNDED';
+        $twoOrder['line_items'] = [self::twoLine('p1', 'PHYSICAL', '0.2', '100.00')];
+        $module = self::makeModule($twoOrder);
+        $module->placedSubtotals = [$sub('100.00', '20.00')];
+        $module->refundRows[1] = ['id_order_slip' => 1, 'status' => 'SENT', 'amount' => '119.97', 'tax_subtotals' => [$sub('99.98', '19.99')]];
+        $status = new OrderState();
+        $status->id = 7;
+        $status->name = 'Refunded';
+
+        $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+
+        $calls = $module->refundCalls();
+        TinyAssert::count(1, $calls, 'the remainder is sent');
+        TinyAssert::same([['p1', '0.02', '0.01', '0.03']], self::sentLines($calls[0]['payload'], $twoOrder['line_items']), 'the cent goes to the tax: ' . json_encode($calls[0]['payload']));
+    }
+
     private static function testSubtotalsThatCannotBeItemised(): void
     {
         $sub = static function (string $rate, string $taxable, string $tax): array {

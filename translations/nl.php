@@ -646,3 +646,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_2fd94cc464a79be675f7c7c8a2aa5423'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] = 'Selecteer een geldige omgeving.';
 $_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] = 'Staging (interne testomgeving van %s). Selecteer Sandbox of Productie.';
 $_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'Niet herkend: Sandbox wordt gebruikt. Selecteer een omgeving en sla op.';
+$_MODULE['<{twopayment}prestashop>twopayment_6983600f952959aaadcc397037f5107c'] = 'Bij "%1$s" kan niet alleen de btw worden terugbetaald: %2$s betaalt de btw van een regel alleen samen met het nettobedrag terug. Wil je de berekende btw corrigeren, betaal dan de hele bestelling terug en boek die opnieuw met de juiste btw-tarieven.';
+$_MODULE['<{twopayment}prestashop>twopayment_05075aa7225efb1de9b1e229b482dc76'] = 'Bij "%1$s" is geen btw ingevuld: %2$s betaalt het nettobedrag van een regel alleen samen met de btw terug. Vul ook de teruggestorte btw voor deze regel in.';
+$_MODULE['<{twopayment}prestashop>twopayment_4cd45ba06e80ad1ecc118adac0cdcf67'] = 'Creditnota #%1$s is opgeslagen in PrestaShop maar niet naar %2$s verzonden.';
+$_MODULE['<{twopayment}prestashop>twopayment_1addd1f71f809c089e7d8c75894cde76'] = 'De bestelling is in PrestaShop als terugbetaald gemarkeerd, maar wat na de creditnota\'s nog terug te betalen was, is niet naar %s verzonden.';

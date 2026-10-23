@@ -646,3 +646,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_2fd94cc464a79be675f7c7c8a2aa5423'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] = 'Selecciona un entorno válido.';
 $_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] = 'Staging (entorno de pruebas interno de %s). Selecciona Entorno de pruebas o Producción.';
 $_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'No reconocido: se está usando el entorno de pruebas. Selecciona un entorno y guarda.';
+$_MODULE['<{twopayment}prestashop>twopayment_6983600f952959aaadcc397037f5107c'] = 'No se puede reembolsar solo el impuesto de «%1$s»: %2$s reembolsa el impuesto de una línea solo junto con su importe neto. Para corregir el impuesto cobrado, reembolsa el pedido completo y vuelve a registrarlo con los tipos impositivos correctos.';
+$_MODULE['<{twopayment}prestashop>twopayment_05075aa7225efb1de9b1e229b482dc76'] = '«%1$s» no tiene impuesto indicado: %2$s reembolsa el importe neto de una línea solo junto con su impuesto. Indica también el impuesto reembolsado en esta línea.';
+$_MODULE['<{twopayment}prestashop>twopayment_4cd45ba06e80ad1ecc118adac0cdcf67'] = 'La factura por abono n.º %1$s se ha guardado en PrestaShop, pero no se ha enviado a %2$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_1addd1f71f809c089e7d8c75894cde76'] = 'El pedido se ha marcado como reembolsado en PrestaShop, pero lo que quedaba por reembolsar tras sus facturas por abono no se ha enviado a %s.';

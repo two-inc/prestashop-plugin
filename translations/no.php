@@ -646,3 +646,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_2fd94cc464a79be675f7c7c8a2aa5423'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] = 'Velg et gyldig miljø.';
 $_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] = 'Staging (internt testmiljø hos %s). Velg Sandbox eller Produksjon.';
 $_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'Ikke gjenkjent: Sandbox brukes. Velg et miljø og lagre.';
+$_MODULE['<{twopayment}prestashop>twopayment_6983600f952959aaadcc397037f5107c'] = '"%1$s" kan ikke refunderes som bare mva.: %2$s refunderer mva. på en linje bare sammen med nettobeløpet. For å rette mva. som ble belastet, refunder hele ordren og bokfør den på nytt med riktige mva.-satser.';
+$_MODULE['<{twopayment}prestashop>twopayment_05075aa7225efb1de9b1e229b482dc76'] = '"%1$s" har ingen mva. oppgitt: %2$s refunderer nettobeløpet på en linje bare sammen med mva. Oppgi også mva. som refunderes for denne linjen.';
+$_MODULE['<{twopayment}prestashop>twopayment_4cd45ba06e80ad1ecc118adac0cdcf67'] = 'Kreditnota #%1$s ble lagret i PrestaShop, men ble ikke sendt til %2$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_1addd1f71f809c089e7d8c75894cde76'] = 'Ordren ble markert som refundert i PrestaShop, men det som gjensto å refundere etter kreditnotaene ble ikke sendt til %s.';

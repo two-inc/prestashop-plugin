@@ -5548,6 +5548,24 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Tell the merchant, as for a credit slip not sent, that a credit slip was refused for one of its lines
+     * (TWO-26638). The refusal says what to do instead, so the message points nowhere else.
+     *
+     * @param int $idOrder
+     * @param int $slipId
+     * @param string $refusal getTwoRefundLineRefusal()
+     */
+    protected function flagTwoCreditSlipLinesRefused($idOrder, $slipId, $refusal)
+    {
+        $text = sprintf(
+            $this->l('Credit slip #%1$s was saved in PrestaShop but was not sent to %2$s.'),
+            (int) $slipId,
+            $this->getTwoBrandConfig('product_name')
+        ) . ' ' . $refusal;
+        $this->flagTwoRefundNotSent($idOrder, $text, 'credit slip ' . (int) $slipId);
+    }
+
+    /**
      * Tell the merchant, as for a credit slip, that the full refund a status change asked for did not reach Two (TWO-26290).
      *
      * @param int $idOrder
@@ -6021,8 +6039,9 @@ class Twopayment extends PaymentModule
             //      never told to refund it in the portal, which would refund the buyer twice;
             //  (b) otherwise the merchant is told it was not sent, even if recording that fails.
             $sent = null;
+            $refused = false;
             try {
-                $reason = $this->sendTwoCreditSlipRefund($slip, $order, $orderpaymentdata, $sent);
+                $reason = $this->sendTwoCreditSlipRefund($slip, $order, $orderpaymentdata, $sent, $refused);
             } catch (Throwable $e) {
                 PrestaShopLogger::addLog('TwoPayment: Exception during partial refund of slip ' . (int)$slip->id . ' on order ' . $id_order . ($sent !== null ? ', after Two accepted it' : '') . '. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
                 $reason = $sent !== null ? null : $this->l('an unexpected error stopped it');
@@ -6033,7 +6052,11 @@ class Twopayment extends PaymentModule
                 PrestaShopLogger::addLog('TwoPayment: Could not record credit slip ' . (int)$slip->id . ' on order ' . $id_order . ' as ' . ($reason === null ? 'SENT' : 'NOT_SENT') . ' - ' . $e->getMessage(), 3);
             }
             if ($reason !== null && $reason !== '') {
-                $this->flagTwoCreditSlipNotSent($id_order, (int)$slip->id, $reason);
+                if ($refused) {
+                    $this->flagTwoCreditSlipLinesRefused($id_order, (int)$slip->id, $reason);
+                } else {
+                    $this->flagTwoCreditSlipNotSent($id_order, (int)$slip->id, $reason);
+                }
             }
         } catch (Throwable $e) {
             PrestaShopLogger::addLog('TwoPayment: Exception during partial refund. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
@@ -6047,9 +6070,10 @@ class Twopayment extends PaymentModule
      * @param Order $order
      * @param array $orderpaymentdata the order's Two row
      * @param array|null $sent set to the payload sent, on success, as getTwoRefundRecord() records it
+     * @param bool $refused set to true when a line was refused (TWO-26638): the reason is then the whole message
      * @return string|null null when Two accepted it; otherwise why not, for the merchant ('' when nothing was due)
      */
-    protected function sendTwoCreditSlipRefund($slip, $order, $orderpaymentdata, &$sent = null)
+    protected function sendTwoCreditSlipRefund($slip, $order, $orderpaymentdata, &$sent = null, &$refused = false)
     {
         $slip_id = (int)$slip->id;
         $id_order = (int)$order->id;
@@ -6156,6 +6180,11 @@ class Twopayment extends PaymentModule
         }
 
         $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $current_two_order, $kind_gross, 'Credit slip ' . $slip_id . ' on order ' . $id_order, $unitemised);
+        $refusal = $this->getTwoRefundLineRefusal((array)$line_items, $current_two_order, 'Partial refund not sent - credit slip ' . $slip_id . ' on order ' . $id_order . ', Two order ID: ' . $two_order_id);
+        if ($refusal !== null) {
+            $refused = true;
+            return $refusal;
+        }
         $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency, $tax_subtotals, $line_items);
         if ($refund_prepaid !== null) {
             $payload['amount'] = number_format($refund_amount, 2, '.', '');
@@ -6545,6 +6574,14 @@ class Twopayment extends PaymentModule
         }
 
         $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $two_order, array(), 'Refund remainder on order ' . $id_order, $unitemised);
+        $refusal = $this->getTwoRefundLineRefusal((array)$line_items, $two_order, 'Full refund remainder not sent - order ' . $id_order . ', Two order ID: ' . $two_order_id);
+        if ($refusal !== null) {
+            $this->flagTwoRefundNotSent($id_order, sprintf(
+                $this->l('The order was marked refunded in PrestaShop, but what was left to refund after its credit slips was not sent to %s.'),
+                $this->getTwoBrandConfig('product_name')
+            ) . ' ' . $refusal, 'the refund remainder');
+            return;
+        }
         $payload = $this->buildTwoPartialRefundPayload($remainder_lines, $currency, $tax_subtotals, $line_items);
         if ($remainder_prepaid !== null) {
             $payload['amount'] = number_format($remainder, 2, '.', '');
@@ -6852,6 +6889,50 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Refuse a refund line Two would take as tax alone, or as a net amount with no tax at a rate that levies some
+     * (TWO-26638). The plugin never decides how a line is taxed, so it never fills in a missing net or tax itself; Two
+     * refunds a line's net and tax together. Each line is read as the payload rounds it, at the rate of the order line
+     * it references. A net-only line is refused only when its tax due at that rate rounds to at least 0.01, so a 0% line,
+     * and a cent whose tax rounds to nothing, go out unchanged. Mismatched non-zero tax is left to Two's API.
+     *
+     * @param array $line_items the refund's lines, each referencing its Two order line by id
+     * @param array|null $two_order the Two order as just read, for each line's rate and name
+     * @param string $label what the log names when a line is refused
+     * @return string|null the merchant's message for the first refused line; null when every line may be sent
+     */
+    public function getTwoRefundLineRefusal(array $line_items, $two_order, $label)
+    {
+        $parents = array();
+        foreach (isset($two_order['line_items']) && is_array($two_order['line_items']) ? $two_order['line_items'] : array() as $line) {
+            if (!empty($line['id'])) {
+                $parents[(string)$line['id']] = $line;
+            }
+        }
+        foreach ($line_items as $item) {
+            $id = isset($item['id']) ? (string)$item['id'] : '';
+            $parent = isset($parents[$id]) ? $parents[$id] : array();
+            $rate = isset($item['tax_rate']) ? (float)$item['tax_rate'] : (isset($parent['tax_rate']) ? (float)$parent['tax_rate'] : 0.0);
+            $net = round((float)(isset($item['net_amount']) ? $item['net_amount'] : 0), 2);
+            $tax = round((float)(isset($item['tax_amount']) ? $item['tax_amount'] : 0), 2);
+            if ($net == 0.0 && $tax != 0.0) {
+                $what = 'is tax alone';
+                $text = $this->l('"%1$s" cannot be refunded as tax alone: %2$s refunds a line\'s tax only together with its net amount. To correct the tax charged, refund the whole order and rebook it with the correct tax rates.');
+            } elseif ($tax == 0.0 && round(abs($net) * $rate, 2) != 0.0) {
+                $what = 'has a net amount and no tax at its rate';
+                $text = $this->l('"%1$s" has no tax entered: %2$s refunds a line\'s net amount only together with its tax. Enter the tax refunded for this line as well.');
+            } else {
+                continue;
+            }
+            $name = !empty($item['name']) ? (string)$item['name'] : (!empty($parent['name']) ? (string)$parent['name'] : $id);
+            PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - refund line for order line ' . $id . ' (' . $name . ') ' . $what . ': net ' . $this->getTwoRoundAmount($net) . ', tax ' . $this->getTwoRoundAmount($tax) . ', rate ' . $rate, 3);
+
+            return sprintf($text, $name, $this->getTwoBrandConfig('product_name'));
+        }
+
+        return null;
+    }
+
+    /**
      * A partial refund's lines (TWO-26143): each references the Two order line it refunds by id, so Two copies that
      * line's name, rate and tax code onto it, and overrides only the amounts. Each rate's subtotal is spread over the
      * Two order's lines at that rate with a positive net and something left to refund (its gross less what Two's
@@ -6945,6 +7026,11 @@ class Twopayment extends PaymentModule
                     return null;
                 }
                 $net = round($line_gross / (1 + $rate), 2);
+                // A few cents at a rate can round to no tax at all (0.03 at 20%), which getTwoRefundLineRefusal()
+                // refuses when the net's tax at the rate rounds to a cent: the cent goes to the tax, leaving a net.
+                if ($net >= 0.02 && round($line_gross - $net, 2) == 0.0 && round($net * $rate, 2) != 0.0) {
+                    $net = round($net - 0.01, 2);
+                }
                 $lines[] = array(
                     'id' => (string)$id,
                     'quantity' => 1,
