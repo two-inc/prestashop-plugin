@@ -15,7 +15,9 @@
  *   every shop that never touched the dropdown is on it today and must stay
  *   on sandbox, not move to staging.
  *
- * Idempotent: a value already canonical is not written again.
+ * Every stored row is rewritten at its own tier (global, shop group, shop),
+ * and a missing global row is written as `sandbox`. Idempotent: a value
+ * already canonical is not written again.
  *
  * Created: 2026-08-14
  */
@@ -26,33 +28,55 @@ if (!defined('_PS_VERSION_')) {
 
 function upgrade_module_2_7_8($module)
 {
-    $current = Configuration::get('PS_TWO_ENVIRONMENT');
-    $target = Twopayment::normaliseTwoEnvironment($current);
-
-    if ($current === $target) {
-        return true;
+    // Every stored row, at every tier: global, shop group and shop. A
+    // Configuration::get() here would see only the tier the upgrade's context
+    // resolves to, leaving a shop's own override on its legacy value.
+    $rows = Db::getInstance()->executeS(
+        'SELECT `id_shop_group`, `id_shop`, `value` FROM `' . _DB_PREFIX_ . 'configuration`'
+        . " WHERE `name` = 'PS_TWO_ENVIRONMENT'"
+    );
+    $rows = is_array($rows) ? $rows : array();
+    $hasGlobal = false;
+    foreach ($rows as $row) {
+        if (!(int) $row['id_shop_group'] && !(int) $row['id_shop']) {
+            $hasGlobal = true;
+        }
+    }
+    if (!$hasGlobal) {
+        // A missing key always resolved to the sandbox hosts.
+        $rows[] = array('id_shop_group' => 0, 'id_shop' => 0, 'value' => null);
     }
 
-    if (!Configuration::updateValue('PS_TWO_ENVIRONMENT', $target)) {
+    $ok = true;
+    foreach ($rows as $row) {
+        $current = $row['value'];
+        $target = Twopayment::normaliseTwoEnvironment($current);
+        if ($current === $target) {
+            continue;
+        }
+        $group = (int) $row['id_shop_group'];
+        $shop = (int) $row['id_shop'];
+        $scope = 'group ' . $group . ', shop ' . $shop;
+        if (!Configuration::updateValue('PS_TWO_ENVIRONMENT', $target, false, $group, $shop)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment Upgrade 2.7.8: Failed to rewrite PS_TWO_ENVIRONMENT to ' . $target . ' (' . $scope . ')',
+                3,
+                null,
+                'Module',
+                $module->id
+            );
+            $ok = false;
+            continue;
+        }
         PrestaShopLogger::addLog(
-            'TwoPayment Upgrade 2.7.8: Failed to rewrite PS_TWO_ENVIRONMENT to ' . $target,
-            3,
+            'TwoPayment: Successfully upgraded to version 2.7.8 - PS_TWO_ENVIRONMENT rewritten from '
+            . var_export($current, true) . ' to ' . $target . ' (' . $scope . ')',
+            1,
             null,
             'Module',
             $module->id
         );
-
-        return false;
     }
 
-    PrestaShopLogger::addLog(
-        'TwoPayment: Successfully upgraded to version 2.7.8 - PS_TWO_ENVIRONMENT rewritten from '
-        . var_export($current, true) . ' to ' . $target,
-        1,
-        null,
-        'Module',
-        $module->id
-    );
-
-    return true;
+    return $ok;
 }

@@ -15,6 +15,7 @@ final class EnvironmentUpgradeMigrationSpec
     public static function runAll(): void
     {
         self::testMigrationTable();
+        self::testEveryTierIsMigrated();
         self::testFailureToWriteIsReportedAndFailsTheUpgrade();
     }
 
@@ -56,6 +57,31 @@ final class EnvironmentUpgradeMigrationSpec
             TinyAssert::true(upgrade_module_2_7_8($module), $description . ' (re-run succeeds)');
             TinyAssert::same($expected, (string) Configuration::get('PS_TWO_ENVIRONMENT'), $description . ' (idempotent)');
         }
+    }
+
+    /** A shop group's or a shop's own row is rewritten at its own tier, not only the one the context resolves to. */
+    private static function testEveryTierIsMigrated(): void
+    {
+        self::loadScript();
+        StubStore::reset();
+        StubStore::$multistore = true;
+        StubStore::$configuration['PS_TWO_ENVIRONMENT'] = 'development';
+        StubStore::$configurationGroup[2]['PS_TWO_ENVIRONMENT'] = 'PROD';
+        StubStore::$configurationShop[3]['PS_TWO_ENVIRONMENT'] = 'staging';
+        StubStore::$configurationShop[4]['PS_TWO_ENVIRONMENT'] = 'Demo';
+
+        TinyAssert::true(upgrade_module_2_7_8(new TwopaymentTestHarness()), 'the upgrade succeeds');
+
+        $cases = [
+            [StubStore::$configuration['PS_TWO_ENVIRONMENT'], 'sandbox', 'global development to sandbox'],
+            [StubStore::$configurationGroup[2]['PS_TWO_ENVIRONMENT'], 'production', 'shop group PROD to production'],
+            [StubStore::$configurationShop[3]['PS_TWO_ENVIRONMENT'], 'staging', 'shop staging kept'],
+            [StubStore::$configurationShop[4]['PS_TWO_ENVIRONMENT'], 'sandbox', 'shop unknown value to sandbox'],
+        ];
+        foreach ($cases as list($actual, $expected, $description)) {
+            TinyAssert::same($expected, $actual, $description);
+        }
+        StubStore::$multistore = false;
     }
 
     private static function testFailureToWriteIsReportedAndFailsTheUpgrade(): void

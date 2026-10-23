@@ -2783,6 +2783,25 @@ namespace {
         public function executeS($sql): array
         {
             StubStore::$dbLastExecuteS[] = (string) $sql;
+            // Every tier's row of one configuration key, as the 2.7.8 upgrade reads them.
+            if (preg_match("/^SELECT `id_shop_group`, `id_shop`, `value` FROM `ps_configuration` WHERE `name` = '([A-Za-z0-9_]+)'$/", (string) $sql, $m)) {
+                $rows = [];
+                if (array_key_exists($m[1], StubStore::$configuration)) {
+                    $rows[] = ['id_shop_group' => null, 'id_shop' => null, 'value' => StubStore::$configuration[$m[1]]];
+                }
+                foreach (StubStore::$configurationGroup as $group => $values) {
+                    if (array_key_exists($m[1], $values)) {
+                        $rows[] = ['id_shop_group' => (string) $group, 'id_shop' => null, 'value' => $values[$m[1]]];
+                    }
+                }
+                foreach (StubStore::$configurationShop as $shop => $values) {
+                    if (array_key_exists($m[1], $values)) {
+                        $rows[] = ['id_shop_group' => null, 'id_shop' => (string) $shop, 'value' => $values[$m[1]]];
+                    }
+                }
+
+                return $rows;
+            }
             if (preg_match('/^SELECT `id_cart`, `record`, `data`, `updated_at` FROM `ps_twopayment_cart_record`' . self::CUSTOMER_WHERE . '$/', (string) $sql, $m)) {
                 $rows = [];
                 foreach (self::customerRecords($m[1]) as [$cartId, $shopId, $record]) {
