@@ -1590,10 +1590,13 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_VENDOR_NAME'] = Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
-        // A refused environment was not stored, so the form shows the stored one.
+        // A refused environment was not stored, so the form shows the stored one,
+        // as the environment it resolves to: a legacy value matches no option and
+        // would otherwise show, and save, as Production.
+        $stored = self::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'));
         $fields_values['PS_TWO_ENVIRONMENT'] = $this->environmentRefused
-            ? Configuration::get('PS_TWO_ENVIRONMENT')
-            : Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
+            ? $stored
+            : Tools::getValue('PS_TWO_ENVIRONMENT', $stored);
         return $fields_values;
     }
 
