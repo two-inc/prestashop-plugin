@@ -6892,8 +6892,9 @@ class Twopayment extends PaymentModule
      * Refuse a refund line Two would take as tax alone, or as a net amount with no tax at a rate that levies some
      * (TWO-26638). The plugin never decides how a line is taxed, so it never fills in a missing net or tax itself; Two
      * refunds a line's net and tax together. Each line is read as the payload rounds it, at the rate of the order line
-     * it references. A net-only line is refused only when its tax due at that rate rounds to at least 0.01, so a 0% line,
-     * and a cent whose tax rounds to nothing, go out unchanged. Mismatched non-zero tax is left to Two's API.
+     * it references. A net-only line is refused only when its tax due at that rate is more than the tolerance Two allows a
+     * line's tax (TAX_FORMULA_TOLERANCE), so a 0% line, and a line of a few cents whose tax rounds to nothing (0.03 at
+     * 20%, as the module's own split of a gross can give), go out unchanged. Mismatched non-zero tax is left to Two's API.
      *
      * @param array $line_items the refund's lines, each referencing its Two order line by id
      * @param array|null $two_order the Two order as just read, for each line's rate and name
@@ -6917,7 +6918,7 @@ class Twopayment extends PaymentModule
             if ($net == 0.0 && $tax != 0.0) {
                 $what = 'is tax alone';
                 $text = $this->l('"%1$s" cannot be refunded as tax alone: %2$s refunds a line\'s tax only together with its net amount. To correct the tax charged, refund the whole order and rebook it with the correct tax rates.');
-            } elseif ($tax == 0.0 && round(abs($net) * $rate, 2) != 0.0) {
+            } elseif ($tax == 0.0 && round(abs($net) * $rate, 6) > self::TAX_FORMULA_TOLERANCE) {
                 $what = 'has a net amount and no tax at its rate';
                 $text = $this->l('"%1$s" has no tax entered: %2$s refunds a line\'s net amount only together with its tax. Enter the tax refunded for this line as well.');
             } else {
@@ -7026,11 +7027,6 @@ class Twopayment extends PaymentModule
                     return null;
                 }
                 $net = round($line_gross / (1 + $rate), 2);
-                // A few cents at a rate can round to no tax at all (0.03 at 20%), which getTwoRefundLineRefusal()
-                // refuses when the net's tax at the rate rounds to a cent: the cent goes to the tax, leaving a net.
-                if ($net >= 0.02 && round($line_gross - $net, 2) == 0.0 && round($net * $rate, 2) != 0.0) {
-                    $net = round($net - 0.01, 2);
-                }
                 $lines[] = array(
                     'id' => (string)$id,
                     'quantity' => 1,
