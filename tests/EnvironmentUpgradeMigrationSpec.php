@@ -16,6 +16,7 @@ final class EnvironmentUpgradeMigrationSpec
     {
         self::testMigrationTable();
         self::testEveryTierIsMigrated();
+        self::testSingleStoreIgnoresStaleShopRows();
         self::testFailureToWriteIsReportedAndFailsTheUpgrade();
     }
 
@@ -82,6 +83,20 @@ final class EnvironmentUpgradeMigrationSpec
             TinyAssert::same($expected, $actual, $description);
         }
         StubStore::$multistore = false;
+    }
+
+    /** Without multistore a stale shop row is not live, and migrating it would overwrite the global value. */
+    private static function testSingleStoreIgnoresStaleShopRows(): void
+    {
+        self::loadScript();
+        StubStore::reset();
+        StubStore::$configuration['PS_TWO_ENVIRONMENT'] = 'production';
+        StubStore::$configurationShop[1]['PS_TWO_ENVIRONMENT'] = 'development';
+        StubStore::$configurationGroup[1]['PS_TWO_ENVIRONMENT'] = 'Demo';
+
+        TinyAssert::true(upgrade_module_2_7_8(new TwopaymentTestHarness()), 'single store: the upgrade succeeds');
+        TinyAssert::same('production', StubStore::$configuration['PS_TWO_ENVIRONMENT'], 'single store: global production kept');
+        TinyAssert::same('production', (string) Configuration::get('PS_TWO_ENVIRONMENT'), 'single store: effective value stays production');
     }
 
     private static function testFailureToWriteIsReportedAndFailsTheUpgrade(): void

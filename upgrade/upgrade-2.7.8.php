@@ -15,8 +15,9 @@
  *   every shop that never touched the dropdown is on it today and must stay
  *   on sandbox, not move to staging.
  *
- * Every stored row is rewritten at its own tier (global, shop group, shop),
- * and a missing global row is written as `sandbox`. Idempotent: a value
+ * With multistore on, every stored row is rewritten at its own tier (global,
+ * shop group, shop). With it off, only the global row is live and only it is
+ * rewritten. A missing global row is written as `sandbox`. Idempotent: a value
  * already canonical is not written again.
  *
  * Created: 2026-08-14
@@ -36,6 +37,15 @@ function upgrade_module_2_7_8($module)
         . " WHERE `name` = 'PS_TWO_ENVIRONMENT'"
     );
     $rows = is_array($rows) ? $rows : array();
+    if (!Shop::isFeatureActive()) {
+        // Without multistore only the global row is read, and updateValue()
+        // ignores the group and shop arguments and writes the global row. A
+        // stale shop or group row left from when multistore was on would
+        // otherwise overwrite the live global value, so leave those alone.
+        $rows = array_values(array_filter($rows, function ($row) {
+            return !(int) $row['id_shop_group'] && !(int) $row['id_shop'];
+        }));
+    }
     $hasGlobal = false;
     foreach ($rows as $row) {
         if (!(int) $row['id_shop_group'] && !(int) $row['id_shop']) {
