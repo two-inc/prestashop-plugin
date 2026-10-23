@@ -179,7 +179,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_66c12ee256d5b468a43062e3ab9d643f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3d010ab63c1ada7af0907e77ca4d5d8e'] = 'De btw-behandeling van de toeslag is ongeldig: deze winkel is ingesteld om de toeslag in elk land ONBELAST te laten. Die behandeling is niet langer beschikbaar en deze instellingen kunnen niet meer worden opgeslagen zolang ze is opgeslagen. Selecteer onder Betaalinstellingen een belastingregelgroep - wil je de vergoeding onbelast laten, maak dan een groep aan met een tarief van 0 procent en selecteer die.';
 $_MODULE['<{twopayment}prestashop>twopayment_3d773cd2133003c21b5348d17b400f3f'] = 'Momenteel actief:';
 $_MODULE['<{twopayment}prestashop>twopayment_3d94e3cb25fc73d812643a4cf4d8354a'] = 'Gedeeltelijke uitlevering - bestellingen moeten volledig worden uitgeleverd';
-$_MODULE['<{twopayment}prestashop>twopayment_c0df38350f764595ec9eb062507f895e'] = 'Selecteer een geldige omgeving (Productie of Staging).';
 $_MODULE['<{twopayment}prestashop>twopayment_3ef2ad2a1483fd9861c50152ef58e38b'] = 'Bestelling uitgeleverd → Verzonden';
 $_MODULE['<{twopayment}prestashop>twopayment_cddb055b1f1dd15d5b6df428e01c6893'] = '%s: Geverifieerd - Klaar voor uitlevering';
 $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] = 'Geverifieerd';
@@ -367,7 +366,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_cc4d7e72dda2f971cf3de3046c77afe2'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d378b918f97f59232f70bbcde9a4a2fa'] = '%s-betaling is niet beschikbaar voor deze bestelling. Kies een andere betaalmethode.';
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Vul een API-sleutel in.';
 $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] = '%d dagen';
-$_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Selecteer de %s API-omgeving die je wilt gebruiken. Productie voor echte transacties, Staging om te testen.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Termijn';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Geen overeenkomsten gevonden';
 $_MODULE['<{twopayment}prestashop>twopayment_b4c08ff047c09729b6bf028ef6a7a388'] = 'Als je JA kiest, wordt een tax_subtotals-uitsplitsing per btw-tarief meegestuurd met orderintenties, orders, orderwijzigingen en terugbetalingen, ter validatie tegen de orderregels. Als je NEE kiest, worden tax_subtotals bij al deze verzoeken weggelaten.';
@@ -516,7 +514,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_117c08e0ebe802c50ba459a8cd6bdb1d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9398138bd940ea2f1e4fcd39b1584e6f'] = 'Aangepaste betaaltermijnen (dagen) van %s is nu een van de standaardtermijnen die u aanbiedt, dus deze is geselecteerd onder Betaaltermijnen en het aangepaste veld is gewist.';
 $_MODULE['<{twopayment}prestashop>twopayment_615a0b0fa408ef70c0548f8b9d94283b'] = 'Verouderde instelling. Dit biedt een aangepaste termijn van %s dagen vanaf uitvoering. Deze wordt niet langer ondersteund en kan niet worden gewijzigd. Kies Verwijderen om deze in te trekken, of gebruik de betaaltermijnen hierboven om te wijzigen wat u aanbiedt.';
 $_MODULE['<{twopayment}prestashop>twopayment_3a577b3e1f0b2a28d17fe1ffdbe07d29'] = 'Verouderde instelling. Dit biedt een aangepaste termijn van %s dagen na het einde van de maand. Deze wordt niet langer ondersteund en kan niet worden gewijzigd. Kies Verwijderen om deze in te trekken, of gebruik de betaaltermijnen hierboven om te wijzigen wat u aanbiedt.';
-$_MODULE['<{twopayment}prestashop>twopayment_db3f921088947d83680a80a0285ef414'] = 'Niet geconfigureerd';
 $_MODULE['<{twopayment}prestashop>twopayment_1a4b2efd8f0a1e7960d1a59d50cdb257'] = 'Merchantprofiel';
 $_MODULE['<{twopayment}prestashop>twopayment_f87d012d4d7fdcebf202ba1d11f30302'] = 'Uw aan te bieden betaaltermijnen, kopertoeslagtarieven, minimale orderwaarde en standaardtermijn worden uit %s gelezen en gecachet. Ze worden volgens een schema vernieuwd en telkens wanneer de API-sleutel of de omgeving wordt opgeslagen; gebruik dit om een wijziging nu door te halen.';
 $_MODULE['<{twopayment}prestashop>twopayment_613ef0108fe785be3eae70f1a6fbaa7d'] = 'Merchantprofiel vernieuwen';
@@ -644,3 +641,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_d8b18f5a49707de0eee44ffc69ec5a7c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3e54799b38ea681ce59a22cd976b2d61'] = 'de opgeslagen indeling van belastingcodes is onleesbaar. Gebruik Opgeslagen belastingcodes wissen onder Orderbeheer.';
 $_MODULE['<{twopayment}prestashop>twopayment_26972e4a497058079071603896510806'] = 'de opgeslagen indeling van belastingcodes is onleesbaar. Gebruik Opgeslagen belastingcodes wissen onder Orderbeheer (kies eerst de winkel).';
 $_MODULE['<{twopayment}prestashop>twopayment_550f3ff50a65127f476f5640546ea56a'] = 'Opgeslagen belastingcodes gewist; kies de codes opnieuw.';
+$_MODULE['<{twopayment}prestashop>twopayment_2652eec977dcb2a5aea85f5bec235b05'] = 'Sandbox';
+$_MODULE['<{twopayment}prestashop>twopayment_2fd94cc464a79be675f7c7c8a2aa5423'] = 'Sandbox is bedoeld om te testen en verplaatst geen echt geld. Gebruik de API-sleutel die is uitgegeven voor de omgeving die je selecteert.';
+$_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] = 'Selecteer een geldige omgeving.';
+$_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] = 'Staging (interne testomgeving van %s). Selecteer Sandbox of Productie.';
+$_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'Niet herkend: Sandbox wordt gebruikt. Selecteer een omgeving en sla op.';

@@ -45,6 +45,7 @@ services:
       TWO_API_BASE_URL: ${TWO_API_BASE_URL:-}
       TWO_PORTAL_BASE_URL: ${TWO_PORTAL_BASE_URL:-}
       TWO_CHECKOUT_BASE_URL: ${TWO_CHECKOUT_BASE_URL:-}
+      TWO_INTERNAL_ENVIRONMENTS: ${TWO_INTERNAL_ENVIRONMENTS:-}
     volumes:
       - .:/var/www/html/modules/twopayment
       - ./dev/apache-admin-alias.conf:/etc/apache2/conf-enabled/admin-alias.conf:ro

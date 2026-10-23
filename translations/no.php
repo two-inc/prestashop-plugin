@@ -179,7 +179,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_66c12ee256d5b468a43062e3ab9d643f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3d010ab63c1ada7af0907e77ca4d5d8e'] = 'Avgiftsbehandlingen for tillegg er ugyldig: denne butikken er satt opp til å la tillegget være UTEN AVGIFT i alle land. Denne behandlingen er ikke lenger tilgjengelig, og disse innstillingene kan ikke lagres så lenge den er lagret. Velg en avgiftsregelgruppe under Betalingsinnstillinger – hvis gebyret skal være uten avgift, oppretter du en gruppe med en sats på 0 prosent og velger den.';
 $_MODULE['<{twopayment}prestashop>twopayment_3d773cd2133003c21b5348d17b400f3f'] = 'Aktive nå:';
 $_MODULE['<{twopayment}prestashop>twopayment_3d94e3cb25fc73d812643a4cf4d8354a'] = 'Delvis oppfyllelse – ordrer må oppfylles i sin helhet';
-$_MODULE['<{twopayment}prestashop>twopayment_c0df38350f764595ec9eb062507f895e'] = 'Velg et gyldig miljø (Produksjon eller Staging).';
 $_MODULE['<{twopayment}prestashop>twopayment_3ef2ad2a1483fd9861c50152ef58e38b'] = 'Ordre oppfylt → Sendt';
 $_MODULE['<{twopayment}prestashop>twopayment_cddb055b1f1dd15d5b6df428e01c6893'] = '%s: Verifisert – klar for oppfyllelse';
 $_MODULE['<{twopayment}prestashop>twopayment_3f68e67dc6c397aaa9d1c24c356f754f'] = 'Verifisert';
@@ -367,7 +366,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_cc4d7e72dda2f971cf3de3046c77afe2'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d378b918f97f59232f70bbcde9a4a2fa'] = '%s-betaling er ikke tilgjengelig for denne ordren. Velg en annen betalingsmåte.';
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Skriv inn en API-nøkkel.';
 $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] = '%d dager';
-$_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Velg hvilket %s-API-miljø som skal brukes. Produksjon for reelle transaksjoner, Staging for testing.';
 $_MODULE['<{twopayment}prestashop>twopayment_cf5f3091e30dee6597885d8c0e0c357f'] = 'Vilkår';
 $_MODULE['<{twopayment}prestashop>twopayment_d132286ce060a9349df55de2808b4d5f'] = 'Ingen treff funnet';
 $_MODULE['<{twopayment}prestashop>twopayment_b4c08ff047c09729b6bf028ef6a7a388'] = 'Hvis du velger JA, blir en tax_subtotals-oppdeling per avgiftssats sendt med ordreintensjoner, ordrer, ordreendringer og refusjoner, for validering mot ordrelinjene. Hvis du velger NEI, utelates tax_subtotals fra alle disse.';
@@ -516,7 +514,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_117c08e0ebe802c50ba459a8cd6bdb1d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9398138bd940ea2f1e4fcd39b1584e6f'] = 'Egendefinerte betalingsvilkår (dager) på %s er nå en av standardbetingelsene du tilbyr, så den er valgt under Betalingsbetingelser og det egendefinerte feltet er tømt.';
 $_MODULE['<{twopayment}prestashop>twopayment_615a0b0fa408ef70c0548f8b9d94283b'] = 'Eldre innstilling. Denne tilbyr et egendefinert vilkår på %s dager fra oppfyllelse. Den støttes ikke lenger og kan ikke redigeres. Velg Fjern for å trekke den tilbake, eller bruk betalingsvilkårene ovenfor for å endre hva du tilbyr.';
 $_MODULE['<{twopayment}prestashop>twopayment_3a577b3e1f0b2a28d17fe1ffdbe07d29'] = 'Eldre innstilling. Denne tilbyr et egendefinert vilkår på %s dager etter månedens slutt. Den støttes ikke lenger og kan ikke redigeres. Velg Fjern for å trekke den tilbake, eller bruk betalingsvilkårene ovenfor for å endre hva du tilbyr.';
-$_MODULE['<{twopayment}prestashop>twopayment_db3f921088947d83680a80a0285ef414'] = 'Ikke konfigurert';
 $_MODULE['<{twopayment}prestashop>twopayment_1a4b2efd8f0a1e7960d1a59d50cdb257'] = 'Merchantprofil';
 $_MODULE['<{twopayment}prestashop>twopayment_f87d012d4d7fdcebf202ba1d11f30302'] = 'Betalingsbetingelsene du kan tilby, kjøpertillegg, minste ordreverdi og standardbetingelse leses fra %s og mellomlagres. De oppdateres etter en plan og hver gang API-nøkkelen eller miljøet lagres; bruk denne for å hente inn en endring nå.';
 $_MODULE['<{twopayment}prestashop>twopayment_613ef0108fe785be3eae70f1a6fbaa7d'] = 'Oppdater merchantprofil';
@@ -644,3 +641,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_d8b18f5a49707de0eee44ffc69ec5a7c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3e54799b38ea681ce59a22cd976b2d61'] = 'den lagrede tilordningen av avgiftskoder kan ikke leses. Bruk Fjern lagrede avgiftskoder under Ordrehåndtering.';
 $_MODULE['<{twopayment}prestashop>twopayment_26972e4a497058079071603896510806'] = 'den lagrede tilordningen av avgiftskoder kan ikke leses. Bruk Fjern lagrede avgiftskoder under Ordrehåndtering (velg butikken først).';
 $_MODULE['<{twopayment}prestashop>twopayment_550f3ff50a65127f476f5640546ea56a'] = 'Lagrede avgiftskoder er fjernet; velg kodene på nytt.';
+$_MODULE['<{twopayment}prestashop>twopayment_2652eec977dcb2a5aea85f5bec235b05'] = 'Sandbox';
+$_MODULE['<{twopayment}prestashop>twopayment_2fd94cc464a79be675f7c7c8a2aa5423'] = 'Sandbox er for testing og flytter ingen ekte penger. Bruk API-nøkkelen som er utstedt for miljøet du velger.';
+$_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] = 'Velg et gyldig miljø.';
+$_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] = 'Staging (internt testmiljø hos %s). Velg Sandbox eller Produksjon.';
+$_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'Ikke gjenkjent: Sandbox brukes. Velg et miljø og lagre.';
