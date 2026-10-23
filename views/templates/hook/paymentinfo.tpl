@@ -36,7 +36,6 @@
 
     <div class="two-header">
         <div class="two-logo-container">
-            <img src="{$module_dir|escape:'html':'UTF-8'}views/img/TwoLogo.svg" alt="{$two_product_name|escape:'html':'UTF-8'}" class="two-logo" />
             {* The icon IS the link - the tooltip is its sibling and
                carries no anchor, so nothing inside the box is interactive. A
                brand with no about URL renders no control at all, whatever the
