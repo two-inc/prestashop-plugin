@@ -48,15 +48,34 @@ final class EnvironmentOptionsSpec
         TinyAssert::same($case['health_ok'], Twopayment::isTwoEnvironmentHealthy($stored), $description . ' (health)');
     }
 
+    /** Driven through the General form's own validate-then-save, so a refusal keeps the stored value and saves the rest. */
     private static function assertSaveCase(array $case): void
     {
+        StubStore::reset();
         self::setFlag($case['flag']);
+        StubStore::$configuration['PS_TWO_ENVIRONMENT'] = $case['stored'];
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', $case['submitted']);
+        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', '');
+        Tools::setTestValue('PS_TWO_VENDOR_NAME', 'Vendor ' . $case['description']);
+        $module = new TwopaymentTestHarness();
+        try {
+            foreach (array('validTwoGeneralFormValues', 'saveTwoGeneralFormValues') as $step) {
+                $method = new ReflectionMethod(Twopayment::class, $step);
+                $method->setAccessible(true);
+                $method->invoke($module);
+            }
+        } finally {
+            Tools::resetTestValues();
+        }
+        $refused = (new ReflectionProperty(Twopayment::class, 'environmentRefused'))->getValue($module);
 
+        TinyAssert::same(!$case['accepted'], $refused, $case['description'] . ' (refused)');
         TinyAssert::same(
-            $case['accepted'],
-            Twopayment::isTwoEnvironmentSaveAllowed($case['submitted'], $case['stored']),
-            $case['description']
+            $case['accepted'] ? $case['submitted'] : $case['stored'],
+            (string) Configuration::get('PS_TWO_ENVIRONMENT'),
+            $case['description'] . ' (stored)'
         );
+        TinyAssert::same('Vendor ' . $case['description'], (string) Configuration::get('PS_TWO_VENDOR_NAME'), $case['description'] . ' (the rest saves)');
     }
 
     /** The dropdown rows come from getTwoEnvironmentOptions(), labelled, in order. */

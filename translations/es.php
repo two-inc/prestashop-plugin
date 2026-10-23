@@ -641,7 +641,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_d8b18f5a49707de0eee44ffc69ec5a7c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3e54799b38ea681ce59a22cd976b2d61'] = 'la asignación de códigos fiscales guardada no se puede leer. Usa Borrar los códigos fiscales guardados en Gestión de pedidos.';
 $_MODULE['<{twopayment}prestashop>twopayment_26972e4a497058079071603896510806'] = 'la asignación de códigos fiscales guardada no se puede leer. Usa Borrar los códigos fiscales guardados en Gestión de pedidos (selecciona antes la tienda).';
 $_MODULE['<{twopayment}prestashop>twopayment_550f3ff50a65127f476f5640546ea56a'] = 'Se han borrado los códigos fiscales guardados; vuelve a elegir los códigos.';
-$_MODULE['<{twopayment}prestashop>twopayment_2652eec977dcb2a5aea85f5bec235b05'] = 'Sandbox';
+$_MODULE['<{twopayment}prestashop>twopayment_2652eec977dcb2a5aea85f5bec235b05'] = 'Entorno de pruebas';
 $_MODULE['<{twopayment}prestashop>twopayment_2fd94cc464a79be675f7c7c8a2aa5423'] = 'Sandbox es para pruebas y no mueve dinero real. Usa la clave de API emitida para el entorno que selecciones.';
 $_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] = 'Selecciona un entorno válido.';
 $_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] = 'Staging (entorno de pruebas interno de %s). Selecciona Sandbox o Producción.';
