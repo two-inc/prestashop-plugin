@@ -17,18 +17,25 @@ const STYLESHEET = fs.readFileSync(
     'utf8'
 );
 
-/** Rules outside any media query, and the narrow-width block that re-states the open transform. */
+/** Rules outside any media query, and the narrow-width block. */
 const BASE = STYLESHEET.slice(0, STYLESHEET.indexOf('@media'));
 const MOBILE = STYLESHEET.slice(STYLESHEET.indexOf('@media (max-width: 768px)'));
 
 describe('the about tooltip', () => {
     test.each([
         ['opens on hover', BASE, /\.two-info-tooltip:hover\s+\.two-tooltip-content/],
-        ['opens on keyboard focus', BASE, /\.two-info-tooltip:focus-within\s+\.two-tooltip-content/],
-        ['sits where it belongs on hover at mobile widths', MOBILE, /\.two-info-tooltip:hover\s+\.two-tooltip-content/],
-        ['sits where it belongs on focus at mobile widths', MOBILE, /\.two-info-tooltip:focus-within\s+\.two-tooltip-content/]
+        ['opens on keyboard focus', BASE, /\.two-info-tooltip:focus-within\s+\.two-tooltip-content/]
     ])('it %s', (description, source, pattern) => {
         expect(source).toMatch(pattern);
+    });
+
+    // The box is anchored at the icon's left edge with no horizontal shift
+    // (TWO-26609), so the base open rule holds at every width: a narrow-width
+    // block re-stating its position or transform would have to be kept in step.
+    test('keeps one position at every width', () => {
+        const narrow = Array.from(MOBILE.matchAll(/([^{}]*two-tooltip-content[^{}]*)\{([^}]*)\}/g)).map((rule) => rule[2]);
+
+        narrow.forEach((body) => expect(body).not.toMatch(/\b(left|transform):/));
     });
 
     test.each(

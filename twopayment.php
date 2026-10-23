@@ -8396,6 +8396,15 @@ class Twopayment extends PaymentModule
             ->setInputs($inputs)
             ->setAdditionalInformation($this->context->smarty->fetch('module:twopayment/views/templates/hook/paymentinfo.tpl'));
 
+        // The brand's mark beside the method name in the payment step's radio
+        // label, as the other platforms show it (TWO-26609). Resolved through
+        // brands/two.php 'logo' like the product-page badge, so an overlay
+        // swaps it and a brand declaring none renders the title alone.
+        $logo = (string) $this->getTwoBrandConfig('logo');
+        if ($logo !== '') {
+            $preTwoOption->setLogo($this->_path . ltrim($logo, '/'));
+        }
+
         return $preTwoOption;
     }
 
