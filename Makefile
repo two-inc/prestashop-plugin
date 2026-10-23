@@ -35,10 +35,13 @@ TWO_PORTAL_BASE_URL  ?= https://portal.$(TWO_ENV).two.inc
 # overrides" in README.
 TWO_CHECKOUT_BASE_URL ?= https://checkout.$(TWO_ENV).two.inc
 export TWO_API_BASE_URL TWO_PORTAL_BASE_URL TWO_CHECKOUT_BASE_URL
-# Plugin admin config only exposes 'sandbox' vs 'production' â€” TWO_ENV
-# selects the API URL the dev loop hits, TWO_ENVIRONMENT selects the
-# plugin's admin-side mode.
-TWO_ENVIRONMENT      ?= sandbox
+# TWO_ENV selects the API URL the dev loop hits, TWO_ENVIRONMENT selects the
+# plugin's admin-side mode (production, sandbox or staging).
+TWO_ENVIRONMENT      ?= $(TWO_ENV)
+# Offers the Staging environment in the admin (TWO-26604). Set for internal
+# Two devs, the same people TWO_ENV points at staging.
+TWO_INTERNAL_ENVIRONMENTS ?= $(if $(filter staging,$(TWO_ENV)),1,)
+export TWO_INTERNAL_ENVIRONMENTS
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 

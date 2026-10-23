@@ -2,23 +2,20 @@
 /**
  * UPGRADE SCRIPT: Version 2.7.8
  *
- * Removes the decorative "Development" `PS_TWO_ENVIRONMENT` option (TWO-25455).
+ * Rewrites `PS_TWO_ENVIRONMENT` to the canonical set `production`, `sandbox`,
+ * `staging` (TWO-25455, TWO-26604), preserving the hosts each shop already
+ * talked to:
  *
- * `development` had no entry in any of Twopayment::ENVIRONMENT_HOSTS,
- * Twopayment::PORTAL_HOSTS, Twopayment::BUYER_PORTAL_HOSTS or
- * TwoSoleTrader::$signup_hosts, so selecting it silently fell back to the
- * sandbox host everywhere - identical to leaving the setting unset. It was
- * also, until this release, the install-time default (installTwoSettings()),
- * so any shop that never touched the dropdown is on this value today.
+ * - `production` in any case, or `prod`: `production`
+ * - `sandbox` in any case: `sandbox`
+ * - `staging` in any case: `staging`, kept
+ * - `development`, empty, missing or anything else: `sandbox`. None of these
+ *   had an entry in any host map, so they always resolved to the sandbox
+ *   hosts. `development` was also the released install-time default, so
+ *   every shop that never touched the dropdown is on it today and must stay
+ *   on sandbox, not move to staging.
  *
- * The admin dropdown no longer offers "Development" as of this release. Any
- * shop with `PS_TWO_ENVIRONMENT` still stored as 'development' is rewritten
- * to 'staging' here - the closest non-inert replacement, and a real entry in
- * every host map above - rather than being left on a value the admin UI can
- * no longer render or validate.
- *
- * Idempotent: a shop already on 'staging', 'production', or anything else is
- * untouched.
+ * Idempotent: a value already canonical is not written again.
  *
  * Created: 2026-08-14
  */
@@ -30,15 +27,15 @@ if (!defined('_PS_VERSION_')) {
 function upgrade_module_2_7_8($module)
 {
     $current = Configuration::get('PS_TWO_ENVIRONMENT');
+    $target = Twopayment::normaliseTwoEnvironment($current);
 
-    if (strtolower((string) $current) !== 'development') {
+    if ($current === $target) {
         return true;
     }
 
-    if (!Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging')) {
+    if (!Configuration::updateValue('PS_TWO_ENVIRONMENT', $target)) {
         PrestaShopLogger::addLog(
-            'TwoPayment Upgrade 2.7.8: Failed to rewrite PS_TWO_ENVIRONMENT from the removed '
-            . "'development' value to 'staging'",
+            'TwoPayment Upgrade 2.7.8: Failed to rewrite PS_TWO_ENVIRONMENT to ' . $target,
             3,
             null,
             'Module',
@@ -49,9 +46,8 @@ function upgrade_module_2_7_8($module)
     }
 
     PrestaShopLogger::addLog(
-        "TwoPayment: Successfully upgraded to version 2.7.8 - PS_TWO_ENVIRONMENT was 'development' "
-        . "(a removed, decorative option that always fell back to sandbox hosts) and has been "
-        . "rewritten to 'staging'",
+        'TwoPayment: Successfully upgraded to version 2.7.8 - PS_TWO_ENVIRONMENT rewritten from '
+        . var_export($current, true) . ' to ' . $target,
         1,
         null,
         'Module',

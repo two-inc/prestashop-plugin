@@ -80,8 +80,8 @@ class TwoSoleTrader
     /**
      * Explicit environment -> checkout-page host map for Two's hosted
      * sole-trader signup page (the checkout-page app, not the API).
-     * Mirrors Twopayment::ENVIRONMENT_HOSTS: anything not in the map
-     * (legacy 'development', empty/unset) falls back to sandbox. In dev mode
+     * Mirrors Twopayment::ENVIRONMENT_HOSTS and is resolved through
+     * Twopayment::normaliseTwoEnvironment(), so every value has an entry. In dev mode
      * only, TWO_CHECKOUT_BASE_URL takes precedence over this map — see
      * getSignupPageUrl().
      *
@@ -89,6 +89,7 @@ class TwoSoleTrader
      */
     private static $signup_hosts = array(
         'production' => 'https://checkout.two.inc',
+        'sandbox' => 'https://checkout.sandbox.two.inc',
         'staging' => 'https://checkout.staging.two.inc',
     );
 
@@ -441,11 +442,8 @@ class TwoSoleTrader
             // hand may, and '<host>//soletrader/signup' is not the same path.
             return rtrim($override, '/') . '/soletrader/signup';
         }
-        $env = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
-        $host = isset(self::$signup_hosts[$env])
-            ? self::$signup_hosts[$env]
-            : 'https://checkout.sandbox.two.inc';
-        return $host . '/soletrader/signup';
+        $env = Twopayment::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'));
+        return self::$signup_hosts[$env] . '/soletrader/signup';
     }
 
     /**

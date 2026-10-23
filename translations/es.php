@@ -19,7 +19,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_d0b5695eb8c733bf925d2066de816bda'] 
 $_MODULE['<{twopayment}prestashop>twopayment_0bd1bbf38ae30740b208fa00447e04b2'] = 'Para todas las empresas, %1$sleer más%2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Introduce tu clave API proporcionada por %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Entorno';
-$_MODULE['<{twopayment}prestashop>twopayment_8b6ddb993ec11f974a0fa6a46244401e'] = 'Selecciona el entorno de API de %s que deseas usar. Producción para transacciones reales, Staging para pruebas.';
 $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] = 'Producción';
 $_MODULE['<{twopayment}prestashop>twopayment_7af191b62135c0adab07f2c26940a68a'] = '%s permanece oculto en el proceso de pago hasta que la clave se verifique.';
 $_MODULE['<{twopayment}prestashop>twopayment_e8ca0cae6b365fe0c03816ef8905b89c'] = 'Elige cómo se calculan los términos de pago:';
@@ -30,7 +29,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_de68657d5c597fa395ed600a61c98178'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c9cc8cce247e49bae79f15173ce97354'] = 'Guardar';
 $_MODULE['<{twopayment}prestashop>twopayment_12a62151fbf8218ddf2165d1f23821cd'] = 'Introduce un título.';
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Introduce una clave API.';
-$_MODULE['<{twopayment}prestashop>twopayment_c0df38350f764595ec9eb062507f895e'] = 'Selecciona un entorno válido (Producción o Staging).';
 $_MODULE['<{twopayment}prestashop>twopayment_1924a6cb5a7ce6a33e93620792fea964'] = 'Debes seleccionar al menos un plazo de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_85925e31c13734f285ce48920c8120b9'] = 'La configuración general se ha actualizado.';
 $_MODULE['<{twopayment}prestashop>twopayment_93cba07454f06a4a960172bbd6e2a435'] = 'Si';
@@ -294,7 +292,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_4009e05973e240e0ae89bfb77b847115'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b42b57d56d7d5c1b63351f4d87e396c0'] = 'Marque "Enviar también desde el navegador" solo cuando su administrador de TI requiera la cabecera también para las llamadas desde el navegador del comprador: el valor de esa cabecera se publicará en el navegador del comprador y cualquiera podrá leerlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_1063e38cb53d94d386f21227fcd84717'] = 'Eliminar';
 $_MODULE['<{twopayment}prestashop>twopayment_404c493aff65500a37b1f0d09ffa29ae'] = 'Método de recargo no reconocido: %1$s. Elija uno de: %2$s.';
-$_MODULE['<{twopayment}prestashop>twopayment_db3f921088947d83680a80a0285ef414'] = 'No configurado';
 $_MODULE['<{twopayment}prestashop>twopayment_1a4b2efd8f0a1e7960d1a59d50cdb257'] = 'Perfil del comercio';
 $_MODULE['<{twopayment}prestashop>twopayment_f87d012d4d7fdcebf202ba1d11f30302'] = 'Los plazos de pago que puede ofrecer, los recargos al comprador, el importe mínimo de pedido y el plazo predeterminado se leen de %s y se almacenan en caché. Se actualizan de forma programada y cada vez que se guarda la clave de API o el entorno; use esto para aplicar un cambio ahora.';
 $_MODULE['<{twopayment}prestashop>twopayment_613ef0108fe785be3eae70f1a6fbaa7d'] = 'Actualizar el perfil del comercio';
@@ -644,3 +641,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_d8b18f5a49707de0eee44ffc69ec5a7c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3e54799b38ea681ce59a22cd976b2d61'] = 'la asignación de códigos fiscales guardada no se puede leer. Usa Borrar los códigos fiscales guardados en Gestión de pedidos.';
 $_MODULE['<{twopayment}prestashop>twopayment_26972e4a497058079071603896510806'] = 'la asignación de códigos fiscales guardada no se puede leer. Usa Borrar los códigos fiscales guardados en Gestión de pedidos (selecciona antes la tienda).';
 $_MODULE['<{twopayment}prestashop>twopayment_550f3ff50a65127f476f5640546ea56a'] = 'Se han borrado los códigos fiscales guardados; vuelve a elegir los códigos.';
+$_MODULE['<{twopayment}prestashop>twopayment_2652eec977dcb2a5aea85f5bec235b05'] = 'Sandbox';
+$_MODULE['<{twopayment}prestashop>twopayment_2fd94cc464a79be675f7c7c8a2aa5423'] = 'Sandbox es para pruebas y no mueve dinero real. Usa la clave de API emitida para el entorno que selecciones.';
+$_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] = 'Selecciona un entorno válido.';
+$_MODULE['<{twopayment}prestashop>twopayment_bff06b0339a647d9be0d8fe7fecc8466'] = 'Staging (entorno de pruebas interno de Two). Selecciona Sandbox o Producción.';
+$_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'No reconocido: se está usando Sandbox. Selecciona un entorno y guarda.';

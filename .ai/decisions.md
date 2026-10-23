@@ -19,6 +19,16 @@
 
 ---
 
+## [2026-10-23] Environment Options Match The Other Plugins; Staging Only On Two Infrastructure (TWO-26604)
+
+**Context**: PrestaShop offered Staging to every merchant and hid Sandbox, while WooCommerce and Magento offer Production and Sandbox. The unreleased 2.7.8 upgrade rewrote the released default `development` (always sandbox hosts) to `staging`, which would have moved live merchants onto the staging API.
+**Decision**: One rule on all three plugins. Options Production, Sandbox, and Staging only when `TWO_INTERNAL_ENVIRONMENTS` is exactly `1` or `staging` is already stored. Stored values `production`, `sandbox`, `staging`; fresh install `sandbox`; reads trimmed, lowercased, `prod` aliased, anything else resolves to `sandbox`. The helpers are `Twopayment::isTwoInternalEnvironmentsEnabled()`, `recogniseTwoEnvironment()`, `normaliseTwoEnvironment()`, `getTwoEnvironmentOptions()`, `isTwoEnvironmentSaveAllowed()` and `isTwoEnvironmentHealthy()`. `upgrade-2.7.8.php` rewrites legacy values in place, `development` to `sandbox`.
+**Alternatives Considered**: Hostname detection (WooCommerce's old approach): implicit, and tied to the two.inc domain that brand overlays do not share.
+**Rationale**: Identical behaviour across plugins; the flag is explicit and set only in Two's helm values and local docker stacks. It is not a security gate: Staging needs a staging key.
+**Consequences**: `tests/fixtures/environment-cases.json` is byte-identical in the three plugin repos and drives `EnvironmentOptionsSpec`. A shop that loses the flag keeps a stored `staging`, and the health checklist reports it.
+
+---
+
 ## [2026-10-01] Partial Refunds Are Itemised Onto The Two Order's Own Lines (TWO-26143)
 
 **Context**: Credit slips and the Refunded remainder were sent as an amount and per-rate tax
