@@ -4799,7 +4799,7 @@ class Twopayment extends PaymentModule
                 'value' => $recognisedEnvironment === null
                     ? $this->l('Not recognised: Sandbox is in use. Select an environment and save.')
                     : ($recognisedEnvironment === 'staging' && !self::isTwoInternalEnvironmentsEnabled()
-                        ? $this->l('Staging (Two internal test environment). Select Sandbox or Production.')
+                        ? sprintf($this->l('Staging (%s internal test environment). Select Sandbox or Production.'), $this->getTwoBrandConfig('product_name'))
                         : $this->getTwoEnvironmentLabel($recognisedEnvironment)),
                 'ok' => self::isTwoEnvironmentHealthy($storedEnvironment),
             ),

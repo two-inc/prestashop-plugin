@@ -644,5 +644,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_550f3ff50a65127f476f5640546ea56a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2652eec977dcb2a5aea85f5bec235b05'] = 'Sandbox';
 $_MODULE['<{twopayment}prestashop>twopayment_2fd94cc464a79be675f7c7c8a2aa5423'] = 'Sandbox is bedoeld om te testen en verplaatst geen echt geld. Gebruik de API-sleutel die is uitgegeven voor de omgeving die je selecteert.';
 $_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] = 'Selecteer een geldige omgeving.';
-$_MODULE['<{twopayment}prestashop>twopayment_bff06b0339a647d9be0d8fe7fecc8466'] = 'Staging (interne testomgeving van Two). Selecteer Sandbox of Productie.';
+$_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] = 'Staging (interne testomgeving van %s). Selecteer Sandbox of Productie.';
 $_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'Niet herkend: Sandbox wordt gebruikt. Selecteer een omgeving en sla op.';
