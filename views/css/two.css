@@ -489,9 +489,11 @@
         padding: 20px;
     }
     
-    /* Mobile tooltip adjustments */
+    /* Mobile tooltip adjustments: the box opens rightwards from the icon, so
+       it is capped short of the viewport's right edge on the narrowest phones. */
     .two-tooltip-content {
         width: 260px;
+        max-width: calc(100vw - 7rem);
     }
     
     /* Adjust header padding for mobile */
