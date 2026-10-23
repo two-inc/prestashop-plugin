@@ -3,25 +3,20 @@
 declare(strict_types=1);
 
 /**
- * Coverage for upgrade/upgrade-2.7.8.php (TWO-25455).
+ * Coverage for upgrade/upgrade-2.7.8.php (TWO-25455, TWO-26604).
  *
- * The "Development" `PS_TWO_ENVIRONMENT` option is removed from the admin
- * dropdown as of this release - it had no entry in ENVIRONMENT_HOSTS,
- * PORTAL_HOSTS, BUYER_PORTAL_HOSTS or TwoSoleTrader::$signup_hosts, so it
- * silently behaved exactly like an unset/legacy value (sandbox everywhere).
- * It was also the install-time default, so any shop that never touched the
- * dropdown is on this value today. This script rewrites it to 'staging' - a
- * real, mapped environment - rather than leaving those shops on a value the
- * admin UI can no longer render.
+ * The stored environment is rewritten to the canonical set, preserving the
+ * hosts the shop already talked to. Released builds installed with
+ * `development`, which always resolved to the sandbox hosts, so it must land
+ * on `sandbox` and never on `staging`.
  */
 final class EnvironmentUpgradeMigrationSpec
 {
     public static function runAll(): void
     {
-        self::testRewritesStoredDevelopmentValueToStaging();
-        self::testLeavesStagingUntouched();
-        self::testLeavesProductionUntouched();
-        self::testIsCaseInsensitiveOnTheStoredValue();
+        self::testMigrationTable();
+        self::testEveryTierIsMigrated();
+        self::testSingleStoreIgnoresStaleShopRows();
         self::testFailureToWriteIsReportedAndFailsTheUpgrade();
     }
 
@@ -30,71 +25,84 @@ final class EnvironmentUpgradeMigrationSpec
         require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.8.php';
     }
 
-    private static function testRewritesStoredDevelopmentValueToStaging(): void
+    private static function testMigrationTable(): void
     {
+        $cases = [
+            ['production', 'production', 'production kept'],
+            ['PROD', 'production', 'upper-case alias to production'],
+            ['Production', 'production', 'mixed-case production lowercased'],
+            ['prod', 'production', 'alias to production'],
+            ['sandbox', 'sandbox', 'sandbox kept'],
+            ['SANDBOX', 'sandbox', 'upper-case sandbox lowercased'],
+            ['staging', 'staging', 'staging kept'],
+            ['Staging', 'staging', 'staging in any case kept'],
+            ['development', 'sandbox', 'released default development always resolved to sandbox, so it stays on sandbox'],
+            ['Development', 'sandbox', 'development in any case to sandbox'],
+            ['', 'sandbox', 'empty to sandbox'],
+            [null, 'sandbox', 'missing key to sandbox'],
+            ['Demo', 'sandbox', 'any other value to sandbox'],
+        ];
+
         self::loadScript();
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development');
-        $module = new TwopaymentTestHarness();
+        foreach ($cases as list($stored, $expected, $description)) {
+            StubStore::reset();
+            if ($stored === null) {
+                unset(StubStore::$configuration['PS_TWO_ENVIRONMENT']);
+            } else {
+                StubStore::$configuration['PS_TWO_ENVIRONMENT'] = $stored;
+            }
+            $module = new TwopaymentTestHarness();
 
-        TinyAssert::true(upgrade_module_2_7_8($module), 'the upgrade script must report success');
-        TinyAssert::same(
-            'staging',
-            (string) Configuration::get('PS_TWO_ENVIRONMENT'),
-            "a shop stored on the removed 'development' value must be rewritten to 'staging'"
-        );
-
-        // Idempotent: a re-run (e.g. a re-triggered upgrade) must not error and
-        // must leave the now-migrated value alone.
-        TinyAssert::true(upgrade_module_2_7_8($module), 're-running the upgrade must still succeed');
-        TinyAssert::same('staging', (string) Configuration::get('PS_TWO_ENVIRONMENT'));
+            TinyAssert::true(upgrade_module_2_7_8($module), $description . ' (upgrade succeeds)');
+            TinyAssert::same($expected, (string) Configuration::get('PS_TWO_ENVIRONMENT'), $description);
+            TinyAssert::true(upgrade_module_2_7_8($module), $description . ' (re-run succeeds)');
+            TinyAssert::same($expected, (string) Configuration::get('PS_TWO_ENVIRONMENT'), $description . ' (idempotent)');
+        }
     }
 
-    private static function testLeavesStagingUntouched(): void
+    /** A shop group's or a shop's own row is rewritten at its own tier, not only the one the context resolves to. */
+    private static function testEveryTierIsMigrated(): void
     {
         self::loadScript();
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
-        $module = new TwopaymentTestHarness();
+        StubStore::reset();
+        StubStore::$multistore = true;
+        StubStore::$configuration['PS_TWO_ENVIRONMENT'] = 'development';
+        StubStore::$configurationGroup[2]['PS_TWO_ENVIRONMENT'] = 'PROD';
+        StubStore::$configurationShop[3]['PS_TWO_ENVIRONMENT'] = 'staging';
+        StubStore::$configurationShop[4]['PS_TWO_ENVIRONMENT'] = 'Demo';
 
-        TinyAssert::true(upgrade_module_2_7_8($module));
-        TinyAssert::same(
-            'staging',
-            (string) Configuration::get('PS_TWO_ENVIRONMENT'),
-            'a shop already on staging must be left alone'
-        );
+        TinyAssert::true(upgrade_module_2_7_8(new TwopaymentTestHarness()), 'the upgrade succeeds');
+
+        $cases = [
+            [StubStore::$configuration['PS_TWO_ENVIRONMENT'], 'sandbox', 'global development to sandbox'],
+            [StubStore::$configurationGroup[2]['PS_TWO_ENVIRONMENT'], 'production', 'shop group PROD to production'],
+            [StubStore::$configurationShop[3]['PS_TWO_ENVIRONMENT'], 'staging', 'shop staging kept'],
+            [StubStore::$configurationShop[4]['PS_TWO_ENVIRONMENT'], 'sandbox', 'shop unknown value to sandbox'],
+        ];
+        foreach ($cases as list($actual, $expected, $description)) {
+            TinyAssert::same($expected, $actual, $description);
+        }
+        StubStore::$multistore = false;
     }
 
-    private static function testLeavesProductionUntouched(): void
+    /** Without multistore a stale shop row is not live, and migrating it would overwrite the global value. */
+    private static function testSingleStoreIgnoresStaleShopRows(): void
     {
         self::loadScript();
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'production');
-        $module = new TwopaymentTestHarness();
+        StubStore::reset();
+        StubStore::$configuration['PS_TWO_ENVIRONMENT'] = 'production';
+        StubStore::$configurationShop[1]['PS_TWO_ENVIRONMENT'] = 'development';
+        StubStore::$configurationGroup[1]['PS_TWO_ENVIRONMENT'] = 'Demo';
 
-        TinyAssert::true(upgrade_module_2_7_8($module));
-        TinyAssert::same(
-            'production',
-            (string) Configuration::get('PS_TWO_ENVIRONMENT'),
-            'a shop on production must never be touched by this migration'
-        );
-    }
-
-    private static function testIsCaseInsensitiveOnTheStoredValue(): void
-    {
-        self::loadScript();
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'Development');
-        $module = new TwopaymentTestHarness();
-
-        TinyAssert::true(upgrade_module_2_7_8($module));
-        TinyAssert::same(
-            'staging',
-            (string) Configuration::get('PS_TWO_ENVIRONMENT'),
-            'the stored value is matched case-insensitively, mirroring how the host maps '
-                . 'themselves resolve PS_TWO_ENVIRONMENT (strtolower)'
-        );
+        TinyAssert::true(upgrade_module_2_7_8(new TwopaymentTestHarness()), 'single store: the upgrade succeeds');
+        TinyAssert::same('production', StubStore::$configuration['PS_TWO_ENVIRONMENT'], 'single store: global production kept');
+        TinyAssert::same('production', (string) Configuration::get('PS_TWO_ENVIRONMENT'), 'single store: effective value stays production');
     }
 
     private static function testFailureToWriteIsReportedAndFailsTheUpgrade(): void
     {
         self::loadScript();
+        StubStore::reset();
         PrestaShopLogger::reset();
         Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development');
 
@@ -104,7 +112,7 @@ final class EnvironmentUpgradeMigrationSpec
         TinyAssert::false(
             upgrade_module_2_7_8($module),
             'a failed write must fail the upgrade rather than silently leaving the shop '
-                . 'on the removed value with no record of why'
+                . 'on a legacy value with no record of why'
         );
 
         $logged = false;

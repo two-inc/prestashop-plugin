@@ -813,9 +813,8 @@ class Twopayment extends PaymentModule
         // TWO-25800: the product-page buy button, opt-in and independent of the
         // message above. A shop may run either, both or neither.
         Configuration::updateValue('PS_TWO_PRODUCT_BUTTON_ENABLED', 0);
-        // Default to staging (TWO-25455) - 'development' was removed as a
-        // decorative option that always silently fell back to sandbox hosts.
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
+        // Sandbox on every fresh install, on Two's infrastructure too (TWO-26604).
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', self::TWO_ENVIRONMENT_DEFAULT);
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', '');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', '');
         Configuration::updateValue(self::CONFIG_CUSTOM_HEADERS, json_encode(array()));
@@ -1265,6 +1264,9 @@ class Twopayment extends PaymentModule
                 if ($this->apiKeyVerificationWarning !== null) {
                     $this->output .= $this->displayWarning($this->apiKeyVerificationWarning);
                 }
+                if ($this->environmentRefused) {
+                    $this->output .= $this->displayError($this->l('Select a valid environment.'));
+                }
             } else {
                 foreach ($this->errors as $err) {
                     $this->output .= $this->displayError($err);
@@ -1429,6 +1431,29 @@ class Twopayment extends PaymentModule
         return $this->output;
     }
 
+    /** Display label for each canonical environment, in one place for the dropdown and the health checklist. */
+    protected function getTwoEnvironmentLabel($environment)
+    {
+        $labels = array(
+            'production' => $this->l('Production'),
+            'sandbox' => $this->l('Sandbox'),
+            'staging' => $this->l('Staging'),
+        );
+
+        return $labels[$environment];
+    }
+
+    /** Dropdown rows for the Environment setting, per getTwoEnvironmentOptions(). */
+    protected function getTwoEnvironmentOptionRows()
+    {
+        $rows = array();
+        foreach (self::getTwoEnvironmentOptions(Configuration::get('PS_TWO_ENVIRONMENT')) as $environment) {
+            $rows[] = array('id_option' => $environment, 'name' => $this->getTwoEnvironmentLabel($environment));
+        }
+
+        return $rows;
+    }
+
     /**
      * The tab the configuration page opens on, and any confirmation to show above it. After "Refresh merchant profile"
      * the page reloads with two_refreshed=1 (TWO-26304): that opens Diagnostics, where the button is, and confirms the
@@ -1480,13 +1505,10 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'label' => $this->l('Environment'),
                         'name' => 'PS_TWO_ENVIRONMENT',
-                        'desc' => sprintf($this->l('Select the %s API environment to use. Production for live transactions, Staging for testing.'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => $this->l('Sandbox is for testing and moves no real money. Use the API key issued for the environment you select.'),
                         'required' => true,
                         'options' => array(
-                            'query' => array(
-                                array('id_option' => 'staging', 'name' => $this->l('Staging')),
-                                array('id_option' => 'production', 'name' => $this->l('Production')),
-                            ),
+                            'query' => $this->getTwoEnvironmentOptionRows(),
                             'id' => 'id_option',
                             'name' => 'name'
                         )
@@ -1568,7 +1590,13 @@ class Twopayment extends PaymentModule
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
         $fields_values['PS_TWO_VENDOR_NAME'] = Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
-        $fields_values['PS_TWO_ENVIRONMENT'] = Tools::getValue('PS_TWO_ENVIRONMENT', Configuration::get('PS_TWO_ENVIRONMENT'));
+        // A refused environment was not stored, so the form shows the stored one,
+        // as the environment it resolves to: a legacy value matches no option and
+        // would otherwise show, and save, as Production.
+        $stored = self::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'));
+        $fields_values['PS_TWO_ENVIRONMENT'] = $this->environmentRefused
+            ? $stored
+            : Tools::getValue('PS_TWO_ENVIRONMENT', $stored);
         return $fields_values;
     }
 
@@ -1579,15 +1607,18 @@ class Twopayment extends PaymentModule
         }
         
         // Validate environment
-        $environment = Tools::getValue('PS_TWO_ENVIRONMENT');
-        if (Tools::isEmpty($environment) || !in_array($environment, array('production', 'staging'))) {
-            $this->errors[] = $this->l('Please select a valid environment (Production or Staging).');
-        }
+        // Refused field by field, as the WooCommerce and Magento plugins do
+        // (TWO-26604): the stored environment stays, every other field saves,
+        // and the key is verified against the environment that will be stored.
+        $this->environmentRefused = !self::isTwoEnvironmentSaveAllowed(
+            Tools::getValue('PS_TWO_ENVIRONMENT'),
+            Configuration::get('PS_TWO_ENVIRONMENT')
+        );
         
         // Verify API key with Two against selected environment and capture merchant id and short name
         $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
-        $env = Tools::getValue('PS_TWO_ENVIRONMENT');
-        if (!empty($apiKey) && in_array($env, array('production', 'staging'))) {
+        $env = $this->getTwoEnvironmentToSave();
+        if (!empty($apiKey)) {
             $verify = $this->verifyTwoApiKey($apiKey, $env);
             // Held for the SAVE to publish, not published here (TWO-25326).
             // Validation can still fail on an unrelated field - an empty title,
@@ -1620,10 +1651,18 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /** The submitted environment, or the stored one when the submission was refused (TWO-26604). */
+    protected function getTwoEnvironmentToSave()
+    {
+        return $this->environmentRefused
+            ? Configuration::get('PS_TWO_ENVIRONMENT')
+            : Tools::getValue('PS_TWO_ENVIRONMENT');
+    }
+
     protected function saveTwoGeneralFormValues()
     {
         $submittedApiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
-        $submittedEnv = Tools::getValue('PS_TWO_ENVIRONMENT');
+        $submittedEnv = $this->getTwoEnvironmentToSave();
         // The one submitted value a save may not commit: it would take Two off
         // a checkout the stored key still serves.
         $rejected = is_array($this->verifiedApiKeyResult)
@@ -4751,9 +4790,11 @@ class Twopayment extends PaymentModule
      */
     protected function renderTwoPluginHealthChecklist()
     {
-        // Lowered as every runtime read of this key lowers it, so the row, the host
-        // map and the production warning below all judge the same value.
-        $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
+        // Judged as the host maps judge it, so the row, the hosts and the
+        // production warning below all describe the same value (TWO-26604).
+        $storedEnvironment = Configuration::get('PS_TWO_ENVIRONMENT');
+        $recognisedEnvironment = self::recogniseTwoEnvironment($storedEnvironment);
+        $environment = self::normaliseTwoEnvironment($storedEnvironment);
         // Same live verdict the checkout gate uses (TWO-25326).
         $api_verified = $this->isTwoApiKeyVerified();
         // Only a definitive rejection withholds, so only that earns
@@ -4772,12 +4813,14 @@ class Twopayment extends PaymentModule
             ),
             array(
                 'label' => $this->l('Environment'),
-                // Anything outside ENVIRONMENT_HOSTS silently resolves to the sandbox, so
-                // reporting it as healthy is the same untruth as inventing one.
-                'value' => $environment === ''
-                    ? $this->l('Not configured')
-                    : htmlspecialchars(strtoupper($environment), ENT_QUOTES, 'UTF-8'),
-                'ok' => array_key_exists($environment, self::ENVIRONMENT_HOSTS),
+                // An unrecognised value runs on sandbox, and a stored staging
+                // outside Two's infrastructure keeps working but is reported.
+                'value' => $recognisedEnvironment === null
+                    ? $this->l('Not recognised: Sandbox is in use. Select an environment and save.')
+                    : ($recognisedEnvironment === 'staging' && !self::isTwoInternalEnvironmentsEnabled()
+                        ? sprintf($this->l('Staging (%s internal test environment). Select Sandbox or Production.'), $this->getTwoBrandConfig('product_name'))
+                        : $this->getTwoEnvironmentLabel($recognisedEnvironment)),
+                'ok' => self::isTwoEnvironmentHealthy($storedEnvironment),
             ),
             array(
                 'label' => $this->l('SSL verification'),
@@ -15051,35 +15094,85 @@ class Twopayment extends PaymentModule
         return $this->getTwoCheckoutHostUrlForEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'));
     }
 
+    /** Stored values the Environment setting accepts, in the order the dropdown offers them (TWO-26604). */
+    public const TWO_ENVIRONMENTS = array('production', 'sandbox', 'staging');
+
+    /** Fresh-install value, with or without TWO_INTERNAL_ENVIRONMENTS (TWO-26604). */
+    public const TWO_ENVIRONMENT_DEFAULT = 'sandbox';
+
     /**
-     * Explicit environment -> API host map, mirroring the Woo/Magento plugins'
-     * templated 'api.<mode>.two.inc' host builder. Any value not in this map
-     * (including the legacy 'development' option and empty/unset config)
-     * falls back to sandbox — the same default this plugin has always used
-     * for "not production".
+     * Whether this shop runs on Two's own infrastructure, which alone may offer
+     * the Staging environment. Enabled only by TWO_INTERNAL_ENVIRONMENTS=1
+     * exactly; not a security gate (a staging key is needed to use staging).
      */
+    public static function isTwoInternalEnvironmentsEnabled()
+    {
+        return getenv('TWO_INTERNAL_ENVIRONMENTS') === '1';
+    }
+
+    /**
+     * The canonical environment for a stored value, or null when the value is
+     * not recognised. Trimmed, lowercased, `prod` aliased to `production`.
+     */
+    public static function recogniseTwoEnvironment($value)
+    {
+        $environment = strtolower(trim((string) $value));
+        if ($environment === 'prod') {
+            $environment = 'production';
+        }
+
+        return in_array($environment, self::TWO_ENVIRONMENTS, true) ? $environment : null;
+    }
+
+    /** The environment a stored value resolves to: anything unrecognised is sandbox, never production. */
+    public static function normaliseTwoEnvironment($value)
+    {
+        return self::recogniseTwoEnvironment($value) ?? 'sandbox';
+    }
+
+    /** Environments the dropdown offers: Staging only on Two's infrastructure or when already stored. */
+    public static function getTwoEnvironmentOptions($stored)
+    {
+        if (self::isTwoInternalEnvironmentsEnabled() || self::recogniseTwoEnvironment($stored) === 'staging') {
+            return self::TWO_ENVIRONMENTS;
+        }
+
+        return array('production', 'sandbox');
+    }
+
+    /** Whether a submitted Environment may be saved over the stored one. */
+    public static function isTwoEnvironmentSaveAllowed($submitted, $stored)
+    {
+        return in_array((string) $submitted, self::getTwoEnvironmentOptions($stored), true);
+    }
+
+    /** Health checklist verdict: staging is healthy only on Two's infrastructure, unrecognised values never. */
+    public static function isTwoEnvironmentHealthy($stored)
+    {
+        $environment = self::recogniseTwoEnvironment($stored);
+
+        return $environment !== null
+            && ($environment !== 'staging' || self::isTwoInternalEnvironmentsEnabled());
+    }
+
+    /** Explicit environment -> API host map. Resolved through normaliseTwoEnvironment(), so every value has an entry. */
     private const ENVIRONMENT_HOSTS = array(
         'production' => 'https://api.two.inc',
+        'sandbox' => 'https://api.sandbox.two.inc',
         'staging' => 'https://api.staging.two.inc',
     );
 
-    /**
-     * Explicit environment -> merchant portal host map, mirroring ENVIRONMENT_HOSTS.
-     * Any value not in this map (legacy 'development', empty/unset) falls back to
-     * the sandbox portal.
-     */
+    /** Explicit environment -> merchant portal host map, mirroring ENVIRONMENT_HOSTS. */
     private const PORTAL_HOSTS = array(
         'production' => 'https://portal.two.inc',
+        'sandbox' => 'https://portal.sandbox.two.inc',
         'staging' => 'https://portal.staging.two.inc',
     );
 
-    /**
-     * Explicit environment -> buyer portal login URL map, mirroring ENVIRONMENT_HOSTS.
-     * Any value not in this map (legacy 'development', empty/unset) falls back to
-     * the sandbox buyer portal.
-     */
+    /** Explicit environment -> buyer portal login URL map, mirroring ENVIRONMENT_HOSTS. */
     private const BUYER_PORTAL_HOSTS = array(
         'production' => 'https://buyer.two.inc/login',
+        'sandbox' => 'https://buyer.sandbox.two.inc/login',
         'staging' => 'https://buyer.staging.two.inc/login',
     );
 
@@ -15092,7 +15185,7 @@ class Twopayment extends PaymentModule
         if ($override !== null) {
             return $override;
         }
-        return self::ENVIRONMENT_HOSTS[strtolower((string) $environment)] ?? 'https://api.sandbox.two.inc';
+        return self::ENVIRONMENT_HOSTS[self::normaliseTwoEnvironment($environment)];
     }
 
     /**
@@ -15669,8 +15762,7 @@ class Twopayment extends PaymentModule
         if ($override !== null) {
             return $override;
         }
-        $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
-        return self::PORTAL_HOSTS[$environment] ?? 'https://portal.sandbox.two.inc';
+        return self::PORTAL_HOSTS[self::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'))];
     }
 
     /**
@@ -15678,8 +15770,7 @@ class Twopayment extends PaymentModule
      */
     public function getTwoBuyerPortalUrl()
     {
-        $environment = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
-        return self::BUYER_PORTAL_HOSTS[$environment] ?? 'https://buyer.sandbox.two.inc/login';
+        return self::BUYER_PORTAL_HOSTS[self::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'))];
     }
 
     /**
@@ -17384,7 +17475,7 @@ class Twopayment extends PaymentModule
     protected function buildApiKeyLiveVerificationResult($apiKey, $environment)
     {
         $apiKey = trim((string) $apiKey);
-        if ($apiKey === '' || !in_array($environment, array('production', 'staging'), true)) {
+        if ($apiKey === '' || !in_array($environment, self::TWO_ENVIRONMENTS, true)) {
             return array('status' => self::API_KEY_STATUS_NOT_CONFIGURED, 'ok' => false, 'message' => '', 'definitive' => false);
         }
         $verify = $this->verifyTwoApiKey($apiKey, $environment);
@@ -17601,6 +17692,9 @@ class Twopayment extends PaymentModule
      * @var string|null
      */
     protected $apiKeyVerificationWarning = null;
+
+    /** Whether the submitted Environment was refused, so the stored one is kept (TWO-26604). */
+    protected $environmentRefused = false;
 
     /**
      * Whether this instance has already logged that it is withholding Two over

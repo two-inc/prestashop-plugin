@@ -19,6 +19,16 @@
 
 ---
 
+## [2026-10-23] Environment Options Match The Other Plugins (TWO-26604)
+
+**Context**: PrestaShop hid Sandbox from merchants, while WooCommerce and Magento offer Production and Sandbox. The unreleased 2.7.8 upgrade rewrote the released default `development` (always sandbox hosts) away from sandbox, which would have moved live merchants onto a different API.
+**Decision**: One rule on all three plugins. Merchants are offered Production and Sandbox. There are also internal environments for the use of Two employees only, offered only on Two's own servers. Fresh install `sandbox`; reads trimmed, lowercased, `prod` aliased, anything unrecognised resolves to `sandbox`. The helpers are `Twopayment::isTwoInternalEnvironmentsEnabled()`, `recogniseTwoEnvironment()`, `normaliseTwoEnvironment()`, `getTwoEnvironmentOptions()`, `isTwoEnvironmentSaveAllowed()` and `isTwoEnvironmentHealthy()`. `upgrade-2.7.8.php` rewrites legacy values in place, `development` to `sandbox`.
+**Alternatives Considered**: Hostname detection (WooCommerce's old approach): implicit, and tied to the two.inc domain that brand overlays do not share.
+**Rationale**: Identical behaviour across plugins, gated explicitly rather than inferred. It is not a security gate: each environment needs its own key.
+**Consequences**: `tests/fixtures/environment-cases.json` is byte-identical in the three plugin repos and drives `EnvironmentOptionsSpec`. A shop with an internal environment stored where it is not offered keeps the stored value, and the health checklist reports it.
+
+---
+
 ## [2026-10-01] Partial Refunds Are Itemised Onto The Two Order's Own Lines (TWO-26143)
 
 **Context**: Credit slips and the Refunded remainder were sent as an amount and per-rate tax
