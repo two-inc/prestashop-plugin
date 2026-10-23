@@ -86,5 +86,6 @@ final class PaymentOptionLogoSpec
         $css = (string) file_get_contents(dirname(__DIR__) . '/views/css/two.css');
 
         TinyAssert::same(false, strpos($css, '.payment-option img') !== false, 'no module style hides the mark in the payment option label');
+        TinyAssert::same(1, preg_match('/\.payment-option label img\[src\*="\/twopayment\/"\]\s*\{[^}]*height:\s*1\.5em/', $css), 'the module sizes the mark in the payment option label');
     }
 }
