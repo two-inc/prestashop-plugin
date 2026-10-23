@@ -39,7 +39,7 @@ set -euo pipefail
 docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
 require "/var/www/html/config/config.inc.php";
 Configuration::updateValue("PS_TWO_MERCHANT_API_KEY", "dummy-e2e-key");
-Configuration::updateValue("PS_TWO_ENVIRONMENT", "development");
+Configuration::updateValue("PS_TWO_ENVIRONMENT", "sandbox");
 Configuration::updateValue("PS_TWO_MERCHANT_SHORT_NAME", "E2E Test Merchant");
 Configuration::updateValue("PS_TWO_MERCHANT_ID", "e2e-merchant-id");
 Configuration::updateValue("PS_TWO_API_KEY_VERIFIED", 1);

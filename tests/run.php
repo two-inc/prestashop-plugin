@@ -5917,6 +5917,7 @@ require __DIR__ . '/SoleTraderTokenPreconditionSpec.php';
 require __DIR__ . '/OverrideMigrationSpec.php';
 require __DIR__ . '/OverrideReinstallSpec.php';
 require __DIR__ . '/EnvironmentUpgradeMigrationSpec.php';
+require __DIR__ . '/EnvironmentOptionsSpec.php';
 require __DIR__ . '/CheckoutTitleSpec.php';
 require __DIR__ . '/CheckoutSubtitleSpec.php';
 require __DIR__ . '/ProductPromoMessageSpec.php';
@@ -6002,6 +6003,7 @@ $tests = [
     'OverrideMigrationSpec::runAll' => [OverrideMigrationSpec::class, 'runAll'],
     'OverrideReinstallSpec::runAll' => [OverrideReinstallSpec::class, 'runAll'],
     'EnvironmentUpgradeMigrationSpec::runAll' => [EnvironmentUpgradeMigrationSpec::class, 'runAll'],
+    'EnvironmentOptionsSpec::runAll' => [EnvironmentOptionsSpec::class, 'runAll'],
     'CheckoutTitleSpec::runAll' => [CheckoutTitleSpec::class, 'runAll'],
     'CheckoutSubtitleSpec::runAll' => [CheckoutSubtitleSpec::class, 'runAll'],
     'ProductPromoMessageSpec::runAll' => [ProductPromoMessageSpec::class, 'runAll'],

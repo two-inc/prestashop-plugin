@@ -21,13 +21,9 @@ require '/var/www/html/config/config.inc.php';
 
 $apiKey      = getenv('TWO_API_KEY') ?: 'dummy-dev-key';
 $environment = getenv('TWO_ENVIRONMENT') ?: 'sandbox';
-// 'sandbox' is an alias from the Makefile UX for "not production". The
-// plugin no longer has a 'development' environment (TWO-25455 - it was
-// decorative, always fell back to sandbox hosts) - 'staging' is the closest
-// real, mapped value and the config value written here is never actually
-// used to resolve hosts anyway: TWO_API_BASE_URL below drives the dev
-// override.
-$pluginEnv = ($environment === 'production') ? 'production' : 'staging';
+// Stored as given when it is one of the plugin's environments (TWO-26604);
+// anything else is stored as 'sandbox', the plugin's own fallback.
+$pluginEnv = in_array($environment, array('production', 'sandbox', 'staging'), true) ? $environment : 'sandbox';
 
 // --- Defensive dedup: keep highest id_configuration row per (name, NULL scope). ---
 $keys = [

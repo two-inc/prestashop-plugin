@@ -55,17 +55,19 @@ final class ConfigFallbackSpec
         }
     }
 
-    /** Anything ENVIRONMENT_HOSTS does not name resolves to the sandbox at runtime, so the panel must not call it healthy. */
+    /** Anything unrecognised resolves to the sandbox at runtime, so the panel must not call it healthy (TWO-26604). */
     private static function testHealthChecklistEnvironmentRow(): void
     {
+        $unrecognised = 'Not recognised: Sandbox is in use. Select an environment and save.';
         $cases = [
-            ['production', 'PRODUCTION', true, 'a production shop reports production'],
-            ['staging', 'STAGING', true, 'a staging shop reports staging'],
-            [null, 'Not configured', false, 'no row at all is named and warned about, not rendered blank and called healthy'],
-            ['', 'Not configured', false, 'an emptied row is reported as unconfigured'],
-            ['development', 'DEVELOPMENT', false, 'the withdrawn value is shown but not called healthy'],
-            ['Production', 'PRODUCTION', true, 'a shop stored in another case is judged as the host lookup judges it'],
-            ['<img src=x onerror=alert(1)>', '&lt;IMG SRC=X ONERROR=ALERT(1)&gt;', false, 'a stored value is escaped before it reaches an admin page'],
+            ['production', 'Production', true, 'a production shop reports production'],
+            ['sandbox', 'Sandbox', true, 'a sandbox shop reports sandbox'],
+            ['staging', 'Staging (Two internal test environment). Select Sandbox or Production.', false, 'a staging shop off Two infrastructure is told what to do'],
+            [null, $unrecognised, false, 'no row at all is named and warned about, not rendered blank and called healthy'],
+            ['', $unrecognised, false, 'an emptied row is reported as unrecognised'],
+            ['development', $unrecognised, false, 'the withdrawn value is not called healthy'],
+            ['Production', 'Production', true, 'a shop stored in another case is judged as the host lookup judges it'],
+            ['<img src=x onerror=alert(1)>', $unrecognised, false, 'a stored value never reaches an admin page'],
         ];
 
         foreach ($cases as list($stored, $expected, $expectedOk, $description)) {
