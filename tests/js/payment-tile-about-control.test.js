@@ -67,14 +67,12 @@ describe('payment tile about control', () => {
 
                 const emphasis = box.querySelector('.two-tooltip-text--strong');
                 expect(emphasis.tagName).toBe('STRONG');
-
-                // The icon sits beside the logo, which is this tile's title.
-                expect(tile.querySelector('.two-logo').compareDocumentPosition(wrapper))
-                    .toBe(global.Node.DOCUMENT_POSITION_FOLLOWING);
             }
 
-            // The rest of the header is untouched either way.
-            expect(tile.querySelector('.two-logo')).not.toBeNull();
+            // The rest of the header is untouched either way. The brand mark
+            // sits in the radio label (TWO-26609), so the tile carries none.
+            expect(tile.querySelector('.two-header')).not.toBeNull();
+            expect(tile.querySelector('img[src*="TwoLogo.svg"], .two-logo')).toBeNull();
         });
     });
 });

@@ -17,6 +17,7 @@ final class PaymentOptionLogoSpec
     {
         self::testSetsTheBrandLogo();
         self::testTheDefaultBrandLogoShips();
+        self::testTheLabelMarkIsNotHidden();
     }
 
     /**
@@ -78,5 +79,12 @@ final class PaymentOptionLogoSpec
         $logo = (string) (new TwopaymentTestHarness())->getTwoBrandConfig('logo');
 
         TinyAssert::same(true, $logo !== '' && is_file(dirname(__DIR__) . '/' . $logo), 'the Two brand mark is shipped with the module');
+    }
+
+    private static function testTheLabelMarkIsNotHidden(): void
+    {
+        $css = (string) file_get_contents(dirname(__DIR__) . '/views/css/two.css');
+
+        TinyAssert::same(false, strpos($css, '.payment-option img') !== false, 'no module style hides the mark in the payment option label');
     }
 }
