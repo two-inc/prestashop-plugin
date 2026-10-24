@@ -3,7 +3,7 @@
 /**
  * INTEGRATION PROBE - who may read the Two error log (TWO-26612), against a real PrestaShop engine's permissions.
  *
- * The error log tab is hidden, and core grants a new tab only to SuperAdmin and the installing employee, so any
+ * The error log tab is hidden, and core grants a new tab only to SuperAdmin and the installer's profile, so any
  * other profile got "Access denied". AdminTwoErrorLogController::viewAccess() also lets in a profile that may view
  * Orders. This probe makes throwaway profiles with real grants in core's access table and checks:
  *   - a profile granted only the Orders tab's view may view the log
