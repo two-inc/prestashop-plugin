@@ -129,6 +129,11 @@ final class ApiRefusalLogSpec
 
             TinyAssert::false($result['approved'], 'not approved: ' . $description);
             TinyAssert::same($buyerMessage, $result['message'], 'buyer message: ' . $description);
+            $summaries = array_filter(PrestaShopLogger::$logs, function ($entry) {
+                return strpos((string) $entry['message'], 'TwoPayment: Backend order intent response summary at payment submit') === 0;
+            });
+            // A refusal is logged as its refusal line alone, carrying Two's reason; anything else keeps its summary line.
+            TinyAssert::count($fragment === null ? 1 : 0, $summaries, 'summary lines: ' . $description);
             if ($fragment === null) {
                 TinyAssert::count(0, self::refusals('order intent at payment submit'), 'no refusal logged: ' . $description);
                 continue;
@@ -416,6 +421,24 @@ final class ApiRefusalLogSpec
             TinyAssert::same([self::LOOKUP_FAILED], $controller->errors, 'the buyer gets the generic sentence: ' . $description);
             self::assertLogged('the order lookup', self::DETAIL, $description);
             TinyAssert::true(strpos(self::refusals('the order lookup')[0]['message'], $reference) !== false, 'the log names ' . $reference . ': ' . $description);
+
+            // A 200 whose body carries an error fails the lookup too, and is logged as a warning.
+            $module = self::checkoutModule();
+            $module->lookup = ['http_status' => 200, 'error_code' => 'LOOKUP_ERROR', 'error_details' => self::DETAIL];
+            $controller = new TwopaymentConfirmationModuleFrontController();
+            $controller->module = $module;
+            self::runToRedirect($controller, $method, [$arg]);
+
+            TinyAssert::same([self::LOOKUP_FAILED], $controller->errors, 'the buyer gets the generic sentence on a 200 error: ' . $description);
+            $answered = array_values(array_filter(PrestaShopLogger::$logs, function ($entry) use ($reference) {
+                $message = (string) $entry['message'];
+
+                return strpos($message, 'TwoPayment: Two answered the order lookup with an error for cart ' . self::CART_ID . ', ') === 0
+                    && strpos($message, $reference . ' - HTTP 200 LOOKUP_ERROR | ' . self::DETAIL) !== false;
+            }));
+            TinyAssert::count(1, $answered, 'a 200 error is logged with the cart reference: ' . $description);
+            TinyAssert::same(2, $answered[0]['severity'], 'a 200 error is a warning: ' . $description);
+            TinyAssert::same(self::CART_ID, $answered[0]['object_id'], 'a 200 error is logged against the cart: ' . $description);
         }
     }
 
