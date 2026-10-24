@@ -44,7 +44,8 @@ final class ApiRefusalLogSpec
     {
         $refusals = self::refusals($refused);
         TinyAssert::count(1, $refusals, 'one refusal logged: ' . $description);
-        TinyAssert::same(3, $refusals[0]['severity'], 'logged at error severity: ' . $description);
+        // An order intent is refused routinely, so it is a warning; anything else is an error.
+        TinyAssert::same(strpos($refused, 'order intent') === 0 ? 2 : 3, $refusals[0]['severity'], 'logged severity: ' . $description);
         TinyAssert::same('Cart', $refusals[0]['object_type'], 'logged against the cart: ' . $description);
         TinyAssert::same(self::CART_ID, $refusals[0]['object_id'], 'logged against this cart: ' . $description);
         TinyAssert::true(strpos($refusals[0]['message'], 'cart ' . self::CART_ID) !== false, 'the log names the cart: ' . $description);

@@ -953,7 +953,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     {
         if ($refused !== null) {
             $id_cart = isset($this->context->cart->id) ? (int) $this->context->cart->id : 0;
-            $this->module->logTwoApiRefusal($refused, 'cart ' . $id_cart, $result, $id_cart);
+            $this->module->logTwoApiRefusal($refused, 'cart ' . $id_cart, $result, $id_cart, $refused === 'order intent' ? 2 : 3);
         }
         $status = is_array($result) && isset($result['http_status']) ? (int) $result['http_status'] : 0;
         // A transport failure has no HTTP status of its own; 502 keeps it on
