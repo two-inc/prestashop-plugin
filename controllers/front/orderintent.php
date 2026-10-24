@@ -946,16 +946,24 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
      * for one is recorded for the merchant here (TWO-26611). $refused names
      * the request, and is null for an answer the module made up itself.
      *
+     * An order intent or company search is refused routinely, so it is a
+     * warning; a company search, which runs as the buyer types, is logged
+     * once per cart and HTTP status, so a search outage cannot push the real
+     * refusals off the error log page.
+     *
      * @param mixed $result
      * @param string|null $refused
      */
     private function relayTwoApiResponse($result, $refused = null)
     {
+        $status = is_array($result) && isset($result['http_status']) ? (int) $result['http_status'] : 0;
         if ($refused !== null) {
             $id_cart = isset($this->context->cart->id) ? (int) $this->context->cart->id : 0;
-            $this->module->logTwoApiRefusal($refused, 'cart ' . $id_cart, $result, $id_cart, $refused === 'order intent' ? 2 : 3);
+            $search = $refused === 'company search';
+            if (!$search || $this->claimTwoCompanySearchRefusalLog($id_cart, $status)) {
+                $this->module->logTwoApiRefusal($refused, 'cart ' . $id_cart, $result, $id_cart, $search || $refused === 'order intent' ? 2 : 3);
+            }
         }
-        $status = is_array($result) && isset($result['http_status']) ? (int) $result['http_status'] : 0;
         // A transport failure has no HTTP status of its own; 502 keeps it on
         // the client's error branch instead of looking like an empty success.
         if ($status < 100) {
@@ -965,6 +973,37 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
         http_response_code($status);
         $this->sendJsonResponse(json_encode($body));
+    }
+
+    /**
+     * Whether this company search refusal is the first of its HTTP status for
+     * this cart (TWO-26611). The marker is a cookie entry, `<id_cart>:<status>,...`,
+     * kept for the current cart only, so it stays a few bytes. A request
+     * without the shopper's cookie is not throttled.
+     *
+     * @param int $id_cart
+     * @param int $status
+     * @return bool
+     */
+    private function claimTwoCompanySearchRefusalLog($id_cart, $status)
+    {
+        if ($status < Twopayment::HTTP_STATUS_BAD_REQUEST) {
+            return false;
+        }
+        $cookie = $this->context->cookie;
+        $stored = isset($cookie->two_company_search_refusals) ? (string) $cookie->two_company_search_refusals : '';
+        $parts = explode(':', $stored, 2);
+        $logged = count($parts) === 2 && (int) $parts[0] === (int) $id_cart && $parts[1] !== ''
+            ? array_map('intval', explode(',', $parts[1]))
+            : array();
+        if (in_array((int) $status, $logged, true)) {
+            return false;
+        }
+        $logged[] = (int) $status;
+        $cookie->two_company_search_refusals = (int) $id_cart . ':' . implode(',', $logged);
+        $cookie->write();
+
+        return true;
     }
 
     /**

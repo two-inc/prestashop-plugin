@@ -190,7 +190,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             // Two's reason is for the merchant, never the buyer (TWO-26611).
             $this->module->logTwoApiRefusal(
                 'the order lookup',
-                'attempt ' . $attempt_token . ', Two order ' . $two_order_id,
+                'cart ' . (int) $cart->id . ', attempt ' . $attempt_token . ', Two order ' . $two_order_id,
                 $response,
                 (int) $cart->id
             );
@@ -631,7 +631,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 // Two's reason is for the merchant, never the buyer (TWO-26611).
                 $this->module->logTwoApiRefusal(
                     'the order lookup',
-                    'order ' . (int) $order->id . ', Two order ' . $two_order_id,
+                    'cart ' . (int) $order->id_cart . ', order ' . (int) $order->id . ', Two order ' . $two_order_id,
                     $response,
                     (int) $order->id_cart
                 );
