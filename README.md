@@ -265,6 +265,12 @@ To keep the token out of process listings and proxy access logs, send it as a he
 
 **Maintenance mode:** PrestaShop serves the maintenance page before a module front controller runs, so while the shop is closed this URL does nothing unless the calling server's IP is listed under **Shop Parameters → General → Maintenance**.
 
+### Error log
+
+The **View last 100 error log records** button in the module settings opens the module's error log: its latest lines in PrestaShop's log (those starting `TwoPayment:`), and the discrepancy snapshots, each downloadable as JSON. The page only reads; it changes nothing.
+
+Any employee whose profile may view **Orders** is allowed to read it, as is SuperAdmin and any profile granted the page's own tab. The only link to the page is that button on the module settings page, so an employee who may view Orders but cannot open the module settings has to be given the page's URL. The page's tab is hidden from the menu, and PrestaShop grants a new hidden tab only to SuperAdmin and the profile of the employee who installed the module, with no way to grant it to another profile from the Permissions page, so it follows the Orders tab instead (TWO-26612). This needs no upgrade and no permission change on an existing shop. Only viewing is opened this way: anything else on the tab still needs the tab's own permission.
+
 ## Payment Terms: Standard vs End-of-Month (EOM)
 
 The module supports two types of payment terms to match your B2B invoicing practices:

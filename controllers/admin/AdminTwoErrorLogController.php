@@ -30,6 +30,47 @@ class AdminTwoErrorLogController extends ModuleAdminController
     const MAX_SNAPSHOT_ROWS = 50;
     const DOWNLOAD_PARAM = 'downloadSnapshot';
 
+    /** The tab whose view permission also opens this page (TWO-26612). */
+    const ORDERS_READ_ROLE = 'ROLE_MOD_TAB_ADMINORDERS_READ';
+
+    /**
+     * Reading this page is open to anyone who may view Orders (TWO-26612).
+     *
+     * The tab is hidden, and core grants a new tab only to SuperAdmin and the
+     * profile of the employee who installed the module, so no other profile
+     * could ever be given it from the Permissions page. The log is where the merchant reads why Two
+     * refused an order, so it follows the Orders tab instead, on every
+     * install with no upgrade or profile grant.
+     *
+     * Only viewing is widened. Everything else core gates calls access()
+     * with its own action, which still asks this tab's own permission, and
+     * this page has no write action of its own.
+     *
+     * @param bool $disable
+     * @return bool
+     */
+    public function viewAccess($disable = false)
+    {
+        if (parent::viewAccess($disable)) {
+            return true;
+        }
+        $id_profile = isset($this->context->employee->id_profile) ? (int) $this->context->employee->id_profile : 0;
+
+        return $id_profile > 0 && (bool) Access::isGranted(self::ORDERS_READ_ROLE, $id_profile);
+    }
+
+    /**
+     * Unchanged, and declared for PrestaShop 9: its Symfony wrapper for legacy
+     * controllers asks viewAccess() about a read only when the controller
+     * declares getTabSlug(), and asks the tab's own permission otherwise.
+     *
+     * @return string
+     */
+    public function getTabSlug()
+    {
+        return parent::getTabSlug();
+    }
+
     public function postProcess()
     {
         $id_log = (int) Tools::getValue(self::DOWNLOAD_PARAM);
