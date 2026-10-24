@@ -92,15 +92,15 @@ class AdminTwoErrorLogController extends ModuleAdminController
         $rows = $this->getTwoLogRows();
 
         $html = '<div class="panel"><div class="panel-heading"><i class="icon-file-text"></i> '
-            . sprintf($this->l('%s payment gateway - last log records'), $this->module->getTwoBrandConfig('product_name')) . '</div>';
+            . sprintf($this->module->l('%s payment gateway - last log records'), $this->module->getTwoBrandConfig('product_name')) . '</div>';
 
         if (empty($rows)) {
-            $html .= '<p class="alert alert-info">' . $this->l('No log records found for this module.') . '</p>';
+            $html .= '<p class="alert alert-info">' . $this->module->l('No log records found for this module.') . '</p>';
         } else {
             $html .= '<table class="table"><thead><tr>'
-                . '<th>' . $this->l('Date') . '</th>'
-                . '<th>' . $this->l('Severity') . '</th>'
-                . '<th>' . $this->l('Message') . '</th>'
+                . '<th>' . $this->module->l('Date') . '</th>'
+                . '<th>' . $this->module->l('Severity') . '</th>'
+                . '<th>' . $this->module->l('Message') . '</th>'
                 . '</tr></thead><tbody>';
             foreach ($rows as $row) {
                 $html .= '<tr>'
@@ -130,17 +130,17 @@ class AdminTwoErrorLogController extends ModuleAdminController
     protected function renderTwoSnapshotPanel()
     {
         $html = '<div class="panel"><div class="panel-heading"><i class="icon-download"></i> '
-            . $this->l('Discrepancy snapshots') . '</div>';
+            . $this->module->l('Discrepancy snapshots') . '</div>';
         $rows = $this->getTwoSnapshotRows();
         if (empty($rows)) {
-            return $html . '<p class="alert alert-info">' . $this->l('No discrepancy snapshots recorded.') . '</p></div>';
+            return $html . '<p class="alert alert-info">' . $this->module->l('No discrepancy snapshots recorded.') . '</p></div>';
         }
 
         $base = $this->context->link->getAdminLink('AdminTwoErrorLog', true);
         $html .= '<table class="table"><thead><tr>'
-            . '<th>' . $this->l('Date') . '</th>'
-            . '<th>' . $this->l('Severity') . '</th>'
-            . '<th>' . $this->l('Cart') . '</th>'
+            . '<th>' . $this->module->l('Date') . '</th>'
+            . '<th>' . $this->module->l('Severity') . '</th>'
+            . '<th>' . $this->module->l('Cart') . '</th>'
             . '<th></th>'
             . '</tr></thead><tbody>';
         foreach ($rows as $row) {
@@ -150,7 +150,7 @@ class AdminTwoErrorLogController extends ModuleAdminController
                 . '<td>' . (int) $row['severity'] . '</td>'
                 . '<td>' . (int) $row['object_id'] . '</td>'
                 . '<td><a class="btn btn-default" href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">'
-                . '<i class="icon-download"></i> ' . $this->l('Download JSON') . '</a></td>'
+                . '<i class="icon-download"></i> ' . $this->module->l('Download JSON') . '</a></td>'
                 . '</tr>';
         }
 
