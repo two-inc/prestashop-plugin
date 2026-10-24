@@ -33,21 +33,21 @@ return [
     'steps' => [
         ['file' => 'upgrade/upgrade-2.7.8.php', 'in' => null, 'calls' => 'Twopayment::normaliseTwoEnvironment('],
     ],
-    'declarations' => static function (Plugin $p): array {
+    'declarations' => static function (array $p): array {
         $field = match1(
             "/'label'\\s*=>\\s*\\\$this->l\\(\\s*" . STR . "\\s*\\),\\s*'name'\\s*=>\\s*'PS_TWO_ENVIRONMENT',"
             . "\\s*'desc'\\s*=>\\s*\\\$this->l\\(\\s*" . STR . "\\s*\\)/",
-            $p->file('twopayment.php'),
+            $p['file']('twopayment.php'),
             'the PS_TWO_ENVIRONMENT HelperForm input'
         );
         $install = match1(
             "/Configuration::updateValue\\(\\s*'PS_TWO_ENVIRONMENT'\\s*,\\s*([^)]+?)\\s*\\)/",
-            $p->method('twopayment.php', 'Twopayment', 'installTwoSettings'),
+            $p['method']('twopayment.php', 'Twopayment', 'installTwoSettings'),
             'the PS_TWO_ENVIRONMENT write in installTwoSettings()'
         );
         return [
-            'install_default' => [$p->value($install[1])],
-            'labels' => labels($p->method('twopayment.php', 'Twopayment', 'getTwoEnvironmentLabel')),
+            'install_default' => [$p['value']($install[1])],
+            'labels' => labels($p['method']('twopayment.php', 'Twopayment', 'getTwoEnvironmentLabel')),
             'field_label' => [unquote($field[1])],
             'description' => [unquote($field[2])],
         ];
