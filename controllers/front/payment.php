@@ -273,12 +273,10 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
                 // words are for the merchant: there is no order yet to note them
                 // on, so they go to the module log, and the buyer gets the same
                 // wording the WooCommerce plugin gives.
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Two refused order creation for cart ' . (int)$cart->id . ', attempt ' . $attempt_token .
-                    ' - ' . $this->module->getTwoApiErrorDetail($response),
-                    3,
-                    null,
-                    'Cart',
+                $this->module->logTwoApiRefusal(
+                    'order creation',
+                    'cart ' . (int)$cart->id . ', attempt ' . $attempt_token,
+                    $response,
                     (int)$cart->id
                 );
                 $message = $this->module->getTwoCreateRefusalBuyerMessage($response);

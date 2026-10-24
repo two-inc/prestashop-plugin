@@ -5959,6 +5959,7 @@ require __DIR__ . '/TaxCodeAdminSpec.php';
 require __DIR__ . '/OrderTendersSpec.php';
 require __DIR__ . '/DebugApiLoggingSpec.php';
 require __DIR__ . '/ErrorLogAccessSpec.php';
+require __DIR__ . '/ApiRefusalLogSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -6046,6 +6047,7 @@ $tests = [
     'OrderTendersSpec::runAll' => [OrderTendersSpec::class, 'runAll'],
     'DebugApiLoggingSpec::runAll' => [DebugApiLoggingSpec::class, 'runAll'],
     'ErrorLogAccessSpec::runAll' => [ErrorLogAccessSpec::class, 'runAll'],
+    'ApiRefusalLogSpec::runAll' => [ApiRefusalLogSpec::class, 'runAll'],
 ];
 
 $failed = 0;

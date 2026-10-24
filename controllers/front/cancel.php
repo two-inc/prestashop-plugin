@@ -72,7 +72,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             if ($cancel_http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Attempt cancel failed for token ' . $attempt_token . ', Two order ' . $two_order_id .
-                    ', HTTP ' . $cancel_http_status,
+                    ' - ' . $this->module->getTwoApiErrorDetail($cancel_response),
                     2
                 );
             }
@@ -154,7 +154,6 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         $two_order_id = (string)$orderpaymentdata['two_order_id'];
 
         $cancel_response = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
-        $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
 
         $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
         $response_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
@@ -180,7 +179,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             PrestaShopLogger::addLog(
                 'TwoPayment: Legacy cancel callback could not confirm CANCELLED provider state for order ' . (int)$order->id .
                 ', Two order ' . $two_order_id .
-                ', cancel_http=' . $cancel_http_status .
+                ', cancel: ' . $this->module->getTwoApiErrorDetail($cancel_response) .
                 ', fetch_http=' . $response_http_status .
                 ', provider_state=' . (isset($response['state']) ? (string)$response['state'] : 'unknown'),
                 2
