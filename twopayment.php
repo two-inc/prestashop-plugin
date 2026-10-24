@@ -10532,16 +10532,19 @@ class Twopayment extends PaymentModule
             return $result;
         }
 
+        // Two's reason is for the merchant (TWO-26611); the buyer gets the same
+        // wording an order-create refusal gives, never Two's own text.
+        $refused = $this->logTwoApiRefusal('order intent at payment submit', 'cart ' . (int) $cart->id, $response, (int) $cart->id);
+
         if ($http_status >= self::HTTP_STATUS_SERVER_ERROR) {
             $result['status'] = 'provider_unavailable';
             $result['message'] = $this->l('Payment provider temporarily unavailable. Please try again later.');
             return $result;
         }
 
-        $two_error_message = $this->getTwoErrorMessage($response);
         $result['status'] = 'provider_error';
-        if (!Tools::isEmpty($two_error_message)) {
-            $result['message'] = $two_error_message;
+        if ($refused) {
+            $result['message'] = $this->getTwoCreateRefusalBuyerMessage($response);
         }
 
         return $result;
@@ -15940,7 +15943,8 @@ class Twopayment extends PaymentModule
         $confirm_err = $this->getTwoErrorMessage($confirm_response);
         
         if ($confirm_err) {
-            PrestaShopLogger::addLog('TwoPayment: Order confirmation failed for Two order ID: ' . $two_order_id . ', Error: ' . $confirm_err, 2);
+            // Two's own words, not the buyer-advice rewrite (TWO-26611).
+            PrestaShopLogger::addLog('TwoPayment: Order confirmation failed for Two order ID: ' . $two_order_id . ', Error: ' . $this->getTwoApiErrorDetail($confirm_response), 2);
             return array(
                 'success' => false,
                 'error' => $confirm_err,
@@ -22587,6 +22591,35 @@ class Twopayment extends PaymentModule
         $detail = 'HTTP ' . $status . ($parts === array() ? '' : ' ' . implode(' | ', array_unique($parts)));
 
         return Tools::strlen($detail) > 1000 ? Tools::substr($detail, 0, 1000) . '...' : $detail;
+    }
+
+    /**
+     * Record Two's reason for refusing a buyer-facing request in the module log, which the
+     * merchant reads on the Two error log tab (TWO-26611). The buyer is shown the caller's own
+     * generic wording, never this text. Only an answer of 400 or above is a refusal: no answer
+     * at all is already logged as a connection error by setTwoPaymentRequest().
+     *
+     * @param string $refused What Two refused, e.g. 'order creation'
+     * @param string $reference The cart, attempt or order it was refused for
+     * @param mixed $response setTwoPaymentRequest()
+     * @param int $id_cart The cart the entry is filed against, 0 for none
+     * @return bool Whether the response was a refusal
+     */
+    public function logTwoApiRefusal($refused, $reference, $response, $id_cart = 0)
+    {
+        $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        if ($status < self::HTTP_STATUS_BAD_REQUEST) {
+            return false;
+        }
+        PrestaShopLogger::addLog(
+            'TwoPayment: Two refused ' . $refused . ' for ' . $reference . ' - ' . $this->getTwoApiErrorDetail($response),
+            3,
+            null,
+            (int) $id_cart > 0 ? 'Cart' : null,
+            (int) $id_cart > 0 ? (int) $id_cart : null
+        );
+
+        return true;
     }
 
     /**

@@ -187,8 +187,14 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         $two_err = $this->module->getTwoErrorMessage($response);
         if ($two_err) {
             $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            $message = ($two_err != '') ? $two_err : $this->module->l('Unable to retrieve the order payment information please contact store owner.');
-            $this->errors[] = $message;
+            // Two's reason is for the merchant, never the buyer (TWO-26611).
+            $this->module->logTwoApiRefusal(
+                'the order lookup',
+                'attempt ' . $attempt_token . ', Two order ' . $two_order_id,
+                $response,
+                (int) $cart->id
+            );
+            $this->errors[] = $this->module->l('Unable to retrieve the order payment information please contact store owner.');
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
@@ -622,8 +628,14 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             if ($two_err) {
                 $this->module->restoreDuplicateCart($order->id, $customer->id);
                 $this->module->changeOrderStatus($order->id, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-                $message = ($two_err != '') ? $two_err : $this->module->l('Unable to retrieve the order payment information please contact store owner.');
-                $this->errors[] = $message;
+                // Two's reason is for the merchant, never the buyer (TWO-26611).
+                $this->module->logTwoApiRefusal(
+                    'the order lookup',
+                    'order ' . (int) $order->id . ', Two order ' . $two_order_id,
+                    $response,
+                    (int) $order->id_cart
+                );
+                $this->errors[] = $this->module->l('Unable to retrieve the order payment information please contact store owner.');
                 $this->redirectWithNotifications('index.php?controller=order');
             }
 
