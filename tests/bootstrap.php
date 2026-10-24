@@ -709,6 +709,8 @@ namespace {
         // $country above. The module scopes its module_country lookup to the
         // current shop (TWO-25387).
         public $shop;
+        // The back office's signed-in employee; read by admin controllers' access checks.
+        public $employee;
 
         private static ?self $instance = null;
 
@@ -3218,6 +3220,56 @@ namespace {
                 unset(StubStore::$tabIds[$this->class_name]);
             }
             return true;
+        }
+    }
+
+    /** Core's profile permissions: a role is granted to a profile only when listed here. */
+    class Access
+    {
+        /** @var array<int,array<string,bool>> id_profile => role => granted */
+        public static array $granted = [];
+
+        public static function isGranted($role, $idProfile): bool
+        {
+            foreach ((array) $role as $currentRole) {
+                if (!empty(self::$granted[(int) $idProfile][(string) $currentRole])) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /** Core's access(): the controller's own tab role for the action, asked of the employee's profile. */
+    class ModuleAdminController
+    {
+        public $module;
+        public $context;
+        public $bootstrap = false;
+        public $content = '';
+        public $controller_name = '';
+
+        public function __construct()
+        {
+            $this->context = Context::getContext();
+        }
+
+        public function getTabSlug()
+        {
+            return 'ROLE_MOD_TAB_' . strtoupper($this->controller_name) . '_';
+        }
+
+        public function access($action, $disable = false)
+        {
+            $suffix = ['view' => 'READ', 'add' => 'CREATE', 'edit' => 'UPDATE', 'delete' => 'DELETE'][$action];
+
+            return Access::isGranted($this->getTabSlug() . $suffix, (int) $this->context->employee->id_profile);
+        }
+
+        public function viewAccess($disable = false)
+        {
+            return $this->access('view', $disable);
         }
     }
 
