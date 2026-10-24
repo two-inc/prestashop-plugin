@@ -138,7 +138,7 @@ Reliable B2B invoice checkout via Two, with:
 ## 6) i18n Rules
 
 When adding/changing user-facing strings:
-1. Wrap PHP strings with `$this->l(...)`.
+1. Wrap PHP strings with `$this->l(...)` in the module class, and `$this->module->l(...)` in controllers: PrestaShop 9 removed `ModuleAdminController::l()`.
 2. For JS, expose keys via `Media::addJsDef(... 'i18n' => [...])` in `twopayment.php`.
 3. Consume keys in JS; avoid raw English literals for user-facing errors/messages.
 4. Add/update every locale in `translations/` — `es.php`, `nl.php`, `no.php`, `sv.php` — with
