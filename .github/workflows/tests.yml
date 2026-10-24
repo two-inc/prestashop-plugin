@@ -87,6 +87,7 @@ jobs:
           php -l tests/integration/stale-merchant-id.php
           php -l tests/integration/tax-code-clear-multistore.php
           php -l tests/integration/error-log-access.php
+          php -l tests/integration/error-log-render.php
           php -l tests/integration/fixtures/twoorderpostprocessingtest/twoorderpostprocessingtest.php
           php -l dev/ci/seed-carrierless-cart.php
           php -l dev/ci/two-api-stub.php
