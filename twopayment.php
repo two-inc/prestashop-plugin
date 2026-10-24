@@ -10482,11 +10482,15 @@ class Twopayment extends PaymentModule
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         $result['http_status'] = $http_status;
 
-        $response_summary = $this->buildTwoApiResponseLogSummary($response);
-        PrestaShopLogger::addLog(
-            'TwoPayment: Backend order intent response summary at payment submit - ' . json_encode($response_summary),
-            ($http_status >= self::HTTP_STATUS_BAD_REQUEST || $http_status === 0) ? 2 : 1
-        );
+        // Two's reason for a refusal is for the merchant (TWO-26611), in one
+        // line; any other answer keeps its summary line.
+        $refused = $this->logTwoApiRefusal('order intent at payment submit', 'cart ' . (int) $cart->id, $response, (int) $cart->id, 2);
+        if (!$refused) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Backend order intent response summary at payment submit - ' . json_encode($this->buildTwoApiResponseLogSummary($response)),
+                $http_status === 0 ? 2 : 1
+            );
+        }
 
         if ($http_status >= self::HTTP_STATUS_OK && $http_status < self::HTTP_STATUS_BAD_REQUEST) {
             if (array_key_exists('approved', $response)) {
@@ -10498,16 +10502,16 @@ class Twopayment extends PaymentModule
                     : sprintf($this->l('Your order could not be approved by %s payment. Please choose another payment method or contact support.'), $this->getTwoBrandConfig('product_name'));
 
                 if (!$approved) {
-                    $provider_message = '';
-                    if (isset($response['message']) && is_string($response['message'])) {
-                        $provider_message = trim($response['message']);
-                    } elseif (isset($response['data']) && is_array($response['data']) && isset($response['data']['message']) && is_string($response['data']['message'])) {
-                        $provider_message = trim($response['data']['message']);
-                    }
-
-                    if (!Tools::isEmpty($provider_message)) {
-                        $result['message'] = $provider_message;
-                    }
+                    // The buyer keeps the generic sentence; Two's own message and
+                    // decline reason are for the merchant (TWO-26611).
+                    PrestaShopLogger::addLog(
+                        'TwoPayment: Two declined the order intent at payment submit for cart ' . (int) $cart->id
+                        . ' - ' . $this->getTwoDeclineDetail($response),
+                        2,
+                        null,
+                        'Cart',
+                        (int) $cart->id
+                    );
 
                     // Surface the platform minimum when the decline is
                     // attributable to it (TWO-24775) - decline_reason first,
@@ -10538,10 +10542,10 @@ class Twopayment extends PaymentModule
             return $result;
         }
 
-        $two_error_message = $this->getTwoErrorMessage($response);
+        // The same wording an order-create refusal gives, never Two's own text.
         $result['status'] = 'provider_error';
-        if (!Tools::isEmpty($two_error_message)) {
-            $result['message'] = $two_error_message;
+        if ($refused) {
+            $result['message'] = $this->getTwoCreateRefusalBuyerMessage($response);
         }
 
         return $result;
@@ -15940,7 +15944,8 @@ class Twopayment extends PaymentModule
         $confirm_err = $this->getTwoErrorMessage($confirm_response);
         
         if ($confirm_err) {
-            PrestaShopLogger::addLog('TwoPayment: Order confirmation failed for Two order ID: ' . $two_order_id . ', Error: ' . $confirm_err, 2);
+            // Two's own words, not the buyer-advice rewrite (TWO-26611).
+            PrestaShopLogger::addLog('TwoPayment: Order confirmation failed for Two order ID: ' . $two_order_id . ', Error: ' . $this->getTwoApiErrorDetail($confirm_response), 2);
             return array(
                 'success' => false,
                 'error' => $confirm_err,
@@ -22585,6 +22590,60 @@ class Twopayment extends PaymentModule
             }
         }
         $detail = 'HTTP ' . $status . ($parts === array() ? '' : ' ' . implode(' | ', array_unique($parts)));
+
+        return Tools::strlen($detail) > 1000 ? Tools::substr($detail, 0, 1000) . '...' : $detail;
+    }
+
+    /**
+     * Record Two's reason for refusing a buyer-facing request in the module log, which the
+     * merchant reads on the Two error log tab (TWO-26611). The buyer is shown the caller's own
+     * generic wording, never this text. Only an answer of 400 or above is a refusal: no answer
+     * at all is already logged as a connection error by setTwoPaymentRequest().
+     *
+     * @param string $refused What Two refused, e.g. 'order creation'
+     * @param string $reference The cart, attempt or order it was refused for
+     * @param mixed $response setTwoPaymentRequest()
+     * @param int $id_cart The cart the entry is filed against, 0 for none
+     * @param int $severity 3 (error); an order intent, refused routinely, logs 2 (warning)
+     * @return bool Whether the response was a refusal
+     */
+    public function logTwoApiRefusal($refused, $reference, $response, $id_cart = 0, $severity = 3)
+    {
+        $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        if ($status < self::HTTP_STATUS_BAD_REQUEST) {
+            return false;
+        }
+        PrestaShopLogger::addLog(
+            'TwoPayment: Two refused ' . $refused . ' for ' . $reference . ' - ' . $this->getTwoApiErrorDetail($response),
+            (int) $severity,
+            null,
+            (int) $id_cart > 0 ? 'Cart' : null,
+            (int) $id_cart > 0 ? (int) $id_cart : null
+        );
+
+        return true;
+    }
+
+    /**
+     * Two's message and decline reason from an order intent it declined, for the module log
+     * (TWO-26611). 'no reason given' when it sent neither.
+     *
+     * @param mixed $response setTwoPaymentRequest()
+     * @return string
+     */
+    public function getTwoDeclineDetail($response)
+    {
+        $parts = array();
+        $bodies = is_array($response) ? array($response, isset($response['data']) && is_array($response['data']) ? $response['data'] : array()) : array();
+        foreach (array('decline_reason', 'message') as $key) {
+            foreach ($bodies as $body) {
+                if (isset($body[$key]) && is_scalar($body[$key]) && trim((string) $body[$key]) !== '') {
+                    $parts[] = $key . ': ' . trim((string) $body[$key]);
+                    break;
+                }
+            }
+        }
+        $detail = $parts === array() ? 'no reason given' : implode(' | ', $parts);
 
         return Tools::strlen($detail) > 1000 ? Tools::substr($detail, 0, 1000) . '...' : $detail;
     }

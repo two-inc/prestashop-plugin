@@ -187,8 +187,13 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         $two_err = $this->module->getTwoErrorMessage($response);
         if ($two_err) {
             $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            $message = ($two_err != '') ? $two_err : $this->module->l('Unable to retrieve the order payment information please contact store owner.');
-            $this->errors[] = $message;
+            // Two's reason is for the merchant, never the buyer (TWO-26611).
+            $this->logTwoOrderLookupFailure(
+                'cart ' . (int) $cart->id . ', attempt ' . $attempt_token . ', Two order ' . $two_order_id,
+                $response,
+                (int) $cart->id
+            );
+            $this->errors[] = $this->module->l('Unable to retrieve the order payment information please contact store owner.');
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
@@ -531,6 +536,34 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
     /**
      * Validate callback authorization against stored attempt secure key.
      */
+    /**
+     * Two's reason for a failed order lookup, for the merchant (TWO-26611). A
+     * refusal (400 and above) is an error line; an answer below 400 whose body
+     * still carries an error is a warning. No answer at all is already logged
+     * as a connection error.
+     *
+     * @param string $reference
+     * @param mixed $response
+     * @param int $id_cart
+     * @return void
+     */
+    private function logTwoOrderLookupFailure($reference, $response, $id_cart)
+    {
+        if ($this->module->logTwoApiRefusal('the order lookup', $reference, $response, $id_cart)) {
+            return;
+        }
+        $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
+        if ($status > 0) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Two answered the order lookup with an error for ' . $reference . ' - ' . $this->module->getTwoApiErrorDetail($response),
+                2,
+                null,
+                (int) $id_cart > 0 ? 'Cart' : null,
+                (int) $id_cart > 0 ? (int) $id_cart : null
+            );
+        }
+    }
+
     private function isAuthorizedAttemptCallback($attempt)
     {
         $provided_key = trim((string)Tools::getValue('key'));
@@ -622,8 +655,13 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             if ($two_err) {
                 $this->module->restoreDuplicateCart($order->id, $customer->id);
                 $this->module->changeOrderStatus($order->id, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
-                $message = ($two_err != '') ? $two_err : $this->module->l('Unable to retrieve the order payment information please contact store owner.');
-                $this->errors[] = $message;
+                // Two's reason is for the merchant, never the buyer (TWO-26611).
+                $this->logTwoOrderLookupFailure(
+                    'cart ' . (int) $order->id_cart . ', order ' . (int) $order->id . ', Two order ' . $two_order_id,
+                    $response,
+                    (int) $order->id_cart
+                );
+                $this->errors[] = $this->module->l('Unable to retrieve the order payment information please contact store owner.');
                 $this->redirectWithNotifications('index.php?controller=order');
             }
 
