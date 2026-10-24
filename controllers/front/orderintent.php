@@ -841,7 +841,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             '/companies/v2/company?' . http_build_query($query),
             array(),
             'GET'
-        ));
+        ), 'company search');
     }
 
     /**
@@ -901,7 +901,7 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                 return (string) Country::getZipCodeFormat((int) Country::getByIso($iso));
             });
         }
-        $this->relayTwoApiResponse($result);
+        $this->relayTwoApiResponse($result, 'company lookup');
     }
 
     /**
@@ -935,15 +935,26 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         );
         $this->context->cookie->write();
 
-        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest('/v1/order_intent', $built['payload'], 'POST'));
+        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest('/v1/order_intent', $built['payload'], 'POST'), 'order intent');
     }
 
     /**
      * Pass a setTwoPaymentRequest() result back to the browser with Two's own
      * status code, so existing client-side success/error branches still apply.
+     *
+     * The checkout script maps a refusal to its own wording, so Two's reason
+     * for one is recorded for the merchant here (TWO-26611). $refused names
+     * the request, and is null for an answer the module made up itself.
+     *
+     * @param mixed $result
+     * @param string|null $refused
      */
-    private function relayTwoApiResponse($result)
+    private function relayTwoApiResponse($result, $refused = null)
     {
+        if ($refused !== null) {
+            $id_cart = isset($this->context->cart->id) ? (int) $this->context->cart->id : 0;
+            $this->module->logTwoApiRefusal($refused, 'cart ' . $id_cart, $result, $id_cart);
+        }
         $status = is_array($result) && isset($result['http_status']) ? (int) $result['http_status'] : 0;
         // A transport failure has no HTTP status of its own; 502 keeps it on
         // the client's error branch instead of looking like an empty success.
