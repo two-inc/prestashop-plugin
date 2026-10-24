@@ -1324,7 +1324,7 @@ and the offline suite fails if they drift apart.
 ### "Order Cannot Be Processed with Two"
 - **Symptom**: Order creation fails with error message
 - **Solutions**:
-  - Read Two's reason in the module's error log (the **View last 100 error log records** button in the module settings). When Two refuses an order intent, an order create, a company lookup or an order lookup at checkout, the module logs a line starting `TwoPayment: Two refused`, naming the cart and carrying Two's own reason and trace id. The buyer sees only the module's generic wording, never Two's text
+  - Read Two's reason in the module's error log (the **View last 100 error log records** button in the module settings). When Two refuses an order intent, an order create, a company search or lookup, or an order lookup at checkout, the module logs a line starting `TwoPayment: Two refused`, naming the cart and carrying Two's own reason and trace id; a company search refusal is logged once per cart and HTTP status. An order intent Two declines at payment submit logs `TwoPayment: Two declined` with Two's message and decline reason. The buyer sees only the module's generic wording, never Two's text
   - Check PrestaShop logs for server-side Order Intent errors
   - Verify company data persisted (`twopayment_cart_record` row for the cart, and hidden `companyid` field)
   - Ensure Order Intent was approved (check cookie `two_order_intent_approved`)
