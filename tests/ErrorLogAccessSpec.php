@@ -5,8 +5,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/../controllers/admin/AdminTwoErrorLogController.php';
 
 /**
- * TWO-26612: the error log tab is hidden, so core grants it only to SuperAdmin and the employee
- * who installed the module. Viewing it is also open to any profile that may view Orders; every
+ * TWO-26612: the error log tab is hidden, so core grants it only to SuperAdmin and the profile of
+ * the employee who installed the module. Viewing it is also open to any profile that may view Orders; every
  * other action still asks the tab's own permission.
  */
 final class ErrorLogAccessSpec

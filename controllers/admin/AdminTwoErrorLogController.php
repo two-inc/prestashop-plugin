@@ -37,8 +37,8 @@ class AdminTwoErrorLogController extends ModuleAdminController
      * Reading this page is open to anyone who may view Orders (TWO-26612).
      *
      * The tab is hidden, and core grants a new tab only to SuperAdmin and the
-     * installing employee, so no other profile could ever be given it from
-     * the Permissions page. The log is where the merchant reads why Two
+     * profile of the employee who installed the module, so no other profile
+     * could ever be given it from the Permissions page. The log is where the merchant reads why Two
      * refused an order, so it follows the Orders tab instead, on every
      * install with no upgrade or profile grant.
      *
