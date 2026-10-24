@@ -10534,7 +10534,7 @@ class Twopayment extends PaymentModule
 
         // Two's reason is for the merchant (TWO-26611); the buyer gets the same
         // wording an order-create refusal gives, never Two's own text.
-        $refused = $this->logTwoApiRefusal('order intent at payment submit', 'cart ' . (int) $cart->id, $response, (int) $cart->id);
+        $refused = $this->logTwoApiRefusal('order intent at payment submit', 'cart ' . (int) $cart->id, $response, (int) $cart->id, 2);
 
         if ($http_status >= self::HTTP_STATUS_SERVER_ERROR) {
             $result['status'] = 'provider_unavailable';
@@ -22603,9 +22603,10 @@ class Twopayment extends PaymentModule
      * @param string $reference The cart, attempt or order it was refused for
      * @param mixed $response setTwoPaymentRequest()
      * @param int $id_cart The cart the entry is filed against, 0 for none
+     * @param int $severity 3 (error); an order intent, refused routinely, logs 2 (warning)
      * @return bool Whether the response was a refusal
      */
-    public function logTwoApiRefusal($refused, $reference, $response, $id_cart = 0)
+    public function logTwoApiRefusal($refused, $reference, $response, $id_cart = 0, $severity = 3)
     {
         $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
         if ($status < self::HTTP_STATUS_BAD_REQUEST) {
@@ -22613,7 +22614,7 @@ class Twopayment extends PaymentModule
         }
         PrestaShopLogger::addLog(
             'TwoPayment: Two refused ' . $refused . ' for ' . $reference . ' - ' . $this->getTwoApiErrorDetail($response),
-            3,
+            (int) $severity,
             null,
             (int) $id_cart > 0 ? 'Cart' : null,
             (int) $id_cart > 0 ? (int) $id_cart : null
