@@ -5876,7 +5876,7 @@ class Twopayment extends PaymentModule
                         $idempotency_key = 'refund_' . $two_order_id . '_' . md5($order->id . '_' . microtime(true) . '_' . uniqid('', true));
                         
                         // Issue refund call with no request body (full refund) and idempotency key
-                        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', [], 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $current_two_order);
+                        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', [], 'POST', null, $order, ['Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $current_two_order);
                         
                         // Extract HTTP status code from response
                         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
@@ -6183,7 +6183,7 @@ class Twopayment extends PaymentModule
             },
         )));
         try {
-            $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, $checks, $current_two_order);
+            $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['Idempotency-Key: ' . $idempotency_key], $sent_payload, $checks, $current_two_order);
         } catch (TwoCheckoutAmountException $e) {
             PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not build tax subtotals from the credit slip. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
             return $this->l('its refunded amount could not be split across the order\'s tax rates');
@@ -6556,7 +6556,7 @@ class Twopayment extends PaymentModule
         // Same remainder after the same refunds: same key, so a repeated status change cannot refund it twice.
         $idempotency_key = 'refund_remainder_' . $two_order_id . '_' . md5(implode(',', $slip_ids) . '|' . $payload['amount']);
         $sent_payload = null;
-        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['X-Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $two_order);
+        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $two_order);
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         $accepted = $http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'];
         $this->logTwoRefundSentUnitemised($sent_payload, $unitemised);

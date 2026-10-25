@@ -241,7 +241,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             '/v1/order',
             $paymentdata,
             'POST',
-            ['X-Idempotency-Key: ' . $idempotency_key]
+            ['Idempotency-Key: ' . $idempotency_key]
         );
 
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
