@@ -20,6 +20,7 @@ final class IdempotencyKeySpec
         self::testOrderRequestKeys();
         self::testCallSiteKeys();
         self::testOrderEditKeyIsOnePerEdit();
+        self::testTokenMintWithoutCartSendsNoKey();
         self::testFullRefundKeyIsStableAndApartFromRemainder();
         self::testMerchantHeaderCannotSetKey();
         self::testOrderWritesLogTheirKey();
@@ -33,11 +34,22 @@ final class IdempotencyKeySpec
             /** @var array<int, array{method: string, endpoint: string, headers: array}> */
             public $sent = [];
 
+            /** @var int what Two answers an edit */
+            public $editStatus = 0;
+
+            /** @var string the create key the order's attempt row records */
+            public $createKey = '';
+
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
                 $this->sent[] = ['method' => (string) $method, 'endpoint' => (string) $endpoint, 'headers' => (array) $additional_headers];
 
-                return ['http_status' => 0];
+                return ['http_status' => $method === 'PUT' ? $this->editStatus : 0];
+            }
+
+            protected function getTwoOrderCreateIdempotencyKeyFor($two_order_id)
+            {
+                return $this->createKey;
             }
 
             public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
@@ -130,30 +142,71 @@ final class IdempotencyKeySpec
         }
     }
 
+    /** With no cart there is nothing to scope a token mint's key to, so none is sent rather than a shared one. */
+    private static function testTokenMintWithoutCartSendsNoKey(): void
+    {
+        $tokenMint = new ReflectionMethod(TwoSoleTrader::class, 'buildTokenMintHeaders');
+        $tokenMint->setAccessible(true);
+        // [context cart, description]
+        $cases = [
+            [null, 'no cart in the context'],
+            [new Cart(0), 'a cart not yet saved (id 0)'],
+        ];
+        foreach ($cases as [$cart, $desc]) {
+            StubStore::reset();
+            Context::getContext()->cart = $cart;
+            $headers = $tokenMint->invoke(null, self::recordingModule(), '/registry/v1/delegation');
+
+            TinyAssert::same(null, Twopayment::findTwoIdempotencyKey($headers), $desc . ': no key');
+            TinyAssert::false(in_array('Idempotency-Key: registry_delegation_0', $headers, true), $desc . ': never the shared cart-0 key');
+        }
+        Context::getContext()->cart = null;
+    }
+
     /**
-     * An edit's key is edit_<two order id>_<hash of this payload after the last one Two accepted>: a retry repeats
-     * it, a different payload changes it, and reverting to an earlier payload is a new edit.
+     * An edit's key is edit_<two order id>_<hash of the last accepted edit's key (the create key for the first edit)
+     * and this payload>, and an accepted edit's key is stored on the order. A retry repeats the key; every edit in a
+     * sequence gets its own, A to B to A to B included.
      */
     private static function testOrderEditKeyIsOnePerEdit(): void
     {
-        $send = static function (string $gross, string $previous): string {
-            StubStore::reset();
+        StubStore::reset();
+        $id_order = 91;
+        // Sends one edit of the given gross on the order as stored; Two answers $status. Returns the key sent.
+        $send = static function (string $gross, int $status, string $createKey = 'create_attempt-1') use ($id_order): string {
             $module = self::recordingModule();
-            $order = new Order(91);
-            $module->putTwoOrderUpdate($order, ['two_order_id' => self::TWO_ORDER, 'two_update_hash' => $previous, 'test_gross' => $gross], $sent, 'buyer_confirmation');
+            $module->editStatus = $status;
+            $module->createKey = $createKey;
+            $row = array_merge(['two_order_id' => self::TWO_ORDER], StubStore::$twoPaymentRows[$id_order] ?? [], ['test_gross' => $gross]);
+            $order = new Order($id_order);
+            $order->id = $id_order;
+            $module->putTwoOrderUpdate($order, $row, $sent, 'buyer_confirmation');
             TinyAssert::same('PUT', $module->sent[0]['method'], 'the edit is a PUT');
 
             return (string) Twopayment::findTwoIdempotencyKey($module->sent[0]['headers']);
         };
-        $first = $send('100.00', 'hash-a');
+
+        $refusedA = $send('100.00', 500);
+        $a1 = $send('100.00', 200);
+        $b1 = $send('120.00', 200);
+        $a2 = $send('100.00', 200);
+        $b2 = $send('120.00', 200);
+        StubStore::reset();
+        $otherCreate = $send('100.00', 200, 'create_attempt-2');
+
         // [key, the key it is compared with, whether they are equal, description]
         $cases = [
-            [$send('100.00', 'hash-a'), $first, true, 'a retry of the same edit repeats its key'],
-            [$send('120.00', 'hash-a'), $first, false, 'a different payload is a different edit'],
-            [$send('100.00', 'hash-b'), $first, false, 'the same payload after a different accepted edit (a revert) is a new edit'],
+            [$a1, $refusedA, true, 'a retry of an edit Two did not accept repeats its key'],
+            [$b1, $a1, false, 'A then B: B gets a new key'],
+            [$a2, $a1, false, 'A, B, A: the second A gets a new key'],
+            [$b2, $b1, false, 'A, B, A, B: the second B gets a new key'],
+            [$b2, $a2, false, 'A, B, A, B: the last two differ'],
+            [$otherCreate, $a1, false, 'the first edit chains on the create key'],
+            [StubStore::$twoPaymentRows[$id_order]['two_update_key'] ?? null, $otherCreate, true, 'the accepted edit key is stored on the order'],
         ];
-        TinyAssert::true((bool) preg_match('/^edit_' . self::TWO_ORDER . '_[0-9a-f]{16}$/', $first), 'edit key shape: ' . $first);
-        self::assertKeyShape($first, 'edit');
+        TinyAssert::same(4, count(array_unique([$a1, $b1, $a2, $b2])), 'A, B, A, B: four distinct keys');
+        TinyAssert::true((bool) preg_match('/^edit_' . self::TWO_ORDER . '_[0-9a-f]{16}$/', $a1), 'edit key shape: ' . $a1);
+        self::assertKeyShape($a1, 'edit');
         foreach ($cases as [$key, $other, $equal, $desc]) {
             TinyAssert::same($equal, $key === $other, $desc);
         }
