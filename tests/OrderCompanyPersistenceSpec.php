@@ -152,6 +152,7 @@ final class OrderCompanyPersistenceSpec
                 'two_not_sent_at',
                 'two_organization_number',
                 'two_update_hash',
+                'two_update_key',
             ],
             self::alterStatements(),
             'the runtime guard must add every column on a file-swapped shop'

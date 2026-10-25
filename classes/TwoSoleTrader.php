@@ -364,6 +364,8 @@ class TwoSoleTrader
      * own, silently missing all three - plus the mint's idempotency key
      * (TWO-26658). A mint has no record of its own, so the key names the
      * token and the cart it is minted for: `<service>_delegation_<cart id>`.
+     * With no cart there is nothing to scope it to, so no key is sent rather
+     * than one every cartless buyer would share.
      *
      * @param Twopayment $module
      * @param string     $endpoint
@@ -372,14 +374,14 @@ class TwoSoleTrader
      */
     private static function buildTokenMintHeaders($module, $endpoint)
     {
+        $headers = $module->getTwoRequestHeaders($endpoint);
         $cart = Context::getContext()->cart;
-        $operation = str_replace('/v1/', '_', trim((string) $endpoint, '/'));
-        $key = Twopayment::buildTwoIdempotencyKey($operation, array($cart ? (int) $cart->id : 0));
+        if ($cart && (int) $cart->id > 0) {
+            $operation = str_replace('/v1/', '_', trim((string) $endpoint, '/'));
+            $headers[] = Twopayment::buildTwoIdempotencyHeader(Twopayment::buildTwoIdempotencyKey($operation, array((int) $cart->id)));
+        }
 
-        return array_merge(
-            $module->getTwoRequestHeaders($endpoint),
-            array(Twopayment::buildTwoIdempotencyHeader($key))
-        );
+        return $headers;
     }
 
     /**

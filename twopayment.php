@@ -989,6 +989,7 @@ class Twopayment extends PaymentModule
             `two_company_name` VARCHAR(255) NULL,
             `two_not_sent_at` DATETIME NULL,
             `two_update_hash` VARCHAR(32) NULL,
+            `two_update_key` VARCHAR(100) NULL,
             `two_declared_rates` TEXT NULL,
             PRIMARY KEY  (`id_two`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
@@ -5302,14 +5303,27 @@ class Twopayment extends PaymentModule
 
             return $refusal;
         }
-        // One key per edit (TWO-26658): this payload after the last one Two accepted, so a retry repeats it and
-        // reverting to an earlier payload is a new edit.
-        $previous = isset($orderpaymentdata['two_update_hash']) ? (string) $orderpaymentdata['two_update_hash'] : '';
-        $key = self::buildTwoIdempotencyKey('edit', array($orderpaymentdata['two_order_id']), array($previous, $hash));
+        // One key per edit (TWO-26658): this payload chained on the key of the last edit Two accepted, or on the
+        // create key for the first edit. A retry repeats it, since the last accepted key has not moved; every edit
+        // in a sequence (A, B, A, B) gets a key of its own, so Two can never answer one with a stored earlier edit.
+        $previous_key = !empty($orderpaymentdata['two_update_key'])
+            ? (string) $orderpaymentdata['two_update_key']
+            : $this->getTwoOrderCreateIdempotencyKeyFor((string) $orderpaymentdata['two_order_id']);
+        $key = self::buildTwoIdempotencyKey('edit', array($orderpaymentdata['two_order_id']), array($previous_key, $hash));
         $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT', array(self::buildTwoIdempotencyHeader($key)));
         $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
-        if ($http_status >= 200 && $http_status < 300 && in_array('two_update_hash', $this->ensureTwoPaymentColumns(), true)) {
-            Db::getInstance()->update('twopayment', array('two_update_hash' => pSQL($hash)), 'id_order = ' . (int) $order->id);
+        if ($http_status >= 200 && $http_status < 300) {
+            $columns = $this->ensureTwoPaymentColumns();
+            $accepted = array();
+            if (in_array('two_update_hash', $columns, true)) {
+                $accepted['two_update_hash'] = pSQL($hash);
+            }
+            if (in_array('two_update_key', $columns, true)) {
+                $accepted['two_update_key'] = pSQL($key);
+            }
+            if (!empty($accepted)) {
+                Db::getInstance()->update('twopayment', $accepted, 'id_order = ' . (int) $order->id);
+            }
         }
 
         return $response;
@@ -19627,6 +19641,8 @@ class Twopayment extends PaymentModule
             'two_company_name' => 'ALTER TABLE `' . $table . '` ADD `two_company_name` VARCHAR(255) NULL',
             'two_not_sent_at' => 'ALTER TABLE `' . $table . '` ADD `two_not_sent_at` DATETIME NULL',
             'two_update_hash' => 'ALTER TABLE `' . $table . '` ADD `two_update_hash` VARCHAR(32) NULL',
+            // The key of the last edit Two accepted, which the next edit's key chains on (TWO-26658).
+            'two_update_key' => 'ALTER TABLE `' . $table . '` ADD `two_update_key` VARCHAR(100) NULL',
             'two_declared_rates' => 'ALTER TABLE `' . $table . '` ADD `two_declared_rates` TEXT NULL',
         );
 
@@ -23187,6 +23203,24 @@ class Twopayment extends PaymentModule
 
         echo $body;
         exit;
+    }
+
+    /**
+     * The idempotency key the Two order was created with, as its checkout attempt recorded it; '' when no attempt
+     * row holds one. The first edit chains on it (TWO-26658). The Two order id keeps the key the order's own.
+     *
+     * @param string $two_order_id
+     * @return string
+     */
+    protected function getTwoOrderCreateIdempotencyKeyFor($two_order_id)
+    {
+        $key = Db::getInstance()->getValue(
+            'SELECT `order_create_idempotency_key` FROM `' . _DB_PREFIX_ . 'twopayment_attempt`'
+            . " WHERE `two_order_id` = '" . pSQL($two_order_id) . "' AND `order_create_idempotency_key` IS NOT NULL"
+            . ' ORDER BY `updated_at` DESC, `id_attempt` DESC'
+        );
+
+        return is_string($key) ? $key : '';
     }
 
     /**
