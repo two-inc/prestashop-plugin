@@ -314,6 +314,11 @@ final class AjaxCheckoutFailureSpec
         );
         TinyAssert::same('index.php?controller=order', $payload['redirect_url']);
         TinyAssert::count(0, $controller->errors);
+        TinyAssert::same(
+            ['Idempotency-Key: create_attempt-ajax-1'],
+            $controller->module->createHeaders,
+            'order create sends the key of its checkout attempt (TWO-26658)'
+        );
     }
 
     private static function testProviderRejectionStillRedirectsBrowserNavigation(): void
@@ -429,6 +434,9 @@ final class AjaxCheckoutFailureSpec
             /** @var string */
             private $minimumHint;
 
+            /** @var array|null the header lines the create request was given */
+            public $createHeaders;
+
             public function __construct($payloadException, array $createResponse, string $minimumHint)
             {
                 parent::__construct();
@@ -486,11 +494,6 @@ final class AjaxCheckoutFailureSpec
                 return 'snapshot-hash';
             }
 
-            public function buildTwoOrderCreateIdempotencyKey($cart, $snapshot_hash)
-            {
-                return 'idempotency-key';
-            }
-
             public function buildTwoApiResponseLogSummary($response)
             {
                 return ['http_status' => isset($response['http_status']) ? (int) $response['http_status'] : 0];
@@ -498,6 +501,8 @@ final class AjaxCheckoutFailureSpec
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
+                $this->createHeaders = $additional_headers;
+
                 return $this->createResponse;
             }
         };

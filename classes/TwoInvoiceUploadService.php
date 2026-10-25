@@ -233,7 +233,8 @@ class TwoInvoiceUploadService
         $endpoint = '/uploads/v1/invoice/' . urlencode($two_invoice_id) . '/external_invoice/' . (int)$index;
         $payload = array('content_type' => 'application/pdf');
         
-        $response = $this->module->setTwoPaymentRequest($endpoint, $payload, 'PUT');
+        $key = Twopayment::buildTwoIdempotencyKey('invoice_upload', array($two_invoice_id, (int)$index));
+        $response = $this->module->setTwoPaymentRequest($endpoint, $payload, 'PUT', array(Twopayment::buildTwoIdempotencyHeader($key)));
         $httpStatus = isset($response['http_status']) ? (int)$response['http_status'] : 0;
 
         if ($httpStatus !== 202) {
