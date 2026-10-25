@@ -240,8 +240,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         $response = $this->module->setTwoPaymentRequest(
             '/v1/order',
             $paymentdata,
-            'POST',
-            ['X-Idempotency-Key: ' . $idempotency_key]
+            'POST'
         );
 
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;

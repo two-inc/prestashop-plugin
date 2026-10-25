@@ -903,7 +903,7 @@ final class RefundSpec
 
         $refunds = $module->refundCalls();
         TinyAssert::count(1, $refunds);
-        TinyAssert::same(['X-Idempotency-Key: partial_refund_two-order-uuid_slip_742'], $refunds[0]['headers']);
+        TinyAssert::same(['Idempotency-Key: partial_refund_two-order-uuid_slip_742'], $refunds[0]['headers']);
     }
 
     private static function testSequentialSlipsSameAmountIssueTwoDistinctCalls(): void
@@ -927,8 +927,8 @@ final class RefundSpec
         TinyAssert::count(2, $refunds);
         TinyAssert::same('30.00', $refunds[0]['payload']['amount']);
         TinyAssert::same('30.00', $refunds[1]['payload']['amount']);
-        TinyAssert::same(['X-Idempotency-Key: partial_refund_two-order-uuid_slip_801'], $refunds[0]['headers']);
-        TinyAssert::same(['X-Idempotency-Key: partial_refund_two-order-uuid_slip_802'], $refunds[1]['headers']);
+        TinyAssert::same(['Idempotency-Key: partial_refund_two-order-uuid_slip_801'], $refunds[0]['headers']);
+        TinyAssert::same(['Idempotency-Key: partial_refund_two-order-uuid_slip_802'], $refunds[1]['headers']);
         TinyAssert::notSame($refunds[0]['headers'][0], $refunds[1]['headers'][0]);
     }
 
@@ -1166,7 +1166,7 @@ final class RefundSpec
             }
 
             $got = array_map(static function ($r) {
-                return (int)substr($r['headers'][0], strlen('X-Idempotency-Key: partial_refund_two-order-uuid_slip_'));
+                return (int)substr($r['headers'][0], strlen('Idempotency-Key: partial_refund_two-order-uuid_slip_'));
             }, $module->refundCalls());
             TinyAssert::same($expectedSlipIds, $got, $desc . ': got ' . json_encode($got));
         }
