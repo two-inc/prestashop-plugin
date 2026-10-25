@@ -20,6 +20,7 @@ final class IdempotencyKeySpec
         self::testOrderRequestKeys();
         self::testCallSiteKeys();
         self::testOrderEditKeyIsOnePerEdit();
+        self::testUnknownEditOutcomeClearsStoredHash();
         self::testTokenMintWithoutCartSendsNoKey();
         self::testFullRefundKeyIsStableAndApartFromRemainder();
         self::testMerchantHeaderCannotSetKey();
@@ -210,6 +211,58 @@ final class IdempotencyKeySpec
         foreach ($cases as [$key, $other, $equal, $desc]) {
             TinyAssert::same($equal, $key === $other, $desc);
         }
+    }
+
+    /**
+     * TWO-26662: when Two's answer to an edit is unknown (no answer, or a 5xx), the stored payload hash is replaced
+     * by a marker, so the next edit is sent even when it returns to the last accepted payload. The stored key is
+     * kept. A refused (4xx) edit and an accepted one leave the skip as it was.
+     */
+    private static function testUnknownEditOutcomeClearsStoredHash(): void
+    {
+        $id_order = 92;
+        // Sends one edit of the given gross on the order as stored; Two answers $status. Returns the key, or null when skipped.
+        $send = static function (string $gross, int $status) use ($id_order): ?string {
+            $module = self::recordingModule();
+            $module->editStatus = $status;
+            $module->createKey = 'create_attempt-1';
+            $row = array_merge(['two_order_id' => self::TWO_ORDER], StubStore::$twoPaymentRows[$id_order] ?? [], ['test_gross' => $gross]);
+            $order = new Order($id_order);
+            $order->id = $id_order;
+            $module->putTwoOrderUpdate($order, $row, $sent, 'buyer_confirmation');
+
+            return $module->sent === [] ? null : (string) Twopayment::findTwoIdempotencyKey($module->sent[0]['headers']);
+        };
+        $marker = Twopayment::TWO_UPDATE_HASH_UNCONFIRMED;
+
+        // [edits before the last as [gross, Two's status], the last edit's gross, whether it is sent, the stored hash after the edits before it ('payload', the marker or null), description]
+        $cases = [
+            [[['100.00', 200], ['120.00', 0]], '100.00', true, $marker, 'an edit A to B that timed out, then an edit back to A, is sent'],
+            [[['100.00', 200], ['120.00', 503]], '100.00', true, $marker, 'an edit A to B answered 5xx, then an edit back to A, is sent'],
+            [[['100.00', 200]], '100.00', false, 'payload', 'an accepted edit followed by an identical edit is still skipped'],
+            [[['100.00', 200], ['120.00', 0], ['100.00', 200]], '100.00', false, 'payload', 'once an edit after a timeout is accepted, an identical edit is skipped again'],
+            [[['100.00', 200], ['120.00', 422]], '100.00', false, 'payload', 'an edit A to B refused with a 4xx keeps the hash, so an edit back to A is skipped as before'],
+            [[['120.00', 0]], '100.00', true, null, 'a first edit that timed out stores nothing, so no earlier accepted edit is implied'],
+        ];
+        foreach ($cases as [$before, $gross, $sent, $stored, $desc]) {
+            StubStore::reset();
+            foreach ($before as [$g, $status]) {
+                $send($g, $status);
+            }
+            $hash = StubStore::$twoPaymentRows[$id_order]['two_update_hash'] ?? null;
+            TinyAssert::same($stored, $stored === 'payload' && is_string($hash) && preg_match('/^[0-9a-f]{32}$/', $hash) ? 'payload' : $hash, $desc . ': the stored hash');
+            TinyAssert::same($sent, $send($gross, 200) !== null, $desc);
+        }
+
+        // The ticket's sequence: A accepted, A to B timed out, back to A. The stored key stays A's, and the edit
+        // back to A gets a key apart from every earlier one, so Two can never answer it with a stored earlier edit.
+        StubStore::reset();
+        $a = $send('100.00', 200);
+        $b = $send('120.00', 0);
+        TinyAssert::same($a, StubStore::$twoPaymentRows[$id_order]['two_update_key'] ?? null, 'a timed-out edit keeps the stored key of the last accepted edit');
+        $back = $send('100.00', 0);
+        TinyAssert::same(4, count(array_unique(['create_attempt-1', $a, $b, $back])), 'A, timed-out B, back to A: three distinct edit keys, none equal to the create key');
+        TinyAssert::same($back, $send('100.00', 200), 'a retry of the edit back to A repeats its key');
     }
 
     /**
