@@ -378,6 +378,9 @@ class Twopayment extends PaymentModule
     // Constants for delivery dates
     const DEFAULT_DELIVERY_DAYS_OFFSET = 7; // Default expected delivery date offset
     
+    /** The header every write to Two carries its idempotency key in (TWO-26658). */
+    const IDEMPOTENCY_HEADER = 'Idempotency-Key';
+
     // Constants for HTTP status codes
     const HTTP_STATUS_OK = 200;
     /** Seconds a credit slip stays a candidate for a hook call that is not passed its slip (TWO-26093). */
@@ -5299,7 +5302,11 @@ class Twopayment extends PaymentModule
 
             return $refusal;
         }
-        $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT');
+        // One key per edit (TWO-26658): this payload after the last one Two accepted, so a retry repeats it and
+        // reverting to an earlier payload is a new edit.
+        $previous = isset($orderpaymentdata['two_update_hash']) ? (string) $orderpaymentdata['two_update_hash'] : '';
+        $key = self::buildTwoIdempotencyKey('edit', array($orderpaymentdata['two_order_id']), array($previous, $hash));
+        $response = $this->setTwoPaymentRequest('/v1/order/' . $orderpaymentdata['two_order_id'], $paymentdata, 'PUT', array(self::buildTwoIdempotencyHeader($key)));
         $http_status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
         if ($http_status >= 200 && $http_status < 300 && in_array('two_update_hash', $this->ensureTwoPaymentColumns(), true)) {
             Db::getInstance()->update('twopayment', array('two_update_hash' => pSQL($hash)), 'id_order = ' . (int) $order->id);
@@ -5870,10 +5877,10 @@ class Twopayment extends PaymentModule
                             }
                         }
                         
-                        // Generate idempotency key to prevent duplicate refund calls (race condition protection)
-                        // Format: refund_{order_id}_{unique_hash} ensures uniqueness per refund attempt
-                        // Uses microtime + uniqid for maximum uniqueness even in high-concurrency scenarios
-                        $idempotency_key = 'refund_' . $two_order_id . '_' . md5($order->id . '_' . microtime(true) . '_' . uniqid('', true));
+                        // The full refund has no record of its own, so its key names it by what it refunds (TWO-26658):
+                        // the order's gross with no refund before it. A retried status change repeats the key. The
+                        // "full|" prefix keeps it apart from a remainder key, whose hashed input never starts so.
+                        $idempotency_key = self::buildTwoFullRefundIdempotencyKey($two_order_id, isset($current_two_order['gross_amount']) ? $current_two_order['gross_amount'] : 0);
                         
                         // Issue refund call with no request body (full refund) and idempotency key
                         $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', [], 'POST', null, $order, ['Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $current_two_order);
@@ -6554,7 +6561,7 @@ class Twopayment extends PaymentModule
             return (int)$row['id_order_slip'];
         }, $sent);
         // Same remainder after the same refunds: same key, so a repeated status change cannot refund it twice.
-        $idempotency_key = 'refund_remainder_' . $two_order_id . '_' . md5(implode(',', $slip_ids) . '|' . $payload['amount']);
+        $idempotency_key = self::buildTwoRefundRemainderIdempotencyKey($two_order_id, implode(',', $slip_ids) . '|' . $payload['amount']);
         $sent_payload = null;
         $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $two_order);
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
@@ -10022,7 +10029,8 @@ class Twopayment extends PaymentModule
 
     /**
      * Postprocess and send an order request that no pricing builder composes:
-     * confirm, capture, the refunds and cancel.
+     * confirm, capture, the refunds and cancel. Confirm, capture and cancel go out with the
+     * order's idempotency key for that operation unless the caller passed one; a refund passes its own.
      *
      * @param string $requestType
      * @param string $trigger
@@ -10060,6 +10068,10 @@ class Twopayment extends PaymentModule
         }
 
         $sentPayload = $payload;
+        $key = self::findTwoIdempotencyKey($headers) === null ? self::getTwoOrderRequestIdempotencyKey($requestType, $endpoint) : null;
+        if ($key !== null) {
+            $headers[] = self::buildTwoIdempotencyHeader($key);
+        }
 
         return $this->setTwoPaymentRequest($endpoint, $payload, $method, $headers);
     }
@@ -10478,7 +10490,7 @@ class Twopayment extends PaymentModule
             return $result;
         }
 
-        $response = $this->setTwoPaymentRequest('/v1/order_intent', $payload, 'POST');
+        $response = $this->setTwoPaymentRequest('/v1/order_intent', $payload, 'POST', array(self::buildTwoIdempotencyHeader(self::buildTwoIdempotencyKey('order_intent', array((int) $cart->id), $payload))));
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         $result['http_status'] = $http_status;
 
@@ -17277,16 +17289,17 @@ class Twopayment extends PaymentModule
      */
     private function fetchTwoMerchantFeeRatesLive($net_terms, $buyer_country)
     {
+        $payload = array(
+            'buyer_country_code' => $buyer_country,
+            // No admin recourse-pricing config exists.
+            'recourse_pricing' => false,
+            'net_terms' => $net_terms,
+        );
         $response = $this->setTwoPaymentRequest(
             '/pricing/v1/merchant/rates',
-            array(
-                'buyer_country_code' => $buyer_country,
-                // No admin recourse-pricing config exists.
-                'recourse_pricing' => false,
-                'net_terms' => $net_terms,
-            ),
+            $payload,
             'POST',
-            array(),
+            array(self::buildTwoIdempotencyHeader(self::buildTwoIdempotencyKey('merchant_rates', array(), $payload))),
             // Render-path call: cap tight rather than block the admin page.
             self::API_TIMEOUT_STATE_CHECK
         );
@@ -18512,7 +18525,7 @@ class Twopayment extends PaymentModule
             '/v1/pricing/order/fee',
             $payload,
             'POST',
-            array(),
+            array(self::buildTwoIdempotencyHeader(self::buildTwoIdempotencyKey('fee_quote', array(), $payload))),
             self::API_TIMEOUT_SURCHARGE_PRICING
         );
         if (!is_array($response)) {
@@ -21821,6 +21834,124 @@ class Twopayment extends PaymentModule
         );
     }
 
+    /**
+     * The idempotency key for one logical write to Two (TWO-26658): `<operation>_<ids>[_<short payload hash>]`,
+     * lowercase. Every retry or re-trigger of the same operation builds the same key and every other operation a
+     * different one, so it is built only from durable ids, plus a hash of the payload where the operation has no
+     * record of its own. Never from time or randomness.
+     *
+     * @param string $operation
+     * @param array $ids
+     * @param mixed $payload hashed into the key when not null
+     * @return string
+     */
+    public static function buildTwoIdempotencyKey($operation, array $ids = array(), $payload = null)
+    {
+        $parts = array_merge(array((string) $operation), array_map('strval', array_values($ids)));
+        if ($payload !== null) {
+            $parts[] = substr(hash('sha256', (string) json_encode($payload)), 0, 16);
+        }
+
+        return strtolower(implode('_', $parts));
+    }
+
+    /**
+     * @param string $key
+     * @return string the request header line carrying the key
+     */
+    public static function buildTwoIdempotencyHeader($key)
+    {
+        return self::IDEMPOTENCY_HEADER . ': ' . $key;
+    }
+
+    /**
+     * A refund with no record of its own: `refund_remainder_<two order id>_<md5 of what it refunds>`.
+     *
+     * @param string $two_order_id
+     * @param string $basis the prior refund ids and the amount
+     * @return string
+     */
+    public static function buildTwoRefundRemainderIdempotencyKey($two_order_id, $basis)
+    {
+        return 'refund_remainder_' . $two_order_id . '_' . md5((string) $basis);
+    }
+
+    /**
+     * The body-less full refund from a status change: no refund before it, the order's gross refunded.
+     *
+     * @param string $two_order_id
+     * @param mixed $gross Two's gross_amount for the order
+     * @return string
+     */
+    public static function buildTwoFullRefundIdempotencyKey($two_order_id, $gross)
+    {
+        return self::buildTwoRefundRemainderIdempotencyKey($two_order_id, 'full|' . number_format((float) $gross, 2, '.', ''));
+    }
+
+    /**
+     * The idempotency key among a request's header lines, or null.
+     *
+     * @param array $headers "Name: value" lines
+     * @return string|null
+     */
+    public static function findTwoIdempotencyKey(array $headers)
+    {
+        foreach ($headers as $line) {
+            $parts = explode(':', (string) $line, 2);
+            if (count($parts) === 2 && strtolower(trim($parts[0])) === strtolower(self::IDEMPOTENCY_HEADER)) {
+                return trim($parts[1]);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Confirm, fulfil and cancel each name one operation per Two order, so their key is the operation and the
+     * order id; the order id is the one in the endpoint. Null for any other request type: a refund builds its own.
+     *
+     * @param string $requestType a TwoOrderPostprocessing::REQUEST_* type
+     * @param string $endpoint
+     * @return string|null
+     */
+    public static function getTwoOrderRequestIdempotencyKey($requestType, $endpoint)
+    {
+        $operations = array(
+            TwoOrderPostprocessing::REQUEST_ORDER_CONFIRM => 'confirm',
+            TwoOrderPostprocessing::REQUEST_CAPTURE => 'fulfil',
+            TwoOrderPostprocessing::REQUEST_CANCEL => 'cancel',
+        );
+        if (!isset($operations[$requestType]) || !preg_match('#^/v1/order/([^/?]+)/#', (string) $endpoint, $match)) {
+            return null;
+        }
+
+        return self::buildTwoIdempotencyKey($operations[$requestType], array($match[1]));
+    }
+
+    /**
+     * Record the idempotency key an order write went out with, beside its method, endpoint and status, so support
+     * can match the request to Two's side. Only the order lifecycle (create, edit, confirm, fulfil, cancel, refund)
+     * is logged here: the other writes are quotes and checks the checkout repeats on every change, and Debug Mode
+     * logs their headers, key included.
+     *
+     * @param string $method
+     * @param string $endpoint
+     * @param array $headers
+     * @param int $http_status
+     * @return void
+     */
+    protected function logTwoIdempotencyKey($method, $endpoint, array $headers, $http_status)
+    {
+        $key = self::findTwoIdempotencyKey($headers);
+        if ($key === null || !preg_match('#^/v1/order(/|$)#', (string) $endpoint)) {
+            return;
+        }
+        PrestaShopLogger::addLog(
+            'TwoPayment: ' . $method . ' ' . $endpoint . ' sent with ' . self::IDEMPOTENCY_HEADER . ' ' . $key . ' (HTTP ' . (int) $http_status . ')',
+            1
+        );
+    }
+
     public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
     {
         $request_timeout = $timeout !== null ? max(1, (int)$timeout) : self::API_TIMEOUT_LONG;
@@ -21849,6 +21980,7 @@ class Twopayment extends PaymentModule
             $curl_error = curl_error($ch);
             curl_close($ch);
             $this->logTwoApiExchange($method, $endpoint, $payload, $headers, $response_body, (int)$http_status, $response_headers, $curl_error);
+            $this->logTwoIdempotencyKey($method, $endpoint, $headers, (int)$http_status);
             
             if ($response_body === false || !empty($curl_error)) {
                 PrestaShopLogger::addLog(
@@ -21897,6 +22029,7 @@ class Twopayment extends PaymentModule
             $curl_error = curl_error($ch);
             curl_close($ch);
             $this->logTwoApiExchange($method, $endpoint, $payload, $headers, $response_body, (int)$http_status, $response_headers, $curl_error);
+            $this->logTwoIdempotencyKey($method, $endpoint, $headers, (int)$http_status);
             
             if ($response_body === false || !empty($curl_error)) {
                 PrestaShopLogger::addLog(
@@ -22091,7 +22224,8 @@ class Twopayment extends PaymentModule
     /**
      * Names a merchant row may not take: what the plugin or curl sets itself, the RFC 7230
      * hop-by-hop headers, headers that change how a response or the connection is framed,
-     * and credentials or caller identity that must not be forgeable.
+     * credentials or caller identity that must not be forgeable, and the idempotency key
+     * in both spellings, which must name one operation.
      *
      * @return array<int, string>
      */
@@ -22107,6 +22241,9 @@ class Twopayment extends PaymentModule
             'accept-encoding',
             'x-api-key',
             'x-vendor-name',
+            // The key names one operation to Two (TWO-26658); a fixed value would make every write a repeat.
+            'idempotency-key',
+            'x-idempotency-key',
             'x-forwarded-for',
             'x-real-ip',
             'connection',
@@ -23066,19 +23203,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * @param Cart $cart
-     * @param string $snapshot_hash
+     * One key per checkout attempt (TWO-26658): the attempt token, which the attempt row stores and the order's
+     * merchant_order_id and callback URLs carry. A new attempt on the same cart, whatever its buyer company or
+     * contents, mints a new token and so a new key; the cart's contents alone never make the key.
+     *
+     * @param string $attempt_token generateTwoCheckoutAttemptToken()
      * @return string
      */
-    public function buildTwoOrderCreateIdempotencyKey($cart, $snapshot_hash)
+    public function buildTwoOrderCreateIdempotencyKey($attempt_token)
     {
-        $seed = 'create_order|' .
-            (int)$cart->id . '|' .
-            (int)$cart->id_customer . '|' .
-            (string)$snapshot_hash . '|' .
-            (string)Configuration::get('PS_TWO_ENVIRONMENT');
-
-        return 'create_' . Tools::substr(hash('sha256', $seed), 0, 48);
+        return self::buildTwoIdempotencyKey('create', array($attempt_token));
     }
 
     /**

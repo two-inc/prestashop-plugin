@@ -106,7 +106,7 @@ final class OrderBuilderSpec
         self::testCreateTwoLocalOrderAfterProviderVerificationFailsWhenNoRecoverableOrderExists();
         self::testCancelTwoOrderBestEffortReturnsTrueOnSuccessAndFalseOnFailure();
         self::testSnapshotHashIgnoresTaxRateChangesBeyondTwoDecimals();
-        self::testBuildTwoOrderCreateIdempotencyKeyIsDeterministicForSameSnapshot();
+        self::testBuildTwoOrderCreateIdempotencyKeyIsOnePerAttempt();
         self::testHasTwoOrderRebindingConflictDetectsMismatchedTwoOrderIds();
         self::testIsTwoAttemptCallbackAuthorizedWithMatchingKey();
         self::testIsTwoAttemptCallbackAuthorizedFallsBackToContextCustomerKeyWhenRequestKeyMissing();
@@ -4129,20 +4129,17 @@ final class OrderBuilderSpec
         TinyAssert::same($hashA, $hashB);
     }
 
-    private static function testBuildTwoOrderCreateIdempotencyKeyIsDeterministicForSameSnapshot(): void
+    private static function testBuildTwoOrderCreateIdempotencyKeyIsOnePerAttempt(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        $cart = new Cart(991);
-        $cart->id_customer = 123;
+        $keyA = $module->buildTwoOrderCreateIdempotencyKey('attempt-token-1');
+        $keyB = $module->buildTwoOrderCreateIdempotencyKey('attempt-token-1');
+        $keyC = $module->buildTwoOrderCreateIdempotencyKey('attempt-token-2');
 
-        $keyA = $module->buildTwoOrderCreateIdempotencyKey($cart, 'snapshot-hash-1');
-        $keyB = $module->buildTwoOrderCreateIdempotencyKey($cart, 'snapshot-hash-1');
-        $keyC = $module->buildTwoOrderCreateIdempotencyKey($cart, 'snapshot-hash-2');
-
-        TinyAssert::same($keyA, $keyB);
-        TinyAssert::notSame($keyA, $keyC);
+        TinyAssert::same($keyA, $keyB, 'a retry of one attempt reuses its key');
+        TinyAssert::notSame($keyA, $keyC, 'a new attempt gets a new key');
     }
 
     private static function testHasTwoOrderRebindingConflictDetectsMismatchedTwoOrderIds(): void
@@ -5880,6 +5877,7 @@ require __DIR__ . '/TrackingNumberSpec.php';
 require __DIR__ . '/OrderEditRefusalSpec.php';
 require __DIR__ . '/PlacedOrderUpdateSpec.php';
 require __DIR__ . '/RefundSpec.php';
+require __DIR__ . '/IdempotencyKeySpec.php';
 require __DIR__ . '/SurchargeSpec.php';
 require __DIR__ . '/DefaultPaymentTermSpec.php';
 require __DIR__ . '/DeployVersionInfoSpec.php';
@@ -5969,6 +5967,7 @@ $tests = [
     'OrderEditRefusalSpec::runAll' => [OrderEditRefusalSpec::class, 'runAll'],
     'PlacedOrderUpdateSpec::runAll' => [PlacedOrderUpdateSpec::class, 'runAll'],
     'RefundSpec::runAll' => [RefundSpec::class, 'runAll'],
+    'IdempotencyKeySpec::runAll' => [IdempotencyKeySpec::class, 'runAll'],
     'SurchargeSpec::runAll' => [SurchargeSpec::class, 'runAll'],
     'DefaultPaymentTermSpec::runAll' => [DefaultPaymentTermSpec::class, 'runAll'],
     'DeployVersionInfoSpec::runAll' => [DeployVersionInfoSpec::class, 'runAll'],

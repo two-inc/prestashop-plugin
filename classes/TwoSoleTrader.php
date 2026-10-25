@@ -361,7 +361,9 @@ class TwoSoleTrader
     /**
      * Same shared header set every other Two API call carries (X-API-Key,
      * X-Vendor-Name, custom headers) - this call site used to hand-roll its
-     * own, silently missing all three.
+     * own, silently missing all three - plus the mint's idempotency key
+     * (TWO-26658). A mint has no record of its own, so the key names the
+     * token and the cart it is minted for: `<service>_delegation_<cart id>`.
      *
      * @param Twopayment $module
      * @param string     $endpoint
@@ -370,7 +372,14 @@ class TwoSoleTrader
      */
     private static function buildTokenMintHeaders($module, $endpoint)
     {
-        return $module->getTwoRequestHeaders($endpoint);
+        $cart = Context::getContext()->cart;
+        $operation = str_replace('/v1/', '_', trim((string) $endpoint, '/'));
+        $key = Twopayment::buildTwoIdempotencyKey($operation, array($cart ? (int) $cart->id : 0));
+
+        return array_merge(
+            $module->getTwoRequestHeaders($endpoint),
+            array(Twopayment::buildTwoIdempotencyHeader($key))
+        );
     }
 
     /**
