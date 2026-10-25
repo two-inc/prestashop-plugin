@@ -416,6 +416,9 @@ final class AdminFirewallRateLimitFieldsSpec
             array('X-Api-Key', 'the API credential, in mixed casing'),
             array('X-Vendor-Name', 'the vendor identifier this plugin sends'),
             array('x-vendor-NAME', 'the vendor identifier, in mixed casing'),
+            array('Idempotency-Key', 'the key naming one operation to Two'),
+            array('idempotency-KEY', 'the operation key, in mixed casing'),
+            array('X-Idempotency-Key', 'the operation key, in its prefixed spelling'),
             array('X-Forwarded-For', 'proxy-supplied caller identity'),
             array('x-real-ip', 'proxy-supplied caller identity'),
             array('Connection', 'hop-by-hop connection control'),
@@ -503,15 +506,15 @@ final class AdminFirewallRateLimitFieldsSpec
     {
         $expected = array(
             'accept', 'accept-encoding', 'accept-language', 'authorization', 'connection', 'content-length',
-            'content-type', 'cookie', 'expect', 'host', 'keep-alive', 'proxy-authenticate',
+            'content-type', 'cookie', 'expect', 'host', 'idempotency-key', 'keep-alive', 'proxy-authenticate',
             'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'x-api-key',
-            'x-forwarded-for', 'x-real-ip', 'x-vendor-name',
+            'x-forwarded-for', 'x-idempotency-key', 'x-real-ip', 'x-vendor-name',
         );
 
         $actual = Twopayment::reservedTwoHeaderNames();
         sort($actual);
 
-        TinyAssert::same($expected, $actual, 'the reserved-name list must hold exactly these 21 names, lowercased');
+        TinyAssert::same($expected, $actual, 'the reserved-name list must hold exactly these 23 names, lowercased');
     }
 
     private static function testReservedRowsAreNeverSent(): void

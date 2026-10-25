@@ -35,7 +35,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 - Phone number fallback (phone → phone_mobile)
 - Provider-first checkout finalization (local order created after provider verification)
 - Cart snapshot validation before callback-time local order creation
-- Idempotency key header on provider order creation requests
+- An `Idempotency-Key` header on every write to Two's API, one key per operation, so a retry repeats it
 
 ## Requirements
 
@@ -443,7 +443,7 @@ Retired ids are recorded whenever the fee product is replaced. Ids from before t
   - Issues a full refund for the entire order amount
   - Two immediately issues a credit note to the buyer
   - Order state changes to `REFUNDED` in Two
-  - Idempotency keys prevent duplicate refund calls (race condition protection)
+  - Sends a stable idempotency key, so a repeated status change cannot refund the order twice
 
 **Configuration:**
 - Configure refund trigger status in module settings: **Two → Configuration → Order management → Two: Order Refunded**
