@@ -935,7 +935,8 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         );
         $this->context->cookie->write();
 
-        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest('/v1/order_intent', $built['payload'], 'POST'), 'order intent');
+        $key = Twopayment::buildTwoIdempotencyKey('order_intent', array((int) $built['cart']->id), $built['payload']);
+        $this->relayTwoApiResponse($this->module->setTwoPaymentRequest('/v1/order_intent', $built['payload'], 'POST', array(Twopayment::buildTwoIdempotencyHeader($key))), 'order intent');
     }
 
     /**

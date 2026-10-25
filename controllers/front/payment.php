@@ -211,7 +211,7 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         try {
             $paymentdata = $this->module->getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls);
             $cart_snapshot_hash = $this->module->calculateTwoCheckoutSnapshotHash($cart, $paymentdata);
-            $idempotency_key = $this->module->buildTwoOrderCreateIdempotencyKey($cart, $cart_snapshot_hash);
+            $idempotency_key = $this->module->buildTwoOrderCreateIdempotencyKey($attempt_token);
         } catch (Exception $e) {
             // Surface WHY only when the plugin raised the failure as a
             // buyer-actionable amount diagnostic (TwoCheckoutAmountException,
@@ -240,7 +240,8 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         $response = $this->module->setTwoPaymentRequest(
             '/v1/order',
             $paymentdata,
-            'POST'
+            'POST',
+            [Twopayment::buildTwoIdempotencyHeader($idempotency_key)]
         );
 
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
