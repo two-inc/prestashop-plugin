@@ -223,6 +223,8 @@ class Twopayment extends PaymentModule
     // States and status meaning all or part of the order has been invoiced.
     const TWO_INVOICED_STATES = array('FULFILLING', 'FULFILMENT_NEEDS_MANUAL_RESOLUTION', 'FULFILLED', 'DELIVERED', 'REFUNDED');
     const TWO_PARTIAL_STATUS = 'PARTIAL';
+    // Stored in place of an edit's payload hash when Two's answer to an edit is unknown (TWO-26662).
+    const TWO_UPDATE_HASH_UNCONFIRMED = 'unconfirmed';
 
     // Constants for validation tolerances
     const TAX_FORMULA_TOLERANCE = 0.02; // Tolerance for tax formula validation
@@ -5323,6 +5325,15 @@ class Twopayment extends PaymentModule
             }
             if (!empty($accepted)) {
                 Db::getInstance()->update('twopayment', $accepted, 'id_order = ' . (int) $order->id);
+            }
+        } elseif (($http_status < 400 || $http_status >= 500) && !empty($orderpaymentdata['two_update_hash'])) {
+            // No answer, or a 5xx: Two may have applied this edit (TWO-26662), so the stored hash no longer says what
+            // Two holds and the next edit must be sent, even one back to that payload. The marker never equals a
+            // payload hash and, unlike an empty value, still tells a refund that an earlier edit was accepted. The
+            // stored key is kept, so the next edit chains on the last edit Two is known to have accepted.
+            $columns = $this->ensureTwoPaymentColumns();
+            if (in_array('two_update_hash', $columns, true)) {
+                Db::getInstance()->update('twopayment', array('two_update_hash' => self::TWO_UPDATE_HASH_UNCONFIRMED), 'id_order = ' . (int) $order->id);
             }
         }
 
