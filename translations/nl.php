@@ -427,6 +427,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_90a5f22cdff46c106eb927b92562347f'] = 'Handmatig invoeren';
 $_MODULE['<{twopayment}prestashop>twopayment_22294ef90aa68e15429879889a0cdaf5'] = 'Geregistreerd bedrijf';
 $_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Selecteer een andere eenmanszaak';
+$_MODULE['<{twopayment}prestashop>twopayment_a5bb1c5f9375b2b162b24e683969c1f8'] = 'Klik hier om in te loggen of je aan te melden als eenmanszaak.';
 $_MODULE['<{twopayment}prestashop>twopayment_85975d3764f15a461e1b4241e4a5b1c3'] = 'Welke aangeboden termijn standaard is voorgeselecteerd bij het afrekenen. Laat niet ingesteld om de automatische keuze te behouden (de eigen standaardtermijn van de merchant indien aangeboden, anders 30 dagen, anders de kortste aangeboden termijn).';
 $_MODULE['<{twopayment}prestashop>twopayment_ea5dc66828c0b5143181e3d1619bd1cf'] = 'Toon uitlegkoppeling "Wat is %s"';
 $_MODULE['<{twopayment}prestashop>twopayment_e385d49e793ac9d4aa4835d62282469b'] = 'Als je JA kiest, zien kopers een info-tooltip "Wat is %1$s?" met een koppeling naar een uitlegbron in de %1$s-betaaltegel bij het afrekenen.';

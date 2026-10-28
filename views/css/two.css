@@ -1633,9 +1633,40 @@
 }
 
 .two-company-search-back:focus,
-.two-company-select-different-sole-trader:focus {
+.two-company-select-different-sole-trader:focus,
+.two-sole-trader-fallback__link:focus {
     outline: 2px solid #1976d2;
     outline-offset: 2px;
+}
+
+/*
+ * The retry a blocked sole-trader signup popup leaves under the company field
+ * (TWO-26775): a muted bell icon, then an underlined link-styled button.
+ */
+.two-sole-trader-fallback {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    color: #6b6b6b;
+}
+
+.two-sole-trader-fallback__icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.two-sole-trader-fallback__link {
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    text-align: start;
+    color: #1976d2;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
 }
 
 /* Clean up unused styles */
