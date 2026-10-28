@@ -2939,6 +2939,11 @@ class TwoSoleTrader {
 
                     return;
                 }
+                // This prompt is no capture's control, so its launch is no
+                // capture's either: a block here is reported by the prompt's
+                // own error, not by a retry link under a company field left
+                // over from whichever capture launched last (TWO-26775).
+                self._launcher = null;
                 self.openPopup();
             });
         }
