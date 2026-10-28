@@ -1154,10 +1154,17 @@ class TwoSoleTrader {
      * can offer the buyer a link to try again from their own click
      * (TWO-26775). Covers a blocker refusing window.open() and a launch with
      * no tokens to open with alike: either way there is no window.
+     * `replacement` says the refused launch asked for a different sole trader
+     * (`autoselect=false`), so a retry can ask for the same.
+     *
+     * @param {?Object} extraParams what openPopup() was asked to add to the URL
      */
-    notifyPopupBlocked() {
+    notifyPopupBlocked(extraParams) {
         document.dispatchEvent(new CustomEvent('two:sole-trader-popup-blocked', {
-            detail: { launcher: this._launcher }
+            detail: {
+                launcher: this._launcher,
+                replacement: !!(extraParams && extraParams.autoselect === 'false')
+            }
         }));
     }
 
@@ -2460,7 +2467,7 @@ class TwoSoleTrader {
         if (!this.tokens) {
             // A failed re-mint can null these out with the prompt still on
             // screen; showError() also settles the gesture (see there).
-            this.notifyPopupBlocked();
+            this.notifyPopupBlocked(extraParams);
             this.showError();
 
             return null;
@@ -2540,7 +2547,7 @@ class TwoSoleTrader {
             // showError() also notifies (TWO-40) - do not ALSO notify below,
             // or a blocked popup would fire the settle event twice for one
             // click.
-            this.notifyPopupBlocked();
+            this.notifyPopupBlocked(extraParams);
             this.showError();
             if (!this.container()) {
                 // eslint-disable-next-line no-console
