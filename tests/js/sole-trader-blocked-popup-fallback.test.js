@@ -86,6 +86,18 @@ function fallbackLink() {
     return $('.two-sole-trader-fallback__link');
 }
 
+/** The screen-reader announcement of a block. */
+function fallbackStatus() {
+    return $('.two-sole-trader-fallback__status');
+}
+
+/** A launch's refusal as TwoSoleTrader reports it. */
+function refuse(launcher) {
+    document.dispatchEvent(new window.CustomEvent('two:sole-trader-popup-blocked', {
+        detail: { launcher: launcher, replacement: false }
+    }));
+}
+
 /** A window the way the blocker lets one through. */
 function realWindow() {
     return { closed: false, focus: jest.fn(), close() { this.closed = true; } };
@@ -121,6 +133,7 @@ async function blockedLaunch() {
     openPanel();
     panelParts().soleTrader.trigger('click');
     await settle();
+    jest.advanceTimersByTime(TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
 }
 
 beforeEach(() => {
@@ -210,6 +223,24 @@ describe.each([
         rebuild();
         openPanel();
     }, true, 'sole_trader', 1, null, 'the rebuilt capture keeps the retry and the mode'],
+    ['has the retry spent, then sees another capture\'s launch refused', async () => {
+        nextWindow = realWindow();
+        fallbackLink().trigger('click');
+        await settle();
+        refuse('another-capture');
+    }, false, 'sole_trader', 2, null, 'only its own launches leave a retry'],
+    ['clicks the Registered chip, then sees its own late launch refused', async () => {
+        openPanel();
+        panelParts().registered.trigger('click');
+        refuse(search._instanceNs);
+    }, false, 'registered', 1, null, 'a refusal does not bring back a mode the buyer left'],
+    ['sees a re-render, clicks Registered, then the old capture\'s launch is refused', async () => {
+        const old = search._instanceNs;
+        rebuild();
+        openPanel();
+        panelParts().registered.trigger('click');
+        refuse(old);
+    }, false, 'registered', 1, null, 'a torn-down capture no longer answers'],
     ['changes country, then sees the address form re-render', async () => {
         $("select[name='id_country'] option").get(0).setAttribute('data-iso-code', 'NO');
         rebuild();
@@ -223,7 +254,8 @@ describe.each([
         expect(shown(fallbackLink())).toBe(true);
         expect(fallbackLink().text()).toBe(FALLBACK_TEXT);
         expect(fallbackLink().attr('type')).toBe('button');
-        expect(fallbackLink().parent().attr('role')).toBe('status');
+        expect(fallbackStatus().attr('role')).toBe('status');
+        expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
 
         await act();
         await settle();
@@ -285,4 +317,49 @@ test('a refused "select a different sole trader" retries as one', async () => {
     expect(global.window.open).toHaveBeenCalledTimes(2);
     expect(String(global.window.open.mock.calls[1][0])).toContain('autoselect=false');
     expect(shown(fallbackLink())).toBe(false);
+});
+
+test('every block is announced, a repeat one included, without moving the button', async () => {
+    // In place, and silent, before anything is blocked.
+    expect(fallbackStatus().length).toBe(1);
+    expect(fallbackStatus().text()).toBe('');
+
+    await blockedLaunch();
+    expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
+    const button = fallbackLink().get(0);
+
+    fallbackLink().trigger('click');
+    // Emptied first, so the same words are a fresh message.
+    expect(fallbackStatus().text()).toBe('');
+    jest.advanceTimersByTime(TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
+    expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
+    expect(fallbackLink().get(0)).toBe(button);
+
+    panelParts().registered.trigger('click');
+    expect(fallbackStatus().text()).toBe('');
+});
+
+test('a block of the payment-step prompt leaves no retry under the company field', async () => {
+    // The payment step's own prompt, as its template renders it.
+    document.body.insertAdjacentHTML('beforeend', [
+        '<div class="two-sole-trader">',
+        '  <a href="#" class="two-sole-trader__prompt" style="display: none;">prompt</a>',
+        '  <span class="two-sole-trader__status" style="display: none;"></span>',
+        '  <span class="two-sole-trader__error" style="display: none;">error</span>',
+        '</div>'
+    ].join(''));
+    // The chip offers the prompt rather than a popup on the payment step.
+    openPanel();
+    panelParts().soleTrader.trigger('click');
+    await settle();
+    expect(global.window.open).not.toHaveBeenCalled();
+    const prompt = document.querySelector('.two-sole-trader__prompt');
+    expect(prompt.style.display).toBe('inline');
+
+    prompt.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await settle();
+
+    expect(global.window.open).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('.two-sole-trader__error').style.display).toBe('inline');
+    expect(fallbackLink().length).toBe(0);
 });
