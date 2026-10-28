@@ -274,6 +274,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_90a5f22cdff46c106eb927b92562347f'] = 'Introducir manualmente';
 $_MODULE['<{twopayment}prestashop>twopayment_22294ef90aa68e15429879889a0cdaf5'] = 'Empresa registrada';
 $_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Seleccionar otro autónomo';
+$_MODULE['<{twopayment}prestashop>twopayment_a5bb1c5f9375b2b162b24e683969c1f8'] = 'Haz clic aquí para iniciar sesión o registrarte como autónomo.';
 $_MODULE['<{twopayment}prestashop>twopayment_d6d46ce9e07ae06a04fee031065a845e'] = 'Proxies de confianza';
 $_MODULE['<{twopayment}prestashop>twopayment_d6d57cf76907586f162c14be9978430e'] = 'Direcciones de sus propios proxies inversos, balanceadores de carga o salida de CDN, como IPs o rangos CIDR, separados por comas o saltos de línea. Estas direcciones IP quedarán exentas de la limitación de solicitudes.';
 $_MODULE['<{twopayment}prestashop>twopayment_31d13204819985325cd56ac35e36ebe6'] = 'Desactivar la limitación de solicitudes en el checkout';
