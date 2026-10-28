@@ -7796,6 +7796,10 @@ class Twopayment extends PaymentModule
             // "pick a different registration" and "register as new" inside
             // its own UI, so this plugin does not need to distinguish them.
             'company_search_select_different_sole_trader' => $this->l('Select a different sole trader'),
+            // Retry link under the company field when the browser blocks the
+            // sole-trader signup popup (TWO-26775). Relaunches the popup from
+            // the buyer's own click.
+            'company_search_sole_trader_fallback' => $this->l('Click here to login or sign up as a sole trader.'),
         );
 
         // Resolve the record before the reads in getAvailablePaymentTerms /

@@ -1127,6 +1127,41 @@ class TwoSoleTrader {
     }
 
     /**
+     * Relaunch the hosted signup straight from the fallback link a blocked
+     * popup leaves under the company field (TWO-26775). The link's own click is
+     * the user gesture, so the window opens synchronously from it: no mint and
+     * no autofill lookup first, either of which would spend that gesture. With
+     * no tokens to open with, openPopup() refuses again and the link stays.
+     *
+     * @param {?string} launcher opaque id of the capture asking
+     * @param {?Element} [chip] that capture's own Sole trader chip, which owns
+     *   the popup this opens (TWO-25658).
+     */
+    relaunchSignup(launcher, chip) {
+        this.enrolling = true;
+        this._launcher = launcher || null;
+        this._pendingLaunchChip = this.chipOf(chip || null);
+        this._launchControl = document.activeElement;
+        if (this.tokens) {
+            // Same "explicit resume" re-stamp as startEnrollment().
+            this._tokensGeneration = this._enrollGeneration;
+        }
+        this.openPopup();
+    }
+
+    /**
+     * Tell the capture that asked for the popup that it never opened, so it
+     * can offer the buyer a link to try again from their own click
+     * (TWO-26775). Covers a blocker refusing window.open() and a launch with
+     * no tokens to open with alike: either way there is no window.
+     */
+    notifyPopupBlocked() {
+        document.dispatchEvent(new CustomEvent('two:sole-trader-popup-blocked', {
+            detail: { launcher: this._launcher }
+        }));
+    }
+
+    /**
      * Continuation once tokens are ready (a fresh mint or an existing set),
      * shared by fetchTokens()'s success branches. Ordinary flow proceeds to
      * the silent-autofill check; startReplacement() sets `_skipAutofillCheck`
@@ -2425,6 +2460,7 @@ class TwoSoleTrader {
         if (!this.tokens) {
             // A failed re-mint can null these out with the prompt still on
             // screen; showError() also settles the gesture (see there).
+            this.notifyPopupBlocked();
             this.showError();
 
             return null;
@@ -2495,13 +2531,16 @@ class TwoSoleTrader {
         );
         if (!popup) {
             // Popup blocked despite opening from a click - surface it rather
-            // than failing silently. showError() itself no-ops without a
+            // than failing silently. The capture that asked shows a fallback
+            // link under its field on the blocked notice (TWO-26775); the
+            // notice goes first, so that link is up before showError()'s
+            // settle closes the panel. showError() itself no-ops without a
             // `.two-sole-trader__error` element (containerless address-page
-            // path, TWO-40 follow-up) - console.error is the only signal left
-            // there, so it is not a completely silent dead end even in that
-            // edge case. showError() also notifies (TWO-40) - do not ALSO
-            // notify below, or a blocked popup would fire the settle event
-            // twice for one click.
+            // path, TWO-40 follow-up), hence the console.error as well.
+            // showError() also notifies (TWO-40) - do not ALSO notify below,
+            // or a blocked popup would fire the settle event twice for one
+            // click.
+            this.notifyPopupBlocked();
             this.showError();
             if (!this.container()) {
                 // eslint-disable-next-line no-console
