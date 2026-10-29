@@ -239,9 +239,12 @@ final class OrderTermWireSpec
             TinyAssert::same([['success' => true]], self::saveTerm($module, $saved), $description . ': setup save');
             self::offer($offeredAtSubmit);
 
+            $writesBefore = $context->cookie->writes;
             $errors = self::submitPayment($module);
+            $writes = $context->cookie->writes - $writesBefore;
 
             if ($stillOffered) {
+                TinyAssert::same(0, $writes, $description . ': the cookie is not written');
                 TinyAssert::count(1, $module->sent, $description . ': one POST /v1/order');
                 TinyAssert::same($saved, $module->sent[0]['payload']['terms']['duration_days'] ?? null, $description . ': terms.duration_days');
                 continue;
@@ -249,12 +252,16 @@ final class OrderTermWireSpec
             TinyAssert::count(0, $module->sent, $description . ': no POST /v1/order');
             TinyAssert::same([$module->getUnofferedPaymentTermBuyerMessage()], $errors, $description . ': the buyer is told to choose again');
             TinyAssert::same('', (string) $context->cookie->two_payment_term, $description . ': the saved choice is cleared');
+            // The AJAX failure path exits, so the cleared choice only survives if the cookie is written before it.
+            TinyAssert::true($writes >= 1, $description . ': the cleared choice is written to the cookie before the refusal ends the request');
         }
 
         // A cookie holding a term that was never offered (set outside the save) is refused alike.
         [$module, $context] = self::arrange('STANDARD');
         $context->cookie->two_payment_term = '45';
+        $writesBefore = $context->cookie->writes;
         $errors = self::submitPayment($module);
+        TinyAssert::true($context->cookie->writes - $writesBefore >= 1, 'a cookie holding a never-offered 45: the cleared choice is written to the cookie');
         TinyAssert::count(0, $module->sent, 'a cookie holding a never-offered 45: no POST /v1/order');
         TinyAssert::same([$module->getUnofferedPaymentTermBuyerMessage()], $errors, 'a cookie holding a never-offered 45: the buyer is told to choose again');
 
