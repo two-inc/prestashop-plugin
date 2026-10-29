@@ -437,6 +437,44 @@ final class OrderPostprocessingSpec
         return $out;
     }
 
+    /**
+     * Where a payload left its golden, by field path, so a failing golden says which field moved
+     * (a key dropped, added or changed) rather than leaving two long JSON strings to compare by eye.
+     * Empty when they match.
+     */
+    public static function describeGoldenDiff(string $expectedJson, string $actualJson): string
+    {
+        if ($expectedJson === $actualJson) {
+            return '';
+        }
+        $found = [];
+        self::collectGoldenDiff(json_decode($expectedJson, true), json_decode($actualJson, true), '', $found);
+
+        return $found === [] ? ' (same fields, different order or formatting)' : ' (differs at: ' . implode(', ', array_slice($found, 0, 12)) . ')';
+    }
+
+    /** @param string[] $found */
+    private static function collectGoldenDiff($expected, $actual, string $path, array &$found): void
+    {
+        if (is_array($expected) && is_array($actual)) {
+            foreach (array_unique(array_merge(array_keys($expected), array_keys($actual))) as $key) {
+                $here = $path . '/' . $key;
+                if (!array_key_exists($key, $actual)) {
+                    $found[] = 'removed ' . $here;
+                } elseif (!array_key_exists($key, $expected)) {
+                    $found[] = 'added ' . $here;
+                } else {
+                    self::collectGoldenDiff($expected[$key], $actual[$key], $here, $found);
+                }
+            }
+
+            return;
+        }
+        if ($expected !== $actual) {
+            $found[] = 'changed ' . ($path === '' ? '/' : $path);
+        }
+    }
+
     /* ---- specs ---- */
 
     /**
@@ -456,7 +494,7 @@ final class OrderPostprocessingSpec
                 self::subscribe($mode, $calls);
             }
             foreach (self::payloadsForGolden($module, $cart) as $name => $json) {
-                TinyAssert::same($golden[$name], $json, $label . ': ' . $name . ' payload must be byte-identical to the pre-hook builder');
+                TinyAssert::same($golden[$name], $json, $label . ': ' . $name . ' payload must be byte-identical to the pre-hook builder' . self::describeGoldenDiff($golden[$name], $json));
             }
         }
     }

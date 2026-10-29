@@ -3291,6 +3291,19 @@ namespace {
         }
     }
 
+    /**
+     * For a harness stub that replaces getTwoUpdateOrderData() with a canned body and is handed an order with no
+     * addresses: the edit hash reads the buyer company from the order (ABN-621), not from that body, so the stub
+     * supplies one too.
+     */
+    trait StubbedTwoUpdateBuyerCompany
+    {
+        public function getTwoUpdateBuyerCompany($order, $orderpaymentdata)
+        {
+            return ['company_name' => 'Stub Co', 'organization_number' => 'STUB-1', 'country_iso' => 'ES'];
+        }
+    }
+
     #[\AllowDynamicProperties]
     class TwopaymentTestHarness extends Twopayment
     {
