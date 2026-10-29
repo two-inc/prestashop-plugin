@@ -165,6 +165,24 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
             return;
         }
 
+        // A term the buyer chose and the merchant no longer offers (withdrawn
+        // since it was saved) is refused, never swapped for the default: the
+        // order must not be booked under a term the buyer did not select. The
+        // saved choice is cleared so the reloaded page shows what a retry would
+        // book (the default), instead of refusing every retry. A buyer who never
+        // chose a term is untouched and gets the default.
+        $unofferedTerm = $this->module->getUnofferedChosenPaymentTerm();
+        if ($unofferedTerm > 0) {
+            $this->context->cookie->two_payment_term = '';
+            $this->context->cookie->write();
+            $this->failCheckout(
+                $this->module->getUnofferedPaymentTermBuyerMessage(),
+                'TwoPayment: Order submission refused - chosen payment term ' . $unofferedTerm . ' days is not offered, cart ' . (int) $cart->id,
+                2
+            );
+            return;
+        }
+
         // Keep attempt table bounded without adding cron requirements.
         $this->module->maybeCleanupStaleTwoCheckoutAttempts();
 
