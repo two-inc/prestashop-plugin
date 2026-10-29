@@ -760,6 +760,12 @@ passes an empty array. Any part of it may be changed, including gross amounts, l
 totals and fields the module does not itself send, except on `order_confirm` and
 `cancel` (below).
 
+Two's API does not define some order-level fields on some requests and ignores them,
+so the module does not send them there: the order edit (`order_update`) has no `buyer`,
+and the order intent has no `discount_amount`, `billing_address` or `tax_subtotals`.
+A subscriber that reads one of them on those requests no longer finds it; the order
+create still carries all of them, and every line's own `discount_amount` is unchanged.
+
 `order_confirm` and `cancel` take no body at Two's API, so they are always sent empty,
 as the Magento plugin sends them. The hook still runs on them, with an empty `payload`
 and the usual `context`. A body a subscriber returns there is ignored and logged with

@@ -79,7 +79,10 @@ final class BuyerCompanyFallbackSpec
                 $module = new TwopaymentTestHarness();
 
                 $payload = self::buildPayload($module, $payloadKind);
-                $company = $payload['buyer']['company'];
+                // The edit body has no buyer block (ABN-621): the company it stands for is what the edit hash reads.
+                $company = $payloadKind === 'update'
+                    ? $module->getTwoUpdateBuyerCompany(self::makeOrder(), self::unstoredRow())
+                    : $payload['buyer']['company'];
                 $label = $payloadKind . ' payload, ' . $description;
 
                 TinyAssert::same($expectedName, $company['company_name'], 'company name - ' . $label);
@@ -94,11 +97,14 @@ final class BuyerCompanyFallbackSpec
                     'name and organisation number must come from one address - ' . $label
                 );
 
-                TinyAssert::same(
-                    $expectedName,
-                    $payload['billing_address']['organization_name'],
-                    'the billing address carries the resolved buyer company - ' . $label
-                );
+                // The order intent carries no billing_address (ABN-621).
+                if ($payloadKind !== 'intent') {
+                    TinyAssert::same(
+                        $expectedName,
+                        $payload['billing_address']['organization_name'],
+                        'the billing address carries the resolved buyer company - ' . $label
+                    );
+                }
             }
         }
     }
@@ -164,13 +170,12 @@ final class BuyerCompanyFallbackSpec
             self::seedCart('', '', 'Delivery Co Ltd', 'DEL-87654321');
             $module = new TwopaymentTestHarness();
 
-            $payload = $module->getTwoUpdateOrderData(self::makeOrder(), array(
+            $company = $module->getTwoUpdateBuyerCompany(self::makeOrder(), array(
                 'two_order_reference' => 'ref-' . self::ORDER_ID,
                 'two_day_on_invoice' => '30',
                 'two_organization_number' => $storedOrg,
                 'two_company_name' => $storedName,
             ));
-            $company = $payload['buyer']['company'];
 
             TinyAssert::same($expectedName, $company['company_name'], 'company name - ' . $description);
             TinyAssert::same($expectedOrg, $company['organization_number'], 'organisation number - ' . $description);
@@ -303,13 +308,18 @@ final class BuyerCompanyFallbackSpec
             return $module->getTwoNewOrderData(self::ORDER_ID, new Cart(self::CART_ID));
         }
 
-        // Nothing stored, which is what makes the update payload re-resolve.
-        return $module->getTwoUpdateOrderData(self::makeOrder(), array(
+        return $module->getTwoUpdateOrderData(self::makeOrder(), self::unstoredRow());
+    }
+
+    /** Nothing stored, which is what makes the update re-resolve the company. */
+    private static function unstoredRow(): array
+    {
+        return array(
             'two_order_reference' => 'ref-' . self::ORDER_ID,
             'two_day_on_invoice' => '30',
             'two_organization_number' => '',
             'two_company_name' => '',
-        ));
+        );
     }
 
     private static function reset(): void

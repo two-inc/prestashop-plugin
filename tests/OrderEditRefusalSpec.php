@@ -98,7 +98,7 @@ final class OrderEditRefusalSpec
                 $module = self::module($lookup);
                 $module->handler = $handler;
                 if ($unchanged) {
-                    $module->hash = md5(json_encode($basis->invoke($module, $module->getTwoUpdateOrderData(null, []))));
+                    $module->hash = md5(json_encode($basis->invoke($module, $module->getTwoUpdateOrderData(null, []), $module->getTwoUpdateBuyerCompany(null, []))));
                 }
                 $module->$hook(['order' => self::order()]);
                 $want = $calls;
@@ -114,6 +114,7 @@ final class OrderEditRefusalSpec
     private static function module(array $lookup): TwopaymentTestHarness
     {
         return new class ($lookup) extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             public array $calls = [];
             /** @var array the Two order each build was given (TWO-26282) */
             public array $builtWith = [];
@@ -144,7 +145,6 @@ final class OrderEditRefusalSpec
                 }
                 return [
                     'line_items' => [],
-                    'buyer' => ['company' => []],
                     'shipping_details' => ['carrier_name' => '', 'tracking_number' => ''],
                 ];
             }
