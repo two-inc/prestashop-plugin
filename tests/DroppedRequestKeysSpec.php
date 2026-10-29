@@ -33,6 +33,7 @@ final class DroppedRequestKeysSpec
         self::testKeysAreDroppedOnlyFromTheRequestsTheApiDoesNotDefineThemOn();
         self::testACompanyChangeStillChangesTheEditHashBasis();
         self::testAnUnchangedOrderKeepsItsEditHash();
+        self::testACompanyChangeSendsAnEditAndNoChangeSendsNone();
     }
 
     /**
@@ -143,6 +144,32 @@ final class DroppedRequestKeysSpec
             [$otherHash, $otherBody] = self::editHash($other);
             TinyAssert::same($sameBody, $body === $otherBody, $description . ': the body ' . ($sameBody ? 'must be the same, so the hash alone sees the change' : 'differs'));
             TinyAssert::same($differs, $hash !== $otherHash, $description . ': edit hash ' . ($differs ? 'must differ' : 'must match'));
+        }
+    }
+
+    /**
+     * The same through putTwoOrderUpdate(): with the hash of the last accepted edit stored, an unchanged order sends
+     * no PUT, and a changed organisation number (which the body cannot show) sends one.
+     */
+    private static function testACompanyChangeSendsAnEditAndNoChangeSendsNone(): void
+    {
+        OrderPostprocessingSpec::seed(true);
+        $base = ['two_organization_number' => 'B12345678', 'two_company_name' => 'Hook Shop SL'];
+        $accepted = ['two_update_hash' => self::editHash(self::row($base))[0]];
+        // [stored company of the order, PUTs expected, description]
+        $cases = [
+            [$base, 0, 'no change: no edit sent'],
+            [['two_organization_number' => 'B87654321'] + $base, 1, 'another organisation number: an edit is sent'],
+        ];
+        foreach ($cases as [$stored, $puts, $description]) {
+            $module = OrderPostprocessingSpec::module();
+            OrderPostprocessingSpec::harnessAsInstance($module);
+            $payload = null;
+            $module->putTwoOrderUpdate(OrderPostprocessingSpec::order(), self::row($stored) + $accepted, $payload, 'merchant_order_id');
+            $sent = array_filter($module->sent, static function (array $request): bool {
+                return $request['method'] === 'PUT';
+            });
+            TinyAssert::count($puts, array_values($sent), $description);
         }
     }
 
