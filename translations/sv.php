@@ -647,3 +647,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_2fd94cc464a79be675f7c7c8a2aa5423'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] = 'Välj en giltig miljö.';
 $_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] = 'Staging (intern testmiljö hos %s). Välj Sandbox eller Produktion.';
 $_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'Inte igenkänt: Sandbox används. Välj en miljö och spara.';
+$_MODULE['<{twopayment}prestashop>twopayment_83ddb18c833306739ac336402fa25e10'] = 'Betalningstiden du valde är inte tillgänglig. Välj en annan betalningstid.';
