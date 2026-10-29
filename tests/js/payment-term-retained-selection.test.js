@@ -107,6 +107,18 @@ describe('a term the server did not accept', () => {
         expect(document.getElementById('two-selected-days').textContent).toContain('60');
     });
 
+    test('a 200 answer that refuses the term puts the chip back too', () => {
+        render([30, 60, 90], 30, 60);
+
+        document.querySelector('.two-term-chip[data-days="90"]').click();
+        expect(selectedDays()).toBe(90);
+
+        savePaymentTermCalls().pop().succeed({ success: false, error: 'not available' });
+
+        expect(selectedDays()).toBe(60);
+        expect(ariaCheckedDays()).toEqual([60]);
+    });
+
     test('the revert goes back to the last term the server accepted', () => {
         render([30, 60, 90], 30, 60);
 

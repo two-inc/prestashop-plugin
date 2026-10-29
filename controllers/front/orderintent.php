@@ -253,6 +253,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->l('Invalid days')]));
             return;
         }
+        // Only a term the merchant offers is recorded: a saved term that is not
+        // offered could only be refused at submit, or worse, replaced by the default.
+        if (!$this->module->isPaymentTermOffered($days)) {
+            PrestaShopLogger::addLog('TwoPayment: Refused to save payment term ' . $days . ' days: not an offered term', 2);
+            $this->sendJsonResponse(json_encode(['success' => false, 'error' => $this->module->getUnofferedPaymentTermBuyerMessage()]));
+            return;
+        }
         $this->context->cookie->two_payment_term = $days;
         $this->context->cookie->setExpire(time() + Twopayment::COOKIE_EXPIRY_ONE_HOUR);
         PrestaShopLogger::addLog('TwoPayment: Saved selected payment term ' . $days . ' days in cookie', 1);
