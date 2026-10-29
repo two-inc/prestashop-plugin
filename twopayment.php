@@ -10430,7 +10430,6 @@ class Twopayment extends PaymentModule
             ],
             'currency' => $currency->iso_code,
             'merchant_short_name' => $this->merchant_short_name,
-            'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'billing_address' => $this->buildTwoAddress($invoice_address, $buyerCompany['company_name'], $companyData['country_iso']),
             'shipping_address' => $this->buildTwoAddress($delivery_address, $shippingOrgName, $shippingData['country_iso']),
             'line_items' => $line_items,
@@ -10825,7 +10824,6 @@ class Twopayment extends PaymentModule
             'currency' => $currency->iso_code,
             'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)), // Two API expects positive discount amount at order level (already abs() at line 1532)
             'discount_rate' => '0',
-            'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
             'buyer' => [
                 'company' => [
@@ -11424,7 +11422,6 @@ class Twopayment extends PaymentModule
             'currency' => $currency->iso_code,
             'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)), // Two API expects positive discount amount at order level
             'discount_rate' => '0',
-            'invoice_type' => 'FUNDED_INVOICE', // Default product type
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
             'buyer' => [
                 'company' => [
@@ -23337,7 +23334,6 @@ class Twopayment extends PaymentModule
             'shipping_country' => isset($paymentdata['shipping_address']['country'])
                 ? strtoupper(trim((string)$paymentdata['shipping_address']['country']))
                 : '',
-            'invoice_type' => isset($paymentdata['invoice_type']) ? (string)$paymentdata['invoice_type'] : '',
         );
 
         $seed = 'order_intent|'
