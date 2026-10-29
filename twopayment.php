@@ -21760,33 +21760,85 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The term the buyer last chose, offered or not: 0 when they never chose one.
+     * The saved selection lives in the context cookie, with the browser's own
+     * cookie as the fallback.
+     *
+     * @return int
+     */
+    public function getChosenPaymentTermDays()
+    {
+        $chosen = isset($this->context->cookie->two_payment_term)
+            ? (int) (string) $this->context->cookie->two_payment_term
+            : 0;
+
+        if (!$chosen && isset($_COOKIE['two_payment_term'])) {
+            $chosen = (int) $_COOKIE['two_payment_term'];
+        }
+
+        return $chosen;
+    }
+
+    /**
+     * @param int|string $days
+     *
+     * @return bool Whether the merchant currently offers a term of this many days.
+     */
+    public function isPaymentTermOffered($days)
+    {
+        return in_array((int) $days, array_map('intval', $this->getAvailablePaymentTerms()), true);
+    }
+
+    /**
+     * The term the buyer chose when it is no longer offered (for example the
+     * merchant withdrew it after it was saved): that choice must be refused, not
+     * replaced by the default. A buyer who never chose a term has no such term.
+     *
+     * @return int Days, or 0 when there is no chosen term, or it is still offered
+     */
+    public function getUnofferedChosenPaymentTerm()
+    {
+        $chosen = $this->getChosenPaymentTermDays();
+
+        return ($chosen > 0 && !$this->isPaymentTermOffered($chosen)) ? $chosen : 0;
+    }
+
+    /**
+     * Buyer-facing refusal of a term that is not offered, shared by the save
+     * and the submit so the two read the same.
+     *
+     * @return string
+     */
+    public function getUnofferedPaymentTermBuyerMessage()
+    {
+        return $this->l('The payment term you chose is not available. Please choose another term.');
+    }
+
+    /**
+     * What the order is booked under, for display and pricing. Order creation
+     * must first refuse a chosen term that is not offered
+     * (getUnofferedChosenPaymentTerm()), so the default substituted here is
+     * only ever for a buyer who made no choice.
+     *
      * @return int Selected payment term in days, 0 when no term is offered
      */
     public function getSelectedPaymentTerm()
     {
         $available_terms = $this->getAvailablePaymentTerms();
         $default_term = (int) $this->getDefaultPaymentTerm();
-        
-        $cookie_term_raw = isset($this->context->cookie->two_payment_term)
-            ? (string)$this->context->cookie->two_payment_term
-            : '';
-        $selected_term = (int)$cookie_term_raw;
-        
-        if (!$selected_term && isset($_COOKIE['two_payment_term'])) {
-            $selected_term = (int)$_COOKIE['two_payment_term'];
-        }
-        
-        PrestaShopLogger::addLog('TwoPayment: Getting payment term - Context Cookie: ' . $cookie_term_raw . ', Browser Cookie: ' . (isset($_COOKIE['two_payment_term']) ? $_COOKIE['two_payment_term'] : 'not set') . ', Selected: ' . $selected_term . ', Available: ' . implode(',', $available_terms) . ', Default: ' . $default_term, 1);
-        
+        $selected_term = $this->getChosenPaymentTermDays();
+
+        PrestaShopLogger::addLog('TwoPayment: Getting payment term - Selected: ' . $selected_term . ', Available: ' . implode(',', $available_terms) . ', Default: ' . $default_term, 1);
+
         if ($selected_term && in_array($selected_term, $available_terms)) {
             PrestaShopLogger::addLog('TwoPayment: Using selected payment term: ' . $selected_term . ' days', 1);
             return $selected_term;
         }
-        
+
         PrestaShopLogger::addLog('TwoPayment: Using default payment term: ' . $default_term . ' days', 1);
         return $default_term;
     }
-    
+
     /**
      * @return array Terms payload
      * 
