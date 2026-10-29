@@ -21,12 +21,12 @@ final class OrderTermWireSpec
     public static function runAll(): void
     {
         self::testSelectedTermIsWhatTheOrderBodyCarries();
-        self::testTermThatIsNotOfferedIsNotSilentlyReplacedByTheDefault();
+        self::testTermThatIsNotOfferedIsCurrentlyReplacedByTheDefault();
     }
 
     /**
      * A module whose only fakes are the wire answers. The body is captured
-     * exactly as it would be serialised onto POST /v1/order.
+     * as the array handed to the request seam, before it is JSON-encoded onto POST /v1/order.
      */
     private static function module(): TwopaymentTestHarness
     {
@@ -134,18 +134,18 @@ final class OrderTermWireSpec
 
     /**
      * CURRENT BEHAVIOUR, recorded as a finding rather than endorsed: a selection
-     * outside the offered set is not refused. getSelectedPaymentTerm() quietly
-     * falls back to the default, so the order is created under 30 days while the
+     * outside the offered set is not refused. getSelectedPaymentTerm() logs at
+     * severity 1 and falls back to the default, so the order is created under 30 days while the
      * buyer asked for 45. The save-term AJAX accepts any positive day count, and
      * the submit proceeds. This case pins that, so a change in either direction
      * (refusal, or a different substitution) is a deliberate, visible edit.
      */
-    private static function testTermThatIsNotOfferedIsNotSilentlyReplacedByTheDefault(): void
+    private static function testTermThatIsNotOfferedIsCurrentlyReplacedByTheDefault(): void
     {
         // [selected days, expected duration_days today, description]
         $cases = [
-            // FINDING: silent default. When the plugin refuses instead, expect no POST /v1/order here.
-            [45, 30, 'a 45-day selection that is not offered is currently replaced by the 30-day default (silent default, finding)'],
+            // FINDING: unrefused fallback. When the plugin refuses instead, expect no POST /v1/order here.
+            [45, 30, 'a 45-day selection that is not offered is currently replaced by the 30-day default (unrefused fallback, finding)'],
         ];
         foreach ($cases as [$selected, $currentDays, $description]) {
             [$module] = self::placeOrderSelecting($selected, 'STANDARD');
