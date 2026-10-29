@@ -1854,7 +1854,14 @@ class TwoCheckoutManager {
                         dataType: 'json',
                         data: { ajax: 1, action: 'savePaymentTerm', token: window.twopayment.ajax_token, days: days },
                         timeout: 10000
-                    }).done(() => {
+                    }).done((response) => {
+                        // The server answers 200 with success:false when it refuses
+                        // the term (no longer offered): put the chips back, so the
+                        // tick never shows a term the order will not be booked under.
+                        if (response && response.success === false) {
+                            applySelection(persistedTerm);
+                            return;
+                        }
                         persistedTerm = days;
                         // The surcharge amount is term-dependent: with Two
                         // selected, re-quote and update the cart line for
