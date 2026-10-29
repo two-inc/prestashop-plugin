@@ -261,7 +261,6 @@ final class BillingCompanyCaptureSpec
                     'tax_amount' => '20.00',
                     'discount_amount' => '0.00',
                     'currency' => 'GBP',
-                    'invoice_type' => 'FUNDED_INVOICE',
                     'buyer' => ['company' => [
                         'company_name' => (string) $address->company,
                         'country_prefix' => 'GB',
