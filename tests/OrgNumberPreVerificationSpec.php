@@ -316,7 +316,6 @@ final class OrgNumberPreVerificationSpec
                     'tax_amount' => '21.00',
                     'discount_amount' => '0.00',
                     'currency' => 'EUR',
-                    'invoice_type' => 'FUNDED_INVOICE',
                     'buyer' => [
                         'company' => [
                             'company_name' => $this->seenCompanyName,
