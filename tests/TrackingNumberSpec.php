@@ -129,6 +129,7 @@ final class TrackingNumberSpec
     {
         StubStore::reset();
         $module = new class () extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             public array $requests = [];
 
             public function getTwoOrderPaymentData($id_order)
@@ -201,6 +202,7 @@ final class TrackingNumberSpec
         // best-effort and must never break the admin action that saved
         // the tracking number.
         $module = new class () extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             public array $requests = [];
 
             public function getTwoOrderPaymentData($id_order)
@@ -229,6 +231,7 @@ final class TrackingNumberSpec
     {
         StubStore::reset();
         $module = new class () extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             public array $warnings = [];
 
             public function getTwoOrderPaymentData($id_order)
@@ -260,6 +263,7 @@ final class TrackingNumberSpec
 
         // And a 2xx acceptance stays quiet.
         $accepted = new class () extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             public array $warnings = [];
 
             public function getTwoOrderPaymentData($id_order)

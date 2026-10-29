@@ -240,19 +240,22 @@ final class OrderCompanyPersistenceSpec
         self::seedCart();
         $module = new TwopaymentTestHarness();
 
-        $payload = $module->getTwoUpdateOrderData(self::makeOrder(), array(
+        $row = array(
             'two_order_reference' => 'ref-' . self::ORDER_ID,
             'two_day_on_invoice' => '30',
             'two_organization_number' => self::TWO_PREFIXED_ID,
             'two_company_name' => 'Example Trading Ltd',
-        ));
+        );
+        $payload = $module->getTwoUpdateOrderData(self::makeOrder(), $row);
 
+        // The body has no buyer block (ABN-621): the company the edit stands for is what the edit hash reads.
+        $company = $module->getTwoUpdateBuyerCompany(self::makeOrder(), $row);
         TinyAssert::same(
             self::TWO_PREFIXED_ID,
-            $payload['buyer']['company']['organization_number'],
-            'the update payload must send the organisation number the order was created with'
+            $company['organization_number'],
+            'the edit must stand for the organisation number the order was created with'
         );
-        TinyAssert::same('Example Trading Ltd', $payload['buyer']['company']['company_name']);
+        TinyAssert::same('Example Trading Ltd', $company['company_name']);
         // The billing address's organisation name comes off the same value, so a
         // stored company name has to reach it too.
         TinyAssert::same('Example Trading Ltd', $payload['billing_address']['organization_name']);
@@ -274,27 +277,27 @@ final class OrderCompanyPersistenceSpec
         $order = self::makeOrder();
 
         // No columns in the row at all - a row written before the upgrade.
-        $legacy = $module->getTwoUpdateOrderData($order, array(
+        $legacy = $module->getTwoUpdateBuyerCompany($order, array(
             'two_order_reference' => 'ref-' . self::ORDER_ID,
             'two_day_on_invoice' => '30',
         ));
         TinyAssert::same(
             'INV-12345678',
-            $legacy['buyer']['company']['organization_number'],
+            $legacy['organization_number'],
             'with nothing stored the resolver must still supply what it can'
         );
-        TinyAssert::same('Invoice Co Ltd', $legacy['buyer']['company']['company_name']);
+        TinyAssert::same('Invoice Co Ltd', $legacy['company_name']);
 
         // Columns present but empty - the same shop after the upgrade ran,
         // before any new order was placed.
-        $blank = $module->getTwoUpdateOrderData($order, array(
+        $blank = $module->getTwoUpdateBuyerCompany($order, array(
             'two_order_reference' => 'ref-' . self::ORDER_ID,
             'two_day_on_invoice' => '30',
             'two_organization_number' => '',
             'two_company_name' => '',
         ));
-        TinyAssert::same('INV-12345678', $blank['buyer']['company']['organization_number']);
-        TinyAssert::same('Invoice Co Ltd', $blank['buyer']['company']['company_name']);
+        TinyAssert::same('INV-12345678', $blank['organization_number']);
+        TinyAssert::same('Invoice Co Ltd', $blank['company_name']);
     }
 
     // -----------------------------------------------------------------
@@ -373,11 +376,11 @@ final class OrderCompanyPersistenceSpec
             'persisting must not transform the prefix'
         );
 
-        $payload = $module->getTwoUpdateOrderData(self::makeOrder(), $stored);
+        $company = $module->getTwoUpdateBuyerCompany(self::makeOrder(), $stored);
         TinyAssert::same(
             self::TWO_PREFIXED_ID,
-            $payload['buyer']['company']['organization_number'],
-            'and the update payload must send it back unchanged'
+            $company['organization_number'],
+            'and the edit must stand for it unchanged'
         );
     }
 

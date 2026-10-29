@@ -1665,18 +1665,18 @@ final class OrderBuilderSpec
         $currency = new Currency(840);
         $address = new Address(603);
 
-        $payloadWithSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
-        TinyAssert::false(isset($payloadWithSubtotals['tax_rate']));
-        TinyAssert::true(isset($payloadWithSubtotals['tax_subtotals']));
-        TinyAssert::true(isset($payloadWithSubtotals['billing_address']));
-        TinyAssert::true(isset($payloadWithSubtotals['shipping_address']));
-        TinyAssert::same('ES', $payloadWithSubtotals['billing_address']['country']);
-        TinyAssert::same('ES', $payloadWithSubtotals['shipping_address']['country']);
-
-        StubStore::$configuration['PS_TWO_ENABLE_TAX_SUBTOTALS'] = 0;
-        $payloadWithoutSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
-        TinyAssert::false(isset($payloadWithoutSubtotals['tax_rate']));
-        TinyAssert::false(isset($payloadWithoutSubtotals['tax_subtotals']));
+        // Two's API does not define order-level tax_subtotals, billing_address or discount_amount on the order intent
+        // request, so none is sent whatever the "Validate tax subtotals" setting says (ABN-621).
+        foreach ([1, 0] as $subtotalsSetting) {
+            StubStore::$configuration['PS_TWO_ENABLE_TAX_SUBTOTALS'] = $subtotalsSetting;
+            $payload = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
+            TinyAssert::false(isset($payload['tax_rate']));
+            foreach (['tax_subtotals', 'billing_address', 'discount_amount'] as $dropped) {
+                TinyAssert::false(array_key_exists($dropped, $payload), "intent body must not carry order-level $dropped (Validate tax subtotals=$subtotalsSetting)");
+            }
+            TinyAssert::true(isset($payload['shipping_address']));
+            TinyAssert::same('ES', $payload['shipping_address']['country']);
+        }
     }
 
     /**
@@ -5949,6 +5949,7 @@ require __DIR__ . '/PaymentTileAboutControlSpec.php';
 require __DIR__ . '/PaymentOptionLogoSpec.php';
 require __DIR__ . '/ReconciliationDriftMessageSpec.php';
 require __DIR__ . '/OrderPostprocessingSpec.php';
+require __DIR__ . '/DroppedRequestKeysSpec.php';
 require __DIR__ . '/ShippingRateControlSpec.php';
 require __DIR__ . '/PostcodeFormatSpec.php';
 require __DIR__ . '/DiscrepancySnapshotSpec.php';
@@ -6042,6 +6043,7 @@ $tests = [
     'CheckoutWithholdReasonSpec::runAll' => [CheckoutWithholdReasonSpec::class, 'runAll'],
     'ReconciliationDriftMessageSpec::runAll' => [ReconciliationDriftMessageSpec::class, 'runAll'],
     'OrderPostprocessingSpec::runAll' => [OrderPostprocessingSpec::class, 'runAll'],
+    'DroppedRequestKeysSpec::runAll' => [DroppedRequestKeysSpec::class, 'runAll'],
     'ShippingRateControlSpec::runAll' => [ShippingRateControlSpec::class, 'runAll'],
     'PostcodeFormatSpec::runAll' => [PostcodeFormatSpec::class, 'runAll'],
     'OrderTendersSpec::runAll' => [OrderTendersSpec::class, 'runAll'],

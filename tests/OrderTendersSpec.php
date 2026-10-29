@@ -293,7 +293,7 @@ final class OrderTendersSpec
                 self::declare($declare);
             }
             foreach (OrderPostprocessingSpec::payloadsForGolden($module, $cart) as $name => $json) {
-                TinyAssert::same(md5($golden[$name]), md5($json), $description . ': ' . $name . ' body hash');
+                TinyAssert::same($golden[$name], $json, $description . ': ' . $name . ' body' . OrderPostprocessingSpec::describeGoldenDiff($golden[$name], $json));
             }
             TinyAssert::false(array_key_exists('prepaid', (array) json_decode((string) $module->getTwoDeclaredChargeRates(), true)), $description . ': no prepaid recorded');
             unset(Hook::$subscribers[TwoOrderTenders::HOOK]);
@@ -309,7 +309,8 @@ final class OrderTendersSpec
             });
             $body = self::updateFor($module, $rates === '' ? null : (string) $rates);
             $body['shipping_details']['expected_delivery_date'] = 'PINNED';
-            TinyAssert::same(md5($golden['update']), md5((string) json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION)), 'legacy edit, ' . $description . ': body hash');
+            $sentJson = (string) json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+            TinyAssert::same($golden['update'], $sentJson, 'legacy edit, ' . $description . ': body' . OrderPostprocessingSpec::describeGoldenDiff($golden['update'], $sentJson));
             unset(Hook::$subscribers[TwoOrderTenders::HOOK]);
         }
     }
