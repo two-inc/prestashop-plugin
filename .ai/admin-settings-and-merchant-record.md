@@ -117,6 +117,14 @@ read standing in for a schedule that has stopped.
   rather than book an order against a term nobody granted.
   `getDefaultPaymentTerm()` is null in that state and the browser seam publishes
   0, so neither PHP nor the checkout JS can name a day count.
+- **A chosen term that is not offered is refused, never defaulted.** The save-term
+  AJAX (`ajaxProcessSavePaymentTerm()`) answers `success:false` and records nothing for
+  a day count the merchant does not offer, and the payment POST refuses before any
+  `/v1/order` when the saved term is no longer offered (the merchant withdrew it since),
+  clearing the saved choice so a retry books what the reloaded page shows.
+  `getUnofferedChosenPaymentTerm()` is the one test for it. Only a buyer who never chose
+  a term gets `getDefaultPaymentTerm()`; `getSelectedPaymentTerm()` stays the display and
+  pricing resolver and is not a substitute for that refusal. Pinned by `OrderTermWireSpec`.
 - **A record past `MERCHANT_RECORD_STALE_AFTER` (26h) says the schedule is not
   running.** A read then refreshes it itself, at most once an hour and on a 2-second
   cap, and serves the record it holds either way. Staleness withholds nothing.
