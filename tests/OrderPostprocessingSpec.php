@@ -33,6 +33,7 @@ final class OrderPostprocessingSpec
 
     public static function runAll(): void
     {
+        self::testNoRequestBodyCarriesAnInvoiceType();
         self::testNoSubscriberPayloadsAreByteIdentical();
         self::testHookEditsAreSentAsReturned();
         self::testSubscriberCodeBugsFailTheRequest();
@@ -457,6 +458,33 @@ final class OrderPostprocessingSpec
             foreach (self::payloadsForGolden($module, $cart) as $name => $json) {
                 TinyAssert::same($golden[$name], $json, $label . ': ' . $name . ' payload must be byte-identical to the pre-hook builder');
             }
+        }
+    }
+
+    /**
+     * Two's API decides the invoice type itself from the merchant account and
+     * ignores a value sent by the client, so no request body names one (ABN-621).
+     * Each row is a request type the module sends that carries an order body.
+     */
+    private static function testNoRequestBodyCarriesAnInvoiceType(): void
+    {
+        $cart = self::seed(true);
+        $module = new TwopaymentTestHarness();
+        self::harnessAsInstance($module);
+        $payloads = self::payloadsForGolden($module, $cart);
+        // [request type, description]
+        $cases = [
+            ['intent', 'the order intent'],
+            ['strict_intent', 'the strict order intent'],
+            ['create', 'the order create'],
+            ['update', 'the order edit'],
+        ];
+        foreach ($cases as [$name, $description]) {
+            TinyAssert::true(isset($payloads[$name]), $description . ' must be one of the payloads under test');
+            TinyAssert::false(
+                strpos($payloads[$name], 'invoice_type') !== false,
+                $description . ' body must not carry invoice_type anywhere'
+            );
         }
     }
 
