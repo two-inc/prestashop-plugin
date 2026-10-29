@@ -1801,6 +1801,7 @@ final class SurchargeSpec
             self::reset();
             PrestaShopLogger::reset();
             $module = new class extends TwopaymentTestHarness {
+                use StubbedTwoUpdateBuyerCompany;
                 public array $requests = [];
                 public array $warnings = [];
 
@@ -1884,6 +1885,7 @@ final class SurchargeSpec
             self::reset();
             StubStore::$twoPaymentRows[8001] = ['id_order' => 8001, 'two_order_id' => 'two-order-uuid', 'two_not_sent_at' => $before];
             $module = new class extends TwopaymentTestHarness {
+                use StubbedTwoUpdateBuyerCompany;
                 /** @var int|string */
                 public $outcome = 200;
                 public array $notes = [];
