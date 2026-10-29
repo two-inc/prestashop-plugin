@@ -32,6 +32,7 @@ final class IdempotencyKeySpec
     private static function recordingModule(): Twopayment
     {
         return new class extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             /** @var array<int, array{method: string, endpoint: string, headers: array}> */
             public $sent = [];
 

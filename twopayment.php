@@ -5294,7 +5294,7 @@ class Twopayment extends PaymentModule
             $twoOrder = $lookup;
         }
         $paymentdata = $this->getTwoUpdateOrderData($order, $orderpaymentdata, $trigger, $twoOrder);
-        $hash = md5(json_encode($this->getTwoUpdateHashBasis($paymentdata)));
+        $hash = md5(json_encode($this->getTwoUpdateHashBasis($paymentdata, $this->getTwoUpdateBuyerCompany($order, $orderpaymentdata))));
         if (isset($orderpaymentdata['two_update_hash']) && $orderpaymentdata['two_update_hash'] === $hash) {
             return null;
         }
@@ -5395,9 +5395,11 @@ class Twopayment extends PaymentModule
      * Catalogue copy, images and translated labels are left out, as they change without the order changing.
      *
      * @param array $paymentdata getTwoUpdateOrderData()
+     * @param array $buyerCompany getTwoUpdateBuyerCompany(): the buyer company is read from the order's own data, since
+     *   the body carries no buyer block (ABN-621)
      * @return array
      */
-    private function getTwoUpdateHashBasis($paymentdata)
+    private function getTwoUpdateHashBasis($paymentdata, $buyerCompany)
     {
         $lines = array();
         foreach ($paymentdata['line_items'] as $line) {
@@ -5409,7 +5411,13 @@ class Twopayment extends PaymentModule
             'gross_amount', 'net_amount', 'tax_amount', 'discount_amount', 'currency', 'merchant_order_id', 'merchant_reference',
             'billing_address', 'shipping_address',
         )));
-        $basis['company'] = $paymentdata['buyer']['company'];
+        // Same keys and order the body's buyer block had, so the hash of an unchanged order is unchanged by ABN-621.
+        $basis['company'] = array(
+            'company_name' => $buyerCompany['company_name'],
+            'country_prefix' => $buyerCompany['country_iso'],
+            'organization_number' => $buyerCompany['organization_number'],
+            'website' => '',
+        );
         $basis['carrier_name'] = $paymentdata['shipping_details']['carrier_name'];
         $basis['tracking_number'] = $paymentdata['shipping_details']['tracking_number'];
         $basis['line_items'] = $lines;
@@ -10376,11 +10384,9 @@ class Twopayment extends PaymentModule
         // cart's surcharge line and enforce cart-vs-payload fee parity.
         $pricingData = $this->buildTwoOrderPricingData($cart, $contextLabel, (bool)$strictReconciliation, null, (bool)$strictReconciliation);
         $line_items = $pricingData['line_items'];
-        $tax_subtotals = $pricingData['tax_subtotals'];
         $final_net = $pricingData['net_amount'];
         $final_tax = $pricingData['tax_amount'];
         $final_gross = $pricingData['gross_amount'];
-        $final_discount = $pricingData['discount_amount'];
         
         // Resolve invoice/shipping addresses for parity with create/update payloads.
         $invoice_address = Validate::isLoadedObject($address) ? $address : new Address((int)$cart->id_address_invoice);
@@ -10413,7 +10419,6 @@ class Twopayment extends PaymentModule
             'gross_amount' => (string)($this->getTwoRoundAmount($final_gross)),
             'net_amount' => (string)($this->getTwoRoundAmount($final_net)),
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
-            'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)),
             'buyer' => [
                 'company' => [
                     'company_name' => $buyerCompany['company_name'],
@@ -10430,14 +10435,12 @@ class Twopayment extends PaymentModule
             ],
             'currency' => $currency->iso_code,
             'merchant_short_name' => $this->merchant_short_name,
-            'billing_address' => $this->buildTwoAddress($invoice_address, $buyerCompany['company_name'], $companyData['country_iso']),
+            // No order-level discount_amount, billing_address or tax_subtotals: Two's API does not define them on the
+            // order intent request and ignores them (ABN-621). The decision cache key reads their sources from the
+            // cart, not from this body (calculateTwoOrderIntentSnapshotHash).
             'shipping_address' => $this->buildTwoAddress($delivery_address, $shippingOrgName, $shippingData['country_iso']),
             'line_items' => $line_items,
         ];
-
-        if ($this->shouldIncludeTaxSubtotals()) {
-            $request_data['tax_subtotals'] = $tax_subtotals;
-        }
 
         return $this->postprocessOrderRequest(
             TwoOrderPostprocessing::REQUEST_ORDER_INTENT,
@@ -11327,6 +11330,72 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The companies an order edit resolves from the order's own data: the invoice
+     * and delivery address companies, and the buyer company the order is edited
+     * under. One resolution for the body (billing_address) and for the edit
+     * hash, so neither can drift from the other.
+     *
+     * @param array $orderpaymentdata
+     * @param Address $invoice_address
+     * @param Address $delivery_address
+     * @return array ['invoice' => array, 'delivery' => array, 'buyer' => array] each as getCompanyDataWithFallbacks() returns
+     * @throws Exception
+     */
+    protected function resolveTwoUpdateCompanies($orderpaymentdata, $invoice_address, $delivery_address)
+    {
+        // Get company data with fallback chain (reused helper method)
+        $buyerData = $this->getCompanyDataWithFallbacks($invoice_address);
+        $shippingData = $this->getCompanyDataWithFallbacks($delivery_address);
+
+        // Same reasoning as $storedTerm above, applied to the buyer company: this
+        // path has no buyer request to resolve from, so prefer what the created
+        // order persisted (TWO-40). Live address resolution stays as the fallback
+        // for orders placed before these columns existed - and ONLY for those, because in
+        // admin/webhook context it resolves to an empty organisation number
+        // whenever the identifier is `TWO:`-prefixed or the buyer's country
+        // carries no identification number at all, which is precisely the empty
+        // value that was being PUT over a good one.
+        $storedOrgNumber = isset($orderpaymentdata['two_organization_number'])
+            ? trim((string) $orderpaymentdata['two_organization_number'])
+            : '';
+        $storedCompanyName = isset($orderpaymentdata['two_company_name'])
+            ? trim((string) $orderpaymentdata['two_company_name'])
+            : '';
+        // A pair: completing a half-stored company from an address would name a
+        // buyer the order was never placed with. No country is stored beside it,
+        // so the prefix alone still follows the invoice address.
+        $hasStoredCompany = $storedOrgNumber !== '' || $storedCompanyName !== '';
+        $buyerCompany = $hasStoredCompany
+            ? array(
+                'company_name' => $storedCompanyName,
+                'organization_number' => $storedOrgNumber,
+                'country_iso' => $buyerData['country_iso'],
+            )
+            : $this->resolveBuyerCompanyData($buyerData, $shippingData);
+
+        return array('invoice' => $buyerData, 'delivery' => $shippingData, 'buyer' => $buyerCompany);
+    }
+
+    /**
+     * The buyer company an order edit stands for, for the edit hash.
+     *
+     * @param Order $order
+     * @param array $orderpaymentdata
+     * @return array ['company_name' => string, 'organization_number' => string, 'country_iso' => string]
+     * @throws Exception
+     */
+    public function getTwoUpdateBuyerCompany($order, $orderpaymentdata)
+    {
+        $companies = $this->resolveTwoUpdateCompanies(
+            $orderpaymentdata,
+            new Address($order->id_address_invoice),
+            new Address($order->id_address_delivery)
+        );
+
+        return $companies['buyer'];
+    }
+
+    /**
      * @param Order $order
      * @param array $orderpaymentdata
      * @param string $trigger the order postprocessing hook's context trigger
@@ -11339,7 +11408,6 @@ class Twopayment extends PaymentModule
         // The cart supplies only the language, the tax address and the buyer's order note: every amount is the order's (TWO-26085).
         $cart = new Cart($order->id_cart);
         $currency = new Currency($order->id_currency);
-        $customer = new Customer($order->id_customer);
         $invoice_address = new Address($order->id_address_invoice);
         $delivery_address = new Address($order->id_address_delivery);
         $carrier_name = '';
@@ -11382,38 +11450,11 @@ class Twopayment extends PaymentModule
         $final_gross = $pricingData['gross_amount'];
         $final_discount = $pricingData['discount_amount'];
 
-        // Get company data with fallback chain (reused helper method)
-        $buyerData = $this->getCompanyDataWithFallbacks($invoice_address);
-        $shippingData = $this->getCompanyDataWithFallbacks($delivery_address);
-
-        // Same reasoning as $storedTerm above, applied to the buyer company: this
-        // path has no buyer request to resolve from, so prefer what the created
-        // order persisted (TWO-40). Live address resolution stays as the fallback
-        // for orders placed before these columns existed - and ONLY for those, because in
-        // admin/webhook context it resolves to an empty organisation number
-        // whenever the identifier is `TWO:`-prefixed or the buyer's country
-        // carries no identification number at all, which is precisely the empty
-        // value that was being PUT over a good one.
-        $storedOrgNumber = isset($orderpaymentdata['two_organization_number'])
-            ? trim((string) $orderpaymentdata['two_organization_number'])
-            : '';
-        $storedCompanyName = isset($orderpaymentdata['two_company_name'])
-            ? trim((string) $orderpaymentdata['two_company_name'])
-            : '';
-        // A pair: completing a half-stored company from an address would name a
-        // buyer the order was never placed with. No country is stored beside it,
-        // so the prefix alone still follows the invoice address.
-        $hasStoredCompany = $storedOrgNumber !== '' || $storedCompanyName !== '';
-        $buyerCompany = $hasStoredCompany
-            ? array(
-                'company_name' => $storedCompanyName,
-                'organization_number' => $storedOrgNumber,
-                'country_iso' => $buyerData['country_iso'],
-            )
-            : $this->resolveBuyerCompanyData($buyerData, $shippingData);
-        $buyerOrgNumber = $buyerCompany['organization_number'];
-        $buyerCompanyName = $buyerCompany['company_name'];
-        $buyerCountryIso = $buyerCompany['country_iso'];
+        // The body carries no buyer block (ABN-621), but billing_address and the edit hash still follow the buyer company.
+        $companies = $this->resolveTwoUpdateCompanies($orderpaymentdata, $invoice_address, $delivery_address);
+        $buyerData = $companies['invoice'];
+        $shippingData = $companies['delivery'];
+        $buyerCompanyName = $companies['buyer']['company_name'];
         $shippingOrgName = !empty($shippingData['company_name']) ? $shippingData['company_name'] : $buyerCompanyName;
 
         $request_data = [
@@ -11423,20 +11464,9 @@ class Twopayment extends PaymentModule
             'discount_amount' => (string)($this->getTwoRoundAmount($final_discount)), // Two API expects positive discount amount at order level
             'discount_rate' => '0',
             'tax_amount' => (string)($this->getTwoRoundAmount($final_tax)),
-            'buyer' => [
-                'company' => [
-                    'company_name' => $buyerCompanyName,
-                    'country_prefix' => $buyerCountryIso,
-                    'organization_number' => $buyerOrgNumber,
-                    'website' => '',
-                ],
-                'representative' => [
-                    'email' => $customer->email,
-                    'first_name' => $customer->firstname,
-                    'last_name' => $customer->lastname,
-                    'phone_number' => $this->getPhoneWithFallback($invoice_address),
-                ],
-            ],
+            // No order-level buyer: Two's API does not define it on an order edit and ignores it (ABN-621), so the
+            // buyer's contact details are no longer sent on every edit. The edit hash reads the buyer company from
+            // getTwoUpdateBuyerCompany(), not from this body.
             // Unchanged behaviour, now stated outright instead of hidden behind
             // a property check that could never be true. This is the order
             // UPDATE payload: it is built from admin order edits, provider
@@ -23328,16 +23358,22 @@ class Twopayment extends PaymentModule
             // Country lives on the address blocks too, and a country switch MUST
             // bust this hash (TWO-24867 tracks country-switch staleness as a bug
             // class here), so both are folded in rather than trusted separately.
-            'billing_country' => isset($paymentdata['billing_address']['country'])
-                ? strtoupper(trim((string)$paymentdata['billing_address']['country']))
-                : '',
+            // The billing country is the cart's invoice address country: the intent
+            // body carries no billing_address (ABN-621).
+            'billing_country' => strtoupper(trim($this->resolveTwoBuyerCountryIso($cart))),
             'shipping_country' => isset($paymentdata['shipping_address']['country'])
                 ? strtoupper(trim((string)$paymentdata['shipping_address']['country']))
                 : '',
         );
 
+        // The cart snapshot also hashes the order-level discount, which the intent body no longer carries
+        // (ABN-621): it is taken from the cart, as the builder did, so a change to it still changes the key. The
+        // order-level tax_subtotals it hashes were a sum of the lines, which it hashes as well.
+        $decisionInputs = $paymentdata;
+        $decisionInputs['discount_amount'] = abs((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS));
+
         $seed = 'order_intent|'
-            . $this->calculateTwoCheckoutSnapshotHash($cart, $paymentdata) . '|'
+            . $this->calculateTwoCheckoutSnapshotHash($cart, $decisionInputs) . '|'
             . json_encode($identity, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         return hash('sha256', $seed);

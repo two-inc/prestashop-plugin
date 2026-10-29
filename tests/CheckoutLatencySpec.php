@@ -37,6 +37,7 @@ final class CheckoutLatencySpec
         self::testCachedDecisionPreservesDeclineAsWellAsApproval();
         self::testCartChangeBustsTheCachedDecision();
         self::testCountrySwitchBustsTheCachedDecision();
+        self::testInputsTheBodyNoLongerCarriesStillBustTheCachedDecision();
         self::testCompanyChangeBustsTheCachedDecisionOnTheSameCart();
         self::testAddressSwitchBustsTheCachedDecision();
         self::testCachedDecisionExpiresAfterTtl();
@@ -62,7 +63,9 @@ final class CheckoutLatencySpec
 
     /**
      * Minimal intent payload. Only the fields the snapshot hash reads matter;
-     * $overrides mutates one decision input at a time.
+     * $overrides mutates one decision input at a time. Like the real order intent body
+     * it has no order-level discount_amount, billing_address or tax_subtotals (ABN-621):
+     * the billing country and the discount are read from the cart.
      */
     private static function intentPayload(array $overrides = []): array
     {
@@ -70,7 +73,6 @@ final class CheckoutLatencySpec
             'gross_amount' => '121.00',
             'net_amount' => '100.00',
             'tax_amount' => '21.00',
-            'discount_amount' => '0.00',
             'currency' => 'EUR',
             'buyer' => [
                 'company' => [
@@ -80,7 +82,6 @@ final class CheckoutLatencySpec
                     'website' => '',
                 ],
             ],
-            'billing_address' => ['country' => 'ES', 'city' => 'Madrid'],
             'shipping_address' => ['country' => 'ES', 'city' => 'Madrid'],
             'line_items' => [[
                 'type' => 'PHYSICAL',
@@ -112,6 +113,10 @@ final class CheckoutLatencySpec
 
     private static function cart(int $idAddress = 1901): Cart
     {
+        // The cart's invoice address, in Spain unless a spec moves it.
+        StubStore::$countries[34] = 'ES';
+        StubStore::$countries[44] = 'GB';
+        StubStore::$addresses[$idAddress] = ['id_country' => 34, 'loaded' => true];
         $cart = new Cart(901);
         $cart->id_customer = 901;
         $cart->id_currency = 978;
@@ -228,16 +233,50 @@ final class CheckoutLatencySpec
 
         TinyAssert::true(self::checkoutUpdate($module, $cart, self::intentPayload()));
 
+        // The buyer's billing address moves to GB along with the company and the delivery address.
         $switched = self::intentPayload([
             'buyer.company.country_prefix' => 'GB',
-            'billing_address' => ['country' => 'GB', 'city' => 'London'],
             'shipping_address' => ['country' => 'GB', 'city' => 'London'],
         ]);
+        StubStore::$addresses[1901]['id_country'] = 44;
 
         TinyAssert::true(
             self::checkoutUpdate($module, $cart, $switched),
             'A country switch must re-run the intent check'
         );
+    }
+
+    /**
+     * ABN-621: the order intent body no longer carries billing_address, so the billing country is read from the
+     * cart's invoice address. Each row moves ONE input the body cannot show while the body stays byte-identical, and
+     * must still change the decision key: a body that cannot see the input cannot be what the key reads it from.
+     */
+    private static function testInputsTheBodyNoLongerCarriesStillBustTheCachedDecision(): void
+    {
+        // [mutation of the stored cart or address, description]
+        $cases = [
+            [static function (): void {
+                StubStore::$addresses[1901]['id_country'] = 44;
+            }, 'the billing country alone (the delivery address and the company unchanged)'],
+            [static function (): void {
+                StubStore::$cartTotals[901] = [true => [Cart::ONLY_DISCOUNTS => -15.0]];
+            }, 'the cart discount alone (the lines and totals unchanged)'],
+        ];
+        foreach ($cases as [$mutate, $description]) {
+            self::reset();
+            $module = new TwopaymentTestHarness();
+            $cart = self::cart();
+            $payload = self::intentPayload();
+
+            $before = $module->calculateTwoOrderIntentSnapshotHash($cart, $payload);
+            TinyAssert::true(self::checkoutUpdate($module, $cart, $payload), $description . ': first check runs');
+            TinyAssert::false(self::checkoutUpdate($module, $cart, $payload), $description . ': unchanged, served from the cache');
+
+            $mutate();
+
+            TinyAssert::notSame($before, $module->calculateTwoOrderIntentSnapshotHash($cart, $payload), $description . ': the decision key must change');
+            TinyAssert::true(self::checkoutUpdate($module, $cart, $payload), $description . ': must re-run the intent check');
+        }
     }
 
     /**
