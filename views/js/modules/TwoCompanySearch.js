@@ -99,16 +99,6 @@ class TwoCompanySearch {
     // a screen reader treats each block as a new message (TWO-26775).
     static FALLBACK_ANNOUNCE_DELAY_MS = 100;
 
-    // Bell icon fronting the blocked-popup retry link (TWO-26775). Decorative:
-    // the button beside it carries the whole message.
-    static BELL_ICON = '<svg class="two-sole-trader-fallback__icon" aria-hidden="true" focusable="false"'
-        + ' xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"'
-        + ' stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857'
-        + ' 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967'
-        + ' 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714'
-        + ' 0m5.714 0a3 3 0 11-5.714 0M3.124 7.5A8.969 8.969 0 015.292 3m13.416 0a8.969 8.969 0'
-        + ' 012.168 4.5"/></svg>';
-
     // THERE IS NO "hide the identification field" MARKER HERE, AND MUST NOT BE
     // ONE (TWO-40): an internal (`TWO:`-prefixed) identifier is never written
     // into the visible `dni` field, which core also renders into address blocks,
@@ -1217,7 +1207,9 @@ class TwoCompanySearch {
                     && this.companyField.get(0) === event.target) {
                     return;
                 }
-                // The popup blurred the launching chip; the return watch owns this panel until it goes.
+                // The popup blurred the launching chip; the return watch owns this
+                // panel until it goes. A press that moves focus nowhere is settled
+                // there too, a tick later (TWO-26775).
                 if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
                     return;
                 }
@@ -1552,12 +1544,12 @@ class TwoCompanySearch {
         // currently adopted: a sole trader IS what is selected in that state.
         // Likewise while a blocked signup's fallback link is up (TWO-26775):
         // the buyer chose sole trader and only the popup failed them.
-        this._chipMode = (this.isSoleTraderAdopted() || this.hasSoleTraderFallbackLink())
-            ? 'sole_trader'
-            : 'registered';
-        this.renderChipSelection();
+        this.recomputeChipMode();
         this.syncModeChipVisibility();
         this.focusPanelEntry();
+        if (this.hasSoleTraderFallbackLink()) {
+            this.drawSoleTraderBlockedPanel();
+        }
         // Render the current state immediately - for an empty query that is the
         // "type N more characters" hint, not an empty or absent panel.
         this.openSearchForCurrentTerm();
@@ -1601,6 +1593,8 @@ class TwoCompanySearch {
         // settle-listener behind (TWO-40) - Escape, for instance, goes straight
         // to closeDropdown() otherwise.
         this.endSoleTraderLoading();
+        // The blocked-popup panel lives on the popover and goes with it (TWO-26775).
+        this.removeSoleTraderFallbackLink();
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
         this._dropdownOpen = false;
@@ -1929,6 +1923,17 @@ class TwoCompanySearch {
     }
 
     /**
+     * The chip the stored identity says is selected: Sole trader while one is
+     * adopted or a blocked signup is still offered, else Registered.
+     */
+    recomputeChipMode() {
+        this._chipMode = (this.isSoleTraderAdopted() || this.hasSoleTraderFallbackLink())
+            ? 'sole_trader'
+            : 'registered';
+        this.renderChipSelection();
+    }
+
+    /**
      * Reflect `this._chipMode` onto the `--selected` class of all three mode
      * chips (TWO-40). Purely cosmetic - the actual mode-switching behaviour
      * lives in each chip's own click handler and in
@@ -2107,7 +2112,7 @@ class TwoCompanySearch {
         }
         $(document).off('.twoSoleTraderFlight' + this._instanceNs)
             .on('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs, () => {
-                if (this._dropdownOpen && !this._panelKeptPastPopup) {
+                if (this._dropdownOpen && !this._panelKeptPastPopup && !this.hasSoleTraderFallbackLink()) {
                     // closeDropdown() itself calls endSoleTraderLoading() as its
                     // own first line.
                     this.closeDropdown(true);
@@ -2144,6 +2149,10 @@ class TwoCompanySearch {
                     && this._popupSeenThisFlight
                     && (detail.popupClosed || !this.isSoleTraderPopupOpen())) {
                     this._panelKeptPastPopup = true;
+                    // The popup went without a signup, so the chips show what is
+                    // stored again (TWO-26775): focus Tabbed onto another chip
+                    // left the Sole trader one looking selected.
+                    this.recomputeChipMode();
                 }
             })
             // This capture's own launch, held in memory so its re-render restore resumes the flight (TWO-25658).
@@ -4702,6 +4711,9 @@ class TwoCompanySearch {
             return;
         }
         this._manualEntry = true;
+        // Every route in, not only the chip, so no other chip stays marked selected (TWO-26775).
+        this._chipMode = 'manual';
+        this.renderChipSelection();
         // Latched for the flight: switching back to Registered must not let a late lookup adopt over the hand-typed name.
         this._manualEntryMemory.refusedSoleTrader = true;
         // Manual entry leaves sole-trader mode, however it was reached (TWO-26775).
@@ -5017,22 +5029,21 @@ class TwoCompanySearch {
     }
 
     /**
-     * The retry a blocked signup popup leaves under the company field
-     * (TWO-26775): a bell icon and a link-styled button whose click repeats
-     * the launch that was blocked, from the buyer's own gesture. A
-     * replacement keeps its "pick a different one" request. Shown in
-     * sole-trader mode only; any chip that leaves that mode removes it, and so
-     * does a popup that finally opens or an identity that is adopted.
+     * What a blocked signup popup leaves (TWO-26775): a panel drawn over the
+     * open popover, styled as part of it, holding one centred button whose
+     * click repeats the launch that was blocked. The prefetch that makes the
+     * autofill instant is also what takes the launch out of the buyer's own
+     * click, so some blockers refuse it; the button is a fresh gesture of
+     * theirs. A replacement keeps its "pick a different one" request.
+     *
+     * The popover is opened under it if it has closed meanwhile. Focus moves to
+     * the button, and the block is announced through the status node. It goes
+     * with any chip or mode change, the popover closing, and a launch that
+     * opens; one blocked again leaves it up and is announced again.
      *
      * Remembered in the capture's reopen memory with its country, so a
-     * re-render of the address form brings it back and a country change does
-     * not.
-     *
-     * A relaunch that is blocked again leaves the link in place, so the
-     * button the buyer just pressed keeps focus; every block is announced
-     * through announceSoleTraderFallback() instead. A real `<button
-     * type="button">` for the same reasons as
-     * renderSelectDifferentSoleTraderLink().
+     * re-render of the address form brings it back with the popover and a
+     * country change does not.
      *
      * @param {string} method the TwoSoleTrader launch its click repeats
      */
@@ -5046,44 +5057,53 @@ class TwoCompanySearch {
         }
         this._soleTraderFallbackMethod = method;
         this._reopenMemory.soleTraderFallback = { method: method, country: this.getCurrentCountry() };
-        if (this.hasSoleTraderFallbackLink() && document.contains(this._soleTraderFallbackLink.get(0))) {
-            this.announceSoleTraderFallback();
-            return;
-        }
-        this.removeSoleTraderFallbackLink(false);
-        const note = $('<div class="two-sole-trader-fallback"></div>')
-            .append(TwoCompanySearch.BELL_ICON)
-            .append($('<button type="button"></button>')
-                .addClass('two-sole-trader-fallback__link')
-                .text(this.soleTraderFallbackText()));
-        note.on('click.twoSoleTraderFallback', '.two-sole-trader-fallback__link', (event) => {
-            event.preventDefault();
-            // Same accordion-toggle reason as renderBackToSearchLink().
-            event.stopPropagation();
-            this.launchSoleTraderSignup(this._soleTraderFallbackMethod);
-        });
-
-        // Same slot as the other links under the field.
-        const wrapper = this.companyField.parent();
-        if (wrapper.length && wrapper.hasClass('two-company-field-wrap')) {
-            wrapper.append(note);
+        if (!this._dropdownOpen) {
+            // openDropdown() draws the panel itself, from the memory just set.
+            this.openDropdown(false);
         } else {
-            this.companyField.after(note);
+            this.drawSoleTraderBlockedPanel();
         }
-        this._soleTraderFallbackLink = note;
         this.announceSoleTraderFallback();
     }
 
-    /** @returns {string} caption of the blocked-popup retry link */
+    /**
+     * Put the blocked-popup panel over the open popover, if it is not up
+     * already, and focus its button.
+     */
+    drawSoleTraderBlockedPanel() {
+        if (!this._dropdownOpen || !this._dropdown || !this._dropdown.length) {
+            return;
+        }
+        let panel = this._soleTraderFallbackLink;
+        if (!panel || !panel.length || !this._dropdown.get(0).contains(panel.get(0))) {
+            const caption = this.soleTraderFallbackText();
+            panel = $('<div class="two-sole-trader-blocked" role="group"></div>')
+                .attr('aria-label', caption)
+                .append($('<button type="button"></button>')
+                    .addClass('two-sole-trader-blocked__button')
+                    .text(caption));
+            panel.on('click.twoSoleTraderFallback', '.two-sole-trader-blocked__button', (event) => {
+                event.preventDefault();
+                // Same accordion-toggle reason as renderBackToSearchLink().
+                event.stopPropagation();
+                this.launchSoleTraderSignup(this._soleTraderFallbackMethod);
+            });
+            this._dropdown.append(panel);
+            this._soleTraderFallbackLink = panel;
+        }
+        this.focusQuietly(panel.find('.two-sole-trader-blocked__button'));
+    }
+
+    /** @returns {string} caption of the blocked-popup button */
     soleTraderFallbackText() {
-        return this.text('company_search_sole_trader_fallback', 'Click here to login or sign up as a sole trader.');
+        return this.text('company_search_sole_trader_blocked', 'Sign up or log in as a sole trader');
     }
 
     /**
      * The empty `role="status"` node a block is announced through, put in
      * place with the capture: a live region only speaks when content changes
      * inside a region already on the page, never for one inserted with its
-     * text already in it. Visually hidden, since the link says the same.
+     * text already in it. Visually hidden, since the button says the same.
      */
     ensureSoleTraderFallbackStatus() {
         if (this._soleTraderFallbackStatus && document.contains(this._soleTraderFallbackStatus.get(0))) {
@@ -5120,9 +5140,10 @@ class TwoCompanySearch {
     }
 
     /**
-     * Bring the retry link back on a rebuilt capture, unless the country
-     * changed since the launch it retries was blocked. Manual entry needs no
-     * check here: entering it forgets the link.
+     * Keep the blocked-popup state on a rebuilt capture, unless the country
+     * changed since the launch it retries was blocked; the panel itself comes
+     * back with the popover. Manual entry needs no check here: entering it
+     * forgets the state.
      */
     restoreSoleTraderFallbackLink() {
         const kept = this._reopenMemory.soleTraderFallback;
@@ -5134,15 +5155,14 @@ class TwoCompanySearch {
             return;
         }
         this._chipMode = 'sole_trader';
-        this.renderSoleTraderFallbackLink(kept.method);
+        this._soleTraderFallbackMethod = kept.method;
     }
 
     /**
-     * Remove the blocked-popup retry link and silence its status node. Same
-     * instance-keyed sweep as the others.
+     * Remove the blocked-popup panel and silence its status node.
      *
      * @param {boolean} [forget=true] false only when the capture is being torn
-     *   down for a rebuild, which brings the link back
+     *   down for a rebuild, which brings the panel back
      */
     removeSoleTraderFallbackLink(forget = true) {
         if (forget) {
@@ -5157,12 +5177,11 @@ class TwoCompanySearch {
             this._soleTraderFallbackLink.remove();
             this._soleTraderFallbackLink = null;
         }
-        this.ownLinks('two-sole-trader-fallback').off('.twoSoleTraderFallback').remove();
     }
 
-    /** @returns {boolean} whether the blocked-popup retry link is up */
+    /** @returns {boolean} whether a blocked signup is still being offered */
     hasSoleTraderFallbackLink() {
-        return !!(this._soleTraderFallbackLink && this._soleTraderFallbackLink.length);
+        return !!this._reopenMemory.soleTraderFallback;
     }
 
     /**

@@ -7807,7 +7807,7 @@ class Twopayment extends PaymentModule
             // Retry link under the company field when the browser blocks the
             // sole-trader signup popup (TWO-26775). Relaunches the popup from
             // the buyer's own click.
-            'company_search_sole_trader_fallback' => $this->l('Click here to login or sign up as a sole trader.'),
+            'company_search_sole_trader_blocked' => $this->l('Sign up or log in as a sole trader'),
         );
 
         // Resolve the record before the reads in getAvailablePaymentTerms /
