@@ -134,7 +134,7 @@ async function blockedLaunch() {
     openPanel();
     panelParts().soleTrader.trigger('click');
     await settle();
-    jest.advanceTimersByTime(TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
+    jest.runOnlyPendingTimers();
 }
 
 beforeEach(() => {
@@ -265,13 +265,10 @@ describe.each([
         expect(shown(fallbackLink())).toBe(true);
         expect(fallbackLink().text()).toBe(FALLBACK_TEXT);
         expect(fallbackLink().attr('type')).toBe('button');
-        // Over the open popover, named, with focus on its button.
+        // Over the open popover, with focus on its button.
         const overlay = fallbackLink().closest('.two-sole-trader-blocked');
         expect(shown(panelParts().panel)).toBe(true);
         expect(panelParts().panel.get(0).contains(overlay.get(0))).toBe(true);
-        // Named by its button, so the caption is not said a third time.
-        expect(overlay.attr('aria-label')).toBeUndefined();
-        expect(overlay.attr('aria-labelledby')).toBe(fallbackLink().attr('id'));
         expect(document.activeElement).toBe(fallbackLink().get(0));
         // Everything else in the popover is out of reach under it.
         panelParts().panel.children().not(overlay).each((_i, child) => {
@@ -279,8 +276,6 @@ describe.each([
         });
         // The old link under the field is gone for good.
         expect($('.two-sole-trader-fallback').length).toBe(0);
-        expect(fallbackStatus().attr('role')).toBe('status');
-        expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
 
         await act();
         await settle();
@@ -327,8 +322,6 @@ test('a launch refused after the buyer closed the popover leaves it closed and t
     expect(shown(panelParts().panel)).toBe(false);
     expect(fallbackLink().length).toBe(0);
     expect(document.activeElement).toBe(typed);
-    jest.advanceTimersByTime(TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
-    expect(fallbackStatus().text()).toBe('');
     // Nor does it come back on the next open.
     openPanel();
     expect(fallbackLink().length).toBe(0);
@@ -356,24 +349,25 @@ test('a refused "select a different sole trader" retries as one', async () => {
     expect(shown(fallbackLink())).toBe(false);
 });
 
-test('every block is announced, a repeat one included, without moving the button', async () => {
-    // In place, and silent, before anything is blocked.
-    expect(fallbackStatus().length).toBe(1);
-    expect(fallbackStatus().text()).toBe('');
-
+test('the caption is said once, by the focused button, a repeat block included', async () => {
     await blockedLaunch();
-    expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
     const button = fallbackLink().get(0);
+    const cover = fallbackLink().closest('.two-sole-trader-blocked');
+    // A plain cover: no role and no name of its own to say the caption again.
+    [['role', 'cover role'], ['aria-label', 'cover label'], ['aria-labelledby', 'cover labelled by']]
+        .forEach(([attr, description]) => {
+            expect([description, cover.attr(attr)]).toEqual([description, undefined]);
+        });
+    expect([document.activeElement === button, button.textContent]).toEqual([true, FALLBACK_TEXT]);
+    // The status region is in place and stays empty.
+    expect(fallbackStatus().attr('role')).toBe('status');
+    expect(fallbackStatus().text()).toBe('');
 
     fallbackLink().trigger('click');
-    // Emptied first, so the same words are a fresh message.
+    await settle();
+    jest.runOnlyPendingTimers();
     expect(fallbackStatus().text()).toBe('');
-    jest.advanceTimersByTime(TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
-    expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
     expect(fallbackLink().get(0)).toBe(button);
-
-    panelParts().registered.trigger('click');
-    expect(fallbackStatus().text()).toBe('');
 });
 
 test('a block of the payment-step prompt leaves no retry under the company field', async () => {

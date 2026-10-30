@@ -95,10 +95,6 @@ class TwoCompanySearch {
     // against blanking an answer the buyer gave us.
     static AUTOFILL_MARKER_ATTR = 'data-two-autofilled-value';
 
-    // Gap between emptying the blocked-popup status and setting it again, so
-    // a screen reader treats each block as a new message (TWO-26775).
-    static FALLBACK_ANNOUNCE_DELAY_MS = 100;
-
     // THERE IS NO "hide the identification field" MARKER HERE, AND MUST NOT BE
     // ONE (TWO-40): an internal (`TWO:`-prefixed) identifier is never written
     // into the visible `dni` field, which core also renders into address blocks,
@@ -278,9 +274,8 @@ class TwoCompanySearch {
         this._soleTraderFallbackLink = null;
         // The launch its click repeats; see renderSoleTraderFallbackLink().
         this._soleTraderFallbackMethod = null;
-        // Where a block is announced; see ensureSoleTraderFallbackStatus().
+        // See ensureSoleTraderFallbackStatus().
         this._soleTraderFallbackStatus = null;
-        this._soleTraderFallbackAnnounceTimer = null;
 
         // The anchored dropdown panel (TWO-25326): a real popup control
         // anchored to the field, carrying its OWN query input, with the
@@ -5039,10 +5034,10 @@ class TwoCompanySearch {
      * Only over a popover that is still open: one the buyer has closed
      * meanwhile stays closed, and their focus stays where they put it. The
      * rest of the popover is inert under it, so Tab cannot reach a control it
-     * covers. Focus moves to the button, and the block is announced through
-     * the status node. It goes with any chip or mode change, the popover
-     * closing, and a launch that opens; one blocked again leaves it up and is
-     * announced again.
+     * covers. Focus moves to the button, whose caption is the one thing said:
+     * the panel has no role or name of its own and the status node stays
+     * empty. It goes with any chip or mode change, the popover closing, and a
+     * launch that opens; one blocked again leaves it up.
      *
      * Remembered in the capture's reopen memory with its country, so a
      * re-render of the address form brings it back with the popover and a
@@ -5065,7 +5060,6 @@ class TwoCompanySearch {
         this._soleTraderFallbackMethod = method;
         this._reopenMemory.soleTraderFallback = { method: method, country: this.getCurrentCountry() };
         this.drawSoleTraderBlockedPanel();
-        this.announceSoleTraderFallback();
     }
 
     /**
@@ -5078,14 +5072,10 @@ class TwoCompanySearch {
         }
         let panel = this._soleTraderFallbackLink;
         if (!panel || !panel.length || !this._dropdown.get(0).contains(panel.get(0))) {
-            // Named by its one button rather than a label of its own: the
-            // caption is said by the focus move and the status node, and a
-            // third time is noise.
-            const buttonId = 'two-sole-trader-blocked-' + this._instanceNs;
-            panel = $('<div class="two-sole-trader-blocked" role="group"></div>')
-                .attr('aria-labelledby', buttonId)
+            // A plain cover with no role or name: the focus move to its button
+            // says the caption, and saying it again is noise.
+            panel = $('<div class="two-sole-trader-blocked"></div>')
                 .append($('<button type="button"></button>')
-                    .attr('id', buttonId)
                     .addClass('two-sole-trader-blocked__button')
                     .text(this.soleTraderFallbackText()));
             panel.on('click.twoSoleTraderFallback', '.two-sole-trader-blocked__button', (event) => {
@@ -5109,10 +5099,9 @@ class TwoCompanySearch {
     }
 
     /**
-     * The empty `role="status"` node a block is announced through, put in
-     * place with the capture: a live region only speaks when content changes
-     * inside a region already on the page, never for one inserted with its
-     * text already in it. Visually hidden, since the button says the same.
+     * The empty `role="status"` node put in place with the capture. A block
+     * leaves it empty: focus moving to the panel's button already says the
+     * caption, and the status saying it too would be heard twice.
      */
     ensureSoleTraderFallbackStatus() {
         if (this._soleTraderFallbackStatus && document.contains(this._soleTraderFallbackStatus.get(0))) {
@@ -5129,23 +5118,6 @@ class TwoCompanySearch {
         } else {
             this.companyField.after(this._soleTraderFallbackStatus);
         }
-    }
-
-    /**
-     * Say the block out loud: empty the status node, then set the caption a
-     * moment later, so a repeat block is a fresh change and is heard again.
-     */
-    announceSoleTraderFallback() {
-        this.ensureSoleTraderFallbackStatus();
-        const status = this._soleTraderFallbackStatus;
-        if (!status) {
-            return;
-        }
-        status.text('');
-        clearTimeout(this._soleTraderFallbackAnnounceTimer);
-        this._soleTraderFallbackAnnounceTimer = setTimeout(() => {
-            status.text(this.soleTraderFallbackText());
-        }, TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
     }
 
     /**
@@ -5168,7 +5140,7 @@ class TwoCompanySearch {
     }
 
     /**
-     * Remove the blocked-popup panel and silence its status node.
+     * Remove the blocked-popup panel.
      *
      * @param {boolean} [forget=true] false only when the capture is being torn
      *   down for a rebuild, which brings the panel back
@@ -5176,10 +5148,6 @@ class TwoCompanySearch {
     removeSoleTraderFallbackLink(forget = true) {
         if (forget) {
             delete this._reopenMemory.soleTraderFallback;
-        }
-        clearTimeout(this._soleTraderFallbackAnnounceTimer);
-        if (this._soleTraderFallbackStatus) {
-            this._soleTraderFallbackStatus.text('');
         }
         if (this._soleTraderFallbackLink) {
             const popover = this._soleTraderFallbackLink.parent();

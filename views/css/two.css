@@ -1665,7 +1665,7 @@
     cursor: pointer;
 }
 
-/* Read out by screen readers only; the button says the same on screen. */
+/* The empty status region; a blocked popup leaves it empty, as the focused button says the caption. */
 .two-sole-trader-fallback__status {
     position: absolute;
     width: 1px;
