@@ -2498,7 +2498,23 @@ class TwoCompanySearch {
         form.off('submit.twoAddressIdentifierSync');
         form.on('submit.twoAddressIdentifierSync', () => {
             this.syncOrganizationToAddressIdentifiers();
+            this.syncManualEntryFlag(form);
         });
+    }
+
+    /**
+     * Tell the address-save hook the form is in manual entry (TWO-26775), so it
+     * refuses the number on record whether or not the clear request arrived.
+     *
+     * @param {jQuery} form the address form being submitted
+     */
+    syncManualEntryFlag(form) {
+        let flag = form.find("input[name='two_manual_entry']");
+        if (flag.length === 0) {
+            flag = $('<input type="hidden" name="two_manual_entry" value="">');
+            form.append(flag);
+        }
+        flag.val(this._manualEntry ? '1' : '');
     }
 
     syncOrganizationToAddressIdentifiers() {
@@ -2513,8 +2529,9 @@ class TwoCompanySearch {
         // If user already filled DNI manually, reuse it as fallback org number
         // for Two flow. This direction is the customer's own input flowing
         // *into* the Two flow, not the lookup writing out, so it is not gated
-        // by the address-lookup toggle.
-        if (!orgNumber && dniValue) {
+        // by the address-lookup toggle. Never the number a manual entry walked
+        // away from, though (TWO-26775): that one is not the buyer's.
+        if (!orgNumber && dniValue && !this.isDisownedCompanyNumber(dniValue)) {
             orgNumber = dniValue;
             this.organizationField.val(orgNumber);
 
@@ -4525,6 +4542,9 @@ class TwoCompanySearch {
      * load-bearing rather than cautious.
      */
     clearSelectedCompany() {
+        const droppedId = this.organizationField && this.organizationField.length
+            ? String(this.organizationField.val() || '').trim()
+            : '';
         if (this.organizationField && this.organizationField.length) {
             this.organizationField.val('');
             this.organizationField.removeAttr('data-two-company-name');
@@ -4534,7 +4554,10 @@ class TwoCompanySearch {
         // clearStaleOrganizationSelection() pairs the two on every branch.
         this.setCompanyIdHint('');
         this.clearLookupWrittenAddressIdentifiers();
-        this.clearPersistedCompany();
+        if (this._manualEntry) {
+            this.disownCompanyNumber(droppedId);
+        }
+        this.clearPersistedCompany(droppedId);
         // FOURTH half (TWO-25326): the in-memory copy the order-intent payload is
         // built from. Clearing the cookie and leaving this behind would
         // reintroduce the very defect it exists to fix, inverted - the intent
@@ -4571,25 +4594,103 @@ class TwoCompanySearch {
      * like from the server. So the outcome does not depend on this request
      * arriving, and there is no ordering guard here for the same reason - unlike
      * the surcharge-line endpoint, where the browser IS the only writer.
+     *
+     * In manual entry the request also names the number being dropped, so the
+     * server refuses it for the rest of the cart (TWO-26775), and a failed
+     * request is retried. A name kept unchanged never trips the hook's
+     * name-change backstop, so manual entry has its own: the address form's
+     * save and the order-intent check both carry the manual-entry flag.
+     *
+     * @param {string} [droppedId] the number the hidden field held
+     * @param {number} [attempt] retries already made
      */
-    clearPersistedCompany() {
+    clearPersistedCompany(droppedId = '', attempt = 0) {
         try {
             if (!this._page.orderIntentUrl || !this._page.ajaxToken) {
                 return;
             }
-            TwoCompanySearch.trackCompanyCookieWrite($.ajax({
+            const data = {
+                ajax: 1,
+                action: 'clearCompany',
+                token: this._page.ajaxToken
+            };
+            const manual = !!this._manualEntry;
+            if (manual) {
+                data.manual = 1;
+                data.companyid = droppedId || this._manualEntryMemory.disownedId || '';
+            }
+            const request = $.ajax({
                 url: this._page.orderIntentUrl,
                 method: 'POST',
-                data: {
-                    ajax: 1,
-                    action: 'clearCompany',
-                    token: this._page.ajaxToken
-                },
+                data: data,
                 timeout: 10000
-            }));
+            });
+            TwoCompanySearch.trackCompanyCookieWrite(request);
+            if (manual && request && typeof request.fail === 'function') {
+                request.fail(() => {
+                    if (attempt + 1 < TwoCompanySearch.CLEAR_COMPANY_ATTEMPTS && this._manualEntry) {
+                        setTimeout(() => this.clearPersistedCompany(droppedId, attempt + 1),
+                            TwoCompanySearch.CLEAR_COMPANY_RETRY_MS * (attempt + 1));
+                    }
+                });
+            }
         } catch (e) {
             // no-op
         }
+    }
+
+    /** Tries a manual-entry clear gets before the other carriers are left to it. */
+    static CLEAR_COMPANY_ATTEMPTS = 3;
+
+    /** Back-off step between those tries. */
+    static CLEAR_COMPANY_RETRY_MS = 1000;
+
+    /**
+     * Letters and digits only, upper-cased, so `12-345 678` and `12345678` are
+     * one number. The server compares the same way.
+     *
+     * @param {*} value
+     * @returns {string}
+     */
+    static normalizeOrgNumber(value) {
+        return String(value == null ? '' : value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    }
+
+    /**
+     * Manual entry walks away from the number on record (TWO-26775), so take it
+     * out of every place on this page that could hand it back: an
+     * identification field still holding it (with or without our marker - a
+     * saved address re-renders it with none), and the invoice mirror's memory,
+     * which would otherwise re-attach it to the hidden field on the next
+     * re-mount. Remembered for the page so the submit sync never adopts it.
+     *
+     * @param {string} droppedId
+     */
+    disownCompanyNumber(droppedId) {
+        const number = TwoCompanySearch.normalizeOrgNumber(droppedId);
+        if (!number) {
+            return;
+        }
+        this._manualEntryMemory.disownedId = droppedId;
+        this.addressIdentifierFields().forEach(field => {
+            if (field.length === 0
+                || TwoCompanySearch.normalizeOrgNumber(field.val()) !== number) {
+                return;
+            }
+            field.removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            field.val('');
+            field.trigger('input');
+            field.trigger('change');
+        });
+        const memory = this.mirrorMemory();
+        memory.organization = '';
+        memory.organizationPending = '';
+    }
+
+    /** @returns {boolean} whether $value is the number manual entry walked away from */
+    isDisownedCompanyNumber(value) {
+        const disowned = TwoCompanySearch.normalizeOrgNumber(this._manualEntryMemory.disownedId);
+        return disowned !== '' && TwoCompanySearch.normalizeOrgNumber(value) === disowned;
     }
 
     /**

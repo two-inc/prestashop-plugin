@@ -1082,6 +1082,98 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
             });
         });
 
+        /**
+         * TWO-26775: after Enter manually no path hands the old number back. A
+         * saved address re-renders `dni` with NO marker, so these start from a
+         * marker-less `dni` holding the selected number.
+         */
+        describe('the old number is gone for good (TWO-26775)', () => {
+            function selectThenUnmarkDni(instance) {
+                search(AT_THRESHOLD);
+                ajax.last().succeed(SEARCH_RESPONSE);
+                selectFirstCompany();
+                $("input[name='dni']").removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR).val('12-345-678');
+                expect(instance.organizationField.val()).toBe('12345678');
+            }
+
+            test.each([
+                ['an unmarked dni holding the old number is cleared', () => $("input[name='dni']").val(), ''],
+                ['the clear names the dropped number and says manual entry',
+                    () => JSON.stringify(callsFor('clearCompany').map((c) => [c.settings.data.manual, c.settings.data.companyid])),
+                    JSON.stringify([[1, '12345678']])],
+            ])('%s', (description, read, expected) => {
+                withEndpoint(() => {
+                    const instance = makeInstance();
+                    selectThenUnmarkDni(instance);
+                    instance.enterManualEntryMode();
+                    expect([description, read()]).toEqual([description, expected]);
+                });
+            });
+
+            test.each([
+                ['the old number retyped into dni is not adopted at submit', '12345678', ''],
+                ['a different number the buyer typed is still adopted', '99887766', '99887766'],
+            ])('%s', (description, typed, adopted) => {
+                withEndpoint(() => {
+                    const instance = makeInstance();
+                    selectThenUnmarkDni(instance);
+                    instance.enterManualEntryMode();
+                    $("input[name='dni']").val(typed);
+                    submitForm();
+                    expect([description, instance.organizationField.val()]).toEqual([description, adopted]);
+                });
+            });
+
+            test.each([
+                ['manual entry flags the submitted form', true, '1'],
+                ['search mode leaves the flag empty', false, ''],
+            ])('%s', (description, manual, flag) => {
+                withEndpoint(() => {
+                    const instance = makeInstance();
+                    selectThenUnmarkDni(instance);
+                    if (manual) {
+                        instance.enterManualEntryMode();
+                    }
+                    submitForm();
+                    expect([description, $("input[name='two_manual_entry']").val()]).toEqual([description, flag]);
+                });
+            });
+
+            test('a failed clear is retried, and stops once it lands', () => {
+                jest.useFakeTimers();
+                try {
+                    withEndpoint(() => {
+                        const instance = makeInstance();
+                        selectThenUnmarkDni(instance);
+                        instance.enterManualEntryMode();
+                        callsFor('clearCompany')[0].fail('error');
+                        jest.advanceTimersByTime(TwoCompanySearch.CLEAR_COMPANY_RETRY_MS);
+                        expect(callsFor('clearCompany')).toHaveLength(2);
+                        callsFor('clearCompany')[1].succeed({ success: true });
+                        jest.advanceTimersByTime(10 * TwoCompanySearch.CLEAR_COMPANY_RETRY_MS);
+                        expect(callsFor('clearCompany')).toHaveLength(2);
+                    });
+                } finally {
+                    jest.useRealTimers();
+                }
+            });
+
+            /** F4: the invoice mirror's memory must not re-attach the number on a re-mount. */
+            test('the invoice mirror forgets the number it would re-publish', () => {
+                withEndpoint(() => {
+                    const mirrorMemory = { companyid: '12345678', company: 'Example Trading Ltd', organization: '12345678', organizationPending: '' };
+                    const instance = makeInstance({ mirrorMemory: mirrorMemory });
+                    selectThenUnmarkDni(instance);
+                    instance.enterManualEntryMode();
+                    instance.companyField.val('Example Trading Ltd')
+                        .attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR, 'Example Trading Ltd');
+
+                    expect(instance.republishMirroredSelection()).toBe(false);
+                    expect(instance.organizationField.val()).toBe('');
+                });
+            });
+        });
+
         test('no endpoint configured is tolerated rather than thrown', () => {
             const saved = window.twopayment;
             window.twopayment = undefined;
