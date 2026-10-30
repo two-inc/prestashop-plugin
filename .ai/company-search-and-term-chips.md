@@ -158,9 +158,12 @@ trader marked selected.
 **A blocked popup leaves a panel over the popover** (TWO-26775): one centred button,
 a fresh gesture of the buyer's own, because the autofill prefetch takes the launch
 out of their click. Focus moves to it and the block is announced through the empty
-`role="status"` node put in place with the capture. The flight's settle does not
-close the popover while it is up; a chip or mode change, the popover closing and a
-launch that opens all take it down.
+`role="status"` node put in place with the capture; the group is named by its button
+(`aria-labelledby`), so the caption is not said a third time. The rest of the popover
+is `inert` under it until it goes. It is drawn only over a popover still open: a
+block landing after the buyer closed the popover changes nothing on screen and moves
+no focus. The flight's settle does not close the popover while it is up; a chip or
+mode change, the popover closing and a launch that opens all take it down.
 
 ## Enter Manually Refuses The Old Number
 
@@ -173,9 +176,17 @@ halves:
   adopts it at submit, and drops it from the invoice mirror's memory.
 - **The server** records it on the cart as `disowned_id`. The saved address, the
   address-save hook and the order-intent store all turn it away until `saveCompany`
-  records a new pick. Three requests carry the manual-entry signal, any one of
-  them enough: `clearCompany` with `manual=1` (retried on failure), the address
-  form's `two_manual_entry`, and the order intent's `manual_entry`.
+  records a new pick; the resolver's own clears and a plain `clearCompany` keep it.
+  Three requests carry the manual-entry signal, any one of them enough:
+  `clearCompany` with `manual=1` (retried on failure), the address form's
+  `two_manual_entry`, and the order intent's `manual_entry`.
+- **Only a picked number is refused.** `saveCompany` records its number as
+  `picked_id`, because `id` also holds a number the address save stored from manual
+  entry. The two flag-only carriers refuse `picked_id` and nothing else, so a number
+  the buyer typed is never refused and never replaces the refusal. `clearCompany`
+  also names the number the page held, used only when no pick is on record and no
+  refusal stands. A pick waits for a clear still in flight, so a slow clear cannot
+  refuse the company picked after it.
 
 
 ## The Payment-Term Chips Owe The Radio-Group Keyboard Contract

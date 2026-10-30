@@ -34,6 +34,8 @@ final class ManualEntryDisownSpec
         self::testAPickLiftsTheRefusal();
         self::testAddressSaveInManualEntryNeverStoresTheOldNumber();
         self::testManualIntentRefusesTheOldNumberFromTheForm();
+        self::testAHandTypedNumberIsNeverRefused();
+        self::testHousekeepingClearsKeepTheRefusal();
     }
 
     /**
@@ -120,6 +122,73 @@ final class ManualEntryDisownSpec
         TinyAssert::same('', (string) TwoSessionRecord::get('company', 'id'), 'the intent must not store the refused number');
     }
 
+    /**
+     * After the clear, the buyer types their own number and saves the address.
+     * Each later flag-only carrier leaves that number alone and keeps the old one
+     * refused, so the intent runs on the typed number and never on the old one,
+     * even from a cart address still holding it.
+     */
+    private static function testAHandTypedNumberIsNeverRefused(): void
+    {
+        $cases = [
+            // [dni on the cart's address, intent status, description]
+            ['99887766', '', 'address holds the typed number: the intent runs on it'],
+            // The record's typed number has no country marker, so the resolver
+            // drops it; the address is all that is left, and it holds the old one.
+            [self::OLD_ID, 'incomplete_company', 'address still holds the old number: the intent runs on neither'],
+        ];
+        foreach ($cases as [$dni, $status, $description]) {
+            self::seed($dni);
+            self::runClear(['manual' => '1', 'companyid' => self::OLD_ID]);
+            self::runAddressSave('Hand Typed Ltd', '99887766', true);
+            self::runAddressSave('Hand Typed Ltd', '99887766', true);
+            TinyAssert::same('99887766', (string) TwoSessionRecord::get('company', 'id'), $description . ': the typed number left the record');
+            TinyAssert::same(self::OLD_ID, (string) TwoSessionRecord::get('company', 'disowned_id'), $description . ': an address save moved the refusal');
+
+            $controller = self::runIntent(['manual_entry' => '1', 'company' => 'Hand Typed Ltd', 'companyid' => '']);
+
+            TinyAssert::same($status, (string) ($controller->emitted[0]['status'] ?? ''), $description . ': intent status');
+            TinyAssert::same(self::OLD_ID, (string) TwoSessionRecord::get('company', 'disowned_id'), $description . ': the intent moved the refusal');
+            $sent = (string) json_encode($controller->emitted);
+            TinyAssert::false(strpos($sent, self::OLD_ID) !== false, $description . ': the old number went out in the intent');
+            if ($status === '') {
+                TinyAssert::true(strpos($sent, '99887766') !== false, $description . ': the typed number did not go out');
+            }
+        }
+    }
+
+    /**
+     * The resolver's own clears (a record with no country marker, a country
+     * change) and a plain clear request keep the refusal: only a pick lifts it.
+     */
+    private static function testHousekeepingClearsKeepTheRefusal(): void
+    {
+        $cases = [
+            ['resolver drops a record with no country marker', function () {
+                self::runAddressSave('Hand Typed Ltd', '99887766', true);
+                self::module()->getTwoCheckoutCompanyData(new Address(self::ADDRESS_ID));
+            }],
+            ['resolver drops a record for another country', function () {
+                TwoSessionRecord::set('company', 'name', 'Hand Typed Ltd');
+                TwoSessionRecord::set('company', 'id', '99887766');
+                TwoSessionRecord::set('company', 'country', 'NO');
+                self::module()->getTwoCheckoutCompanyData(new Address(self::ADDRESS_ID));
+            }],
+            ['plain clear request', function () {
+                self::runClear([]);
+            }],
+        ];
+        foreach ($cases as [$description, $act]) {
+            self::seed(self::OLD_ID);
+            self::runClear(['manual' => '1', 'companyid' => self::OLD_ID]);
+            $act();
+
+            TinyAssert::same(self::OLD_ID, (string) TwoSessionRecord::get('company', 'disowned_id'), $description . ': the refusal was dropped');
+            $resolved = self::module()->getTwoCheckoutCompanyData(new Address(self::ADDRESS_ID));
+            TinyAssert::same('', $resolved['organization_number'], $description . ': the old number came back from the address');
+        }
+    }
+
     /* ---- fixtures ---- */
 
     private static function seed(string $dni): void
@@ -162,6 +231,8 @@ final class ManualEntryDisownSpec
         TwoSessionRecord::set('company', 'id', self::OLD_ID);
         TwoSessionRecord::set('company', 'country', 'GB');
         TwoSessionRecord::set('company', 'address_id', (string) self::ADDRESS_ID);
+        // What saveCompany writes beside a pick.
+        TwoSessionRecord::set('company', 'picked_id', self::OLD_ID);
         TwoSessionRecord::set('company', 'cart', (string) self::CART_ID);
     }
 

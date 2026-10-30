@@ -269,8 +269,14 @@ describe.each([
         const overlay = fallbackLink().closest('.two-sole-trader-blocked');
         expect(shown(panelParts().panel)).toBe(true);
         expect(panelParts().panel.get(0).contains(overlay.get(0))).toBe(true);
-        expect(overlay.attr('aria-label')).toBe(FALLBACK_TEXT);
+        // Named by its button, so the caption is not said a third time.
+        expect(overlay.attr('aria-label')).toBeUndefined();
+        expect(overlay.attr('aria-labelledby')).toBe(fallbackLink().attr('id'));
         expect(document.activeElement).toBe(fallbackLink().get(0));
+        // Everything else in the popover is out of reach under it.
+        panelParts().panel.children().not(overlay).each((_i, child) => {
+            expect(child.hasAttribute('inert')).toBe(true);
+        });
         // The old link under the field is gone for good.
         expect($('.two-sole-trader-fallback').length).toBe(0);
         expect(fallbackStatus().attr('role')).toBe('status');
@@ -280,6 +286,8 @@ describe.each([
         await settle();
 
         expect(shown(fallbackLink())).toBe(linkAfter);
+        // The popover's own controls come back with the panel gone.
+        expect(panelParts().panel.find('[inert]').length).toBe(linkAfter ? panelParts().panel.children().length - 1 : 0);
         if (modeAfter !== null) {
             expect(search._chipMode).toBe(modeAfter);
         }
@@ -294,7 +302,7 @@ describe.each([
     });
 });
 
-test('a launch refused after its flight was let go still leaves the retry', async () => {
+test('a launch refused after the buyer closed the popover leaves it closed and their focus alone', async () => {
     // No answer held, so the click waits on a lookup of its own.
     soleTrader.clearHeldBuyerResult();
     heldLookups = [];
@@ -303,9 +311,11 @@ test('a launch refused after its flight was let go still leaves the retry', asyn
     await settle();
     expect(heldLookups.length).toBe(1);
 
-    // Escape closes the panel, which lets the flight go.
+    // Escape closes the panel, which lets the flight go, and the buyer moves on.
     panelParts().panel.trigger($.Event('keydown', { key: 'Escape', keyCode: 27 }));
     expect(search._soleTraderLoading).toBe(false);
+    const typed = $("input[name='address1']").get(0);
+    typed.focus();
 
     // The lookup lands, the popup it opens is refused.
     heldLookups.splice(0).forEach((resolve) => resolve({ ok: false, status: 404 }));
@@ -313,9 +323,15 @@ test('a launch refused after its flight was let go still leaves the retry', asyn
 
     expect(global.window.open).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledWith(BLOCKED_LOG);
-    // The popover comes back under it.
-    expect(shown(panelParts().panel)).toBe(true);
-    expect(shown(fallbackLink())).toBe(true);
+    // The popover stays closed, with nothing drawn and focus where the buyer put it.
+    expect(shown(panelParts().panel)).toBe(false);
+    expect(fallbackLink().length).toBe(0);
+    expect(document.activeElement).toBe(typed);
+    jest.advanceTimersByTime(TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
+    expect(fallbackStatus().text()).toBe('');
+    // Nor does it come back on the next open.
+    openPanel();
+    expect(fallbackLink().length).toBe(0);
 });
 
 test('a refused "select a different sole trader" retries as one', async () => {
