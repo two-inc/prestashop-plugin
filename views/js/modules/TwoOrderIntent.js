@@ -322,6 +322,11 @@ class TwoOrderIntent {
                 action: 'checkOrderIntent',
                 token: this.config.ajaxToken
             };
+            // The server refuses the number on record while this is set
+            // (TWO-26775), whether or not the search's own clear arrived.
+            if (this.isManualEntry()) {
+                formData.manual_entry = 1;
+            }
             let company = '';
             let companyid = '';
             // TWO-25326: the address-area `company`/`companyid` DOM
@@ -498,6 +503,14 @@ class TwoOrderIntent {
         return '';
     }
 
+    /** @returns {boolean} whether the company search is in manual entry */
+    isManualEntry() {
+        const search = typeof this.config.getCompanySearch === 'function'
+            ? this.config.getCompanySearch()
+            : null;
+        return !!(search && typeof search.isManualEntry === 'function' && search.isManualEntry());
+    }
+
     getCurrentAddressId() {
         // The company search answers when there is one: its read is scoped to
         // its own block, and the two must agree or the stamp it compares against
@@ -612,7 +625,7 @@ class TwoOrderIntent {
                 action: 'orderIntent',
                 token: window.twopayment.ajax_token
             };
-            ['company', 'companyid', 'id_address_invoice', 'id_address_delivery'].forEach((key) => {
+            ['company', 'companyid', 'id_address_invoice', 'id_address_delivery', 'manual_entry'].forEach((key) => {
                 if (buyerFields && buyerFields[key] !== undefined) {
                     data[key] = buyerFields[key];
                 }

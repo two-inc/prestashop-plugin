@@ -346,7 +346,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        $fields = ['name' => $company, 'id' => $companyId];
+        // A pick is the one thing that lifts a manual-entry refusal, and the only
+        // number a later one refuses (TWO-26775).
+        $fields = ['name' => $company, 'id' => $companyId, 'disowned_id' => null, 'picked_id' => $companyId];
         if (!empty($country)) {
             $fields['country'] = $country;
         }
@@ -387,7 +389,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        $this->module->clearTwoCartScopedCompany();
+        // Manual entry also refuses the number it walked away from (TWO-26775),
+        // so the saved address cannot hand it back once the record is gone.
+        if ((string) Tools::getValue('manual', '') !== '1'
+            || !$this->module->disownTwoCartScopedCompany(Tools::getValue('companyid', ''))
+        ) {
+            $this->module->clearTwoCartScopedCompany();
+        }
 
         PrestaShopLogger::addLog('TwoPayment: Session company cleared for manual company entry', 1);
 
@@ -632,6 +640,12 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
                 'status' => 'buyer_country_not_supported',
                 'error' => $this->module->l('This payment method is not available.'),
             ));
+        }
+
+        // The browser is in manual entry (TWO-26775): refuse the number on record,
+        // whether or not its own clear request ever arrived.
+        if ($this->isManualEntryRequest()) {
+            $this->module->disownTwoCartScopedCompany();
         }
 
         $companyData = $this->getCompanyDataWithFallbacks();
@@ -1059,6 +1073,16 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
+     * Whether the browser says its company field is in manual entry (TWO-26775).
+     *
+     * @return bool
+     */
+    private function isManualEntryRequest()
+    {
+        return (string) Tools::getValue('manual_entry', '') === '1';
+    }
+
+    /**
      * Get company data using PrestaShop-native fallback chain
      * Priority: Form data → Session → Address fields → Partial session → Partial form
      *
@@ -1073,7 +1097,13 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         // Priority 1: Form data (highest priority - direct user input from company search)
         $company = trim(Tools::getValue('company', ''));
         $companyId = trim(Tools::getValue('companyid', ''));
-        
+        // Manual entry captures no number of the company it walked away from
+        // (TWO-26775). Outside manual entry a pick may be racing its own
+        // saveCompany, so the form is trusted there as before.
+        if ($companyId !== '' && $this->isManualEntryRequest() && $this->module->isTwoDisownedOrgNumber($companyId)) {
+            $companyId = '';
+        }
+
         if (!empty($company) && !empty($companyId)) {
             PrestaShopLogger::addLog('TwoPayment: Company data retrieved from form data', 1);
             return ['company' => $company, 'companyid' => $companyId];
@@ -1227,6 +1257,10 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             // copy of the organisation number. Persisting it here destroyed that
             // number for the rest of the checkout, so no later re-check could
             // recover it. Disowning a company has its own action (clearCompany).
+            // Never re-store a number the buyer disowned (TWO-26775).
+            if ($this->module->isTwoDisownedOrgNumber((string) ($companyData['companyid'] ?? ''))) {
+                $companyData['companyid'] = '';
+            }
             $stored = $this->module->readTwoCartScopedCompany();
             if (trim((string) ($companyData['companyid'] ?? '')) === ''
                 && $stored !== null

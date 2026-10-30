@@ -1033,3 +1033,67 @@ describe('two captures on one page', () => {
         expect(replacement._dropdownOpen).toBe(false);
     });
 });
+
+/**
+ * TWO-26775: a press that moves focus nowhere is the buyer back on the checkout
+ * too. It closes the popup, and the popover only when it landed outside it.
+ * jsdom performs no press default action, so a press here focuses nothing,
+ * exactly as one on non-focusable content does in a browser.
+ */
+describe('a press on non-focusable content', () => {
+    function press(node) {
+        node.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        jest.advanceTimersByTime(1);
+    }
+
+    test.each([
+        ['page background outside the popover', () => document.body, false],
+        ['plain text outside the popover', () => {
+            const text = document.createElement('p');
+            document.body.appendChild(text);
+            return text;
+        }, false],
+        ['the popover\'s own dead space', () => panelParts().panel.get(0), true],
+    ])('on %s closes the popup; the popover stays only when inside', async (description, target, panelStays) => {
+        await launchWithPopupOpen();
+        press(target());
+        expect([description, popup.closed]).toEqual([description, true]);
+        // The poll notices the close and the flight settles.
+        jest.advanceTimersByTime(600);
+        await settle();
+        expect([description, shown(panelParts().panel)]).toEqual([description, panelStays]);
+    });
+
+    test('a press on the launching chip leaves the popup to the chip', async () => {
+        await launchWithPopupOpen();
+        press(panelParts().soleTrader.get(0));
+        expect(popup.closed).toBe(false);
+    });
+
+    test('a press that lands focus on a control is settled as that focus, once', async () => {
+        await launchWithPopupOpen();
+        const dni = document.querySelector("input[name='dni']");
+        dni.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        expect(shown(panelParts().panel)).toBe(true);
+        dni.focus();
+        jest.advanceTimersByTime(1);
+        expect(popup.closeCalls).toBe(1);
+    });
+});
+
+describe('the chips show the mode the buyer is really in (TWO-26775)', () => {
+    test('Tab onto another chip closes the popup and the Sole trader chip stops showing selected', async () => {
+        await launchWithPopupOpen();
+        panelParts().registered.get(0).focus();
+        expect(popup.closed).toBe(true);
+        expect(panelParts().soleTrader.hasClass('two-company-mode-chip--selected')).toBe(false);
+        expect(panelParts().registered.hasClass('two-company-mode-chip--selected')).toBe(true);
+    });
+
+    test('manual entry leaves no other chip marked selected', async () => {
+        await launchWithPopupOpen();
+        panelParts().notListed.trigger('click');
+        expect(panelParts().soleTrader.hasClass('two-company-mode-chip--selected')).toBe(false);
+        expect(panelParts().notListed.hasClass('two-company-mode-chip--selected')).toBe(true);
+    });
+});

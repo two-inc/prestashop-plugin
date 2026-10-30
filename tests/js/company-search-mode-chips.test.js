@@ -104,9 +104,14 @@ describe('default selection (TWO-40: "Default selected chip: Registered Company"
         makeInstance();
         openPanel();
         panelParts().notListed.trigger('click');
+        // Manual entry marks its own chip, and no other (TWO-26775).
+        expect(panelParts().notListed.hasClass('two-company-mode-chip--selected')).toBe(true);
+        expect(panelParts().registered.hasClass('two-company-mode-chip--selected')).toBe(false);
 
-        $("input[name='company']").trigger('mousedown');
+        // Leaving it through "Search for company" re-opens the panel.
+        $('.two-company-search-back').trigger('click');
 
+        expect(shown(panelParts().panel)).toBe(true);
         expect(panelParts().registered.hasClass('two-company-mode-chip--selected')).toBe(true);
     });
 });

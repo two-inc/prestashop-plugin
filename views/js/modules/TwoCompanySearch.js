@@ -95,20 +95,6 @@ class TwoCompanySearch {
     // against blanking an answer the buyer gave us.
     static AUTOFILL_MARKER_ATTR = 'data-two-autofilled-value';
 
-    // Gap between emptying the blocked-popup status and setting it again, so
-    // a screen reader treats each block as a new message (TWO-26775).
-    static FALLBACK_ANNOUNCE_DELAY_MS = 100;
-
-    // Bell icon fronting the blocked-popup retry link (TWO-26775). Decorative:
-    // the button beside it carries the whole message.
-    static BELL_ICON = '<svg class="two-sole-trader-fallback__icon" aria-hidden="true" focusable="false"'
-        + ' xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"'
-        + ' stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857'
-        + ' 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967'
-        + ' 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714'
-        + ' 0m5.714 0a3 3 0 11-5.714 0M3.124 7.5A8.969 8.969 0 015.292 3m13.416 0a8.969 8.969 0'
-        + ' 012.168 4.5"/></svg>';
-
     // THERE IS NO "hide the identification field" MARKER HERE, AND MUST NOT BE
     // ONE (TWO-40): an internal (`TWO:`-prefixed) identifier is never written
     // into the visible `dni` field, which core also renders into address blocks,
@@ -288,9 +274,8 @@ class TwoCompanySearch {
         this._soleTraderFallbackLink = null;
         // The launch its click repeats; see renderSoleTraderFallbackLink().
         this._soleTraderFallbackMethod = null;
-        // Where a block is announced; see ensureSoleTraderFallbackStatus().
+        // See ensureSoleTraderFallbackStatus().
         this._soleTraderFallbackStatus = null;
-        this._soleTraderFallbackAnnounceTimer = null;
 
         // The anchored dropdown panel (TWO-25326): a real popup control
         // anchored to the field, carrying its OWN query input, with the
@@ -1217,7 +1202,9 @@ class TwoCompanySearch {
                     && this.companyField.get(0) === event.target) {
                     return;
                 }
-                // The popup blurred the launching chip; the return watch owns this panel until it goes.
+                // The popup blurred the launching chip; the return watch owns this
+                // panel until it goes. A press that moves focus nowhere is settled
+                // there too, a tick later (TWO-26775).
                 if (this._soleTraderLoading && this.isSoleTraderPopupOpen()) {
                     return;
                 }
@@ -1552,12 +1539,12 @@ class TwoCompanySearch {
         // currently adopted: a sole trader IS what is selected in that state.
         // Likewise while a blocked signup's fallback link is up (TWO-26775):
         // the buyer chose sole trader and only the popup failed them.
-        this._chipMode = (this.isSoleTraderAdopted() || this.hasSoleTraderFallbackLink())
-            ? 'sole_trader'
-            : 'registered';
-        this.renderChipSelection();
+        this.recomputeChipMode();
         this.syncModeChipVisibility();
         this.focusPanelEntry();
+        if (this.hasSoleTraderFallbackLink()) {
+            this.drawSoleTraderBlockedPanel();
+        }
         // Render the current state immediately - for an empty query that is the
         // "type N more characters" hint, not an empty or absent panel.
         this.openSearchForCurrentTerm();
@@ -1601,6 +1588,8 @@ class TwoCompanySearch {
         // settle-listener behind (TWO-40) - Escape, for instance, goes straight
         // to closeDropdown() otherwise.
         this.endSoleTraderLoading();
+        // The blocked-popup panel lives on the popover and goes with it (TWO-26775).
+        this.removeSoleTraderFallbackLink();
         clearTimeout(this._closeTimerId);
         this._closeTimerId = null;
         this._dropdownOpen = false;
@@ -1929,6 +1918,17 @@ class TwoCompanySearch {
     }
 
     /**
+     * The chip the stored identity says is selected: Sole trader while one is
+     * adopted or a blocked signup is still offered, else Registered.
+     */
+    recomputeChipMode() {
+        this._chipMode = (this.isSoleTraderAdopted() || this.hasSoleTraderFallbackLink())
+            ? 'sole_trader'
+            : 'registered';
+        this.renderChipSelection();
+    }
+
+    /**
      * Reflect `this._chipMode` onto the `--selected` class of all three mode
      * chips (TWO-40). Purely cosmetic - the actual mode-switching behaviour
      * lives in each chip's own click handler and in
@@ -2107,7 +2107,7 @@ class TwoCompanySearch {
         }
         $(document).off('.twoSoleTraderFlight' + this._instanceNs)
             .on('two:sole-trader-flight-settled.twoSoleTraderFlight' + this._instanceNs, () => {
-                if (this._dropdownOpen && !this._panelKeptPastPopup) {
+                if (this._dropdownOpen && !this._panelKeptPastPopup && !this.hasSoleTraderFallbackLink()) {
                     // closeDropdown() itself calls endSoleTraderLoading() as its
                     // own first line.
                     this.closeDropdown(true);
@@ -2144,6 +2144,10 @@ class TwoCompanySearch {
                     && this._popupSeenThisFlight
                     && (detail.popupClosed || !this.isSoleTraderPopupOpen())) {
                     this._panelKeptPastPopup = true;
+                    // The popup went without a signup, so the chips show what is
+                    // stored again (TWO-26775): focus Tabbed onto another chip
+                    // left the Sole trader one looking selected.
+                    this.recomputeChipMode();
                 }
             })
             // This capture's own launch, held in memory so its re-render restore resumes the flight (TWO-25658).
@@ -2498,7 +2502,23 @@ class TwoCompanySearch {
         form.off('submit.twoAddressIdentifierSync');
         form.on('submit.twoAddressIdentifierSync', () => {
             this.syncOrganizationToAddressIdentifiers();
+            this.syncManualEntryFlag(form);
         });
+    }
+
+    /**
+     * Tell the address-save hook the form is in manual entry (TWO-26775), so it
+     * refuses the number on record whether or not the clear request arrived.
+     *
+     * @param {jQuery} form the address form being submitted
+     */
+    syncManualEntryFlag(form) {
+        let flag = form.find("input[name='two_manual_entry']");
+        if (flag.length === 0) {
+            flag = $('<input type="hidden" name="two_manual_entry" value="">');
+            form.append(flag);
+        }
+        flag.val(this._manualEntry ? '1' : '');
     }
 
     syncOrganizationToAddressIdentifiers() {
@@ -2513,8 +2533,9 @@ class TwoCompanySearch {
         // If user already filled DNI manually, reuse it as fallback org number
         // for Two flow. This direction is the customer's own input flowing
         // *into* the Two flow, not the lookup writing out, so it is not gated
-        // by the address-lookup toggle.
-        if (!orgNumber && dniValue) {
+        // by the address-lookup toggle. Never the number a manual entry walked
+        // away from, though (TWO-26775): that one is not the buyer's.
+        if (!orgNumber && dniValue && !this.isDisownedCompanyNumber(dniValue)) {
             orgNumber = dniValue;
             this.organizationField.val(orgNumber);
 
@@ -4525,6 +4546,9 @@ class TwoCompanySearch {
      * load-bearing rather than cautious.
      */
     clearSelectedCompany() {
+        const droppedId = this.organizationField && this.organizationField.length
+            ? String(this.organizationField.val() || '').trim()
+            : '';
         if (this.organizationField && this.organizationField.length) {
             this.organizationField.val('');
             this.organizationField.removeAttr('data-two-company-name');
@@ -4534,7 +4558,10 @@ class TwoCompanySearch {
         // clearStaleOrganizationSelection() pairs the two on every branch.
         this.setCompanyIdHint('');
         this.clearLookupWrittenAddressIdentifiers();
-        this.clearPersistedCompany();
+        if (this._manualEntry) {
+            this.disownCompanyNumber(droppedId);
+        }
+        this.clearPersistedCompany(droppedId);
         // FOURTH half (TWO-25326): the in-memory copy the order-intent payload is
         // built from. Clearing the cookie and leaving this behind would
         // reintroduce the very defect it exists to fix, inverted - the intent
@@ -4571,25 +4598,103 @@ class TwoCompanySearch {
      * like from the server. So the outcome does not depend on this request
      * arriving, and there is no ordering guard here for the same reason - unlike
      * the surcharge-line endpoint, where the browser IS the only writer.
+     *
+     * In manual entry the request also names the number being dropped, so the
+     * server refuses it for the rest of the cart (TWO-26775), and a failed
+     * request is retried. A name kept unchanged never trips the hook's
+     * name-change backstop, so manual entry has its own: the address form's
+     * save and the order-intent check both carry the manual-entry flag.
+     *
+     * @param {string} [droppedId] the number the hidden field held
+     * @param {number} [attempt] retries already made
      */
-    clearPersistedCompany() {
+    clearPersistedCompany(droppedId = '', attempt = 0) {
         try {
             if (!this._page.orderIntentUrl || !this._page.ajaxToken) {
                 return;
             }
-            TwoCompanySearch.trackCompanyCookieWrite($.ajax({
+            const data = {
+                ajax: 1,
+                action: 'clearCompany',
+                token: this._page.ajaxToken
+            };
+            const manual = !!this._manualEntry;
+            if (manual) {
+                data.manual = 1;
+                data.companyid = droppedId || this._manualEntryMemory.disownedId || '';
+            }
+            const request = $.ajax({
                 url: this._page.orderIntentUrl,
                 method: 'POST',
-                data: {
-                    ajax: 1,
-                    action: 'clearCompany',
-                    token: this._page.ajaxToken
-                },
+                data: data,
                 timeout: 10000
-            }));
+            });
+            TwoCompanySearch.trackCompanyCookieWrite(request);
+            if (manual && request && typeof request.fail === 'function') {
+                request.fail(() => {
+                    if (attempt + 1 < TwoCompanySearch.CLEAR_COMPANY_ATTEMPTS && this._manualEntry) {
+                        setTimeout(() => this.clearPersistedCompany(droppedId, attempt + 1),
+                            TwoCompanySearch.CLEAR_COMPANY_RETRY_MS * (attempt + 1));
+                    }
+                });
+            }
         } catch (e) {
             // no-op
         }
+    }
+
+    /** Tries a manual-entry clear gets before the other carriers are left to it. */
+    static CLEAR_COMPANY_ATTEMPTS = 3;
+
+    /** Back-off step between those tries. */
+    static CLEAR_COMPANY_RETRY_MS = 1000;
+
+    /**
+     * Letters and digits only, upper-cased, so `12-345 678` and `12345678` are
+     * one number. The server compares the same way.
+     *
+     * @param {*} value
+     * @returns {string}
+     */
+    static normalizeOrgNumber(value) {
+        return String(value == null ? '' : value).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    }
+
+    /**
+     * Manual entry walks away from the number on record (TWO-26775), so take it
+     * out of every place on this page that could hand it back: an
+     * identification field still holding it (with or without our marker - a
+     * saved address re-renders it with none), and the invoice mirror's memory,
+     * which would otherwise re-attach it to the hidden field on the next
+     * re-mount. Remembered for the page so the submit sync never adopts it.
+     *
+     * @param {string} droppedId
+     */
+    disownCompanyNumber(droppedId) {
+        const number = TwoCompanySearch.normalizeOrgNumber(droppedId);
+        if (!number) {
+            return;
+        }
+        this._manualEntryMemory.disownedId = droppedId;
+        this.addressIdentifierFields().forEach(field => {
+            if (field.length === 0
+                || TwoCompanySearch.normalizeOrgNumber(field.val()) !== number) {
+                return;
+            }
+            field.removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+            field.val('');
+            field.trigger('input');
+            field.trigger('change');
+        });
+        const memory = this.mirrorMemory();
+        memory.organization = '';
+        memory.organizationPending = '';
+    }
+
+    /** @returns {boolean} whether $value is the number manual entry walked away from */
+    isDisownedCompanyNumber(value) {
+        const disowned = TwoCompanySearch.normalizeOrgNumber(this._manualEntryMemory.disownedId);
+        return disowned !== '' && TwoCompanySearch.normalizeOrgNumber(value) === disowned;
     }
 
     /**
@@ -4601,6 +4706,9 @@ class TwoCompanySearch {
             return;
         }
         this._manualEntry = true;
+        // Every route in, not only the chip, so no other chip stays marked selected (TWO-26775).
+        this._chipMode = 'manual';
+        this.renderChipSelection();
         // Latched for the flight: switching back to Registered must not let a late lookup adopt over the hand-typed name.
         this._manualEntryMemory.refusedSoleTrader = true;
         // Manual entry leaves sole-trader mode, however it was reached (TWO-26775).
@@ -4892,8 +5000,8 @@ class TwoCompanySearch {
      * Hear how this capture's signup launches end, for the capture's whole
      * life rather than one flight's (TWO-26775): a launch can resolve after
      * its flight has already been let go, e.g. a slow lookup that outlasts
-     * the panel. A blocked launch leaves the retry link; one that opens takes
-     * it down.
+     * the panel. A blocked launch leaves the blocked-popup panel; one that
+     * opens takes it down.
      */
     bindSoleTraderLaunchOutcome() {
         const ns = '.twoSoleTraderLaunch' + this._instanceNs;
@@ -4916,22 +5024,24 @@ class TwoCompanySearch {
     }
 
     /**
-     * The retry a blocked signup popup leaves under the company field
-     * (TWO-26775): a bell icon and a link-styled button whose click repeats
-     * the launch that was blocked, from the buyer's own gesture. A
-     * replacement keeps its "pick a different one" request. Shown in
-     * sole-trader mode only; any chip that leaves that mode removes it, and so
-     * does a popup that finally opens or an identity that is adopted.
+     * What a blocked signup popup leaves (TWO-26775): a panel drawn over the
+     * open popover, styled as part of it, holding one centred button whose
+     * click repeats the launch that was blocked. The prefetch that makes the
+     * autofill instant is also what takes the launch out of the buyer's own
+     * click, so some blockers refuse it; the button is a fresh gesture of
+     * theirs. A replacement keeps its "pick a different one" request.
+     *
+     * Only over a popover that is still open: one the buyer has closed
+     * meanwhile stays closed, and their focus stays where they put it. The
+     * rest of the popover is inert under it, so Tab cannot reach a control it
+     * covers. Focus moves to the button, whose caption is the one thing said:
+     * the panel has no role or name of its own and the status node stays
+     * empty. It goes with any chip or mode change, the popover closing, and a
+     * launch that opens; one blocked again leaves it up.
      *
      * Remembered in the capture's reopen memory with its country, so a
-     * re-render of the address form brings it back and a country change does
-     * not.
-     *
-     * A relaunch that is blocked again leaves the link in place, so the
-     * button the buyer just pressed keeps focus; every block is announced
-     * through announceSoleTraderFallback() instead. A real `<button
-     * type="button">` for the same reasons as
-     * renderSelectDifferentSoleTraderLink().
+     * re-render of the address form brings it back with the popover and a
+     * country change does not.
      *
      * @param {string} method the TwoSoleTrader launch its click repeats
      */
@@ -4943,46 +5053,55 @@ class TwoCompanySearch {
             this.removeSoleTraderFallbackLink();
             return;
         }
-        this._soleTraderFallbackMethod = method;
-        this._reopenMemory.soleTraderFallback = { method: method, country: this.getCurrentCountry() };
-        if (this.hasSoleTraderFallbackLink() && document.contains(this._soleTraderFallbackLink.get(0))) {
-            this.announceSoleTraderFallback();
+        if (!this._dropdownOpen) {
+            // The panel went with the popover when it closed (Q254.3).
             return;
         }
-        this.removeSoleTraderFallbackLink(false);
-        const note = $('<div class="two-sole-trader-fallback"></div>')
-            .append(TwoCompanySearch.BELL_ICON)
-            .append($('<button type="button"></button>')
-                .addClass('two-sole-trader-fallback__link')
-                .text(this.soleTraderFallbackText()));
-        note.on('click.twoSoleTraderFallback', '.two-sole-trader-fallback__link', (event) => {
-            event.preventDefault();
-            // Same accordion-toggle reason as renderBackToSearchLink().
-            event.stopPropagation();
-            this.launchSoleTraderSignup(this._soleTraderFallbackMethod);
-        });
-
-        // Same slot as the other links under the field.
-        const wrapper = this.companyField.parent();
-        if (wrapper.length && wrapper.hasClass('two-company-field-wrap')) {
-            wrapper.append(note);
-        } else {
-            this.companyField.after(note);
-        }
-        this._soleTraderFallbackLink = note;
-        this.announceSoleTraderFallback();
-    }
-
-    /** @returns {string} caption of the blocked-popup retry link */
-    soleTraderFallbackText() {
-        return this.text('company_search_sole_trader_fallback', 'Click here to login or sign up as a sole trader.');
+        this._soleTraderFallbackMethod = method;
+        this._reopenMemory.soleTraderFallback = { method: method, country: this.getCurrentCountry() };
+        this.drawSoleTraderBlockedPanel();
     }
 
     /**
-     * The empty `role="status"` node a block is announced through, put in
-     * place with the capture: a live region only speaks when content changes
-     * inside a region already on the page, never for one inserted with its
-     * text already in it. Visually hidden, since the link says the same.
+     * Put the blocked-popup panel over the open popover, if it is not up
+     * already, and focus its button.
+     */
+    drawSoleTraderBlockedPanel() {
+        if (!this._dropdownOpen || !this._dropdown || !this._dropdown.length) {
+            return;
+        }
+        let panel = this._soleTraderFallbackLink;
+        if (!panel || !panel.length || !this._dropdown.get(0).contains(panel.get(0))) {
+            // A plain cover with no role or name: the focus move to its button
+            // says the caption, and saying it again is noise.
+            panel = $('<div class="two-sole-trader-blocked"></div>')
+                .append($('<button type="button"></button>')
+                    .addClass('two-sole-trader-blocked__button')
+                    .text(this.soleTraderFallbackText()));
+            panel.on('click.twoSoleTraderFallback', '.two-sole-trader-blocked__button', (event) => {
+                event.preventDefault();
+                // Same accordion-toggle reason as renderBackToSearchLink().
+                event.stopPropagation();
+                this.launchSoleTraderSignup(this._soleTraderFallbackMethod);
+            });
+            // Inert first, so the controls under the panel are out of the
+            // tab order before it appears.
+            this._dropdown.children().attr('inert', '');
+            this._dropdown.append(panel);
+            this._soleTraderFallbackLink = panel;
+        }
+        this.focusQuietly(panel.find('.two-sole-trader-blocked__button'));
+    }
+
+    /** @returns {string} caption of the blocked-popup button */
+    soleTraderFallbackText() {
+        return this.text('company_search_sole_trader_blocked', 'Sign up or log in as a sole trader');
+    }
+
+    /**
+     * The empty `role="status"` node put in place with the capture. A block
+     * leaves it empty: focus moving to the panel's button already says the
+     * caption, and the status saying it too would be heard twice.
      */
     ensureSoleTraderFallbackStatus() {
         if (this._soleTraderFallbackStatus && document.contains(this._soleTraderFallbackStatus.get(0))) {
@@ -5002,26 +5121,10 @@ class TwoCompanySearch {
     }
 
     /**
-     * Say the block out loud: empty the status node, then set the caption a
-     * moment later, so a repeat block is a fresh change and is heard again.
-     */
-    announceSoleTraderFallback() {
-        this.ensureSoleTraderFallbackStatus();
-        const status = this._soleTraderFallbackStatus;
-        if (!status) {
-            return;
-        }
-        status.text('');
-        clearTimeout(this._soleTraderFallbackAnnounceTimer);
-        this._soleTraderFallbackAnnounceTimer = setTimeout(() => {
-            status.text(this.soleTraderFallbackText());
-        }, TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
-    }
-
-    /**
-     * Bring the retry link back on a rebuilt capture, unless the country
-     * changed since the launch it retries was blocked. Manual entry needs no
-     * check here: entering it forgets the link.
+     * Keep the blocked-popup state on a rebuilt capture, unless the country
+     * changed since the launch it retries was blocked; the panel itself comes
+     * back with the popover. Manual entry needs no check here: entering it
+     * forgets the state.
      */
     restoreSoleTraderFallbackLink() {
         const kept = this._reopenMemory.soleTraderFallback;
@@ -5033,35 +5136,32 @@ class TwoCompanySearch {
             return;
         }
         this._chipMode = 'sole_trader';
-        this.renderSoleTraderFallbackLink(kept.method);
+        this._soleTraderFallbackMethod = kept.method;
     }
 
     /**
-     * Remove the blocked-popup retry link and silence its status node. Same
-     * instance-keyed sweep as the others.
+     * Remove the blocked-popup panel.
      *
      * @param {boolean} [forget=true] false only when the capture is being torn
-     *   down for a rebuild, which brings the link back
+     *   down for a rebuild, which brings the panel back
      */
     removeSoleTraderFallbackLink(forget = true) {
         if (forget) {
             delete this._reopenMemory.soleTraderFallback;
         }
-        clearTimeout(this._soleTraderFallbackAnnounceTimer);
-        if (this._soleTraderFallbackStatus) {
-            this._soleTraderFallbackStatus.text('');
-        }
         if (this._soleTraderFallbackLink) {
+            const popover = this._soleTraderFallbackLink.parent();
             this._soleTraderFallbackLink.off('.twoSoleTraderFallback');
             this._soleTraderFallbackLink.remove();
             this._soleTraderFallbackLink = null;
+            // The popover's own controls come back.
+            popover.children().removeAttr('inert');
         }
-        this.ownLinks('two-sole-trader-fallback').off('.twoSoleTraderFallback').remove();
     }
 
-    /** @returns {boolean} whether the blocked-popup retry link is up */
+    /** @returns {boolean} whether a blocked signup is still being offered */
     hasSoleTraderFallbackLink() {
-        return !!(this._soleTraderFallbackLink && this._soleTraderFallbackLink.length);
+        return !!this._reopenMemory.soleTraderFallback;
     }
 
     /**
@@ -7304,9 +7404,14 @@ class TwoCompanySearch {
     }
 
     persistCompanyToCookie(data) {
+        // A pick lifts the manual-entry refusal on the server, so the page lets
+        // go of the number too (TWO-26775).
+        this._manualEntryMemory.disownedId = '';
         try {
             if (!this._page.orderIntentUrl || !this._page.ajaxToken) return;
-            TwoCompanySearch.trackCompanyCookieWrite($.ajax({
+            // Behind any clear still in flight: a manual-entry clear landing
+            // after this pick would refuse the company just picked (TWO-26775).
+            TwoCompanySearch.trackCompanyCookieWrite(TwoCompanySearch.queueAfterCompanyCookieWrite({
                 url: this._page.orderIntentUrl,
                 type: 'POST',
                 dataType: 'json',

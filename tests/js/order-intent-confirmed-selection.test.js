@@ -443,3 +443,24 @@ describe('TwoCompanySearch publishes the selection the intent check reads', () =
         expect(published[published.length - 1]).toEqual({ company: '', companyid: '' });
     });
 });
+
+/**
+ * TWO-26775: the intent check carries the manual-entry flag, so the server
+ * refuses the number on record even when the search's own clear was lost.
+ */
+describe('the intent check says when the company is entered manually', () => {
+    test.each([
+        ['manual entry sends the flag', true, 1],
+        ['search mode sends none', false, undefined],
+    ])('%s', async (description, manual, expected) => {
+        const intent = new TwoOrderIntent({
+            enabled: true,
+            orderIntentUrl: 'https://shop.example.test/module/twopayment/orderintent',
+            ajaxToken: 'test-token',
+            companySearchInAddressArea: false,
+            getCompanySearch: () => ({ isManualEntry: () => manual })
+        });
+        const formData = await collect(intent, null);
+        expect([description, formData.manual_entry]).toEqual([description, expected]);
+    });
+});
