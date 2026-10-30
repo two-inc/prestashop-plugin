@@ -1,11 +1,12 @@
 /**
- * TWO-26775: when the browser blocks the sole-trader signup popup, the buyer
- * gets a link under the company field to try again from a click of their own.
- * Sole trader stays the selected mode while it is up. Clicking it repeats the
- * blocked launch straight away; a relaunch that is blocked again keeps it (and
- * the buyer's focus on it), one that opens removes it, and leaving sole-trader
- * mode removes it. A re-render of the address form keeps it; a country change
- * does not. Real modules, no stubs beyond the network and window.open().
+ * TWO-26775: when the browser blocks the sole-trader signup popup, a panel is
+ * drawn over the open popover with one centred button to try again from a click
+ * of the buyer's own, and focus moves to it. Sole trader stays the selected mode
+ * while it is up. Clicking it repeats the blocked launch straight away; a
+ * relaunch that is blocked again keeps it (and the buyer's focus on it), one
+ * that opens removes it, and so do leaving sole-trader mode and the popover
+ * closing. A re-render of the address form keeps it; a country change does not.
+ * Real modules, no stubs beyond the network and window.open().
  */
 
 'use strict';
@@ -23,7 +24,7 @@ const {
     flushPromises
 } = require('./ps-harness');
 
-const FALLBACK_TEXT = 'Click here to login or sign up as a sole trader.';
+const FALLBACK_TEXT = 'Sign up or log in as a sole trader';
 const BLOCKED_LOG = 'Two: sole-trader signup popup was blocked and no on-page error UI is available here.';
 
 const TOKENS = {
@@ -83,7 +84,7 @@ async function settle() {
 }
 
 function fallbackLink() {
-    return $('.two-sole-trader-fallback__link');
+    return $('.two-sole-trader-blocked__button');
 }
 
 /** The screen-reader announcement of a block. */
@@ -133,7 +134,7 @@ async function blockedLaunch() {
     openPanel();
     panelParts().soleTrader.trigger('click');
     await settle();
-    jest.advanceTimersByTime(TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
+    jest.runOnlyPendingTimers();
 }
 
 beforeEach(() => {
@@ -180,9 +181,19 @@ afterEach(() => {
 
 describe.each([
     // [what the buyer does next, act, link shown after, mode after (null: not asserted), window.open calls, extra check, description]
-    ['nothing, then reopens the panel', async () => {
+    ['nothing', async () => {
+    }, true, 'sole_trader', 1, () => {
+        expect(document.activeElement).toBe(fallbackLink().get(0));
+    }, 'the panel stays, with focus on its button, and Sole trader stays selected'],
+    ['presses Escape', async () => {
+        panelParts().panel.trigger($.Event('keydown', { key: 'Escape', keyCode: 27 }));
+    }, false, null, 1, () => {
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(fallbackLink().length).toBe(0);
         openPanel();
-    }, true, 'sole_trader', 1, null, 'the link stays and Sole trader stays selected'],
+        expect(fallbackLink().length).toBe(0);
+        expect(search._chipMode).toBe('registered');
+    }, 'the popover closing takes the panel with it, for good'],
     ['clicks the Registered chip', async () => {
         openPanel();
         panelParts().registered.trigger('click');
@@ -194,7 +205,7 @@ describe.each([
     ['clicks the link and the popup opens', async () => {
         nextWindow = realWindow();
         fallbackLink().trigger('click');
-    }, false, 'sole_trader', 2, null, 'the relaunch opened, so the retry is spent'],
+    }, false, 'sole_trader', 2, null, 'the relaunch opened, so the panel is spent'],
     ['clicks the link and the popup is blocked again', async () => {
         fallbackLink().get(0).focus();
         fallbackLink().trigger('click');
@@ -254,13 +265,24 @@ describe.each([
         expect(shown(fallbackLink())).toBe(true);
         expect(fallbackLink().text()).toBe(FALLBACK_TEXT);
         expect(fallbackLink().attr('type')).toBe('button');
-        expect(fallbackStatus().attr('role')).toBe('status');
-        expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
+        // Over the open popover, with focus on its button.
+        const overlay = fallbackLink().closest('.two-sole-trader-blocked');
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(panelParts().panel.get(0).contains(overlay.get(0))).toBe(true);
+        expect(document.activeElement).toBe(fallbackLink().get(0));
+        // Everything else in the popover is out of reach under it.
+        panelParts().panel.children().not(overlay).each((_i, child) => {
+            expect(child.hasAttribute('inert')).toBe(true);
+        });
+        // The old link under the field is gone for good.
+        expect($('.two-sole-trader-fallback').length).toBe(0);
 
         await act();
         await settle();
 
         expect(shown(fallbackLink())).toBe(linkAfter);
+        // The popover's own controls come back with the panel gone.
+        expect(panelParts().panel.find('[inert]').length).toBe(linkAfter ? panelParts().panel.children().length - 1 : 0);
         if (modeAfter !== null) {
             expect(search._chipMode).toBe(modeAfter);
         }
@@ -275,7 +297,7 @@ describe.each([
     });
 });
 
-test('a launch refused after its flight was let go still leaves the retry', async () => {
+test('a launch refused after the buyer closed the popover leaves it closed and their focus alone', async () => {
     // No answer held, so the click waits on a lookup of its own.
     soleTrader.clearHeldBuyerResult();
     heldLookups = [];
@@ -284,9 +306,11 @@ test('a launch refused after its flight was let go still leaves the retry', asyn
     await settle();
     expect(heldLookups.length).toBe(1);
 
-    // Escape closes the panel, which lets the flight go.
+    // Escape closes the panel, which lets the flight go, and the buyer moves on.
     panelParts().panel.trigger($.Event('keydown', { key: 'Escape', keyCode: 27 }));
     expect(search._soleTraderLoading).toBe(false);
+    const typed = $("input[name='address1']").get(0);
+    typed.focus();
 
     // The lookup lands, the popup it opens is refused.
     heldLookups.splice(0).forEach((resolve) => resolve({ ok: false, status: 404 }));
@@ -294,7 +318,13 @@ test('a launch refused after its flight was let go still leaves the retry', asyn
 
     expect(global.window.open).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledWith(BLOCKED_LOG);
-    expect(shown(fallbackLink())).toBe(true);
+    // The popover stays closed, with nothing drawn and focus where the buyer put it.
+    expect(shown(panelParts().panel)).toBe(false);
+    expect(fallbackLink().length).toBe(0);
+    expect(document.activeElement).toBe(typed);
+    // Nor does it come back on the next open.
+    openPanel();
+    expect(fallbackLink().length).toBe(0);
 });
 
 test('a refused "select a different sole trader" retries as one', async () => {
@@ -319,24 +349,25 @@ test('a refused "select a different sole trader" retries as one', async () => {
     expect(shown(fallbackLink())).toBe(false);
 });
 
-test('every block is announced, a repeat one included, without moving the button', async () => {
-    // In place, and silent, before anything is blocked.
-    expect(fallbackStatus().length).toBe(1);
-    expect(fallbackStatus().text()).toBe('');
-
+test('the caption is said once, by the focused button, a repeat block included', async () => {
     await blockedLaunch();
-    expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
     const button = fallbackLink().get(0);
+    const cover = fallbackLink().closest('.two-sole-trader-blocked');
+    // A plain cover: no role and no name of its own to say the caption again.
+    [['role', 'cover role'], ['aria-label', 'cover label'], ['aria-labelledby', 'cover labelled by']]
+        .forEach(([attr, description]) => {
+            expect([description, cover.attr(attr)]).toEqual([description, undefined]);
+        });
+    expect([document.activeElement === button, button.textContent]).toEqual([true, FALLBACK_TEXT]);
+    // The status region is in place and stays empty.
+    expect(fallbackStatus().attr('role')).toBe('status');
+    expect(fallbackStatus().text()).toBe('');
 
     fallbackLink().trigger('click');
-    // Emptied first, so the same words are a fresh message.
+    await settle();
+    jest.runOnlyPendingTimers();
     expect(fallbackStatus().text()).toBe('');
-    jest.advanceTimersByTime(TwoCompanySearch.FALLBACK_ANNOUNCE_DELAY_MS);
-    expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
     expect(fallbackLink().get(0)).toBe(button);
-
-    panelParts().registered.trigger('click');
-    expect(fallbackStatus().text()).toBe('');
 });
 
 test('a block of the payment-step prompt leaves no retry under the company field', async () => {

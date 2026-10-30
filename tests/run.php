@@ -5907,6 +5907,7 @@ require __DIR__ . '/BrandTokenSpec.php';
 require __DIR__ . '/UpgradeScriptVersionSpec.php';
 require __DIR__ . '/CompanySearchCountrySourcingSpec.php';
 require __DIR__ . '/SessionCompanyClearSpec.php';
+require __DIR__ . '/ManualEntryDisownSpec.php';
 require __DIR__ . '/MirrorWriteRecordSpec.php';
 require __DIR__ . '/CartRecordStorageSpec.php';
 require __DIR__ . '/CartRecordRetentionSpec.php';
@@ -5999,6 +6000,7 @@ $tests = [
     'UpgradeScriptVersionSpec::runAll' => [UpgradeScriptVersionSpec::class, 'runAll'],
     'CompanySearchCountrySourcingSpec::runAll' => [CompanySearchCountrySourcingSpec::class, 'runAll'],
     'SessionCompanyClearSpec::runAll' => [SessionCompanyClearSpec::class, 'runAll'],
+    'ManualEntryDisownSpec::runAll' => [ManualEntryDisownSpec::class, 'runAll'],
     'MirrorWriteRecordSpec::runAll' => [MirrorWriteRecordSpec::class, 'runAll'],
     'CartRecordStorageSpec::runAll' => [CartRecordStorageSpec::class, 'runAll'],
     'CartRecordRetentionSpec::runAll' => [CartRecordRetentionSpec::class, 'runAll'],

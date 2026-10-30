@@ -2695,6 +2695,32 @@ class TwoSoleTrader {
         // Capture phase, so a theme handler stopping propagation cannot hide the focus.
         document.addEventListener('focusin', this._returnHandler, true);
         document.addEventListener('focusout', this._returnHandler, true);
+        // A press that moves focus nowhere - page background, plain text, a
+        // panel's dead space - is still the buyer back on the checkout, so it
+        // closes the popup too (TWO-26775). Judged one tick later, once the
+        // press's own default action has had its chance to focus something:
+        // whether an element takes focus depends on handlers that cancel the
+        // press, which no selector can see.
+        this._pressHandler = (event) => {
+            const target = event.target;
+            if (!target || target.nodeType !== 1 || !this.isPopupOpen()) {
+                return;
+            }
+            if (this._launchChip && this.chipOf(target) === this._launchChip) {
+                return;
+            }
+            this._pressFocusSettled = false;
+            setTimeout(() => {
+                if (this._pressFocusSettled || !this.isPopupOpen()) {
+                    return;
+                }
+                this.closeSignupPopup();
+                document.dispatchEvent(new CustomEvent('two:sole-trader-focus-settled', {
+                    detail: { target: target, popupClosed: true, press: true }
+                }));
+            }, 0);
+        };
+        document.addEventListener('mousedown', this._pressHandler, true);
     }
 
     /** @param {?Element} node @returns {?Element} the Sole trader chip at or above `node` */
@@ -2716,6 +2742,8 @@ class TwoSoleTrader {
         if (this._settlingFocus) {
             return;
         }
+        // A press that landed focus here was settled as a focus, not a press.
+        this._pressFocusSettled = true;
         const chip = this.chipOf(target);
         // A re-render detaches the recorded chip, so the launching capture's
         // REBUILT chip inherits the popup - a sibling capture's does not.
@@ -2752,7 +2780,9 @@ class TwoSoleTrader {
         }
         document.removeEventListener('focusin', this._returnHandler, true);
         document.removeEventListener('focusout', this._returnHandler, true);
+        document.removeEventListener('mousedown', this._pressHandler, true);
         this._returnHandler = null;
+        this._pressHandler = null;
     }
 
     /**

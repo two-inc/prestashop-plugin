@@ -145,6 +145,53 @@ the browser — a validation jump, a restored scroll position, a password-manage
 fill — reads as the buyer and takes the popup down. Close only, so the enrolment
 survives and the chip reopens it.
 
+**A press that moves focus nowhere counts as the buyer back too** (TWO-26775): page
+background, plain text, the popover's own dead space. It closes the popup, and the
+popover only when the press landed outside it. `TwoSoleTrader.js` judges it one tick
+after the `mousedown`, once the press's default action has had its chance to focus
+something, because whether an element takes focus depends on handlers that cancel the
+press (every panel chip does), which no selector can see. A press on the launching
+chip is left to that chip. After a popup closes without a signup, the chips are
+recomputed from the stored identity, so a Tab onto another chip does not leave Sole
+trader marked selected.
+
+**A blocked popup leaves a panel over the popover** (TWO-26775): one centred button,
+a fresh gesture of the buyer's own, because the autofill prefetch takes the launch
+out of their click. Focus moves to it, and its caption is the only thing said: the
+cover is a plain container with no role or name, and the empty `role="status"` node
+put in place with the capture stays empty. The rest of the popover
+is `inert` under it until it goes. It is drawn only over a popover still open: a
+block landing after the buyer closed the popover changes nothing on screen and moves
+no focus. The flight's settle does not close the popover while it is up; a chip or
+mode change, the popover closing and a launch that opens all take it down.
+
+## Enter Manually Refuses The Old Number
+
+Manual entry keeps the name and captures no number of the company it walked away
+from (TWO-26775). The module refuses a name-only order, so a number the buyer
+types into `dni` themselves still reaches Two; only the OLD one is refused, by both
+halves:
+
+- **The page** clears an identification field holding it (marker or not), never
+  adopts it at submit, and drops it from the invoice mirror's memory.
+- **The server** records it on the cart as `disowned_id`. The saved address, the
+  address-save hook and the order-intent store all turn it away until `saveCompany`
+  records a new pick; the resolver's own clears and a plain `clearCompany` keep it.
+  Three requests carry the manual-entry signal, any one of them enough:
+  `clearCompany` with `manual=1` (retried on failure), the address form's
+  `two_manual_entry`, and the order intent's `manual_entry`.
+- **Only a picked number is refused.** `saveCompany` records its number as
+  `picked_id`, because `id` also holds a number the address save stored from manual
+  entry. The two flag-only carriers refuse `picked_id` and nothing else, so a number
+  the buyer typed is never refused and never replaces the refusal. `clearCompany`
+  also names the number the page held, used only when no pick is on record and no
+  refusal stands. A pick waits for a clear still in flight, so a slow clear cannot
+  refuse the company picked after it.
+- **A typed number carries a country.** The address save in manual entry stores a
+  typed number with the saved address's country, so the resolver does not drop it as
+  a record with no country marker, and the buyer pays with it even when the cart's
+  address still holds the old one.
+
 
 ## The Payment-Term Chips Owe The Radio-Group Keyboard Contract
 
