@@ -7804,9 +7804,9 @@ class Twopayment extends PaymentModule
             // "pick a different registration" and "register as new" inside
             // its own UI, so this plugin does not need to distinguish them.
             'company_search_select_different_sole_trader' => $this->l('Select a different sole trader'),
-            // Retry link under the company field when the browser blocks the
-            // sole-trader signup popup (TWO-26775). Relaunches the popup from
-            // the buyer's own click.
+            // The one button on the panel drawn over the popover when the
+            // browser blocks the sole-trader signup popup (TWO-26775).
+            // Relaunches the popup from the buyer's own click.
             'company_search_sole_trader_blocked' => $this->l('Sign up or log in as a sole trader'),
         );
 
@@ -14256,8 +14256,12 @@ class Twopayment extends PaymentModule
      * `disowned_id` is the organisation number the buyer walked away from by
      * entering their company manually (TWO-26775). It is never an answer, only a
      * refusal: see disownTwoCartScopedCompany().
+     *
+     * `picked_id` is the number of the company the buyer last picked through
+     * saveCompany. `id` cannot tell a pick from a number typed in manual entry,
+     * which the address save stores there too; only a picked one is refused.
      */
-    const COMPANY_SESSION_FIELDS = array('name', 'id', 'country', 'address_id', 'disowned_id');
+    const COMPANY_SESSION_FIELDS = array('name', 'id', 'country', 'address_id', 'disowned_id', 'picked_id');
 
     /**
      * Module table holding the company and mirror-write records, one row per
@@ -14340,11 +14344,16 @@ class Twopayment extends PaymentModule
     /**
      * Forget the stored company selection (TWO-40).
      *
+     * A manual-entry refusal stays (TWO-26775): only a new pick lifts it, and
+     * these clears are the resolver's and the browser's housekeeping, not one.
+     *
      * @return void
      */
     public function clearTwoCartScopedCompany()
     {
-        $this->writeTwoCartRecord('company', null);
+        $stored = $this->readTwoCartScopedCompany();
+        $disowned = $stored !== null ? trim($stored['disowned_id']) : '';
+        $this->writeTwoCartRecord('company', $disowned === '' ? null : array('disowned_id' => $disowned));
     }
 
     /**
@@ -14358,22 +14367,33 @@ class Twopayment extends PaymentModule
      * (extractOrgNumberFromAddress()), the address-save hook, the order-intent
      * store - turns it away. Only a new pick through saveCompany lifts it.
      *
+     * Only ever the number of a pick. The one saveCompany recorded comes first.
+     * Failing that, the browser's own word for it, but only while no refusal
+     * stands: once in manual entry the buyer may type a number of their own,
+     * which is theirs to pay with and must neither be refused nor take the
+     * refusal's place.
+     *
      * Idempotent, so every carrier of the manual-entry signal (the clear request,
      * the address form's save, the order-intent check) can call it and the first
      * to arrive wins: none of them depends on another being delivered.
      *
-     * @param string $dropped_id the number the browser held when it entered manual
-     *   entry; the stored number, else an earlier refusal, when it sends none
-     * @return void
+     * @param string $dropped_id the number the browser held from its pick when it
+     *   entered manual entry; the flag-only carriers send none
+     * @return bool whether a number is now refused by this call
      */
     public function disownTwoCartScopedCompany($dropped_id = '')
     {
         $stored = $this->readTwoCartScopedCompany();
-        $disowned = trim((string) $dropped_id);
-        if ($disowned === '' && $stored !== null) {
-            $disowned = trim($stored['id']) !== '' ? trim($stored['id']) : trim($stored['disowned_id']);
+        $disowned = $stored !== null ? trim($stored['picked_id']) : '';
+        if ($disowned === '' && ($stored === null || trim($stored['disowned_id']) === '')) {
+            $disowned = trim((string) $dropped_id);
         }
-        $this->writeTwoCartRecord('company', $disowned === '' ? null : array('disowned_id' => $disowned));
+        if ($disowned === '') {
+            return false;
+        }
+        $this->writeTwoCartRecord('company', array('disowned_id' => $disowned));
+
+        return true;
     }
 
     /**

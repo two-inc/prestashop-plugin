@@ -5005,8 +5005,8 @@ class TwoCompanySearch {
      * Hear how this capture's signup launches end, for the capture's whole
      * life rather than one flight's (TWO-26775): a launch can resolve after
      * its flight has already been let go, e.g. a slow lookup that outlasts
-     * the panel. A blocked launch leaves the retry link; one that opens takes
-     * it down.
+     * the panel. A blocked launch leaves the blocked-popup panel; one that
+     * opens takes it down.
      */
     bindSoleTraderLaunchOutcome() {
         const ns = '.twoSoleTraderLaunch' + this._instanceNs;
@@ -5036,10 +5036,13 @@ class TwoCompanySearch {
      * click, so some blockers refuse it; the button is a fresh gesture of
      * theirs. A replacement keeps its "pick a different one" request.
      *
-     * The popover is opened under it if it has closed meanwhile. Focus moves to
-     * the button, and the block is announced through the status node. It goes
-     * with any chip or mode change, the popover closing, and a launch that
-     * opens; one blocked again leaves it up and is announced again.
+     * Only over a popover that is still open: one the buyer has closed
+     * meanwhile stays closed, and their focus stays where they put it. The
+     * rest of the popover is inert under it, so Tab cannot reach a control it
+     * covers. Focus moves to the button, and the block is announced through
+     * the status node. It goes with any chip or mode change, the popover
+     * closing, and a launch that opens; one blocked again leaves it up and is
+     * announced again.
      *
      * Remembered in the capture's reopen memory with its country, so a
      * re-render of the address form brings it back with the popover and a
@@ -5055,14 +5058,13 @@ class TwoCompanySearch {
             this.removeSoleTraderFallbackLink();
             return;
         }
+        if (!this._dropdownOpen) {
+            // The panel went with the popover when it closed (Q254.3).
+            return;
+        }
         this._soleTraderFallbackMethod = method;
         this._reopenMemory.soleTraderFallback = { method: method, country: this.getCurrentCountry() };
-        if (!this._dropdownOpen) {
-            // openDropdown() draws the panel itself, from the memory just set.
-            this.openDropdown(false);
-        } else {
-            this.drawSoleTraderBlockedPanel();
-        }
+        this.drawSoleTraderBlockedPanel();
         this.announceSoleTraderFallback();
     }
 
@@ -5076,18 +5078,25 @@ class TwoCompanySearch {
         }
         let panel = this._soleTraderFallbackLink;
         if (!panel || !panel.length || !this._dropdown.get(0).contains(panel.get(0))) {
-            const caption = this.soleTraderFallbackText();
+            // Named by its one button rather than a label of its own: the
+            // caption is said by the focus move and the status node, and a
+            // third time is noise.
+            const buttonId = 'two-sole-trader-blocked-' + this._instanceNs;
             panel = $('<div class="two-sole-trader-blocked" role="group"></div>')
-                .attr('aria-label', caption)
+                .attr('aria-labelledby', buttonId)
                 .append($('<button type="button"></button>')
+                    .attr('id', buttonId)
                     .addClass('two-sole-trader-blocked__button')
-                    .text(caption));
+                    .text(this.soleTraderFallbackText()));
             panel.on('click.twoSoleTraderFallback', '.two-sole-trader-blocked__button', (event) => {
                 event.preventDefault();
                 // Same accordion-toggle reason as renderBackToSearchLink().
                 event.stopPropagation();
                 this.launchSoleTraderSignup(this._soleTraderFallbackMethod);
             });
+            // Inert first, so the controls under the panel are out of the
+            // tab order before it appears.
+            this._dropdown.children().attr('inert', '');
             this._dropdown.append(panel);
             this._soleTraderFallbackLink = panel;
         }
@@ -5173,9 +5182,12 @@ class TwoCompanySearch {
             this._soleTraderFallbackStatus.text('');
         }
         if (this._soleTraderFallbackLink) {
+            const popover = this._soleTraderFallbackLink.parent();
             this._soleTraderFallbackLink.off('.twoSoleTraderFallback');
             this._soleTraderFallbackLink.remove();
             this._soleTraderFallbackLink = null;
+            // The popover's own controls come back.
+            popover.children().removeAttr('inert');
         }
     }
 
@@ -7424,9 +7436,14 @@ class TwoCompanySearch {
     }
 
     persistCompanyToCookie(data) {
+        // A pick lifts the manual-entry refusal on the server, so the page lets
+        // go of the number too (TWO-26775).
+        this._manualEntryMemory.disownedId = '';
         try {
             if (!this._page.orderIntentUrl || !this._page.ajaxToken) return;
-            TwoCompanySearch.trackCompanyCookieWrite($.ajax({
+            // Behind any clear still in flight: a manual-entry clear landing
+            // after this pick would refuse the company just picked (TWO-26775).
+            TwoCompanySearch.trackCompanyCookieWrite(TwoCompanySearch.queueAfterCompanyCookieWrite({
                 url: this._page.orderIntentUrl,
                 type: 'POST',
                 dataType: 'json',

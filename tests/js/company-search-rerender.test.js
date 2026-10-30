@@ -1158,6 +1158,61 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
                 }
             });
 
+            /** Back to search and the same company picked again. */
+            function repick(instance) {
+                instance.exitManualEntryMode();
+                search(AT_THRESHOLD);
+                ajax.last().succeed(SEARCH_RESPONSE);
+                selectFirstCompany();
+            }
+
+            test('a new pick lets the page adopt the number again', () => {
+                withEndpoint(() => {
+                    const instance = makeInstance();
+                    selectThenUnmarkDni(instance);
+                    instance.enterManualEntryMode();
+                    repick(instance);
+                    // A re-render empties the hidden field; the address still holds the number.
+                    instance.organizationField.val('');
+                    $("input[name='dni']").val('12345678');
+                    submitForm();
+                    expect(instance.organizationField.val()).toBe('12345678');
+                });
+            });
+
+            test('a new pick waits for a manual clear still in flight', async () => {
+                const stubbed = $.ajax;
+                let releaseClear = null;
+                $.ajax = function (settings) {
+                    const xhr = stubbed(settings);
+                    if (settings.data && settings.data.action === 'clearCompany' && !releaseClear) {
+                        const landed = new Promise((resolve) => { releaseClear = resolve; });
+                        xhr.then = (onDone, onFail) => landed.then(onDone, onFail);
+                    }
+                    return xhr;
+                };
+                try {
+                    withEndpoint(() => {
+                        const instance = makeInstance();
+                        selectThenUnmarkDni(instance);
+                        instance.enterManualEntryMode();
+                        repick(instance);
+                    });
+                    await flushPromises();
+                    // Only the first pick's save: the re-pick is held behind the clear.
+                    expect(callsFor('saveCompany')).toHaveLength(1);
+                    releaseClear();
+                    await flushPromises();
+                    expect(callsFor('saveCompany')).toHaveLength(2);
+                    expect(callsFor('saveCompany')[1].settings.data.companyid).toBe('12345678');
+                } finally {
+                    if (releaseClear) {
+                        releaseClear();
+                    }
+                    $.ajax = stubbed;
+                }
+            });
+
             /** F4: the invoice mirror's memory must not re-attach the number on a re-mount. */
             test('the invoice mirror forgets the number it would re-publish', () => {
                 withEndpoint(() => {

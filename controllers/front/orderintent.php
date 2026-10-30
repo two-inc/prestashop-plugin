@@ -346,8 +346,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
             return;
         }
 
-        // A pick is the one thing that lifts a manual-entry refusal (TWO-26775).
-        $fields = ['name' => $company, 'id' => $companyId, 'disowned_id' => null];
+        // A pick is the one thing that lifts a manual-entry refusal, and the only
+        // number a later one refuses (TWO-26775).
+        $fields = ['name' => $company, 'id' => $companyId, 'disowned_id' => null, 'picked_id' => $companyId];
         if (!empty($country)) {
             $fields['country'] = $country;
         }
@@ -390,9 +391,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
 
         // Manual entry also refuses the number it walked away from (TWO-26775),
         // so the saved address cannot hand it back once the record is gone.
-        if ((string) Tools::getValue('manual', '') === '1') {
-            $this->module->disownTwoCartScopedCompany(Tools::getValue('companyid', ''));
-        } else {
+        if ((string) Tools::getValue('manual', '') !== '1'
+            || !$this->module->disownTwoCartScopedCompany(Tools::getValue('companyid', ''))
+        ) {
             $this->module->clearTwoCartScopedCompany();
         }
 
@@ -1072,16 +1073,6 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * Get company data using PrestaShop-native fallback chain
-     * Priority: Form data → Session → Address fields → Partial session → Partial form
-     *
-     * When a logged-in user checks out against an existing address, an organization
-     * number stored in that address (dni, companyid - vat_number is deliberately not a source) is taken as-is and
-     * handed to Two, which validates its format and resolves it against the company
-     * registry on the order-intent request (TWO-25206). This module makes no company
-     * lookup of its own on this path.
-     */
-    /**
      * Whether the browser says its company field is in manual entry (TWO-26775).
      *
      * @return bool
@@ -1091,6 +1082,16 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         return (string) Tools::getValue('manual_entry', '') === '1';
     }
 
+    /**
+     * Get company data using PrestaShop-native fallback chain
+     * Priority: Form data → Session → Address fields → Partial session → Partial form
+     *
+     * When a logged-in user checks out against an existing address, an organization
+     * number stored in that address (dni, companyid - vat_number is deliberately not a source) is taken as-is and
+     * handed to Two, which validates its format and resolves it against the company
+     * registry on the order-intent request (TWO-25206). This module makes no company
+     * lookup of its own on this path.
+     */
     private function getCompanyDataWithFallbacks()
     {
         // Priority 1: Form data (highest priority - direct user input from company search)
