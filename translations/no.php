@@ -427,7 +427,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_90a5f22cdff46c106eb927b92562347f'] = 'Angi manuelt';
 $_MODULE['<{twopayment}prestashop>twopayment_22294ef90aa68e15429879889a0cdaf5'] = 'Registrert virksomhet';
 $_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Velg et annet enkeltpersonforetak';
-$_MODULE['<{twopayment}prestashop>twopayment_a5bb1c5f9375b2b162b24e683969c1f8'] = 'Klikk her for å logge inn eller registrere deg som enkeltpersonforetak.';
+$_MODULE['<{twopayment}prestashop>twopayment_09c9b40a96b22bb7ff9b9ddaac142841'] = 'Registrer deg eller logg inn som enkeltpersonforetak';
 $_MODULE['<{twopayment}prestashop>twopayment_85975d3764f15a461e1b4241e4a5b1c3'] = 'Hvilken tilbudt betalingsfrist som er forhåndsvalgt i kassen som standard. La stå uvalgt for å beholde det automatiske valget (forhandlerens egen standardfrist når den tilbys, ellers 30 dager, ellers den kortest tilbudte fristen).';
 $_MODULE['<{twopayment}prestashop>twopayment_ea5dc66828c0b5143181e3d1619bd1cf'] = 'Vis forklaringslenken "Hva er %s"';
 $_MODULE['<{twopayment}prestashop>twopayment_e385d49e793ac9d4aa4835d62282469b'] = 'Hvis du velger JA, ser kjøperne en info-verktøytips "Hva er %1$s?" med en lenke til en forklaringsressurs i %1$s-betalingsflisen ved kassen.';

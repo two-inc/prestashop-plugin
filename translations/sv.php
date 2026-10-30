@@ -427,7 +427,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_8fba17b1e1abfeb9ccc08c9248824add'] 
 $_MODULE['<{twopayment}prestashop>twopayment_90a5f22cdff46c106eb927b92562347f'] = 'Ange manuellt';
 $_MODULE['<{twopayment}prestashop>twopayment_22294ef90aa68e15429879889a0cdaf5'] = 'Registrerat företag';
 $_MODULE['<{twopayment}prestashop>twopayment_f2b8ff605311079f7ab03db9fd5da02c'] = 'Välj en annan enskild firma';
-$_MODULE['<{twopayment}prestashop>twopayment_a5bb1c5f9375b2b162b24e683969c1f8'] = 'Klicka här för att logga in eller registrera dig som enskild firma.';
+$_MODULE['<{twopayment}prestashop>twopayment_09c9b40a96b22bb7ff9b9ddaac142841'] = 'Registrera dig eller logga in som enskild firma';
 $_MODULE['<{twopayment}prestashop>twopayment_85975d3764f15a461e1b4241e4a5b1c3'] = 'Vilket erbjudet betalningsvillkor som är förvalt i kassan som standard. Lämna ej valt för att behålla det automatiska valet (handlarens eget standardvillkor när det erbjuds, annars 30 dagar, annars det kortaste erbjudna villkoret).';
 $_MODULE['<{twopayment}prestashop>twopayment_ea5dc66828c0b5143181e3d1619bd1cf'] = 'Visa förklaringslänken "Vad är %s"';
 $_MODULE['<{twopayment}prestashop>twopayment_e385d49e793ac9d4aa4835d62282469b'] = 'Om du väljer JA ser köparna en info-tooltip "Vad är %1$s?" med en länk till en förklarande resurs i %1$s-betalningsplattan i kassan.';

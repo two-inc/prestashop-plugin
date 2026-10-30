@@ -1,11 +1,12 @@
 /**
- * TWO-26775: when the browser blocks the sole-trader signup popup, the buyer
- * gets a link under the company field to try again from a click of their own.
- * Sole trader stays the selected mode while it is up. Clicking it repeats the
- * blocked launch straight away; a relaunch that is blocked again keeps it (and
- * the buyer's focus on it), one that opens removes it, and leaving sole-trader
- * mode removes it. A re-render of the address form keeps it; a country change
- * does not. Real modules, no stubs beyond the network and window.open().
+ * TWO-26775: when the browser blocks the sole-trader signup popup, a panel is
+ * drawn over the open popover with one centred button to try again from a click
+ * of the buyer's own, and focus moves to it. Sole trader stays the selected mode
+ * while it is up. Clicking it repeats the blocked launch straight away; a
+ * relaunch that is blocked again keeps it (and the buyer's focus on it), one
+ * that opens removes it, and so do leaving sole-trader mode and the popover
+ * closing. A re-render of the address form keeps it; a country change does not.
+ * Real modules, no stubs beyond the network and window.open().
  */
 
 'use strict';
@@ -23,7 +24,7 @@ const {
     flushPromises
 } = require('./ps-harness');
 
-const FALLBACK_TEXT = 'Click here to login or sign up as a sole trader.';
+const FALLBACK_TEXT = 'Sign up or log in as a sole trader';
 const BLOCKED_LOG = 'Two: sole-trader signup popup was blocked and no on-page error UI is available here.';
 
 const TOKENS = {
@@ -83,7 +84,7 @@ async function settle() {
 }
 
 function fallbackLink() {
-    return $('.two-sole-trader-fallback__link');
+    return $('.two-sole-trader-blocked__button');
 }
 
 /** The screen-reader announcement of a block. */
@@ -180,9 +181,19 @@ afterEach(() => {
 
 describe.each([
     // [what the buyer does next, act, link shown after, mode after (null: not asserted), window.open calls, extra check, description]
-    ['nothing, then reopens the panel', async () => {
+    ['nothing', async () => {
+    }, true, 'sole_trader', 1, () => {
+        expect(document.activeElement).toBe(fallbackLink().get(0));
+    }, 'the panel stays, with focus on its button, and Sole trader stays selected'],
+    ['presses Escape', async () => {
+        panelParts().panel.trigger($.Event('keydown', { key: 'Escape', keyCode: 27 }));
+    }, false, null, 1, () => {
+        expect(shown(panelParts().panel)).toBe(false);
+        expect(fallbackLink().length).toBe(0);
         openPanel();
-    }, true, 'sole_trader', 1, null, 'the link stays and Sole trader stays selected'],
+        expect(fallbackLink().length).toBe(0);
+        expect(search._chipMode).toBe('registered');
+    }, 'the popover closing takes the panel with it, for good'],
     ['clicks the Registered chip', async () => {
         openPanel();
         panelParts().registered.trigger('click');
@@ -194,7 +205,7 @@ describe.each([
     ['clicks the link and the popup opens', async () => {
         nextWindow = realWindow();
         fallbackLink().trigger('click');
-    }, false, 'sole_trader', 2, null, 'the relaunch opened, so the retry is spent'],
+    }, false, 'sole_trader', 2, null, 'the relaunch opened, so the panel is spent'],
     ['clicks the link and the popup is blocked again', async () => {
         fallbackLink().get(0).focus();
         fallbackLink().trigger('click');
@@ -254,6 +265,14 @@ describe.each([
         expect(shown(fallbackLink())).toBe(true);
         expect(fallbackLink().text()).toBe(FALLBACK_TEXT);
         expect(fallbackLink().attr('type')).toBe('button');
+        // Over the open popover, named, with focus on its button.
+        const overlay = fallbackLink().closest('.two-sole-trader-blocked');
+        expect(shown(panelParts().panel)).toBe(true);
+        expect(panelParts().panel.get(0).contains(overlay.get(0))).toBe(true);
+        expect(overlay.attr('aria-label')).toBe(FALLBACK_TEXT);
+        expect(document.activeElement).toBe(fallbackLink().get(0));
+        // The old link under the field is gone for good.
+        expect($('.two-sole-trader-fallback').length).toBe(0);
         expect(fallbackStatus().attr('role')).toBe('status');
         expect(fallbackStatus().text()).toBe(FALLBACK_TEXT);
 
@@ -294,6 +313,8 @@ test('a launch refused after its flight was let go still leaves the retry', asyn
 
     expect(global.window.open).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledWith(BLOCKED_LOG);
+    // The popover comes back under it.
+    expect(shown(panelParts().panel)).toBe(true);
     expect(shown(fallbackLink())).toBe(true);
 });
 
