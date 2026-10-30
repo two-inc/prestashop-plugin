@@ -14252,8 +14252,12 @@ class Twopayment extends PaymentModule
      *
      * Centralised (TWO-40) so that a write site cannot invent a field the reader
      * does not know, and a clear site cannot miss one.
+     *
+     * `disowned_id` is the organisation number the buyer walked away from by
+     * entering their company manually (TWO-26775). It is never an answer, only a
+     * refusal: see disownTwoCartScopedCompany().
      */
-    const COMPANY_SESSION_FIELDS = array('name', 'id', 'country', 'address_id');
+    const COMPANY_SESSION_FIELDS = array('name', 'id', 'country', 'address_id', 'disowned_id');
 
     /**
      * Module table holding the company and mirror-write records, one row per
@@ -14341,6 +14345,58 @@ class Twopayment extends PaymentModule
     public function clearTwoCartScopedCompany()
     {
         $this->writeTwoCartRecord('company', null);
+    }
+
+    /**
+     * Forget the stored company selection AND refuse its organisation number for
+     * the rest of this cart (TWO-26775): the buyer chose to enter their company
+     * manually, which says the number on record is not theirs.
+     *
+     * The record is replaced by one holding only the refused number, so nothing
+     * of the old selection survives, and every later reader that could put that
+     * number back on the order - the saved address's identifiers
+     * (extractOrgNumberFromAddress()), the address-save hook, the order-intent
+     * store - turns it away. Only a new pick through saveCompany lifts it.
+     *
+     * Idempotent, so every carrier of the manual-entry signal (the clear request,
+     * the address form's save, the order-intent check) can call it and the first
+     * to arrive wins: none of them depends on another being delivered.
+     *
+     * @param string $dropped_id the number the browser held when it entered manual
+     *   entry; the stored number, else an earlier refusal, when it sends none
+     * @return void
+     */
+    public function disownTwoCartScopedCompany($dropped_id = '')
+    {
+        $stored = $this->readTwoCartScopedCompany();
+        $disowned = trim((string) $dropped_id);
+        if ($disowned === '' && $stored !== null) {
+            $disowned = trim($stored['id']) !== '' ? trim($stored['id']) : trim($stored['disowned_id']);
+        }
+        $this->writeTwoCartRecord('company', $disowned === '' ? null : array('disowned_id' => $disowned));
+    }
+
+    /**
+     * Whether $org_number is the one this cart's buyer disowned by entering their
+     * company manually (TWO-26775). Compared on letters and digits only, so a
+     * spacing or case difference between the address field and the record cannot
+     * slip it through.
+     *
+     * @param string $org_number
+     * @return bool
+     */
+    public function isTwoDisownedOrgNumber($org_number)
+    {
+        $stored = $this->readTwoCartScopedCompany();
+        if ($stored === null || trim($stored['disowned_id']) === '') {
+            return false;
+        }
+        $normalize = function ($value) {
+            return preg_replace('/[^A-Z0-9]/', '', Tools::strtoupper(trim((string) $value)));
+        };
+        $candidate = $normalize($org_number);
+
+        return $candidate !== '' && $candidate === $normalize($stored['disowned_id']);
     }
 
     /**
@@ -25399,7 +25455,20 @@ class Twopayment extends PaymentModule
                 $fields['address_id'] = (string) (int) $address->id;
             }
 
-            $companyId = Tools::getValue('companyid', '');
+            // TWO-26775: the form says it was in manual entry, so the number on
+            // record is refused here too. This is the backstop for the browser's
+            // clear request, which a name kept unchanged would otherwise never
+            // trigger below.
+            if ((string) Tools::getValue('two_manual_entry', '') === '1') {
+                $this->disownTwoCartScopedCompany();
+                $previousRecord = $this->readTwoCartScopedCompany();
+                $previousCompanyName = $previousRecord !== null ? $previousRecord['name'] : '';
+            }
+
+            $companyId = trim((string) Tools::getValue('companyid', ''));
+            if ($companyId !== '' && $this->isTwoDisownedOrgNumber($companyId)) {
+                $companyId = '';
+            }
             if (!empty($companyId)) {
                 $fields['id'] = $companyId;
             } elseif (
@@ -25618,6 +25687,11 @@ class Twopayment extends PaymentModule
      * Reads `dni`, then the in-memory `companyid` (see below). NEVER `vat_number`
      * - that fallback was removed in TWO-40 and must not come back.
      *
+     * Neither is returned when it is the number this cart's buyer disowned by
+     * entering their company manually (TWO-26775): the saved address still holds
+     * it until the buyer saves the form again, and once the company record is
+     * cleared this is the next place the resolvers look.
+     *
      * @param Address $address PrestaShop address object
      * @param string $countryIso Country ISO, for log context ONLY.
      * @return string Organization number or empty string
@@ -25636,7 +25710,7 @@ class Twopayment extends PaymentModule
         // first. With that record gone, a filled dni is returned ahead of it.
         if (!empty($address->dni)) {
             $dni = trim($address->dni);
-            if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $dni)) {
+            if (preg_match('/^[A-Z0-9\-]{5,20}$/i', $dni) && !$this->isTwoDisownedOrgNumber($dni)) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Found org number in dni field: ' . $dni . ' for ' . $countryIso,
                     1
@@ -25653,7 +25727,9 @@ class Twopayment extends PaymentModule
         // branch is NOT dead code: it is how the form-first path gets the
         // buyer's just-typed org number into the payload without saving the
         // address first. Third-party modules that add a real column land here too.
-        if (property_exists($address, 'companyid') && !empty($address->companyid)) {
+        if (property_exists($address, 'companyid') && !empty($address->companyid)
+            && !$this->isTwoDisownedOrgNumber($address->companyid)
+        ) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Found org number in companyid field: ' . $address->companyid . ' for ' . $countryIso,
                 1
