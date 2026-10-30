@@ -25479,7 +25479,8 @@ class Twopayment extends PaymentModule
             // record is refused here too. This is the backstop for the browser's
             // clear request, which a name kept unchanged would otherwise never
             // trigger below.
-            if ((string) Tools::getValue('two_manual_entry', '') === '1') {
+            $manualEntry = (string) Tools::getValue('two_manual_entry', '') === '1';
+            if ($manualEntry) {
                 $this->disownTwoCartScopedCompany();
                 $previousRecord = $this->readTwoCartScopedCompany();
                 $previousCompanyName = $previousRecord !== null ? $previousRecord['name'] : '';
@@ -25491,6 +25492,16 @@ class Twopayment extends PaymentModule
             }
             if (!empty($companyId)) {
                 $fields['id'] = $companyId;
+                // A number typed in manual entry is the buyer's own (TWO-26775).
+                // It takes the saved address's country as its marker, or the
+                // resolver drops it as a legacy record and the buyer cannot pay
+                // with it.
+                $country = $manualEntry && !empty($address->id_country)
+                    ? (string) Country::getIsoById((int) $address->id_country)
+                    : '';
+                if ($country !== '') {
+                    $fields['country'] = $country;
+                }
             } elseif (
                 $previousRecord !== null
                 && $previousRecord['id'] !== ''

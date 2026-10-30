@@ -131,13 +131,11 @@ final class ManualEntryDisownSpec
     private static function testAHandTypedNumberIsNeverRefused(): void
     {
         $cases = [
-            // [dni on the cart's address, intent status, description]
-            ['99887766', '', 'address holds the typed number: the intent runs on it'],
-            // The record's typed number has no country marker, so the resolver
-            // drops it; the address is all that is left, and it holds the old one.
-            [self::OLD_ID, 'incomplete_company', 'address still holds the old number: the intent runs on neither'],
+            // [dni on the cart's address, description]
+            ['99887766', 'address holds the typed number: the intent runs on it'],
+            [self::OLD_ID, 'address still holds the old number: the intent runs on the typed one'],
         ];
-        foreach ($cases as [$dni, $status, $description]) {
+        foreach ($cases as [$dni, $description]) {
             self::seed($dni);
             self::runClear(['manual' => '1', 'companyid' => self::OLD_ID]);
             self::runAddressSave('Hand Typed Ltd', '99887766', true);
@@ -147,13 +145,11 @@ final class ManualEntryDisownSpec
 
             $controller = self::runIntent(['manual_entry' => '1', 'company' => 'Hand Typed Ltd', 'companyid' => '']);
 
-            TinyAssert::same($status, (string) ($controller->emitted[0]['status'] ?? ''), $description . ': intent status');
+            TinyAssert::same('', (string) ($controller->emitted[0]['status'] ?? ''), $description . ': the intent was refused');
             TinyAssert::same(self::OLD_ID, (string) TwoSessionRecord::get('company', 'disowned_id'), $description . ': the intent moved the refusal');
             $sent = (string) json_encode($controller->emitted);
             TinyAssert::false(strpos($sent, self::OLD_ID) !== false, $description . ': the old number went out in the intent');
-            if ($status === '') {
-                TinyAssert::true(strpos($sent, '99887766') !== false, $description . ': the typed number did not go out');
-            }
+            TinyAssert::true(strpos($sent, '99887766') !== false, $description . ': the typed number did not go out');
         }
     }
 
@@ -165,7 +161,8 @@ final class ManualEntryDisownSpec
     {
         $cases = [
             ['resolver drops a record with no country marker', function () {
-                self::runAddressSave('Hand Typed Ltd', '99887766', true);
+                TwoSessionRecord::set('company', 'name', 'Hand Typed Ltd');
+                TwoSessionRecord::set('company', 'id', '99887766');
                 self::module()->getTwoCheckoutCompanyData(new Address(self::ADDRESS_ID));
             }],
             ['resolver drops a record for another country', function () {
@@ -258,6 +255,7 @@ final class ManualEntryDisownSpec
         $address = new stdClass();
         $address->company = $company;
         $address->id = self::ADDRESS_ID;
+        $address->id_country = self::COUNTRY_ID;
         self::module()->hookActionCustomerAddressSave(['address' => $address]);
     }
 

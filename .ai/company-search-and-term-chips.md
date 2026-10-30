@@ -157,9 +157,9 @@ trader marked selected.
 
 **A blocked popup leaves a panel over the popover** (TWO-26775): one centred button,
 a fresh gesture of the buyer's own, because the autofill prefetch takes the launch
-out of their click. Focus moves to it and the block is announced through the empty
-`role="status"` node put in place with the capture; the group is named by its button
-(`aria-labelledby`), so the caption is not said a third time. The rest of the popover
+out of their click. Focus moves to it, and its caption is the only thing said: the
+cover is a plain container with no role or name, and the empty `role="status"` node
+put in place with the capture stays empty. The rest of the popover
 is `inert` under it until it goes. It is drawn only over a popover still open: a
 block landing after the buyer closed the popover changes nothing on screen and moves
 no focus. The flight's settle does not close the popover while it is up; a chip or
@@ -187,6 +187,10 @@ halves:
   also names the number the page held, used only when no pick is on record and no
   refusal stands. A pick waits for a clear still in flight, so a slow clear cannot
   refuse the company picked after it.
+- **A typed number carries a country.** The address save in manual entry stores a
+  typed number with the saved address's country, so the resolver does not drop it as
+  a record with no country marker, and the buyer pays with it even when the cart's
+  address still holds the old one.
 
 
 ## The Payment-Term Chips Owe The Radio-Group Keyboard Contract
