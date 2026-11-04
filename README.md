@@ -991,10 +991,12 @@ logs nothing new.
   step with `left` naming what it left. The trace is written either way.
 
 In every payload in a trace the buyer's personal details are replaced by `redacted`:
-the representative's first and last name, email and phone, the billing and shipping
-street address, and the invoice email. Amounts, tax rates and codes, lines, shipping,
-discounts, totals, the company and its organisation number, country, city and postal
-code are kept. An empty detail is left empty.
+the representative's first and last name, email and phone, the company name and the
+billing and shipping organisation names (for a sole trader, a person's name), the
+billing and shipping street address, the invoice email, and the buyer's free-text
+`order_note`. Amounts, tax rates and codes, lines, shipping, discounts, totals, the
+organisation number, country, city and postal code are kept. An empty detail is left
+empty.
 
 A trace is stored in PrestaShop's log, which caps its size, so one that would not fit
 sheds in this order, listing each step under `shed`: the payload after each

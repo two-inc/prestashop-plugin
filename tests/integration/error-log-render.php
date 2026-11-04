@@ -47,7 +47,7 @@ try {
     $check($id_log > 0, 'the probe logged a module line');
 
     // TWO-27014: a trace whose payload holds what core's log handling mangles: quotes, a backslash and tags.
-    $payload = array('order_note' => "O'Brien \\ <b>bold</b> & \"quoted\"", 'gross_amount' => '47.80');
+    $payload = array('merchant_reference' => "O'Brien \\ <b>bold</b> & \"quoted\"", 'gross_amount' => '47.80');
     $subscriber = new stdClass();
     $subscriber->name = 'probesubscriber';
     $trace = new TwoOrderPostprocessingTrace('order_create', 'checkout', 987654, 0, '0.0.0-probe', array('probesubscriber'), $payload);

@@ -14,8 +14,8 @@ final class OrderPostprocessingTraceSpec
     private const FIRST = 'twoorderpostprocessingtest';
     private const SECOND = 'twoorderpostprocessingsecond';
 
-    // The buyer's personal values in OrderPostprocessingSpec::seed() and the optional invoice email set here.
-    private const BUYER_VALUES = ['Pia', 'Sol', 'buyer@example.com', '666666601', 'Calle Uno 1', 'ap@example.com'];
+    // The buyer's personal values in OrderPostprocessingSpec::seed(), and the invoice email and order note set here.
+    private const BUYER_VALUES = ['Pia', 'Sol', 'buyer@example.com', '666666601', 'Calle Uno 1', 'ap@example.com', 'Hook Shop SL', 'Ring the bell'];
 
     public static function runAll(): void
     {
@@ -128,8 +128,7 @@ final class OrderPostprocessingTraceSpec
             'the whole record'
         );
         TinyAssert::same('5.03', $trace['steps'][0]['payload']['line_items'][1]['tax_amount'], 'the first subscriber\'s re-split shows on its own step');
-        TinyAssert::same('postprocessed', $trace['steps'][1]['payload']['order_note'], 'the second subscriber\'s edit shows on its own step');
-        TinyAssert::false(isset($trace['before']['order_note']) && $trace['before']['order_note'] === 'postprocessed', 'the payload before the first subscriber is as built');
+        TinyAssert::same(['', '', 'redacted'], [$trace['before']['order_note'], $trace['steps'][0]['payload']['order_note'], $trace['steps'][1]['payload']['order_note']], 'the second subscriber\'s note shows on its own step, redacted');
     }
 
     /**
@@ -197,7 +196,10 @@ final class OrderPostprocessingTraceSpec
             ['/billing_address/street_address', 'redacted', 'the billing street'],
             ['/shipping_address/street_address', 'redacted', 'the shipping street'],
             ['/invoice_details/invoice_emails', 'redacted', 'the invoice email'],
-            ['/buyer/company/company_name', $kept, 'the company name'],
+            ['/order_note', 'redacted', 'the buyer\'s free-text order note'],
+            ['/buyer/company/company_name', 'redacted', 'the company name, a sole trader\'s own name'],
+            ['/billing_address/organization_name', 'redacted', 'the billing organisation name'],
+            ['/shipping_address/organization_name', 'redacted', 'the shipping organisation name'],
             ['/buyer/company/organization_number', $kept, 'the organisation number'],
             ['/buyer/company/country_prefix', $kept, 'the company country'],
             ['/billing_address/city', $kept, 'the billing city'],
@@ -250,7 +252,7 @@ final class OrderPostprocessingTraceSpec
         $cart = OrderPostprocessingSpec::seed(true);
         $module = OrderPostprocessingSpec::module();
         $payloads = OrderPostprocessingSpec::payloadsForGolden($module, $cart);
-        $payloads['create_with_invoice_email'] = (string) json_encode(self::builtCreate());
+        $payloads['create_with_invoice_email_and_note'] = (string) json_encode(self::builtCreate());
         foreach ($payloads as $name => $json) {
             $encoded = (string) json_encode(TwoOrderPostprocessingTrace::redact(json_decode($json, true)));
             foreach (self::BUYER_VALUES as $value) {
@@ -334,7 +336,7 @@ final class OrderPostprocessingTraceSpec
     }
 
     /**
-     * An order create as the builder sends it, with the optional invoice email the buyer filled in.
+     * An order create as the builder sends it, with the optional invoice email and the order note the buyer filled in.
      *
      * @return array
      */
@@ -342,6 +344,7 @@ final class OrderPostprocessingTraceSpec
     {
         $cart = OrderPostprocessingSpec::seed(true);
         $module = OrderPostprocessingSpec::module();
+        StubStore::$cartMessages[(int) $cart->id] = ['id_message' => 1, 'message' => 'Ring the bell'];
         Configuration::updateValue('PS_TWO_ENABLE_INVOICE_EMAIL', 1);
         Tools::setTestValue('two_invoice_email', 'ap@example.com');
         try {

@@ -24,16 +24,21 @@ class TwoOrderPostprocessingTrace
     const REDACT_BUYER_DETAILS = true;
 
     // The buyer's personal fields the payload builders send (getTwoIntentOrderData(), getTwoNewOrderData(),
-    // getTwoUpdateOrderData() and buildTwoAddress()): person names, email, phone and street address lines.
-    // Amounts, tax, lines, the company, its organisation number, country, city and postal code are kept.
+    // getTwoUpdateOrderData() and buildTwoAddress()): person names, email, phone, street address lines, the
+    // buyer's free-text order note, and the company name, which for a sole trader is a person's name.
+    // Amounts, tax, lines, the organisation number, country, city and postal code are kept.
     const BUYER_DETAIL_PATHS = array(
         '/buyer/representative/first_name',
         '/buyer/representative/last_name',
         '/buyer/representative/email',
         '/buyer/representative/phone_number',
+        '/buyer/company/company_name',
+        '/billing_address/organization_name',
         '/billing_address/street_address',
+        '/shipping_address/organization_name',
         '/shipping_address/street_address',
         '/invoice_details/invoice_emails',
+        '/order_note',
     );
 
     /** @var array the record's header: request, ids, versions, subscribers */
