@@ -1004,6 +1004,25 @@ describe('region routing: the state select where there is one, the city where th
     });
 
     /**
+     * After a page load the marker is gone, so the state is judged ours only by
+     * the write record the server re-publishes (TWO-26775).
+     */
+    test.each([
+        ['the record names the state on screen: cleared', 'Kent', ''],
+        ['the record names another state: the buyer\'s, so it stays', 'Surrey', '31'],
+    ])('after a reload, a blank region with %s', (description, recorded, expected) => {
+        buildAddressesStep({ editing: 'invoice', countryId: ES_OPTION });
+        addStateSelect([['31', 'Kent'], ['32', 'Surrey']]);
+        stateSelect().val('31');
+        window.twopayment.mirror_writes = { state: recorded };
+        expect(stateSelect().attr(MARKER)).toBeUndefined();
+
+        mount().adoptSoleTraderBuyer(buyerWithAddress({ city: 'Dover', region: '' }));
+
+        expect([description, stateSelect().val()]).toEqual([description, expected]);
+    });
+
+    /**
      * TWO-40 follow-up: the address-lookup switch does not gate a signup
      * completion, region included.
      */
