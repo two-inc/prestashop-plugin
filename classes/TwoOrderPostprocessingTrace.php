@@ -332,26 +332,37 @@ class TwoOrderPostprocessingTrace
         $diff = TwoOrderPostprocessing::diff($previous, $step['payload']);
         $entries = array();
         foreach (array_slice($diff, 0, TwoOrderPostprocessing::MAX_DIFF_ENTRIES) as $entry) {
-            $hide = self::isBuyerDetail($entry['path']);
             $entries[] = array(
                 'path' => self::cut($entry['path']),
-                'before' => self::shown($entry['before'], $hide),
-                'after' => self::shown($entry['after'], $hide),
+                'before' => self::shown($entry['before'], $entry['path']),
+                'after' => self::shown($entry['after'], $entry['path']),
             );
         }
 
         return array('subscriber' => $step['subscriber'], 'changes' => count($diff), 'diff' => $entries);
     }
 
-    private static function shown($value, $hide)
+    /**
+     * A diff value as the payloads show it. A diff reports a whole subtree as one entry where the other side is
+     * present but not an array (an address replacing null, say), so a value above a buyer detail has the details
+     * under it redacted, as redact() would.
+     */
+    private static function shown($value, $path)
     {
         if ($value === null || $value === '') {
             return $value;
         }
-        if ($hide) {
+        if (self::isBuyerDetail($path)) {
             return self::REDACTED;
         }
         if (is_array($value)) {
+            $prefix = ($path === '/' ? '' : $path) . '/';
+            foreach (self::REDACT_BUYER_DETAILS ? self::BUYER_DETAIL_PATHS : array() as $detail) {
+                if (strpos($detail, $prefix) === 0) {
+                    $value = self::redactPath($value, explode('/', substr($detail, strlen($prefix))));
+                }
+            }
+
             return self::cut(TwoOrderPostprocessing::canonical($value));
         }
 
