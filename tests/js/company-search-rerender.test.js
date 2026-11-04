@@ -1153,6 +1153,35 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
                 });
             });
 
+            /**
+             * A sole-trader enrolment is a pick too: it lifts the page's refusal,
+             * so entering manual entry again refuses the sole trader's number and
+             * not the long-gone first pick (Q250).
+             */
+            test.each([
+                ['the sole trader\'s number is cleared from dni', () => $("input[name='dni']").val(), ''],
+                ['the clear names the sole trader\'s number',
+                    () => JSON.stringify(callsFor('clearCompany').map((c) => c.settings.data.companyid)),
+                    JSON.stringify(['12345678', '55667788'])],
+                ['the page refuses the sole trader\'s number',
+                    (instance) => instance.isDisownedCompanyNumber('55667788'), true],
+            ])('pick, manual, sole trader, manual again: %s', (description, read, expected) => {
+                withEndpoint(() => {
+                    const instance = makeInstance();
+                    selectThenUnmarkDni(instance);
+                    instance.enterManualEntryMode();
+                    instance.exitManualEntryMode();
+                    instance.beginSoleTraderLoading();
+                    instance.adoptSoleTraderBuyer({ company_name: 'Sam Reed Trading', organization_number: '55667788' });
+                    instance.endSoleTraderLoading();
+                    // An address save re-renders dni with no marker.
+                    $("input[name='dni']").removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+                    expect($("input[name='dni']").val()).toBe('55667788');
+                    instance.enterManualEntryMode();
+                    expect([description, read(instance)]).toEqual([description, expected]);
+                });
+            });
+
             test.each([
                 ['manual entry flags the submitted form', true, '1'],
                 ['search mode leaves the flag empty', false, ''],
