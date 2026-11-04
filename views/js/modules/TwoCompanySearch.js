@@ -7208,6 +7208,34 @@ class TwoCompanySearch {
     }
 
     /**
+     * Empty a state select still holding a value this class wrote there (its
+     * marker, or the one on record from an earlier page), never one the buyer
+     * chose (TWO-26775).
+     *
+     * @param {Object} select jQuery state select
+     * @param {Array<string>} accepted option values on record as ours
+     * @returns {Object} `{state: ''}` when it cleared one, else `{}`
+     */
+    clearOwnStateWrite(select, accepted) {
+        const current = String(select.val() == null ? '' : select.val());
+        if (current === '') {
+            return {};
+        }
+        const marker = select.attr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+        const ours = (typeof marker !== 'undefined' && marker === current)
+            || accepted.indexOf(current) !== -1;
+        if (!ours) {
+            return {};
+        }
+        select.removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+        select.val('');
+        select.trigger('input');
+        select.trigger('change');
+
+        return { state: '' };
+    }
+
+    /**
      * The state/county name an option VALUE in a state select stands for, or ''.
      *
      * Compared and recorded on the option's TEXT, never its value: PrestaShop state
@@ -7300,17 +7328,9 @@ class TwoCompanySearch {
             return {};
         }
         const region = String(source.region == null ? '' : source.region).trim();
-        if (!region) {
-            return {};
-        }
-
         const scope = root ? $(root) : $(document);
         const select = scope.find("select[name='id_state'], select[name='state']").first();
         if (select.length > 0) {
-            const optionValue = this.stateOptionValueForRegion(select[0], region);
-            if (optionValue === null) {
-                return {};
-            }
             // '' rather than the server-rendered value, for the reason given in
             // mirroredAddressFieldStates(): a state select can legitimately be empty,
             // so a server-rendered state is the buyer's saved answer and the
@@ -7324,11 +7344,21 @@ class TwoCompanySearch {
                     return match === null ? '' : match;
                 }
             );
+            const optionValue = region ? this.stateOptionValueForRegion(select[0], region) : null;
+            if (optionValue === null) {
+                // Nothing to write, so a state of ours from an EARLIER record goes,
+                // as autoFillAddress() does for a blank line: left, it would sit
+                // beside this record's address (TWO-26775).
+                return this.clearOwnStateWrite(select, accepted);
+            }
             return this.writeMirroredValue(select, optionValue, accepted)
                 ? { state: this.stateNameForOptionValue(select[0], optionValue) }
                 : {};
         }
 
+        if (!region) {
+            return {};
+        }
         const cityField = scope.find("input[name='city']").first();
         if (cityField.length === 0) {
             return {};
