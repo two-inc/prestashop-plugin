@@ -2679,6 +2679,11 @@ class TwoCheckoutManager {
             this.clearConfirmedCompanySelection();
             return;
         }
+        // Every pick passes through here (a search result, a number arriving
+        // late, a sole-trader enrolment), and each lifts the manual-entry
+        // refusal on the server, so the page lets go of it here too, whether or
+        // not a search instance is live to write the form (TWO-26775).
+        this._companySearchManualEntryMemory.disownedId = '';
         this._confirmedCompanySelection = {
             company: company,
             companyid: companyid,
