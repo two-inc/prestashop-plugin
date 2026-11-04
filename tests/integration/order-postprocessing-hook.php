@@ -33,6 +33,9 @@
  * default-shipping-tax-code.php. Requires dev/ci/install-order-postprocessing-fixture.sh.
  * Hermetic: sends are recorded by a subclass, never made.
  *
+ * TWO-27014: `trace` checks the order postprocessing trace a subscriber's request leaves in core's log, and the
+ * failure scenarios check it names the subscriber that threw.
+ *
  * Usage: php tests/integration/order-postprocessing-hook.php [scenario]
  */
 
@@ -455,7 +458,7 @@ function oppRunScenario($name, &$detail)
     Configuration::updateValue('PS_TWO_DEBUG_MODE', '0');
     Configuration::updateValue('PS_MAIL_METHOD', 3);
     $mode = in_array($name, array('unarmed', 'unhandled', 'paths', 'context_rate', 'relay'), true) ? (in_array($name, array('paths', 'relay'), true) ? 'record' : '') : ($name === 'throws_prod' ? 'throws' : $name);
-    $mode = $name === 'carrierless' ? 'record' : (in_array($name, array('carrierless_resplit', 'refund_resplit'), true) ? 'resplit' : $mode);
+    $mode = $name === 'carrierless' ? 'record' : (in_array($name, array('carrierless_resplit', 'refund_resplit', 'trace'), true) ? 'resplit' : $mode);
     Configuration::updateValue('TWO_OPP_TEST_MODE', $mode);
     $module = new OppProbeTwopayment();
     $checks = array();
@@ -486,6 +489,10 @@ function oppRunScenario($name, &$detail)
         $checks[] = array(count($refunds) === 1 ? $refunds[0]['payload']['amount'] : null, '29.00', 'the amount is unchanged');
 
         return $checks;
+    }
+
+    if ($name === 'trace') {
+        return oppTraceChecks($module, $cart, $customer, $detail);
     }
 
     if ($name === 'carrierless' || $name === 'carrierless_resplit') {
@@ -664,6 +671,11 @@ function oppRunScenario($name, &$detail)
     };
     if ($expected[$name] !== null && strpos($expected[$name], 'TWO_') === 0) {
         $checks[] = array($logged($expected[$name] . ' - the order_create request (checkout) was not sent'), true, 'the failure is logged');
+        // TWO-27014: the trace is written all the same, naming the subscriber that threw, and never its message.
+        $traces = oppTraceRows();
+        $trace = count($traces) === 1 ? json_decode((string) TwoDiscrepancySnapshot::decodeStored($traces[0]['message']), true) : null;
+        $threw = $name === 'non_array' ? null : array('subscriber' => 'twoorderpostprocessingtest', 'class' => 'RuntimeException');
+        $checks[] = array(is_array($trace) && isset($trace['threw']) ? array('subscriber' => $trace['threw']['subscriber'], 'class' => $trace['threw']['class']) : count($traces), $threw === null ? 1 : $threw, 'the trace names the subscriber that threw');
 
         return $checks;
     }
@@ -684,6 +696,68 @@ function oppRunScenario($name, &$detail)
         $checks[] = array(array($payload['net_amount'], $payload['tax_amount'], $payload['gross_amount']), $totals, 'order totals');
     }
     $checks[] = array($logged('The order postprocessing hook changed the order_create request (checkout)'), true, 'the Debug Mode diff is logged');
+
+    return $checks;
+}
+
+/**
+ * The order postprocessing traces this process stored (TWO-27014).
+ *
+ * @return array<int,array{severity:string,object_id:string,message:string}>
+ */
+function oppTraceRows()
+{
+    $rows = Db::getInstance()->executeS(
+        'SELECT severity, object_id, message FROM `' . _DB_PREFIX_ . 'log` WHERE id_log > ' . (int) $GLOBALS['opp_first_log']
+        . " AND object_type = '" . pSQL(TwoOrderPostprocessingTrace::LOG_OBJECT_TYPE) . "'"
+    );
+
+    return is_array($rows) ? $rows : array();
+}
+
+/**
+ * TWO-27014: an order create with the README re-split subscriber, as PrestaShop's own log stores it. One line names
+ * the subscriber; one trace row, which decodes from what core stored (1.7 escapes it, every version strips tags and
+ * checks the message), holds the payload before and after the subscriber, with the buyer's details redacted.
+ *
+ * @return array<int,array{0:mixed,1:mixed,2:string}>
+ */
+function oppTraceChecks(OppProbeTwopayment $module, Cart $cart, Customer $customer, &$detail)
+{
+    $checks = array();
+    Module::getInstanceByName('twoorderpostprocessingtest');
+    Twoorderpostprocessingtest::$calls = array();
+    $payload = $module->getTwoNewOrderData('opp-attempt', $cart, oppMerchantUrls());
+    $checks[] = array(
+        oppLoggedNow('The order postprocessing hook is invoking 1 subscriber on the order_create request (checkout, cart ' . (int) $cart->id . '), in this order: twoorderpostprocessingtest.'),
+        true,
+        'the invocation line is logged'
+    );
+    $rows = oppTraceRows();
+    $checks[] = array(count($rows), 1, 'one trace row');
+    if (count($rows) !== 1) {
+        return $checks;
+    }
+    $json = TwoDiscrepancySnapshot::decodeStored($rows[0]['message']);
+    $trace = $json === null ? null : json_decode($json, true);
+    $checks[] = array(is_array($trace), true, 'the stored trace decodes');
+    if (!is_array($trace)) {
+        $detail = substr((string) $rows[0]['message'], 0, 300);
+
+        return $checks;
+    }
+    $checks[] = array(array((int) $rows[0]['severity'], (int) $rows[0]['object_id']), array(1, (int) $cart->id), 'informational, filed under the cart');
+    $checks[] = array(
+        array($trace['request_type'], $trace['trigger'], $trace['module_version'], $trace['subscribers'], count($trace['steps'])),
+        array('order_create', 'checkout', $module->version, array('twoorderpostprocessingtest'), 1),
+        'the header and one step'
+    );
+    $checks[] = array(oppLine($trace['before'], 'SHIPPING_FEE')[1], '0.00', 'before: shipping as the shop recorded it');
+    $checks[] = array($trace['steps'][0]['subscriber'], 'twoorderpostprocessingtest', 'the step names its subscriber');
+    $checks[] = array($trace['steps'][0]['payload'], TwoOrderPostprocessingTrace::redact($payload), 'after: what the subscriber returned, redacted');
+    $checks[] = array(oppLine($trace['steps'][0]['payload'], 'SHIPPING_FEE')[1], '5.03', 'after: the re-split');
+    $checks[] = array($trace['before']['buyer']['representative']['email'], 'redacted', 'the buyer\'s email is redacted');
+    $checks[] = array(strpos((string) $rows[0]['message'], (string) $customer->email), false, 'the buyer\'s email is nowhere in the row');
 
     return $checks;
 }
@@ -1183,7 +1257,7 @@ oppSeed();
 Context::getContext()->employee = new Employee((int) Db::getInstance()->getValue('SELECT MIN(id_employee) FROM `' . _DB_PREFIX_ . 'employee`'));
 Module::getInstanceByName('twopayment')->getTwoSurchargeCartProductId(true);
 $exit = 0;
-$scenario_names = array('unhandled', 'unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'no_lines', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match', 'outside_carrier_parity_untaxed', 'outside_carrier_parity_taxed', 'outside_carrier_parity_none', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit', 'surcharge_unhandled', 'surcharge_resplit');
+$scenario_names = array('unhandled', 'unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'no_lines', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match', 'outside_carrier_parity_untaxed', 'outside_carrier_parity_taxed', 'outside_carrier_parity_none', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit', 'surcharge_unhandled', 'surcharge_resplit', 'trace');
 // The carrier-less fixture injects through actionFilterDeliveryOptionList, which core only fires from 8.0.
 if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
     $scenario_names[] = 'carrierless';

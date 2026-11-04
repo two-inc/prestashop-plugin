@@ -64,6 +64,8 @@ jobs:
           php -l classes/TwoOrderPostprocessing.php
           php -l classes/TwoOrderPostprocessingException.php
           php -l tests/OrderPostprocessingSpec.php
+          php -l tests/OrderPostprocessingTraceSpec.php
+          php -l classes/TwoOrderPostprocessingTrace.php
           php -l tests/ShippingRateControlSpec.php
           php -l upgrade/upgrade-2.7.18.php
           php -l controllers/admin/AdminTwoErrorLogController.php

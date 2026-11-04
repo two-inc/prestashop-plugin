@@ -314,7 +314,7 @@ final class OrderPostprocessingSpec
      *
      * @param array<int,array> $calls
      */
-    private static function subscribe(string $mode, array &$calls, string $module = 'twoorderpostprocessingtest'): void
+    public static function subscribe(string $mode, array &$calls, string $module = 'twoorderpostprocessingtest'): void
     {
         Hook::$subscribers[TwoOrderPostprocessing::HOOK][$module] = static function (array $params) use ($mode, &$calls): void {
             $calls[] = ['context' => $params['context'], 'payload_in' => $params['payload']];
@@ -1405,7 +1405,7 @@ final class OrderPostprocessingSpec
      *
      * @return array<int,array{0:string,1:string,2:int,3:callable,4:string}> [request_type, trigger, sends, driver, description]
      */
-    private static function requestDrivers(): array
+    public static function requestDrivers(): array
     {
         return [
             ['order_intent', 'precheck', 0, static function ($m, $c) {
