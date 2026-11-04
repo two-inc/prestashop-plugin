@@ -98,6 +98,36 @@ describe('the manager owns manual-entry mode across its own rebuilds', () => {
             .toBe(manager._companySearchManualEntryMemory);
     });
 
+    /**
+     * TWO-26775: every pick lifts the page's manual-entry refusal, including a
+     * sole-trader enrolment whose reply lands with no live search instance to
+     * write the form (a re-render mid round trip). The rebuilt instance must not
+     * still refuse the old number while the sole trader's sits unrefused.
+     */
+    test.each([
+        ['a search pick', (manager) => manager.companySearch.publishConfirmedSelection('Example Trading Ltd', '99887766')],
+        ['a sole-trader enrolment with no live search instance', (manager) => {
+            loadScript('views/js/modules/TwoSoleTrader.js');
+            manager.companySearch.destroy();
+            manager.companySearch = null;
+            window.TwoCheckoutManager_Instance = manager;
+            const buyer = { company_name: 'Sam Reed Trading', organization_number: '55667788' };
+            expect(window.TwoSoleTrader.prototype.adoptEnrolledIdentity.call({}, buyer)).toBe(false);
+            window.TwoSoleTrader.prototype.publishConfirmedSelection.call({}, buyer.company_name, buyer.organization_number);
+            manager.initializeCompanySearch();
+        }],
+    ])('%s lifts the page refusal', (description, pick) => {
+        buildTileStep();
+        const manager = makeTileManager();
+        manager.initializeCompanySearch();
+        manager._companySearchManualEntryMemory.disownedId = '12345678';
+
+        pick(manager);
+
+        expect([description, manager.companySearch.isDisownedCompanyNumber('12345678')])
+            .toEqual([description, false]);
+    });
+
     test('two managers do not share manual-entry mode', () => {
         buildTileStep();
         const first = makeTileManager();

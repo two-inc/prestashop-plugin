@@ -151,7 +151,9 @@ popover only when the press landed outside it. `TwoSoleTrader.js` judges it one 
 after the `mousedown`, once the press's default action has had its chance to focus
 something, because whether an element takes focus depends on handlers that cancel the
 press (every panel chip does), which no selector can see. A press on the launching
-chip is left to that chip. After a popup closes without a signup, the chips are
+chip is left to that chip. Only a primary-button press on content counts: a right
+press and a press on a scrollbar (outside the target's client box; for `html`, outside
+the viewport) are ignored, while empty page space (`html` inside the viewport) counts. After a popup closes without a signup, the chips are
 recomputed from the stored identity, so a Tab onto another chip does not leave Sole
 trader marked selected.
 
@@ -187,6 +189,10 @@ halves:
   also names the number the page held, used only when no pick is on record and no
   refusal stands. A pick waits for a clear still in flight, so a slow clear cannot
   refuse the company picked after it.
+- **A later manual clear keeps the typed number.** Once a refusal stands, a manual
+  `clearCompany` (a corrected name, a second visit to manual entry) leaves the
+  record alone, and the page keeps the typed number in `dni`, sends the refused
+  number rather than the typed one, and adopts the typed one again at submit.
 - **A typed number carries a country.** The address save in manual entry stores a
   typed number with the saved address's country, so the resolver does not drop it as
   a record with no country marker, and the buyer pays with it even when the cart's
