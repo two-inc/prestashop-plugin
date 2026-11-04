@@ -9802,17 +9802,21 @@ class Twopayment extends PaymentModule
         if ($handlers === array()) {
             return;
         }
-        PrestaShopLogger::addLog(
-            'TwoPayment: The order postprocessing hook is invoking ' . count($handlers) . ' subscriber' . (count($handlers) === 1 ? '' : 's')
-            . ' on the ' . $requestType . ' request (' . $context['trigger'] . ', ' . self::getTwoPostprocessingSubject($context) . '), in this order: '
-            . implode(', ', TwoOrderPostprocessing::names($handlers)) . '.',
-            1,
-            null,
-            null,
-            null,
-            // PrestaShop 1.7 otherwise keeps only the first of identical lines, and every request must show.
-            true
-        );
+        // A log that fails must neither fail the request nor read as a subscriber's throw.
+        try {
+            PrestaShopLogger::addLog(
+                'TwoPayment: The order postprocessing hook is invoking ' . count($handlers) . ' subscriber' . (count($handlers) === 1 ? '' : 's')
+                . ' on the ' . $requestType . ' request (' . $context['trigger'] . ', ' . self::getTwoPostprocessingSubject($context) . '), in this order: '
+                . implode(', ', TwoOrderPostprocessing::names($handlers)) . '.',
+                1,
+                null,
+                null,
+                null,
+                // PrestaShop 1.7 otherwise keeps only the first of identical lines, and every request must show.
+                true
+            );
+        } catch (Throwable $e) {
+        }
     }
 
     /**
@@ -9831,16 +9835,20 @@ class Twopayment extends PaymentModule
             return null;
         }
         $this->logTwoOrderPostprocessingInvocation($requestType, $context, $handlers);
-
-        return new TwoOrderPostprocessingTrace(
-            $requestType,
-            $context['trigger'],
-            isset($context['cart']) && is_object($context['cart']) ? (int) $context['cart']->id : 0,
-            isset($context['order']) && is_object($context['order']) ? (int) $context['order']->id : 0,
-            $this->version,
-            TwoOrderPostprocessing::names($handlers),
-            $before
-        );
+        try {
+            return new TwoOrderPostprocessingTrace(
+                $requestType,
+                $context['trigger'],
+                isset($context['cart']) && is_object($context['cart']) ? (int) $context['cart']->id : 0,
+                isset($context['order']) && is_object($context['order']) ? (int) $context['order']->id : 0,
+                $this->version,
+                TwoOrderPostprocessing::names($handlers),
+                $before
+            );
+        } catch (Throwable $e) {
+            // No trace rather than a failed request.
+            return null;
+        }
     }
 
     /**
@@ -9857,7 +9865,8 @@ class Twopayment extends PaymentModule
         try {
             PrestaShopLogger::addLog(
                 $trace->encode(),
-                $trace->hasThrown() ? 2 : 1,
+                // A request the hook failed is logged at the failure's own severity.
+                $trace->failed() ? 3 : 1,
                 null,
                 TwoOrderPostprocessingTrace::LOG_OBJECT_TYPE,
                 $trace->objectId(),

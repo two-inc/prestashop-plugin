@@ -1115,8 +1115,14 @@ namespace {
         /** @var array<int,array{message:string,severity:int,object_type:?string,object_id:?int,allow_duplicate:bool}> */
         public static array $logs = [];
 
+        /** @var string|null a pattern: a log whose message or object type matches it throws, as a failing ps_log insert does */
+        public static ?string $failOn = null;
+
         public static function addLog($message, $severity = 1, $errorCode = null, $objectType = null, $objectId = null, $allowDuplicate = false): bool
         {
+            if (self::$failOn !== null && preg_match(self::$failOn, $message . "\n" . (string) $objectType)) {
+                throw new RuntimeException('the log is down');
+            }
             // Core stores the message through pSQL() without html_ok: strip_tags(nl2br()) on 1.7, 8 and 9.
             $message = strip_tags(str_replace(["\r\n", "\r", "\n"], '<br />', (string) $message));
             self::$logs[] = ['message' => $message, 'severity' => (int) $severity, 'object_type' => $objectType, 'object_id' => $objectId, 'allow_duplicate' => (bool) $allowDuplicate];
@@ -1126,6 +1132,7 @@ namespace {
         public static function reset(): void
         {
             self::$logs = [];
+            self::$failOn = null;
         }
     }
 

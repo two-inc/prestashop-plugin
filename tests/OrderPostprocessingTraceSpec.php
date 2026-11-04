@@ -22,6 +22,8 @@ final class OrderPostprocessingTraceSpec
         self::testInvocationIsLoggedOncePerRequest();
         self::testTraceHoldsThePayloadAfterEachSubscriber();
         self::testTraceNamesTheSubscriberThatThrew();
+        self::testTraceNeverChangesThePayloadSent();
+        self::testALoggingFailureNeverFailsOrMisreportsTheRequest();
         self::testRedactionKeepsAmountsAndDropsBuyerDetails();
         self::testRedactionRemovesEveryBuyerValueTheBuildersSend();
         self::testOversizedTraceShedsInItsDefinedOrder();
@@ -162,7 +164,7 @@ final class OrderPostprocessingTraceSpec
             $rows = self::traces();
             TinyAssert::count(1, $rows, $description . ': the trace is written');
             $trace = json_decode($rows[0]['message'], true);
-            TinyAssert::same($threw === null ? 1 : 2, $rows[0]['severity'], $description . ': severity');
+            TinyAssert::same(3, $rows[0]['severity'], $description . ': at the severity of the failure it caused');
             $actual = [];
             foreach ($trace['steps'] as $step) {
                 $actual[$step['subscriber']] = isset($step['left']) ? $step['left'] : (isset($step['payload']) ? 'payload' : null);
@@ -175,6 +177,91 @@ final class OrderPostprocessingTraceSpec
             TinyAssert::same([$threw, 'RuntimeException'], [$trace['threw']['subscriber'], $trace['threw']['class']], $description . ': who threw what');
             TinyAssert::same(1, preg_match('#^tests/OrderPostprocessingSpec\.php:\d+$#', $trace['threw']['at']), $description . ': the throw site (' . $trace['threw']['at'] . ')');
             TinyAssert::false(strpos($rows[0]['message'], 'half way') !== false || strpos($rows[0]['message'], 'lives at') !== false, $description . ': never the message');
+        }
+    }
+
+    /**
+     * A subscriber that keeps a PHP reference into the payload shares that slot with every plain copy of it. The
+     * trace copies by value, so its redaction never reaches the payload sent to Two, and a later subscriber writing
+     * through the shared slot never changes an earlier subscriber's step.
+     */
+    private static function testTraceNeverChangesThePayloadSent(): void
+    {
+        // [first subscriber, second subscriber|null, path => expected in the payload sent, path => expected in step 0, description]
+        $cases = [
+            [static function (array $params, &$held): void {
+                $held['ref'] = &$params['payload']['buyer'];
+            }, null, ['/buyer/representative/email' => 'buyer@example.com'], ['/buyer/representative/email' => 'redacted'], 'a reference kept to the buyer'],
+            [static function (array $params, &$held): void {
+                $held['ref'] = &$params['payload']['buyer']['representative']['email'];
+            }, null, ['/buyer/representative/email' => 'buyer@example.com'], ['/buyer/representative/email' => 'redacted'], 'a reference kept to the email itself'],
+            [static function (array $params, &$held): void {
+                $held['ref'] = &$params['payload']['line_items'][0];
+            }, static function (array $params): void {
+                $params['payload']['line_items'][0]['name'] = 'Renamed';
+            }, ['/line_items/0/name' => 'Renamed'], ['/line_items/0/name' => 'Lamp'], 'a later subscriber writing through a kept reference'],
+        ];
+        foreach ($cases as [$first, $second, $sent, $stepZero, $description]) {
+            $cart = OrderPostprocessingSpec::seed(true);
+            $module = OrderPostprocessingSpec::module();
+            OrderPostprocessingSpec::harnessAsInstance($module);
+            // Kept in an array element: rebinding a by-reference parameter would not reach this variable.
+            $held = [];
+            Hook::$subscribers[TwoOrderPostprocessing::HOOK][self::FIRST] = static function (array $params) use ($first, &$held): void {
+                $first($params, $held);
+            };
+            if ($second !== null) {
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK][self::SECOND] = $second;
+            }
+            $payload = $module->getTwoNewOrderData('merchant-attempt-9701', $cart, OrderPostprocessingSpec::merchantUrls());
+            $trace = json_decode(self::traces()[0]['message'], true);
+            foreach ($sent as $path => $expected) {
+                TinyAssert::same($expected, self::at($payload, $path), $description . ': sent ' . $path);
+            }
+            foreach ($stepZero as $path => $expected) {
+                TinyAssert::same($expected, self::at($trace['steps'][0]['payload'], $path), $description . ': the first step\'s ' . $path);
+            }
+            unset($held);
+        }
+    }
+
+    /**
+     * The module's own log failing, as a ps_log insert can, never fails the request, never reads as a subscriber's
+     * throw, and never keeps a subscriber from running.
+     */
+    private static function testALoggingFailureNeverFailsOrMisreportsTheRequest(): void
+    {
+        $drivers = [];
+        foreach (OrderPostprocessingSpec::requestDrivers() as [$type, $trigger, , $driver]) {
+            $drivers[$type . '/' . $trigger] = $driver;
+        }
+        // [driver, log that fails, description]
+        $cases = [
+            ['order_create/checkout', '/is invoking/', 'the invocation line fails on a create'],
+            ['order_create/checkout', '/' . TwoOrderPostprocessingTrace::LOG_OBJECT_TYPE . '/', 'the trace write fails on a create'],
+            ['order_create/checkout', '/is invoking|' . TwoOrderPostprocessingTrace::LOG_OBJECT_TYPE . '/', 'both fail on a create'],
+            ['cancel/status_change', '/is invoking/', 'the invocation line fails on a bodyless cancel'],
+        ];
+        foreach ($cases as [$key, $failOn, $description]) {
+            $cart = OrderPostprocessingSpec::seed(true);
+            $module = OrderPostprocessingSpec::module();
+            OrderPostprocessingSpec::harnessAsInstance($module);
+            $calls = [];
+            OrderPostprocessingSpec::subscribe('tag', $calls);
+            PrestaShopLogger::$failOn = $failOn;
+            $error = null;
+            try {
+                $drivers[$key]($module, $cart);
+            } catch (Throwable $e) {
+                $error = get_class($e) . ': ' . $e->getMessage();
+            }
+            PrestaShopLogger::$failOn = null;
+            TinyAssert::same(null, $error, $description . ': the request does not fail');
+            TinyAssert::count(1, $calls, $description . ': the subscriber runs');
+            $misreported = array_filter(PrestaShopLogger::$logs, static function ($entry) {
+                return strpos($entry['message'], TwoOrderPostprocessing::CODE_HOOK_FAILED) !== false || strpos($entry['message'], 'hook threw') !== false;
+            });
+            TinyAssert::same([], array_values($misreported), $description . ': nothing reads as a subscriber failure');
         }
     }
 
@@ -237,6 +324,7 @@ final class OrderPostprocessingTraceSpec
             [['refund' => '1.00'], ['refund' => '1.00'], 'a payload without the fields is unchanged'],
             [['buyer' => 'flat'], ['buyer' => 'flat'], 'a subscriber\'s odd shape is left alone'],
             [[], [], 'an empty payload'],
+            [['buyer' => (object) ['representative' => (object) ['email' => 'x@y.z', 'title' => 'Ms']]], ['buyer' => ['representative' => ['email' => 'redacted', 'title' => 'Ms']]], 'an object a subscriber left, read as the array Two receives'],
         ];
         foreach ($edges as [$input, $expected, $description]) {
             TinyAssert::same($expected, TwoOrderPostprocessingTrace::redact($input), 'redact: ' . $description);
@@ -284,11 +372,11 @@ final class OrderPostprocessingTraceSpec
             [20, 2, 600, false, ['steps/1/payload'], 'the last subscriber\'s payload goes first'],
             [30, 2, 600, false, $steps(2), 'then the one before it'],
             [50, 2, 600, false, array_merge($steps(2), ['before']), 'then the payload before the first subscriber'],
-            [50, 4, 600, true, array_merge($steps(4), ['before', 'steps/*/diff']), 'then the diffs'],
+            [50, 5, 600, true, array_merge($steps(5), ['before', 'steps/*/diff']), 'then the diffs'],
             [1, 300, 10, false, array_merge($steps(300), ['before', 'steps/*/diff', 'all']), 'then everything but the header'],
         ];
         foreach ($cases as [$lines, $subscribers, $length, $rewrite, $expected, $description]) {
-            $payload = ['gross_amount' => '1.00', 'line_items' => []];
+            $payload = ['gross_amount' => '1.00', 'merchant_reference' => 'ref', 'buyer' => ['representative' => ['email' => 'x@y.z']], 'line_items' => []];
             for ($l = 0; $l < $lines; ++$l) {
                 $payload['line_items'][] = ['name' => 'Line ' . $l, 'description' => str_repeat('d', $length), 'net_amount' => '1.00'];
             }
@@ -300,6 +388,8 @@ final class OrderPostprocessingTraceSpec
             foreach ($names as $s => $name) {
                 $module = new StubHookSubscriberModule($name);
                 $trace->starting($module);
+                $payload['merchant_reference'] = 'ref' . $s;
+                $payload['buyer']['representative']['email'] = 's' . $s . '@y.z';
                 foreach ($payload['line_items'] as $l => $line) {
                     $payload['line_items'][$l]['net_amount'] = (string) ($s + 2) . '.00';
                     if ($rewrite) {
@@ -312,7 +402,7 @@ final class OrderPostprocessingTraceSpec
             TinyAssert::true(TwoDiscrepancySnapshot::fits($json), $description . ': fits (' . strlen(addslashes($json)) . ' bytes escaped)');
             $decoded = json_decode((string) TwoDiscrepancySnapshot::decodeStored(addslashes($json)), true);
             TinyAssert::true(is_array($decoded), $description . ': decodes as 1.7 stores it');
-            TinyAssert::same($expected, isset($decoded['shed']) ? $decoded['shed'] : null, $description . ': shed');
+            TinyAssert::same($expected, isset($decoded['shed']) ? $decoded['shed'] : null, $description . ': shed (' . strlen(addslashes($json)) . ' bytes, got ' . json_encode($decoded['shed'] ?? null) . ')');
             if ($expected === null) {
                 TinyAssert::same($trace->record(), $decoded, $description . ': the whole record');
                 continue;
@@ -323,9 +413,17 @@ final class OrderPostprocessingTraceSpec
                 continue;
             }
             $last = $decoded['steps'][$subscribers - 1];
-            TinyAssert::same(['subscriber' . ($subscribers - 1), $lines * ($rewrite ? 2 : 1)], [$last['subscriber'], $last['changes']], $description . ': a shed step keeps its subscriber and count of changes');
+            TinyAssert::same(['subscriber' . ($subscribers - 1), $lines * ($rewrite ? 2 : 1) + 2], [$last['subscriber'], $last['changes']], $description . ': a shed step keeps its subscriber and count of changes');
             if (!in_array('steps/*/diff', $expected, true)) {
-                TinyAssert::same(['path' => '/line_items/0/net_amount', 'before' => (string) $subscribers . '.00', 'after' => (string) ($subscribers + 1) . '.00'], $last['diff'][0], $description . ': against the step before');
+                $byPath = array_column($last['diff'], null, 'path');
+                $diffRows = [
+                    ['/line_items/0/net_amount', (string) $subscribers . '.00', (string) ($subscribers + 1) . '.00', 'an amount'],
+                    ['/merchant_reference', 'ref' . ($subscribers - 2), 'ref' . ($subscribers - 1), 'a kept field outside the amounts, as an unshed step shows it'],
+                    ['/buyer/representative/email', 'redacted', 'redacted', 'a buyer detail, redacted as in the payloads'],
+                ];
+                foreach ($diffRows as [$path, $before, $after, $what]) {
+                    TinyAssert::same(['path' => $path, 'before' => $before, 'after' => $after], $byPath[$path] ?? null, $description . ': ' . $what . ' against the step before');
+                }
             } else {
                 TinyAssert::false(isset($last['diff']), $description . ': the diff is shed');
             }

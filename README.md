@@ -1001,9 +1001,13 @@ empty.
 A trace is stored in PrestaShop's log, which caps its size, so one that would not fit
 sheds in this order, listing each step under `shed`: the payload after each
 subscriber from the last back to the first, each replaced by its count of changes and
-the paths it changed with their values before and after (values outside the amounts
-and lines only as `redacted`); then `before`; then those diffs, leaving each
-subscriber's count of changes; then everything but the header.
+the paths it changed with their values before and after, the buyer's details redacted
+as in the payloads; then `before`; then those diffs, leaving each subscriber's count
+of changes; then everything but the header.
+
+A trace keeps its own copies of the payloads, so it never changes what is sent, and a
+failure to write the module's log never fails a request or reads as a subscriber's
+failure. A trace for a request the hook failed is logged at error severity.
 
 ### Tenders
 
