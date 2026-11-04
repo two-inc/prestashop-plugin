@@ -150,10 +150,11 @@ class TwoOrderPostprocessing
      * @param array $payload edited in place by the subscribers
      * @param array $context
      * @param Module[]|null $modules runnableSubscribers(), when the caller already has it
+     * @param TwoOrderPostprocessingTrace|null $trace told which subscriber runs, and what each one left (TWO-27014)
      * @return void
      * @throws Throwable whatever a subscriber threw
      */
-    public static function dispatch(array &$payload, array $context, $modules = null)
+    public static function dispatch(array &$payload, array $context, $modules = null, $trace = null)
     {
         $core = Context::getContext();
         $args = array('payload' => &$payload, 'context' => $context, 'cookie' => $core->cookie, 'cart' => $core->cart);
@@ -161,7 +162,13 @@ class TwoOrderPostprocessing
         $altern = 0;
         foreach (is_array($modules) ? $modules : self::runnableSubscribers() as $module) {
             $args['altern'] = ++$altern;
+            if ($trace !== null) {
+                $trace->starting($module);
+            }
             $module->{$method}($args);
+            if ($trace !== null) {
+                $trace->finished($module, $payload);
+            }
         }
     }
 

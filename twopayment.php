@@ -24,6 +24,7 @@ require_once dirname(__FILE__) . '/classes/TwoDiscrepancySnapshot.php';
 require_once dirname(__FILE__) . '/classes/TwoPostcodeFormat.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessing.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessingException.php';
+require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessingTrace.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderTenders.php';
 require_once dirname(__FILE__) . '/classes/TwoShopTaxCode.php';
 require_once dirname(__FILE__) . '/classes/TwoTaxCodeSection.php';
@@ -512,7 +513,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.20';
+        $this->version = '2.7.21';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -9686,6 +9687,7 @@ class Twopayment extends PaymentModule
         }
         $before = $payload;
         $handlers = array();
+        $trace = null;
         $outerChecks = self::$twoActiveOrderChecks;
         $outerRefusal = self::$twoShopMatchRefusal;
         self::$twoActiveOrderChecks = $checks === null ? null : array('checks' => $checks, 'before' => $before, 'owner' => $this);
@@ -9693,8 +9695,14 @@ class Twopayment extends PaymentModule
         try {
             // Inside the try: a merchant module that fails to load fails the request with the hook's code, as dispatch always did.
             $handlers = TwoOrderPostprocessing::runnableSubscribers();
-            TwoOrderPostprocessing::dispatch($payload, $context, $handlers);
+            $trace = $this->startTwoOrderPostprocessingTrace($requestType, $context, $handlers, $before);
+            TwoOrderPostprocessing::dispatch($payload, $context, $handlers, $trace);
+            $this->logTwoOrderPostprocessingTrace($trace);
         } catch (Throwable $e) {
+            if ($trace !== null) {
+                $trace->threw($e);
+                $this->logTwoOrderPostprocessingTrace($trace);
+            }
             if ($checks !== null && $e === self::$twoShopMatchRefusal) {
                 // A handler let the module's own refusal from runTwoShopMatchChecks() through: refused as the default handler refuses.
                 if ($checks['cart'] !== null) {
@@ -9724,10 +9732,8 @@ class Twopayment extends PaymentModule
         }
         if ($checks !== null) {
             if ($handlers !== array()) {
-                $subject = isset($context['order']) && is_object($context['order']) ? 'order ' . (int) $context['order']->id
-                    : (isset($context['cart']) && is_object($context['cart']) ? 'cart ' . (int) $context['cart']->id : 'no cart');
                 PrestaShopLogger::addLog(
-                    'TwoPayment: The ' . $requestType . ' request (' . $context['trigger'] . ', ' . $subject . ') has an order postprocessing hook handler ('
+                    'TwoPayment: The ' . $requestType . ' request (' . $context['trigger'] . ', ' . self::getTwoPostprocessingSubject($context) . ') has an order postprocessing hook handler ('
                     . implode(', ', TwoOrderPostprocessing::names($handlers)) . '): the shop-match checks are delegated to it.',
                     1,
                     null,
@@ -9763,7 +9769,9 @@ class Twopayment extends PaymentModule
         self::$twoShopMatchRefusal = null;
         $prefix = 'TwoPayment: The ' . $requestType . ' request (' . $context['trigger'] . ') takes no body, so it was sent empty: ';
         try {
-            TwoOrderPostprocessing::dispatch($payload, $context);
+            $handlers = TwoOrderPostprocessing::runnableSubscribers();
+            $this->logTwoOrderPostprocessingInvocation($requestType, $context, $handlers);
+            TwoOrderPostprocessing::dispatch($payload, $context, $handlers);
         } catch (Throwable $e) {
             // Never the exception's message, which can carry buyer data.
             PrestaShopLogger::addLog($prefix . 'the order postprocessing hook threw ' . get_class($e) . ' at ' . TwoDiscrepancySnapshot::throwSite($e) . ', which was ignored.', 2);
@@ -9778,6 +9786,102 @@ class Twopayment extends PaymentModule
         } elseif ($payload !== array()) {
             PrestaShopLogger::addLog($prefix . 'the body the order postprocessing hook returned was ignored. Paths: ' . implode(', ', TwoOrderPostprocessing::diffPaths(array(), $payload)), 2);
         }
+    }
+
+    /**
+     * Log that the hook is about to run merchant subscribers on a request, and which, in run order (TWO-27014).
+     * Always on, every request type, once per request; nothing when there is no subscriber.
+     *
+     * @param string $requestType
+     * @param array $context
+     * @param Module[] $handlers TwoOrderPostprocessing::runnableSubscribers()
+     * @return void
+     */
+    private function logTwoOrderPostprocessingInvocation($requestType, array $context, array $handlers)
+    {
+        if ($handlers === array()) {
+            return;
+        }
+        PrestaShopLogger::addLog(
+            'TwoPayment: The order postprocessing hook is invoking ' . count($handlers) . ' subscriber' . (count($handlers) === 1 ? '' : 's')
+            . ' on the ' . $requestType . ' request (' . $context['trigger'] . ', ' . self::getTwoPostprocessingSubject($context) . '), in this order: '
+            . implode(', ', TwoOrderPostprocessing::names($handlers)) . '.',
+            1,
+            null,
+            null,
+            null,
+            // PrestaShop 1.7 otherwise keeps only the first of identical lines, and every request must show.
+            true
+        );
+    }
+
+    /**
+     * logTwoOrderPostprocessingInvocation(), then the trace that records what each subscriber leaves; null when
+     * there is no subscriber, so nothing is recorded.
+     *
+     * @param string $requestType
+     * @param array $context
+     * @param Module[] $handlers
+     * @param array $before
+     * @return TwoOrderPostprocessingTrace|null
+     */
+    private function startTwoOrderPostprocessingTrace($requestType, array $context, array $handlers, array $before)
+    {
+        if ($handlers === array()) {
+            return null;
+        }
+        $this->logTwoOrderPostprocessingInvocation($requestType, $context, $handlers);
+
+        return new TwoOrderPostprocessingTrace(
+            $requestType,
+            $context['trigger'],
+            isset($context['cart']) && is_object($context['cart']) ? (int) $context['cart']->id : 0,
+            isset($context['order']) && is_object($context['order']) ? (int) $context['order']->id : 0,
+            $this->version,
+            TwoOrderPostprocessing::names($handlers),
+            $before
+        );
+    }
+
+    /**
+     * Store the trace for the error log page; never lets its own failure reach the request.
+     *
+     * @param TwoOrderPostprocessingTrace|null $trace
+     * @return void
+     */
+    private function logTwoOrderPostprocessingTrace($trace)
+    {
+        if ($trace === null) {
+            return;
+        }
+        try {
+            PrestaShopLogger::addLog(
+                $trace->encode(),
+                $trace->hasThrown() ? 2 : 1,
+                null,
+                TwoOrderPostprocessingTrace::LOG_OBJECT_TYPE,
+                $trace->objectId(),
+                true
+            );
+        } catch (Throwable $e) {
+            try {
+                // The class only: a subscriber's message can carry buyer data.
+                PrestaShopLogger::addLog('TwoPayment: The order postprocessing trace could not be stored: ' . get_class($e), 2);
+            } catch (Throwable $ignored) {
+            }
+        }
+    }
+
+    /**
+     * The order, else the cart, a request is for, as the module's log lines name it.
+     *
+     * @param array $context
+     * @return string
+     */
+    private static function getTwoPostprocessingSubject(array $context)
+    {
+        return isset($context['order']) && is_object($context['order']) ? 'order ' . (int) $context['order']->id
+            : (isset($context['cart']) && is_object($context['cart']) ? 'cart ' . (int) $context['cart']->id : 'no cart');
     }
 
     /**

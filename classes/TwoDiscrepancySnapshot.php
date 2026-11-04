@@ -186,14 +186,61 @@ class TwoDiscrepancySnapshot
      */
     public static function encode(array $snapshot)
     {
+        $json = self::json($snapshot);
+        foreach (self::SHEDDABLE as $key) {
+            if (self::fits($json)) {
+                break;
+            }
+            // A shed list counts all its rows as cut, on top of any the row cap already cut.
+            if (isset($snapshot[$key][0])) {
+                $snapshot['truncated'][$key] = count($snapshot[$key]) + (isset($snapshot['truncated'][$key]) ? $snapshot['truncated'][$key] : 0);
+            }
+            $snapshot[$key] = array('dropped' => 'size');
+            $json = self::json($snapshot);
+        }
+        if (!self::fits($json)) {
+            $json = self::json(array(
+                'v' => self::SCHEMA_VERSION,
+                'id_cart' => isset($snapshot['id_cart']) ? $snapshot['id_cart'] : 0,
+                'gate' => array('name' => isset($snapshot['gate']['name']) ? $snapshot['gate']['name'] : null),
+                'shape' => isset($snapshot['shape']) ? $snapshot['shape'] : 'other',
+                'dropped' => 'size',
+            ));
+        }
+
+        return $json;
+    }
+
+    /**
+     * A JSON document as PrestaShop's log stores it intact: also used by TwoOrderPostprocessingTrace.
+     *
+     * @param array $document
+     * @return string
+     */
+    public static function json(array $document)
+    {
         // Shop images ship serialize_precision=17, which prints 47.8 as 47.799999999999997.
         $precision = ini_get('serialize_precision');
         ini_set('serialize_precision', '-1');
         try {
-            return self::encodeWithinLimit($snapshot);
+            // Core strip_tags() every log message (pSQL without html_ok), so no raw < or > may reach it.
+            $flags = JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | (defined('JSON_PARTIAL_OUTPUT_ON_ERROR') ? JSON_PARTIAL_OUTPUT_ON_ERROR : 0);
+
+            return (string) json_encode($document, $flags);
         } finally {
             ini_set('serialize_precision', (string) $precision);
         }
+    }
+
+    /**
+     * Whether a document fits ps_log.message as 1.7.x stores it, addslashes()-escaped.
+     *
+     * @param string $json
+     * @return bool
+     */
+    public static function fits($json)
+    {
+        return strlen(addslashes((string) $json)) <= self::MAX_BYTES;
     }
 
     /**
@@ -211,35 +258,6 @@ class TwoDiscrepancySnapshot
         }
 
         return null;
-    }
-
-    private static function encodeWithinLimit(array $snapshot)
-    {
-        // Core strip_tags() every log message (pSQL without html_ok), so no raw < or > may reach it.
-        $flags = JSON_HEX_TAG | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | (defined('JSON_PARTIAL_OUTPUT_ON_ERROR') ? JSON_PARTIAL_OUTPUT_ON_ERROR : 0);
-        $json = (string) json_encode($snapshot, $flags);
-        foreach (self::SHEDDABLE as $key) {
-            if (strlen(addslashes($json)) <= self::MAX_BYTES) {
-                break;
-            }
-            // A shed list counts all its rows as cut, on top of any the row cap already cut.
-            if (isset($snapshot[$key][0])) {
-                $snapshot['truncated'][$key] = count($snapshot[$key]) + (isset($snapshot['truncated'][$key]) ? $snapshot['truncated'][$key] : 0);
-            }
-            $snapshot[$key] = array('dropped' => 'size');
-            $json = (string) json_encode($snapshot, $flags);
-        }
-        if (strlen(addslashes($json)) > self::MAX_BYTES) {
-            $json = (string) json_encode(array(
-                'v' => self::SCHEMA_VERSION,
-                'id_cart' => isset($snapshot['id_cart']) ? $snapshot['id_cart'] : 0,
-                'gate' => array('name' => isset($snapshot['gate']['name']) ? $snapshot['gate']['name'] : null),
-                'shape' => isset($snapshot['shape']) ? $snapshot['shape'] : 'other',
-                'dropped' => 'size',
-            ), $flags);
-        }
-
-        return $json;
     }
 
     /**
