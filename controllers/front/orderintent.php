@@ -390,7 +390,9 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
         }
 
         // Manual entry also refuses the number it walked away from (TWO-26775),
-        // so the saved address cannot hand it back once the record is gone.
+        // so the saved address cannot hand it back once the record is gone. Once
+        // that refusal stands, the record is left as it is: what it holds then is
+        // a number the buyer typed.
         if ((string) Tools::getValue('manual', '') !== '1'
             || !$this->module->disownTwoCartScopedCompany(Tools::getValue('companyid', ''))
         ) {

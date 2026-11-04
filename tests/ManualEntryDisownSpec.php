@@ -35,6 +35,7 @@ final class ManualEntryDisownSpec
         self::testAddressSaveInManualEntryNeverStoresTheOldNumber();
         self::testManualIntentRefusesTheOldNumberFromTheForm();
         self::testAHandTypedNumberIsNeverRefused();
+        self::testALaterManualClearKeepsTheTypedNumber();
         self::testHousekeepingClearsKeepTheRefusal();
     }
 
@@ -150,6 +151,32 @@ final class ManualEntryDisownSpec
             $sent = (string) json_encode($controller->emitted);
             TinyAssert::false(strpos($sent, self::OLD_ID) !== false, $description . ': the old number went out in the intent');
             TinyAssert::true(strpos($sent, '99887766') !== false, $description . ': the typed number did not go out');
+        }
+    }
+
+    /**
+     * A manual clear arriving after the refusal stands (the buyer corrects the
+     * name, or comes back to manual entry) finds only the buyer's own typed number
+     * on record. It keeps that number and the old one stays the refused one,
+     * whatever number the clear names.
+     */
+    private static function testALaterManualClearKeepsTheTypedNumber(): void
+    {
+        $cases = [
+            ['clear naming the old number', ['manual' => '1', 'companyid' => self::OLD_ID]],
+            ['clear naming the typed number', ['manual' => '1', 'companyid' => '99887766']],
+            ['clear naming no number', ['manual' => '1']],
+        ];
+        foreach ($cases as [$description, $values]) {
+            self::seed(self::OLD_ID);
+            self::runClear(['manual' => '1', 'companyid' => self::OLD_ID]);
+            self::runAddressSave('Hand Typed Ltd', '99887766', true);
+            self::runClear($values);
+
+            TinyAssert::same('99887766', (string) TwoSessionRecord::get('company', 'id'), $description . ': the typed number left the record');
+            TinyAssert::same(self::OLD_ID, (string) TwoSessionRecord::get('company', 'disowned_id'), $description . ': the refusal moved');
+            $resolved = self::module()->getTwoCheckoutCompanyData(new Address(self::ADDRESS_ID));
+            TinyAssert::same('99887766', $resolved['organization_number'], $description . ': the resolver did not answer with the typed number');
         }
     }
 

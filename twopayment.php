@@ -14377,15 +14377,25 @@ class Twopayment extends PaymentModule
      * the address form's save, the order-intent check) can call it and the first
      * to arrive wins: none of them depends on another being delivered.
      *
+     * A refusal already standing with no pick since leaves the record as it is:
+     * anything else on it is a number the buyer typed in manual entry, so a later
+     * manual clear (a corrected name, a second visit to manual entry) must not
+     * take it away.
+     *
      * @param string $dropped_id the number the browser held from its pick when it
      *   entered manual entry; the flag-only carriers send none
-     * @return bool whether a number is now refused by this call
+     * @return bool whether a number stands refused after this call, so the caller
+     *   has nothing left to clear
      */
     public function disownTwoCartScopedCompany($dropped_id = '')
     {
         $stored = $this->readTwoCartScopedCompany();
         $disowned = $stored !== null ? trim($stored['picked_id']) : '';
-        if ($disowned === '' && ($stored === null || trim($stored['disowned_id']) === '')) {
+        $standing = $stored !== null && trim($stored['disowned_id']) !== '';
+        if ($disowned === '' && $standing) {
+            return true;
+        }
+        if ($disowned === '') {
             $disowned = trim((string) $dropped_id);
         }
         if ($disowned === '') {

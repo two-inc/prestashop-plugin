@@ -4558,7 +4558,9 @@ class TwoCompanySearch {
         // clearStaleOrganizationSelection() pairs the two on every branch.
         this.setCompanyIdHint('');
         this.clearLookupWrittenAddressIdentifiers();
-        if (this._manualEntry) {
+        // Once a refusal stands, the field can only hold a number the buyer
+        // typed in manual entry, which is theirs to pay with (TWO-26775).
+        if (this._manualEntry && !this._manualEntryMemory.disownedId) {
             this.disownCompanyNumber(droppedId);
         }
         this.clearPersistedCompany(droppedId);
@@ -4599,7 +4601,8 @@ class TwoCompanySearch {
      * arriving, and there is no ordering guard here for the same reason - unlike
      * the surcharge-line endpoint, where the browser IS the only writer.
      *
-     * In manual entry the request also names the number being dropped, so the
+     * In manual entry the request also names the number being dropped, or the
+     * refusal already standing in place of a number the buyer typed, so the
      * server refuses it for the rest of the cart (TWO-26775), and a failed
      * request is retried. A name kept unchanged never trips the hook's
      * name-change backstop, so manual entry has its own: the address form's
@@ -4621,7 +4624,7 @@ class TwoCompanySearch {
             const manual = !!this._manualEntry;
             if (manual) {
                 data.manual = 1;
-                data.companyid = droppedId || this._manualEntryMemory.disownedId || '';
+                data.companyid = this._manualEntryMemory.disownedId || droppedId || '';
             }
             const request = $.ajax({
                 url: this._page.orderIntentUrl,
