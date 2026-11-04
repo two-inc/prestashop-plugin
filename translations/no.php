@@ -594,6 +594,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_daeade4fe4e2a2843ee73cf20235f86a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1da99848eacb0cca6260b251a44562ec'] = 'en uventet feil stoppet den';
 $_MODULE['<{twopayment}prestashop>twopayment_b324ba130c48d915b7f4065f928d9019'] = 'Øyeblikksbilder av avvik';
 $_MODULE['<{twopayment}prestashop>twopayment_0fafc015674a68481a377c36125bc110'] = 'Ingen øyeblikksbilder av avvik er registrert.';
+$_MODULE['<{twopayment}prestashop>twopayment_8963b0e218e163f54e8045eca8e220aa'] = 'Spor av etterbehandling av ordrer';
+$_MODULE['<{twopayment}prestashop>twopayment_c90f7096c74fc198c31b895f3d83cdb2'] = 'Ingen spor av etterbehandling av ordrer er registrert.';
+$_MODULE['<{twopayment}prestashop>twopayment_15c2d85f1fae22a3c3a0594510a1f611'] = 'Forespørsel';
+$_MODULE['<{twopayment}prestashop>twopayment_39f7a3e2b56e9bfd753ba6325533a127'] = 'Abonnenter';
+$_MODULE['<{twopayment}prestashop>twopayment_b5bcefb6ada01834c51ee21d375ff6ef'] = 'Ordre %d';
 $_MODULE['<{twopayment}prestashop>twopayment_a85eba4c6c699122b2bb1387ea4813ad'] = 'Handlekurv';
 $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] = 'Last ned JSON';
 $_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'Etterbehandlingskroken for ordrer stoppet denne %1$s-forespørselen, så den ble ikke sendt til %2$s (%3$s). Se modulloggen for detaljer.';

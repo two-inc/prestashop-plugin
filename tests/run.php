@@ -5950,6 +5950,7 @@ require __DIR__ . '/PaymentTileAboutControlSpec.php';
 require __DIR__ . '/PaymentOptionLogoSpec.php';
 require __DIR__ . '/ReconciliationDriftMessageSpec.php';
 require __DIR__ . '/OrderPostprocessingSpec.php';
+require __DIR__ . '/OrderPostprocessingTraceSpec.php';
 require __DIR__ . '/DroppedRequestKeysSpec.php';
 require __DIR__ . '/ShippingRateControlSpec.php';
 require __DIR__ . '/PostcodeFormatSpec.php';
@@ -6045,6 +6046,7 @@ $tests = [
     'CheckoutWithholdReasonSpec::runAll' => [CheckoutWithholdReasonSpec::class, 'runAll'],
     'ReconciliationDriftMessageSpec::runAll' => [ReconciliationDriftMessageSpec::class, 'runAll'],
     'OrderPostprocessingSpec::runAll' => [OrderPostprocessingSpec::class, 'runAll'],
+    'OrderPostprocessingTraceSpec::runAll' => [OrderPostprocessingTraceSpec::class, 'runAll'],
     'DroppedRequestKeysSpec::runAll' => [DroppedRequestKeysSpec::class, 'runAll'],
     'ShippingRateControlSpec::runAll' => [ShippingRateControlSpec::class, 'runAll'],
     'PostcodeFormatSpec::runAll' => [PostcodeFormatSpec::class, 'runAll'],

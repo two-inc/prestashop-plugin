@@ -267,7 +267,7 @@ To keep the token out of process listings and proxy access logs, send it as a he
 
 ### Error log
 
-The **View last 100 error log records** button in the module settings opens the module's error log: its latest lines in PrestaShop's log (those starting `TwoPayment:`), and the discrepancy snapshots, each downloadable as JSON. The page only reads; it changes nothing.
+The **View last 100 error log records** button in the module settings opens the module's error log: its latest lines in PrestaShop's log (those starting `TwoPayment:`), the discrepancy snapshots, and the order postprocessing traces, listed with their request and subscribers (see [What the module logs](#what-the-module-logs)). Snapshots and traces are downloadable as JSON. The page only reads; it changes nothing.
 
 Any employee whose profile may view **Orders** is allowed to read it, as is SuperAdmin and any profile granted the page's own tab. The only link to the page is that button on the module settings page, so an employee who may view Orders but cannot open the module settings has to be given the page's URL. The page's tab is hidden from the menu, and PrestaShop grants a new hidden tab only to SuperAdmin and the profile of the employee who installed the module, with no way to grant it to another profile from the Permissions page, so it follows the Orders tab instead (TWO-26612). This needs no upgrade and no permission change on an existing shop. Only viewing is opened this way: anything else on the tab still needs the tab's own permission.
 
@@ -948,9 +948,9 @@ module log gets `TWO_ORDER_POSTPROCESSING_HOOK_FAILED` with the request type, th
 back office shows a notice on admin actions, and the buyer sees the module's existing
 generic refusal. It never falls back to the unedited payload.
 
-With Debug Mode on, the module logs what the subscribers changed, as a list of paths
+With Debug Mode on, the module also logs what the subscribers changed, as a list of paths
 with their values before and after. Values outside the amounts and lines are shown only
-as `redacted`, since they can carry buyer data.
+as `redacted`, since they can carry buyer data. See also [What the module logs](#what-the-module-logs).
 
 The module never recomputes totals or subtotals after the hook, since that would
 overwrite a subscriber's edits. A subscriber that changes a line also updates the
@@ -966,6 +966,48 @@ changes nothing else. Each total, and each per-rate subtotal, is the sum of its 
 plus any residual it carried before the hook; the module's own payloads carry none, so
 it is the sum of the lines. Its result replaces whatever the payload held, hand edits
 included, and it never writes `-0.00`. It is opt-in and part of this contract.
+
+### What the module logs
+
+Whenever the hook has at least one subscriber to run, the module's log shows it,
+whatever Debug Mode is set to, so a merchant can see from the back office alone
+whether their subscriber ran and what it did (TWO-27014). A shop with no subscriber
+logs nothing new.
+
+- **One line per request**, on every request type including `order_confirm` and
+  `cancel`, written just before the first subscriber runs: `TwoPayment: The order
+  postprocessing hook is invoking 2 subscribers on the order_create request (checkout,
+  cart 42), in this order: firstmodule, secondmodule.` It names the order when the
+  request has one, else the cart.
+- **One trace per request with a body** (`order_intent`, `order_create`,
+  `order_update`, `capture` and `refund`), a JSON document listed under "Order
+  postprocessing traces" on the module's [error log](#error-log) and downloadable from
+  there. It holds the request type, trigger, cart and order ids, the module version,
+  the subscribers in run order, the payload as the module built it (`before`), and in
+  `steps` the payload after each subscriber, `{subscriber, payload}`, in run order, so
+  with several subscribers each one's edits show on its own step. A subscriber that
+  throws is named in `threw` with its exception's class and where it was thrown, never
+  the message, and has no step; one that leaves something other than an array has a
+  step with `left` naming what it left. The trace is written either way.
+
+In every payload in a trace the buyer's personal details are replaced by `redacted`:
+the representative's first and last name, email and phone, the company name and the
+billing and shipping organisation names (for a sole trader, a person's name), the
+billing and shipping street address, the invoice email, and the buyer's free-text
+`order_note`. Amounts, tax rates and codes, lines, shipping, discounts, totals, the
+organisation number, country, city and postal code are kept. An empty detail is left
+empty.
+
+A trace is stored in PrestaShop's log, which caps its size, so one that would not fit
+sheds in this order, listing each step under `shed`: the payload after each
+subscriber from the last back to the first, each replaced by its count of changes and
+the paths it changed with their values before and after, the buyer's details redacted
+as in the payloads; then `before`; then those diffs, leaving each subscriber's count
+of changes; then everything but the header.
+
+A trace keeps its own copies of the payloads, so it never changes what is sent, and a
+failure to write the module's log never fails a request or reads as a subscriber's
+failure. A trace for a request the hook failed is logged at error severity.
 
 ### Tenders
 
