@@ -5,6 +5,9 @@
  * It holds the payload before the first subscriber and after each one, in run order, so a merchant without server
  * access can see which subscriber changed what.
  *
+ * A trace must never change a request or fail one: it keeps its own reference-free copies of every payload, and
+ * none of its methods lets an exception out.
+ *
  * @author Plugin Developer from Two <jgang@two.inc> <support@two.inc>
  * @copyright Since 2021 Two Team
  * @license Two Commercial License
@@ -19,6 +22,7 @@ class TwoOrderPostprocessingTrace
     const LOG_OBJECT_TYPE = 'TwoOrderPostprocessingTrace';
     const SCHEMA_VERSION = 1;
     const REDACTED = 'redacted';
+    const MAX_DEPTH = 512;
 
     // The one switch for the redaction below: false stores every payload whole.
     const REDACT_BUYER_DETAILS = true;
@@ -47,7 +51,7 @@ class TwoOrderPostprocessingTrace
     /** @var array the payload before the first subscriber */
     private $before;
 
-    /** @var array<int,array{subscriber:string,payload:mixed}> after each subscriber that returned, in run order */
+    /** @var array<int,array> after each subscriber that returned, in run order: {subscriber, payload} or {subscriber, left} */
     private $steps = array();
 
     /** @var string|null the subscriber running now */
@@ -78,7 +82,7 @@ class TwoOrderPostprocessingTrace
             'redacted' => self::REDACT_BUYER_DETAILS,
             'subscribers' => array_values($subscribers),
         );
-        $this->before = $before;
+        $this->before = self::copy($before);
     }
 
     /**
@@ -87,17 +91,27 @@ class TwoOrderPostprocessingTrace
      */
     public function starting($module)
     {
-        $this->current = self::name($module);
+        try {
+            $this->current = self::name($module);
+        } catch (Throwable $e) {
+            $this->current = null;
+        }
     }
 
     /**
      * @param Module $module the subscriber that just returned
-     * @param mixed $payload what it left
+     * @param mixed $payload what it left; copied, so a reference it kept can change neither the trace nor the request
      * @return void
      */
     public function finished($module, $payload)
     {
-        $this->steps[] = array('subscriber' => self::name($module), 'payload' => $payload);
+        try {
+            $this->steps[] = is_array($payload)
+                ? array('subscriber' => self::name($module), 'payload' => self::copy($payload))
+                : array('subscriber' => self::name($module), 'left' => gettype($payload));
+        } catch (Throwable $e) {
+            $this->steps[] = array('subscriber' => $this->current, 'unrecorded' => get_class($e));
+        }
         $this->current = null;
     }
 
@@ -109,23 +123,34 @@ class TwoOrderPostprocessingTrace
      */
     public function threw($e)
     {
-        $this->threw = array(
-            'subscriber' => $this->current,
-            'class' => get_class($e),
-            'at' => TwoDiscrepancySnapshot::throwSite($e),
-        );
+        $this->threw = array('subscriber' => $this->current, 'class' => get_class($e), 'at' => null);
+        try {
+            $this->threw['at'] = TwoDiscrepancySnapshot::throwSite($e);
+        } catch (Throwable $ignored) {
+        }
     }
 
     /**
+     * Whether the request fails at the hook: a subscriber threw or left something other than an array.
+     *
      * @return bool
      */
-    public function hasThrown()
+    public function failed()
     {
-        return $this->threw !== null;
+        if ($this->threw !== null) {
+            return true;
+        }
+        foreach ($this->steps as $step) {
+            if (isset($step['left'])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
-     * @return int the cart the record is filed under: core keeps an object type only with a non-zero id
+     * @return int the cart the record is filed under, else the order: core keeps an object type only with a non-zero id
      */
     public function objectId()
     {
@@ -143,7 +168,10 @@ class TwoOrderPostprocessingTrace
         $record['before'] = self::redact($this->before);
         $record['steps'] = array();
         foreach ($this->steps as $step) {
-            $record['steps'][] = self::step($step);
+            if (isset($step['payload'])) {
+                $step['payload'] = self::redact($step['payload']);
+            }
+            $record['steps'][] = $step;
         }
         if ($this->threw !== null) {
             $record['threw'] = $this->threw;
@@ -154,9 +182,9 @@ class TwoOrderPostprocessingTrace
 
     /**
      * The record as log-safe JSON within TwoDiscrepancySnapshot::MAX_BYTES. What does not fit is shed in this
-     * order, each listed under `shed`: each subscriber's payload from the last back to the first, replaced by the
-     * redacted diff against the step before; then the payload before the first subscriber; then the diffs, leaving
-     * each step's count of changes; then everything but the header.
+     * order, each listed under `shed`: each subscriber's payload from the last back to the first, replaced by its
+     * diff against the step before, redacted as the payloads are; then the payload before the first subscriber;
+     * then the diffs, leaving each step's count of changes; then everything but the header.
      *
      * @return string
      */
@@ -166,6 +194,9 @@ class TwoOrderPostprocessingTrace
         $json = TwoDiscrepancySnapshot::json($record);
         $shed = array();
         for ($i = count($this->steps) - 1; $i >= 0 && !TwoDiscrepancySnapshot::fits($json); --$i) {
+            if (!isset($this->steps[$i]['payload'])) {
+                continue;
+            }
             $record['steps'][$i] = $this->diffStep($i);
             $shed[] = 'steps/' . $i . '/payload';
             $json = self::withShed($record, $shed);
@@ -196,59 +227,145 @@ class TwoOrderPostprocessingTrace
     }
 
     /**
-     * The payload with each buyer detail in BUYER_DETAIL_PATHS replaced by "redacted"; an empty or absent one is
-     * left as it is, so a missing detail still shows.
+     * A reference-free copy of the payload with each buyer detail in BUYER_DETAIL_PATHS replaced by "redacted". An
+     * object is read as the array Two would receive. An empty or absent detail is left as it is, so a missing one
+     * still shows.
      *
      * @param mixed $payload
      * @return mixed
      */
     public static function redact($payload)
     {
+        $payload = self::copy($payload);
         if (!self::REDACT_BUYER_DETAILS || !is_array($payload)) {
             return $payload;
         }
         foreach (self::BUYER_DETAIL_PATHS as $path) {
-            $keys = explode('/', ltrim($path, '/'));
-            $last = array_pop($keys);
-            $node = &$payload;
-            foreach ($keys as $key) {
-                if (!is_array($node) || !isset($node[$key])) {
-                    unset($node);
-                    continue 2;
-                }
-                $node = &$node[$key];
-            }
-            if (is_array($node) && isset($node[$last]) && $node[$last] !== '' && $node[$last] !== array()) {
-                $node[$last] = self::REDACTED;
-            }
-            unset($node);
+            $payload = self::redactPath($payload, explode('/', ltrim($path, '/')));
         }
 
         return $payload;
     }
 
+    /**
+     * Whether a JSON pointer is, or lies under, one of BUYER_DETAIL_PATHS.
+     *
+     * @param string $path
+     * @return bool
+     */
+    public static function isBuyerDetail($path)
+    {
+        if (!self::REDACT_BUYER_DETAILS) {
+            return false;
+        }
+        foreach (self::BUYER_DETAIL_PATHS as $detail) {
+            if ($path === $detail || strpos($path, $detail . '/') === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Rebuilt by value: an array copy shares any slot PHP holds as a reference, so a write to the copy could reach
+     * the payload being sent. Objects become the arrays they encode to. Past json_encode()'s own depth limit, which
+     * a payload that refers to itself reaches, nothing is copied: Two could not be sent it either.
+     *
+     * @param mixed $value
+     * @param int $depth
+     * @return mixed
+     */
+    private static function copy($value, $depth = 0)
+    {
+        if ($depth > self::MAX_DEPTH) {
+            return null;
+        }
+        if (is_object($value)) {
+            $json = json_encode($value);
+            $value = $json === false ? null : json_decode($json, true);
+        }
+        if (!is_array($value)) {
+            return $value;
+        }
+        $out = array();
+        foreach ($value as $key => $item) {
+            $out[$key] = self::copy($item, $depth + 1);
+        }
+
+        return $out;
+    }
+
+    private static function redactPath(array $node, array $keys)
+    {
+        $key = array_shift($keys);
+        if (!array_key_exists($key, $node)) {
+            return $node;
+        }
+        if ($keys !== array()) {
+            if (is_array($node[$key])) {
+                $node[$key] = self::redactPath($node[$key], $keys);
+            }
+
+            return $node;
+        }
+        if ($node[$key] !== null && $node[$key] !== '' && $node[$key] !== array()) {
+            $node[$key] = self::REDACTED;
+        }
+
+        return $node;
+    }
+
+    /**
+     * A step's diff against the step before, its values redacted as the payloads are, cut to MAX_DIFF_ENTRIES.
+     */
     private function diffStep($i)
     {
         $step = $this->steps[$i];
-        $previous = $i === 0 ? $this->before : $this->steps[$i - 1]['payload'];
-        if (!is_array($step['payload']) || !is_array($previous)) {
-            return self::step($step);
+        $previous = $this->before;
+        for ($p = $i - 1; $p >= 0; --$p) {
+            if (isset($this->steps[$p]['payload'])) {
+                $previous = $this->steps[$p]['payload'];
+                break;
+            }
         }
         $diff = TwoOrderPostprocessing::diff($previous, $step['payload']);
+        $entries = array();
+        foreach (array_slice($diff, 0, TwoOrderPostprocessing::MAX_DIFF_ENTRIES) as $entry) {
+            $hide = self::isBuyerDetail($entry['path']);
+            $entries[] = array(
+                'path' => self::cut($entry['path']),
+                'before' => self::shown($entry['before'], $hide),
+                'after' => self::shown($entry['after'], $hide),
+            );
+        }
 
-        return array(
-            'subscriber' => $step['subscriber'],
-            'changes' => count($diff),
-            'diff' => TwoOrderPostprocessing::redactDiff(array_slice($diff, 0, TwoOrderPostprocessing::MAX_DIFF_ENTRIES)),
-        );
+        return array('subscriber' => $step['subscriber'], 'changes' => count($diff), 'diff' => $entries);
     }
 
-    private static function step(array $step)
+    private static function shown($value, $hide)
     {
-        // A subscriber that leaves no array fails the request; what it left is named, not stored.
-        return is_array($step['payload'])
-            ? array('subscriber' => $step['subscriber'], 'payload' => self::redact($step['payload']))
-            : array('subscriber' => $step['subscriber'], 'left' => gettype($step['payload']));
+        if ($value === null || $value === '') {
+            return $value;
+        }
+        if ($hide) {
+            return self::REDACTED;
+        }
+        if (is_array($value)) {
+            return self::cut(TwoOrderPostprocessing::canonical($value));
+        }
+
+        return is_string($value) ? self::cut($value) : $value;
+    }
+
+    private static function cut($value)
+    {
+        $value = (string) $value;
+        if (strlen($value) <= TwoOrderPostprocessing::MAX_STRING) {
+            return $value;
+        }
+
+        return (function_exists('mb_strcut') ? mb_strcut($value, 0, TwoOrderPostprocessing::MAX_STRING, 'UTF-8') : substr($value, 0, TwoOrderPostprocessing::MAX_STRING)) . '...';
     }
 
     private static function withShed(array $record, array $shed)

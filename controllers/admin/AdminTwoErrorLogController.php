@@ -186,11 +186,15 @@ class AdminTwoErrorLogController extends ModuleAdminController
             $trace = $json === null ? array() : json_decode($json, true);
             $request = isset($trace['request_type'], $trace['trigger']) ? $trace['request_type'] . ' (' . $trace['trigger'] . ')' : '';
             $subscribers = isset($trace['subscribers']) && is_array($trace['subscribers']) ? implode(', ', $trace['subscribers']) : '';
+            // A trace with no cart is filed under its order.
+            $filedUnder = isset($trace['id_cart']) && (int) $trace['id_cart'] === 0
+                ? sprintf($this->module->l('Order %d'), (int) $row['object_id'])
+                : (string) (int) $row['object_id'];
             $href = $base . '&' . self::DOWNLOAD_PARAM . '=' . (int) $row['id_log'];
             $html .= '<tr>'
                 . '<td>' . htmlspecialchars((string) $row['date_add'], ENT_QUOTES, 'UTF-8') . '</td>'
                 . '<td>' . (int) $row['severity'] . '</td>'
-                . '<td>' . (int) $row['object_id'] . '</td>'
+                . '<td>' . htmlspecialchars($filedUnder, ENT_QUOTES, 'UTF-8') . '</td>'
                 . '<td>' . htmlspecialchars((string) $request, ENT_QUOTES, 'UTF-8') . '</td>'
                 . '<td>' . htmlspecialchars((string) $subscribers, ENT_QUOTES, 'UTF-8') . '</td>'
                 . '<td><a class="btn btn-default" href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '">'
@@ -249,8 +253,14 @@ class AdminTwoErrorLogController extends ModuleAdminController
         if ($json === null) {
             return null;
         }
+        $name = $names[$row['object_type']];
+        $document = json_decode($json, true);
+        if ($row['object_type'] === TwoOrderPostprocessingTrace::LOG_OBJECT_TYPE && isset($document['id_cart']) && (int) $document['id_cart'] === 0) {
+            // A trace with no cart is filed under its order.
+            $name = 'two-postprocessing-trace-order-';
+        }
 
-        return array('json' => $json, 'filename' => $names[$row['object_type']] . (int) $row['object_id'] . '-' . (int) $id_log . '.json');
+        return array('json' => $json, 'filename' => $name . (int) $row['object_id'] . '-' . (int) $id_log . '.json');
     }
 
     /**

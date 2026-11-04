@@ -598,6 +598,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_8963b0e218e163f54e8045eca8e220aa'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c90f7096c74fc198c31b895f3d83cdb2'] = 'Er zijn geen traces van order-postprocessing vastgelegd.';
 $_MODULE['<{twopayment}prestashop>twopayment_15c2d85f1fae22a3c3a0594510a1f611'] = 'Verzoek';
 $_MODULE['<{twopayment}prestashop>twopayment_39f7a3e2b56e9bfd753ba6325533a127'] = 'Abonnees';
+$_MODULE['<{twopayment}prestashop>twopayment_b5bcefb6ada01834c51ee21d375ff6ef'] = 'Bestelling %d';
 $_MODULE['<{twopayment}prestashop>twopayment_a85eba4c6c699122b2bb1387ea4813ad'] = 'Winkelwagen';
 $_MODULE['<{twopayment}prestashop>twopayment_11d52919ac14e3903e6a263f4f3b233a'] = 'JSON downloaden';
 $_MODULE['<{twopayment}prestashop>twopayment_6f64dc214a5686ff709850202a1c3b1c'] = 'De order-postprocessing-hook heeft dit %1$s-verzoek tegengehouden, dus het is niet naar %2$s verstuurd (%3$s). Bekijk het modulelogboek voor de details.';
