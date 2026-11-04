@@ -187,6 +187,10 @@ halves:
   also names the number the page held, used only when no pick is on record and no
   refusal stands. A pick waits for a clear still in flight, so a slow clear cannot
   refuse the company picked after it.
+- **A later manual clear keeps the typed number.** Once a refusal stands, a manual
+  `clearCompany` (a corrected name, a second visit to manual entry) leaves the
+  record alone, and the page keeps the typed number in `dni`, sends the refused
+  number rather than the typed one, and adopts the typed one again at submit.
 - **A typed number carries a country.** The address save in manual entry stores a
   typed number with the saved address's country, so the resolver does not drop it as
   a record with no country marker, and the buyer pays with it even when the cart's

@@ -1124,6 +1124,35 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
                 });
             });
 
+            /**
+             * A clear made later in manual entry (here the buyer correcting the
+             * name after submitting a number of their own) drops the pairing but
+             * never the typed number, and keeps the old number as the one refused.
+             */
+            test.each([
+                ['the typed number stays in dni', () => $("input[name='dni']").val(), '99887766'],
+                ['the later clear names the old number, not the typed one',
+                    () => JSON.stringify(callsFor('clearCompany').map((c) => c.settings.data.companyid)),
+                    JSON.stringify(['12345678', '12345678'])],
+                ['the next submit adopts the typed number again', (instance) => {
+                    submitForm();
+                    return instance.organizationField.val();
+                }, '99887766'],
+            ])('a later manual clear: %s', (description, read, expected) => {
+                withEndpoint(() => {
+                    const instance = makeInstance();
+                    selectThenUnmarkDni(instance);
+                    instance.enterManualEntryMode();
+                    instance.companyField.val('Unregistered Trading Name');
+                    $("input[name='dni']").val('99887766');
+                    submitForm();
+                    expect(instance.organizationField.val()).toBe('99887766');
+                    instance.companyField.val('Unregistered Trading Name Ltd').trigger('input');
+                    expect(callsFor('clearCompany')).toHaveLength(2);
+                    expect([description, read(instance)]).toEqual([description, expected]);
+                });
+            });
+
             test.each([
                 ['manual entry flags the submitted form', true, '1'],
                 ['search mode leaves the flag empty', false, ''],
