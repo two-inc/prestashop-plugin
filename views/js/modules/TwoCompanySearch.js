@@ -6957,11 +6957,6 @@ class TwoCompanySearch {
         if (!number) {
             return false;
         }
-        // The enrolment's `saveCompany` is a pick, which lifts the refusal on the
-        // server, so the page lets go of it too, as persistCompanyToCookie() does
-        // (TWO-26775). Kept, the next manual entry would refuse the old number
-        // and leave this one in place.
-        this._manualEntryMemory.disownedId = '';
         // The name the buyer may SEE. Never applyBuyer()'s organisation-number
         // fallback label: that fallback exists precisely for a sole trader with no
         // trading name of their own, and it is exactly where the synthetic `TWO:`
@@ -7442,9 +7437,6 @@ class TwoCompanySearch {
     }
 
     persistCompanyToCookie(data) {
-        // A pick lifts the manual-entry refusal on the server, so the page lets
-        // go of the number too (TWO-26775).
-        this._manualEntryMemory.disownedId = '';
         try {
             if (!this._page.orderIntentUrl || !this._page.ajaxToken) return;
             // Behind any clear still in flight: a manual-entry clear landing

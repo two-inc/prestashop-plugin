@@ -34,6 +34,7 @@ const {
     installStylesheet,
     countGifFrames,
     shown,
+    loadScript,
     REPO_ROOT
 } = require('./ps-harness');
 
@@ -1088,6 +1089,22 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
          * marker-less `dni` holding the selected number.
          */
         describe('the old number is gone for good (TWO-26775)', () => {
+            /**
+             * Mounted as the manager mounts it: the manager's own memory, and
+             * its real setConfirmedCompanySelection(), which is where a pick
+             * lifts the page refusal.
+             */
+            function makeManagedInstance() {
+                loadScript('views/js/modules/TwoCheckoutManager.js');
+                const memory = {};
+                const manager = Object.assign(Object.create(window.TwoCheckoutManager.prototype), {
+                    _companySearchManualEntryMemory: memory,
+                    getSelectedAddressId: () => 0,
+                    getSelectedCountryIso: () => ''
+                });
+                return makeInstance({ manualEntryMemory: memory, getManager: () => manager });
+            }
+
             function selectThenUnmarkDni(instance) {
                 search(AT_THRESHOLD);
                 ajax.last().succeed(SEARCH_RESPONSE);
@@ -1156,7 +1173,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
             /**
              * A sole-trader enrolment is a pick too: it lifts the page's refusal,
              * so entering manual entry again refuses the sole trader's number and
-             * not the long-gone first pick (Q250).
+             * not the long-gone first pick (TWO-26775).
              */
             test.each([
                 ['the sole trader\'s number is cleared from dni', () => $("input[name='dni']").val(), ''],
@@ -1167,12 +1184,14 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
                     (instance) => instance.isDisownedCompanyNumber('55667788'), true],
             ])('pick, manual, sole trader, manual again: %s', (description, read, expected) => {
                 withEndpoint(() => {
-                    const instance = makeInstance();
+                    const instance = makeManagedInstance();
                     selectThenUnmarkDni(instance);
                     instance.enterManualEntryMode();
                     instance.exitManualEntryMode();
                     instance.beginSoleTraderLoading();
+                    // What the enrolment's save reply does: write the form, then publish.
                     instance.adoptSoleTraderBuyer({ company_name: 'Sam Reed Trading', organization_number: '55667788' });
+                    instance.manager().setConfirmedCompanySelection({ company: 'Sam Reed Trading', companyid: '55667788' });
                     instance.endSoleTraderLoading();
                     // An address save re-renders dni with no marker.
                     $("input[name='dni']").removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
@@ -1226,7 +1245,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
 
             test('a new pick lets the page adopt the number again', () => {
                 withEndpoint(() => {
-                    const instance = makeInstance();
+                    const instance = makeManagedInstance();
                     selectThenUnmarkDni(instance);
                     instance.enterManualEntryMode();
                     repick(instance);
