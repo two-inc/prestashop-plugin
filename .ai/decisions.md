@@ -274,7 +274,9 @@ inconvenient to attribute:
   region NAME with no code, PrestaShop needs a shop-local state id, so the only join available is on
   the visible label (trimmed, case-folded, `data-iso-code` also accepted). No match writes nothing
   rather than guessing. Most countries render no state field at all, and the alternative to
-  appending is losing the region.
+  appending is losing the region. A blank or unmatched region does clear a state the plugin
+  wrote for an earlier record, as a blank address line does, so two records' fields are never
+  mixed; a state the buyer chose stays (TWO-26775).
 - **`address2` and `state` are therefore added to `MIRRORED_ADDRESS_FIELDS` and to
   `Twopayment::MIRROR_WRITE_SESSION_KEYS`, and the pin now judges them.** An address line and a
   state are elements of the address like any other, so a buyer who fills one has pinned the address

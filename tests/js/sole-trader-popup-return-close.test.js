@@ -1041,18 +1041,62 @@ describe('two captures on one page', () => {
  * exactly as one on non-focusable content does in a browser.
  */
 describe('a press on non-focusable content', () => {
-    function press(node) {
-        node.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    /** `offsetX` is set on the event itself, jsdom having no layout. */
+    function press(node, init) {
+        const opts = Object.assign({ bubbles: true, cancelable: true }, init);
+        const event = new window.MouseEvent('mousedown', opts);
+        if (opts.offsetX !== undefined) {
+            Object.defineProperty(event, 'offsetX', { value: opts.offsetX });
+        }
+        node.dispatchEvent(event);
         jest.advanceTimersByTime(1);
     }
 
+    /** A 1000x800 viewport: jsdom has no layout, so the page's client box is otherwise empty. */
+    function stubViewport() {
+        const html = document.documentElement;
+        Object.defineProperty(html, 'clientWidth', { configurable: true, value: 1000 });
+        Object.defineProperty(html, 'clientHeight', { configurable: true, value: 800 });
+    }
+
+    afterEach(() => {
+        delete document.documentElement.clientWidth;
+        delete document.documentElement.clientHeight;
+    });
+
+    function pageText() {
+        const text = document.createElement('p');
+        document.body.appendChild(text);
+        return text;
+    }
+
+    /** As the browser judges a click: the primary button, on content rather than a scrollbar (TWO-26775). */
+    test.each([
+        ['empty page space inside the viewport (target html)', stubViewport,
+            () => document.documentElement, { clientX: 500, clientY: 300 }, true],
+        ['a right-button press on page text', null, pageText, { button: 2 }, false],
+        ['a press on the page\'s own scrollbar, in the gutter beside the viewport', stubViewport,
+            () => document.documentElement, { clientX: 1005, clientY: 300 }, false],
+        ['a press on the page\'s own scrollbar, in the gutter below the viewport', stubViewport,
+            () => document.documentElement, { clientX: 500, clientY: 805 }, false],
+        ['a press on an element\'s scrollbar, outside its client box', null, () => {
+            const text = pageText();
+            Object.defineProperty(text, 'clientWidth', { configurable: true, value: 100 });
+            Object.defineProperty(text, 'clientHeight', { configurable: true, value: 40 });
+            return text;
+        }, { offsetX: 105 }, false],
+    ])('%s', async (description, arrange, target, init, closes) => {
+        if (arrange) {
+            arrange();
+        }
+        await launchWithPopupOpen();
+        press(target(), init);
+        expect([description, popup.closed]).toEqual([description, closes]);
+    });
+
     test.each([
         ['page background outside the popover', () => document.body, false],
-        ['plain text outside the popover', () => {
-            const text = document.createElement('p');
-            document.body.appendChild(text);
-            return text;
-        }, false],
+        ['plain text outside the popover', pageText, false],
         ['the popover\'s own dead space', () => panelParts().panel.get(0), true],
     ])('on %s closes the popup; the popover stays only when inside', async (description, target, panelStays) => {
         await launchWithPopupOpen();

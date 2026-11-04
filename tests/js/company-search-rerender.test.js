@@ -34,6 +34,7 @@ const {
     installStylesheet,
     countGifFrames,
     shown,
+    loadScript,
     REPO_ROOT
 } = require('./ps-harness');
 
@@ -1088,6 +1089,22 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
          * marker-less `dni` holding the selected number.
          */
         describe('the old number is gone for good (TWO-26775)', () => {
+            /**
+             * Mounted as the manager mounts it: the manager's own memory, and
+             * its real setConfirmedCompanySelection(), which is where a pick
+             * lifts the page refusal.
+             */
+            function makeManagedInstance() {
+                loadScript('views/js/modules/TwoCheckoutManager.js');
+                const memory = {};
+                const manager = Object.assign(Object.create(window.TwoCheckoutManager.prototype), {
+                    _companySearchManualEntryMemory: memory,
+                    getSelectedAddressId: () => 0,
+                    getSelectedCountryIso: () => ''
+                });
+                return makeInstance({ manualEntryMemory: memory, getManager: () => manager });
+            }
+
             function selectThenUnmarkDni(instance) {
                 search(AT_THRESHOLD);
                 ajax.last().succeed(SEARCH_RESPONSE);
@@ -1121,6 +1138,66 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
                     $("input[name='dni']").val(typed);
                     submitForm();
                     expect([description, instance.organizationField.val()]).toEqual([description, adopted]);
+                });
+            });
+
+            /**
+             * A clear made later in manual entry (here the buyer correcting the
+             * name after submitting a number of their own) drops the pairing but
+             * never the typed number, and keeps the old number as the one refused.
+             */
+            test.each([
+                ['the typed number stays in dni', () => $("input[name='dni']").val(), '99887766'],
+                ['the later clear names the old number, not the typed one',
+                    () => JSON.stringify(callsFor('clearCompany').map((c) => c.settings.data.companyid)),
+                    JSON.stringify(['12345678', '12345678'])],
+                ['the next submit adopts the typed number again', (instance) => {
+                    submitForm();
+                    return instance.organizationField.val();
+                }, '99887766'],
+            ])('a later manual clear: %s', (description, read, expected) => {
+                withEndpoint(() => {
+                    const instance = makeInstance();
+                    selectThenUnmarkDni(instance);
+                    instance.enterManualEntryMode();
+                    instance.companyField.val('Unregistered Trading Name');
+                    $("input[name='dni']").val('99887766');
+                    submitForm();
+                    expect(instance.organizationField.val()).toBe('99887766');
+                    instance.companyField.val('Unregistered Trading Name Ltd').trigger('input');
+                    expect(callsFor('clearCompany')).toHaveLength(2);
+                    expect([description, read(instance)]).toEqual([description, expected]);
+                });
+            });
+
+            /**
+             * A sole-trader enrolment is a pick too: it lifts the page's refusal,
+             * so entering manual entry again refuses the sole trader's number and
+             * not the long-gone first pick (TWO-26775).
+             */
+            test.each([
+                ['the sole trader\'s number is cleared from dni', () => $("input[name='dni']").val(), ''],
+                ['the clear names the sole trader\'s number',
+                    () => JSON.stringify(callsFor('clearCompany').map((c) => c.settings.data.companyid)),
+                    JSON.stringify(['12345678', '55667788'])],
+                ['the page refuses the sole trader\'s number',
+                    (instance) => instance.isDisownedCompanyNumber('55667788'), true],
+            ])('pick, manual, sole trader, manual again: %s', (description, read, expected) => {
+                withEndpoint(() => {
+                    const instance = makeManagedInstance();
+                    selectThenUnmarkDni(instance);
+                    instance.enterManualEntryMode();
+                    instance.exitManualEntryMode();
+                    instance.beginSoleTraderLoading();
+                    // What the enrolment's save reply does: write the form, then publish.
+                    instance.adoptSoleTraderBuyer({ company_name: 'Sam Reed Trading', organization_number: '55667788' });
+                    instance.manager().setConfirmedCompanySelection({ company: 'Sam Reed Trading', companyid: '55667788' });
+                    instance.endSoleTraderLoading();
+                    // An address save re-renders dni with no marker.
+                    $("input[name='dni']").removeAttr(TwoCompanySearch.AUTOFILL_MARKER_ATTR);
+                    expect($("input[name='dni']").val()).toBe('55667788');
+                    instance.enterManualEntryMode();
+                    expect([description, read(instance)]).toEqual([description, expected]);
                 });
             });
 
@@ -1168,7 +1245,7 @@ describe('the manual-entry affordance on the jQuery UI path (TWO-25326)', () => 
 
             test('a new pick lets the page adopt the number again', () => {
                 withEndpoint(() => {
-                    const instance = makeInstance();
+                    const instance = makeManagedInstance();
                     selectThenUnmarkDni(instance);
                     instance.enterManualEntryMode();
                     repick(instance);
