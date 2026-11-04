@@ -151,7 +151,9 @@ popover only when the press landed outside it. `TwoSoleTrader.js` judges it one 
 after the `mousedown`, once the press's default action has had its chance to focus
 something, because whether an element takes focus depends on handlers that cancel the
 press (every panel chip does), which no selector can see. A press on the launching
-chip is left to that chip. After a popup closes without a signup, the chips are
+chip is left to that chip. Only a primary-button press on content counts: a right
+press and a press on a scrollbar (outside the target's client box; for `html`, outside
+the viewport) are ignored, while empty page space (`html` inside the viewport) counts. After a popup closes without a signup, the chips are
 recomputed from the stored identity, so a Tab onto another chip does not leave Sole
 trader marked selected.
 

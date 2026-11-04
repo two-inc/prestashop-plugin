@@ -2706,6 +2706,12 @@ class TwoSoleTrader {
             if (!target || target.nodeType !== 1 || !this.isPopupOpen()) {
                 return;
             }
+            // Only a primary-button press on content is a click: a right press
+            // opens the context menu, and one on the page's own scrollbar or an
+            // element's scrollbar scrolls.
+            if (event.button !== 0 || TwoSoleTrader.pressIsOnScrollbar(event)) {
+                return;
+            }
             if (this._launchChip && this.chipOf(target) === this._launchChip) {
                 return;
             }
@@ -2721,6 +2727,28 @@ class TwoSoleTrader {
             }, 0);
         };
         document.addEventListener('mousedown', this._pressHandler, true);
+    }
+
+    /**
+     * A press on a native scrollbar lands outside the target's client box. For
+     * the page's own scrollbar (target `html`) that box is the viewport, measured
+     * in client coordinates because `html`'s offsets are page-relative. An empty
+     * client box has no scrollbar (TWO-26775).
+     *
+     * @param {MouseEvent} event the mousedown
+     * @returns {boolean}
+     */
+    static pressIsOnScrollbar(event) {
+        const target = event.target;
+        const width = target.clientWidth;
+        const height = target.clientHeight;
+        if (!width && !height) {
+            return false;
+        }
+        if (target === document.documentElement) {
+            return event.clientX >= width || event.clientY >= height;
+        }
+        return event.offsetX >= width || event.offsetY >= height;
     }
 
     /** @param {?Element} node @returns {?Element} the Sole trader chip at or above `node` */
