@@ -36,15 +36,6 @@ $check = static function ($ok, $description) use (&$failures) {
     }
 };
 
-// Exposes the download's lookup, which the page itself only reaches through a response that exits.
-class ProbeTwoErrorLogController extends AdminTwoErrorLogController
-{
-    public function document($id_log)
-    {
-        return $this->getTwoDocument($id_log);
-    }
-}
-
 $marker = 'TwoPayment: error log render probe ' . uniqid();
 $id_log = 0;
 $id_trace = 0;
@@ -94,12 +85,16 @@ try {
         $check(strpos($content, 'downloadSnapshot=' . $id_trace) !== false, 'the trace has a download link');
     }
 
-    $document = (new ProbeTwoErrorLogController())->document($id_trace);
+    // The download's lookup, which the page itself only reaches through a response that exits. Core ties a module
+    // admin controller to its tab by class name, so it is called on the page's own controller rather than a subclass.
+    $lookup = new ReflectionMethod('AdminTwoErrorLogController', 'getTwoDocument');
+    $lookup->setAccessible(true);
+    $document = $lookup->invoke($controller, $id_trace);
     $decoded = is_array($document) ? json_decode($document['json'], true) : null;
     $check(is_array($decoded) && $decoded['before'] === $payload, 'the downloaded trace decodes to the payload as it was, quotes, backslash and tags included');
     $check(is_array($decoded) && $decoded['steps'][0]['payload']['gross_amount'] === '47.80', 'the downloaded trace holds the step');
     $check(is_array($document) && $document['filename'] === 'two-postprocessing-trace-cart-987654-' . $id_trace . '.json', 'the download is named for a trace');
-    $check((new ProbeTwoErrorLogController())->document($id_log) === null, 'a plain log line is not downloadable');
+    $check($lookup->invoke($controller, $id_log) === null, 'a plain log line is not downloadable');
 } finally {
     if ($id_log > 0) {
         Db::getInstance()->delete('log', 'id_log = ' . $id_log);
