@@ -27,6 +27,7 @@ final class OrderPostprocessingTraceSpec
         self::testRedactionKeepsAmountsAndDropsBuyerDetails();
         self::testRedactionRemovesEveryBuyerValueTheBuildersSend();
         self::testOversizedTraceShedsInItsDefinedOrder();
+        self::testAShedDiffRedactsTheDetailsUnderAWholeSubtree();
     }
 
     /**
@@ -430,6 +431,37 @@ final class OrderPostprocessingTraceSpec
             if (count($expected) === 1) {
                 TinyAssert::same($trace->record()['steps'][0], $decoded['steps'][0], $description . ': the earlier step stays whole');
             }
+        }
+    }
+
+    /**
+     * A diff reports a whole subtree as one entry where the other side is present but not an array, so a shed step
+     * redacts the buyer details under that entry, as the payloads are redacted, and keeps the rest of it.
+     */
+    private static function testAShedDiffRedactsTheDetailsUnderAWholeSubtree(): void
+    {
+        $address = ['city' => 'Oslo', 'country' => 'NO', 'organization_name' => 'Ola Nordmann', 'postal_code' => '0150', 'street_address' => 'Storgata 1'];
+        $shownAddress = '{"city":"Oslo","country":"NO","organization_name":"redacted","postal_code":"0150","street_address":"redacted"}';
+        $buyer = ['company' => ['company_name' => 'Ola Nordmann', 'organization_number' => '999'], 'representative' => ['email' => 'ola@example.com']];
+        $shownBuyer = '{"company":{"company_name":"redacted","organization_number":"999"},"representative":{"email":"redacted"}}';
+        // [key, before, after, expected diff entry, description]
+        $cases = [
+            ['shipping_address', null, $address, ['path' => '/shipping_address', 'before' => null, 'after' => $shownAddress], 'an address replacing null'],
+            ['billing_address', $address, 'none', ['path' => '/billing_address', 'before' => $shownAddress, 'after' => 'none'], 'an address replaced by a string'],
+            ['buyer', 'none', $buyer, ['path' => '/buyer', 'before' => 'none', 'after' => $shownBuyer], 'a buyer replacing a string'],
+            ['invoice_details', ['invoice_emails' => ['ap@example.com'], 'po' => 'P1'], false, ['path' => '/invoice_details', 'before' => '{"invoice_emails":"redacted","po":"P1"}', 'after' => false], 'invoice details replaced by false'],
+        ];
+        foreach ($cases as [$key, $before, $after, $expected, $description]) {
+            // Too large to store whole, so the step is shed to its diff.
+            $payload = ['merchant_additional_info' => str_repeat('x', 40000), $key => $before];
+            $trace = new TwoOrderPostprocessingTrace('order_create', 'checkout', 9701, 0, '2.7.21', [self::FIRST], $payload);
+            $module = new StubHookSubscriberModule(self::FIRST);
+            $trace->starting($module);
+            $payload[$key] = $after;
+            $trace->finished($module, $payload);
+            $decoded = json_decode($trace->encode(), true);
+            TinyAssert::same(['steps/0/payload', 'before'], $decoded['shed'], $description . ': shed to its diff');
+            TinyAssert::same([$expected], $decoded['steps'][0]['diff'], $description . ': the details under it are redacted');
         }
     }
 
