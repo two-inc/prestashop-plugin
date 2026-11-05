@@ -43,6 +43,7 @@ final class AdminFirewallRateLimitFieldsSpec
         self::testValidationRejectsValuelessRow();
         self::testValidationRejectsLineBreakInValue();
         self::testValidationRejectsReservedHeaderNames();
+        self::testDuplicateHeaderNamesAreRefusedAndFirstWinsOnRead();
         self::testValidationRejectsNonPrintableValues();
         self::testHeaderValidatorsAnchorAtEndOfString();
         self::testValidationAcceptsWellFormedRows();
@@ -399,6 +400,39 @@ final class AdminFirewallRateLimitFieldsSpec
         Tools::setTestValue('two_custom_header_value', array("token\r\nX-Evil: 1"));
 
         TinyAssert::true(count(self::validate()) > 0, 'a value that could split the request must be refused');
+    }
+
+    /** TWO-27107: a repeated name, matched case-insensitively, is refused on save; on read the first row wins. */
+    private static function testDuplicateHeaderNamesAreRefusedAndFirstWinsOnRead(): void
+    {
+        // [names, values, expected error count, description]
+        $cases = [
+            [['X-A', 'X-B'], ['1', '2'], 0, 'distinct names save'],
+            [['X-A', 'X-A'], ['1', '2'], 1, 'the same name twice is refused'],
+            [['X-A', 'x-a'], ['1', '2'], 1, 'a name differing only in case is refused'],
+            [['X-A', 'X-B', 'X-a'], ['1', '2', '3'], 1, 'a later repeat is refused even with a row between'],
+            [['X-A', 'x-a', 'X-A'], ['1', '2', '3'], 2, 'each repeat is named'],
+        ];
+        foreach ($cases as [$names, $values, $expected, $description]) {
+            self::reset();
+            Tools::setTestValue('two_custom_headers_submitted', '1');
+            Tools::setTestValue('two_custom_header_name', $names);
+            Tools::setTestValue('two_custom_header_value', $values);
+            $errors = self::validate();
+            TinyAssert::same($expected, count($errors), $description . ' (got: ' . implode(' | ', $errors) . ')');
+            foreach ($errors as $error) {
+                TinyAssert::true(strpos($error, 'already used by another row') !== false, $description . ': the error names the rule');
+            }
+        }
+
+        self::reset();
+        self::storeHeaders(array(
+            array('name' => 'X-A', 'value' => 'first', 'send_from_browser' => true),
+            array('name' => 'x-a', 'value' => 'second', 'send_from_browser' => true),
+            array('name' => 'X-B', 'value' => 'b', 'send_from_browser' => false),
+        ));
+        TinyAssert::same(array('X-A:first', 'X-B:b'), Twopayment::getTwoCustomHeaderLines(), 'a stored repeat is dropped and the first row wins');
+        TinyAssert::same(array('X-A' => 'first'), Twopayment::getTwoBrowserCustomHeaders(), 'the browser map keeps the first row too');
     }
 
     private static function testValidationRejectsReservedHeaderNames(): void

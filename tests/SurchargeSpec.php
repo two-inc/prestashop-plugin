@@ -71,6 +71,8 @@ final class SurchargeSpec
         self::testOrderPageShowsAnUpdateTwoNeverReceivedUntilOneLands();
         self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
         self::testSurchargeGridEmptyStateReplacesTheHeadings();
+        self::testSurchargeGridNamesTheShopDefaultCurrency();
+        self::testSurchargeGridCellsAreCheckedWhateverTheMethod();
     }
 
     private static function reset(): void
@@ -2046,6 +2048,8 @@ final class SurchargeSpec
 
         foreach ($cases as [$ticked, $termType, $customTerm, $gridVisible, $description]) {
             self::reset();
+            StubStore::$currencies[1] = ['iso_code' => 'EUR', 'loaded' => true];
+            Configuration::updateValue('PS_CURRENCY_DEFAULT', 1);
             Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
             foreach (Twopayment::PAYMENT_TERMS_OPTIONS as $days) {
                 Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . (int) $days, in_array((int) $days, $ticked, true) ? 1 : 0);
@@ -2072,7 +2076,87 @@ final class SurchargeSpec
                 (strpos($html, '<p class="help-block two-col-cap" style="margin-top:8px;display:none;">') !== false) !== $gridVisible,
                 $description . ' (cap help visibility)'
             );
+            // The currency note goes with the grid (TWO-27107).
+            TinyAssert::true(
+                (strpos($html, '<p id="two-surcharge-currency-note" class="help-block" style="margin-top:8px;display:none;">') !== false) !== $gridVisible,
+                $description . ' (currency note visibility)'
+            );
         }
+    }
+
+    /**
+     * TWO-27107: the grid states the currency its amounts are in, which is the
+     * shop's default currency, and says nothing when that cannot be read.
+     */
+    private static function testSurchargeGridNamesTheShopDefaultCurrency(): void
+    {
+        $harness = new class extends TwopaymentTestHarness {
+            public function getTwoSurchargeGridHtmlPublic(): string
+            {
+                return $this->getTwoSurchargeGridHtml();
+            }
+        };
+
+        // [default currency id, currency rows, expected note or null, description]
+        $cases = [
+            [2, [2 => ['iso_code' => 'nok', 'loaded' => true]], "Amounts are in the shop&#039;s default currency, NOK.", 'the default currency ISO code, upper-cased'],
+            [3, [2 => ['iso_code' => 'NOK', 'loaded' => true], 3 => ['iso_code' => 'SEK', 'loaded' => true]], "Amounts are in the shop&#039;s default currency, SEK.", 'the default, not another shop currency'],
+            [9, [], null, 'no note when the default currency cannot be loaded'],
+        ];
+        foreach ($cases as [$defaultId, $currencies, $expected, $description]) {
+            self::reset();
+            StubStore::$currencies = $currencies;
+            Configuration::updateValue('PS_CURRENCY_DEFAULT', $defaultId);
+            $html = $harness->getTwoSurchargeGridHtmlPublic();
+            if ($expected === null) {
+                TinyAssert::false(strpos($html, 'two-surcharge-currency-note') !== false, $description);
+                continue;
+            }
+            TinyAssert::true(strpos($html, $expected) !== false, $description . ' (got: ' . $html . ')');
+        }
+    }
+
+    /**
+     * TWO-27107: grid cells are checked whatever the surcharge method. A junk
+     * value posted while the method is none was stored unchecked, and became a
+     * live fee the moment the method was switched on.
+     */
+    private static function testSurchargeGridCellsAreCheckedWhateverTheMethod(): void
+    {
+        // [method, percentage, fixed fee, cap, expected error fragments, description]
+        $cases = [
+            ['none', 'abc', '', '', ['Percentage for the 30-day term'], 'a non-number is refused while the method is none'],
+            ['none', '', '-1', '', ['Fixed fee for the 30-day term'], 'a negative is refused while the method is none'],
+            ['none', '', '', 'x', ['Cap for the 30-day term'], 'a bad cap is refused while the method is none'],
+            ['none', '12,5', '2', '', [], 'valid cells pass while the method is none'],
+            ['none', '', '', '', [], 'an empty grid passes while the method is none'],
+            ['none', '', '', '0', [], 'a zero cap is not refused while the cap column is hidden'],
+            ['fixed', '', '-1', '', ['Fixed fee for the 30-day term'], 'a live method still refuses a negative'],
+        ];
+        foreach ($cases as [$method, $pct, $fixed, $cap, $expectedErrors, $description]) {
+            self::reset();
+            Tools::resetTestValues();
+            StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+            $module = self::makeConfigHarness();
+            Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', $method);
+            Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            Tools::setTestValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_30', $fixed);
+            Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', $cap);
+
+            $errors = $module->validateSurchargeFormForTest();
+            TinyAssert::count(count($expectedErrors), $errors, $description . ' (got: ' . implode(' | ', $errors) . ')');
+            foreach ($expectedErrors as $index => $fragment) {
+                TinyAssert::true(strpos($errors[$index], $fragment) !== false, $description);
+                // The grid is hidden under none, so the error says how to reach it.
+                TinyAssert::same(
+                    $method === 'none',
+                    strpos($errors[$index], 'The grid is hidden while Surcharge method is "No surcharge applied"') !== false,
+                    $description . ': the how-to-reach hint shows only while the grid is hidden'
+                );
+            }
+        }
+        Tools::resetTestValues();
     }
 
 }

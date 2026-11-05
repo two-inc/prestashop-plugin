@@ -43,7 +43,6 @@ services:
       # through `make install` does carry them. Read at container CREATION
       # only - `make run` starts existing containers and cannot change these.
       TWO_API_BASE_URL: ${TWO_API_BASE_URL:-}
-      TWO_PORTAL_BASE_URL: ${TWO_PORTAL_BASE_URL:-}
       TWO_CHECKOUT_BASE_URL: ${TWO_CHECKOUT_BASE_URL:-}
       TWO_INTERNAL_ENVIRONMENTS: ${TWO_INTERNAL_ENVIRONMENTS:-}
     volumes:

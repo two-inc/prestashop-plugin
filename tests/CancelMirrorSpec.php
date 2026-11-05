@@ -109,6 +109,14 @@ final class CancelMirrorSpec
                 return ['http_status' => 200, 'id' => 'two-order-7811', 'state' => $this->twoState, 'status' => 'APPROVED', 'merchant_reference' => 'ref', 'invoice_url' => ''];
             }
 
+            /** @var string[] private order notes written */
+            public array $notes = [];
+
+            protected function addTwoOrderPrivateNote($idOrder, $text)
+            {
+                $this->notes[] = (string) $text;
+            }
+
             /** Core's OrderHistory::changeIdOrderState() fires actionOrderStatusUpdate. */
             public function changeOrderStatus($id_order, $id_order_status)
             {

@@ -46,7 +46,8 @@ final class AdminControlsSpec
         self::testCheckOrderIntentControllerSkipsCallWhenDisabled();
         self::testCheckOrderIntentControllerProceedsWhenEnabled();
 
-        self::testSkipConfirmTokenCheckBypassesTokenValidation();
+        self::testConfirmTokenCheckIgnoresARetiredSkipSwitch();
+        self::testUpgrade2722DropsTheSkipSwitchKey();
         self::testConfirmTokenCheckEnforcedByDefault();
 
         self::testClearSettingsOnDeactivationDefaultsToFalse();
@@ -55,6 +56,7 @@ final class AdminControlsSpec
         self::testUninstallWipesSettingsWhenToggleOn();
 
         self::testVendorNameHeaderIncludedWhenConfigured();
+        self::testVendorNameHeaderSentOnlyWhenSendable();
         self::testVendorNameHeaderOmittedWhenBlank();
         self::testVendorNameHeaderOmittedFromUnauthenticatedRequest();
 
@@ -305,15 +307,47 @@ final class AdminControlsSpec
 
     // ---- skip confirm-order token check ------------------------------------
 
-    private static function testSkipConfirmTokenCheckBypassesTokenValidation(): void
+    /**
+     * TWO-27107: the skip switch is gone. A shop still holding its old row
+     * (one the upgrade has not yet cleaned) gets the token check all the same,
+     * and the settings form no longer offers the switch.
+     */
+    private static function testConfirmTokenCheckIgnoresARetiredSkipSwitch(): void
     {
-        self::reset();
-        Configuration::updateValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', 1);
-        $module = new TwopaymentTestHarness();
-        $controller = self::makeOrderIntentController($module);
-        // Deliberately NO token set - would fail validation otherwise.
+        // [stored value of the retired key, token posted, expected, description]
+        $cases = [
+            ['1', null, false, 'a stored skip of 1 no longer lets a tokenless call through'],
+            ['1', 'valid', true, 'a valid token still passes'],
+            ['1', 'wrong123', false, 'a wrong token is refused'],
+        ];
+        foreach ($cases as [$stored, $token, $expected, $description]) {
+            self::reset();
+            Tools::resetTestValues();
+            Configuration::updateValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', $stored);
+            $controller = self::makeOrderIntentController(new TwopaymentTestHarness());
+            if ($token !== null) {
+                Tools::setTestValue('token', $token === 'valid' ? Tools::getToken(false) : $token);
+            }
+            TinyAssert::same($expected, $controller->validateAjaxToken(), $description);
+        }
+        Tools::resetTestValues();
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        TinyAssert::false(strpos($source, "'name' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'") !== false, 'the settings form must not offer the switch');
+    }
 
-        TinyAssert::true($controller->validateAjaxToken());
+    /** TWO-27107: the 2.7.22 upgrade clears the retired switch's row, and is safe with none. */
+    private static function testUpgrade2722DropsTheSkipSwitchKey(): void
+    {
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.22.php';
+        // [stored value or null for no row, description]
+        foreach ([['1', 'an enabled switch'], ['0', 'a disabled switch'], [null, 'no row at all']] as [$stored, $description]) {
+            self::reset();
+            if ($stored !== null) {
+                Configuration::updateValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', $stored);
+            }
+            TinyAssert::true(upgrade_module_2_7_22(new TwopaymentTestHarness()), $description . ': the upgrade succeeds');
+            TinyAssert::false(Configuration::hasKey('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'), $description . ': no row is left');
+        }
     }
 
     private static function testConfirmTokenCheckEnforcedByDefault(): void
@@ -430,6 +464,27 @@ final class AdminControlsSpec
         }
 
         return false;
+    }
+
+    /** TWO-27107: only a printable-ASCII vendor name of at most 255 characters is sent. */
+    private static function testVendorNameHeaderSentOnlyWhenSendable(): void
+    {
+        // [stored vendor name, sent, description]
+        $cases = [
+            ['Shop A', true, 'plain ASCII is sent'],
+            [str_repeat('a', 255), true, '255 characters is the limit'],
+            [str_repeat('a', 256), false, 'longer is not sent'],
+            ["Shop\r\nX-Evil: 1", false, 'a line break is never sent'],
+            ['Café', false, 'an accented letter is not sent'],
+            ["Shop\tA", false, 'a control character is not sent'],
+        ];
+        foreach ($cases as [$vendor, $sent, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
+            Configuration::updateValue('PS_TWO_VENDOR_NAME', $vendor);
+            TinyAssert::same($sent, self::hasVendorHeader(self::headersFor(new TwopaymentTestHarness(), '/v1/order')), $description);
+            TinyAssert::same($sent, Twopayment::isSendableTwoVendorName($vendor), $description . ' (predicate)');
+        }
     }
 
     private static function testVendorNameHeaderIncludedWhenConfigured(): void
