@@ -634,3 +634,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_432e8554207fde91115c532dc5498e01'] 
 $_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] = 'Företagsfaktura';
 $_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'Betalsättets titel i kassan. Lämna tomt för att visa "Företagsfaktura" på kundens språk.';
 $_MODULE['<{twopayment}prestashop>twopayment_37d1b80601d968add8df172c715c6ceb'] = 'Anpassade begärandeheaders: "%s" används redan av en annan rad. Headernamn skiljer inte på stora och små bokstäver, så behåll en rad per namn.';
+$_MODULE['<{twopayment}prestashop>twopayment_8a80b9e30ea041085b1ea948939a6a8c'] = 'Ange ett leverantörsnamn på högst 255 tecken, utan radbrytningar eller bokstäver med accenter: det skickas med varje förfrågan som en header. Det tidigare sparade leverantörsnamnet behölls.';

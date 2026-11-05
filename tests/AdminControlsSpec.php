@@ -56,6 +56,7 @@ final class AdminControlsSpec
         self::testUninstallWipesSettingsWhenToggleOn();
 
         self::testVendorNameHeaderIncludedWhenConfigured();
+        self::testVendorNameHeaderSentOnlyWhenSendable();
         self::testVendorNameHeaderOmittedWhenBlank();
         self::testVendorNameHeaderOmittedFromUnauthenticatedRequest();
 
@@ -463,6 +464,27 @@ final class AdminControlsSpec
         }
 
         return false;
+    }
+
+    /** TWO-27107: only a printable-ASCII vendor name of at most 255 characters is sent. */
+    private static function testVendorNameHeaderSentOnlyWhenSendable(): void
+    {
+        // [stored vendor name, sent, description]
+        $cases = [
+            ['Shop A', true, 'plain ASCII is sent'],
+            [str_repeat('a', 255), true, '255 characters is the limit'],
+            [str_repeat('a', 256), false, 'longer is not sent'],
+            ["Shop\r\nX-Evil: 1", false, 'a line break is never sent'],
+            ['Café', false, 'an accented letter is not sent'],
+            ["Shop\tA", false, 'a control character is not sent'],
+        ];
+        foreach ($cases as [$vendor, $sent, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
+            Configuration::updateValue('PS_TWO_VENDOR_NAME', $vendor);
+            TinyAssert::same($sent, self::hasVendorHeader(self::headersFor(new TwopaymentTestHarness(), '/v1/order')), $description);
+            TinyAssert::same($sent, Twopayment::isSendableTwoVendorName($vendor), $description . ' (predicate)');
+        }
     }
 
     private static function testVendorNameHeaderIncludedWhenConfigured(): void

@@ -28,6 +28,7 @@ final class ApiKeyVerificationSpec
         self::testNoticeSaysNothingWhileAVerificationIsStillRunning();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
         self::testARejectedKeyIsTheOnlyValueASaveDiscards();
+        self::testAnUnsendableVendorNameIsRefusedAndTheRestSaves();
         self::testAnIdentityChangeRefreshesTheRecordAndNeverClearsIt();
         self::testTheWarningIsRenderedAlongsideTheSaveConfirmation();
         self::testVerifiedPanelFollowsTheLiveVerdict();
@@ -159,6 +160,11 @@ final class ApiKeyVerificationSpec
             public function generalFormWarningForTest(): ?string
             {
                 return $this->apiKeyVerificationWarning;
+            }
+
+            public function vendorNameRefusedForTest(): bool
+            {
+                return $this->vendorNameRefused;
             }
 
             public function verifiedPanelFlagForTest(): int
@@ -623,6 +629,38 @@ final class ApiKeyVerificationSpec
         $fixed->saveGeneralFormForTest();
         TinyAssert::same(Twopayment::API_KEY_STATUS_OK, $fixed->getTwoApiKeyVerificationStatus()['status']);
         TinyAssert::same(1, $fixed->verifyCalls, 'the save must reuse its own check, not verify twice');
+    }
+
+    /**
+     * TWO-27107: a vendor name is sent as a header value, so one that is not
+     * printable ASCII or is over 255 characters is refused on save. The stored
+     * one is kept and every other field still saves.
+     */
+    private static function testAnUnsendableVendorNameIsRefusedAndTheRestSaves(): void
+    {
+        // [submitted vendor name, refused, stored afterwards, description]
+        $cases = array(
+            array('New Vendor', false, 'New Vendor', 'a plain name saves'),
+            array('', false, '', 'an empty name saves, and none is sent'),
+            array('  Padded  ', false, 'Padded', 'surrounding spaces are trimmed'),
+            array(str_repeat('v', 255), false, str_repeat('v', 255), '255 characters saves'),
+            array(str_repeat('v', 256), true, 'Old Vendor', 'over 255 characters is refused'),
+            array("New\nVendor", true, 'Old Vendor', 'a line break is refused'),
+            array('Café', true, 'Old Vendor', 'an accented letter is refused'),
+        );
+        foreach ($cases as list($submitted, $refused, $stored, $description)) {
+            $module = self::module(self::okOutcome());
+            Configuration::updateValue('PS_TWO_VENDOR_NAME', 'Old Vendor');
+            Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'freshly-pasted-key');
+            Tools::setTestValue('PS_TWO_VENDOR_NAME', $submitted);
+            Tools::setTestValue('PS_TWO_ENVIRONMENT', 'production');
+
+            TinyAssert::same(0, count($module->validateGeneralFormForTest()), $description . ': the save is not blocked');
+            $module->saveGeneralFormForTest();
+            TinyAssert::same($refused, $module->vendorNameRefusedForTest(), $description);
+            TinyAssert::same($stored, (string) Configuration::get('PS_TWO_VENDOR_NAME'), $description);
+            TinyAssert::same('freshly-pasted-key', (string) Configuration::get('PS_TWO_MERCHANT_API_KEY'), $description . ': the key still saves');
+        }
     }
 
     /**
