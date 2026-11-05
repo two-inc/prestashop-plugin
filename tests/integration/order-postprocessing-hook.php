@@ -1012,7 +1012,8 @@ function oppSurchargeChecks(OppProbeTwopayment $module, $handled, Cart $cart, Or
 /**
  * TWO-26280: the request that creates the hidden buyer fee product, as the buyer's fee sync or the self-heal at order
  * create does, then prices a carrier cart it has not priced yet. Deletes the product the probe made, recreates it in
- * this process with an employee set (making it records a stock movement), and asserts the shop context is as it was
+ * this process with an employee set and no controller (the request core's first legacy context read puts at all shops
+ * on 1.7 and 8), and asserts the shop context is as it was
  * and the cart keeps its carrier, its 29.00 of shipping and its shipping line, as the `unhandled` scenario sends it.
  *
  * @return array<int,array{0:mixed,1:mixed,2:string}>
@@ -1298,9 +1299,7 @@ if (!Module::isInstalled('twoorderpostprocessingtest')) {
 }
 oppBootKernel();
 oppSeed();
-// The hidden buyer fee product, made here once: the surcharge scenarios price a shop that already has it, and making
-// it records a stock movement, which needs an employee on the command line.
-Context::getContext()->employee = new Employee((int) Db::getInstance()->getValue('SELECT MIN(id_employee) FROM `' . _DB_PREFIX_ . 'employee`'));
+// The hidden buyer fee product, made here once: the surcharge scenarios price a shop that already has it.
 Module::getInstanceByName('twopayment')->getTwoSurchargeCartProductId(true);
 $exit = 0;
 $scenario_names = array('unhandled', 'unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'no_lines', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match', 'outside_carrier_parity_untaxed', 'outside_carrier_parity_taxed', 'outside_carrier_parity_none', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit', 'surcharge_unhandled', 'surcharge_resplit', 'trace', 'surcharge_create');

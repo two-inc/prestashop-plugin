@@ -1459,9 +1459,10 @@ namespace {
 
     class StockAvailable
     {
-        public static function setQuantity($idProduct, $idProductAttribute, $quantity, $idShop = null): void
+        public static function setQuantity($idProduct, $idProductAttribute, $quantity, $idShop = null, $addMovement = true): void
         {
             StubStore::$stock[(int) $idProduct]['quantity'] = (int) $quantity;
+            StubStore::$stock[(int) $idProduct]['add_movement'] = (bool) $addMovement;
             if (StubStore::$onSetQuantity !== null) {
                 (StubStore::$onSetQuantity)();
             }
