@@ -15,8 +15,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_365ddeaa3ef71ac6ee684a8d68f0071f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Título';
 $_MODULE['<{twopayment}prestashop>twopayment_d34347a5f791b2cecfda204f7a0b575d'] = 'Introduce el título que aparecerá en la página de pago como nombre del método de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_c301872a4d91b5473cc74208e3f853bd'] = 'Subtítulo opcional que se muestra debajo del título en la página de pago.';
-$_MODULE['<{twopayment}prestashop>twopayment_d0b5695eb8c733bf925d2066de816bda'] = 'El subtítulo solo acepta texto sin formato y un único enlace; "%1$s" se mostrará como "%2$s".';
-$_MODULE['<{twopayment}prestashop>twopayment_0bd1bbf38ae30740b208fa00447e04b2'] = 'Para todas las empresas, %1$sleer más%2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Introduce tu clave API proporcionada por %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Entorno';
 $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] = 'Producción';
