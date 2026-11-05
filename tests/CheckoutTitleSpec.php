@@ -22,6 +22,7 @@ final class CheckoutTitleSpec
     {
         self::testRendersTheConfiguredTitle();
         self::testDefaultTitleIsTranslatedNotStored();
+        self::testUpgrade2722ClearsOnlyTheUntouchedEnglishDefaults();
     }
 
     private static function moduleWithTitle($title): object
@@ -90,5 +91,47 @@ final class CheckoutTitleSpec
         };
         $translating->_path = '/modules/twopayment/';
         TinyAssert::same('[sv] Business invoice', $translating->exposeTwoPaymentOptionTitle(), 'the default title is the translated string');
+    }
+
+    /**
+     * TWO-27107: upgrade 2.7.22 clears a title or subtitle still holding the
+     * English text earlier installs stored in every language, so those shops
+     * get the per-language default. Anything the merchant edited stays.
+     */
+    private static function testUpgrade2722ClearsOnlyTheUntouchedEnglishDefaults(): void
+    {
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.22.php';
+        $title = 'Business invoice';
+        $subtitle = 'Buy now, pay later - instant credit';
+        // [stored per language [id_lang => [title, subtitle]] (null = no row),
+        //  expected after, description]
+        $cases = [
+            [[1 => [$title, $subtitle], 2 => [$title, $subtitle]], [1 => ['', ''], 2 => ['', '']], 'untouched defaults are cleared in every language'],
+            [[1 => ['Pay by invoice', $subtitle], 2 => [$title, 'Betala senare']], [1 => ['Pay by invoice', ''], 2 => ['', 'Betala senare']], 'an edited value stays, per language and per field'],
+            [[1 => ['Business invoice 30 days', $subtitle . '!'], 2 => [$title, $subtitle]], [1 => ['Business invoice 30 days', $subtitle . '!'], 2 => ['', '']], 'only an exact match is a default'],
+            [[1 => [null, null], 2 => [$title, null]], [1 => [null, null], 2 => ['', null]], 'a language with no row gets none'],
+        ];
+        foreach ($cases as [$stored, $expected, $description]) {
+            StubStore::reset();
+            StubStore::$languages = [['id_lang' => 1, 'iso_code' => 'en'], ['id_lang' => 2, 'iso_code' => 'sv']];
+            foreach ($stored as $idLang => [$t, $st]) {
+                if ($t !== null) {
+                    StubStore::$configurationLang[$idLang]['PS_TWO_TITLE'] = $t;
+                }
+                if ($st !== null) {
+                    StubStore::$configurationLang[$idLang]['PS_TWO_SUB_TITLE'] = $st;
+                }
+            }
+            TinyAssert::true(upgrade_module_2_7_22(new TwopaymentTestHarness()), $description . ': the upgrade succeeds');
+            foreach ($expected as $idLang => [$t, $st]) {
+                foreach (['PS_TWO_TITLE' => $t, 'PS_TWO_SUB_TITLE' => $st] as $key => $want) {
+                    TinyAssert::same(
+                        $want,
+                        Configuration::hasKey($key, $idLang) ? (string) Configuration::get($key, $idLang) : null,
+                        $description . ': ' . $key . ' for language ' . $idLang
+                    );
+                }
+            }
+        }
     }
 }
