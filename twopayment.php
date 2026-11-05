@@ -1628,8 +1628,8 @@ class Twopayment extends PaymentModule
     {
         // Validate environment
         // Refused field by field, as the WooCommerce and Magento plugins do
-        // (TWO-26604): the stored environment stays, every other field saves,
-        // and the key is verified against the environment that will be stored.
+        // (TWO-26604): the stored environment stays and every other field
+        // saves. The API key stays with it, as its pair (TWO-27107).
         $this->environmentRefused = !self::isTwoEnvironmentSaveAllowed(
             Tools::getValue('PS_TWO_ENVIRONMENT'),
             Configuration::get('PS_TWO_ENVIRONMENT')
