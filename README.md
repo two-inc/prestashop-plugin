@@ -60,7 +60,8 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 1. **Install and Enable**: Install the module from Module Manager
 2. **Environment Selection**: Choose Production or Sandbox (testing, no real money moves). Sandbox is the default, and an unrecognised stored value resolves to Sandbox
 3. **API Key**: Enter your Two API key for the selected environment
-   - The module validates the API key on save
+   - The module validates the API key on save. The key and the environment are saved together or not at all: a key Two rejects, a malformed key, or a key Two cannot check while the saved key last verified leaves both as they were, and the other settings still save
+   - The key field is always empty, with a note when a key is saved. Leave it empty to keep the saved key
    - A key that does not verify is reported by category, so a rejected key, a Two service error and a shop that cannot reach Two at all read differently. The HTTP status is shown; the response body is only ever logged
    - While a stored key does not verify, Two is withheld from checkout entirely (payment option and company search alike) and the config page says so. The verdict is re-checked automatically - about once a minute while it is failing - so a fixed key or a resolved outage takes effect without a re-save
 4. **Payment terms**: Configure payment term type and available terms

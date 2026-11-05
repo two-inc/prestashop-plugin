@@ -4,7 +4,6 @@ global $_MODULE;
 $_MODULE = array();
 $_MODULE['<{twopayment}prestashop>twopayment_52563a872dfbca393bed4ff3b7868687'] = 'Esta tienda no ha podido conectar con la API de %s (red, DNS o firewall). La clave API en sí no se ha evaluado.';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = '%1$s ha rechazado esta clave API. Puede que no sea válida o haya caducado: comprueba la clave en tu portal de %1$s.';
-$_MODULE['<{twopayment}prestashop>twopayment_935a9723572dd90aed81e13b2d4fdd2e'] = 'Se ha conservado la clave guardada anteriormente.';
 $_MODULE['<{twopayment}prestashop>twopayment_876bf0d6ed002da6532dbb047cd14f4a'] = 'No se pudo determinar el país de facturación de este pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_8effea9a4ab719b4272d74ad33f5b897'] = 'No se ha podido verificar la clave API.';
 $_MODULE['<{twopayment}prestashop>twopayment_ff917d30c610c32938987db6b6693541'] = '%s ha devuelto una respuesta inesperada al verificar la clave API (HTTP %d).';
@@ -635,3 +634,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] 
 $_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'El título del método de pago que se muestra al finalizar la compra. Déjalo vacío para mostrar "Factura para empresas" en el idioma del cliente.';
 $_MODULE['<{twopayment}prestashop>twopayment_37d1b80601d968add8df172c715c6ceb'] = 'Cabeceras de solicitud personalizadas: "%s" ya lo usa otra fila. Los nombres de cabecera no distinguen mayúsculas de minúsculas, así que deja una sola fila por nombre.';
 $_MODULE['<{twopayment}prestashop>twopayment_8a80b9e30ea041085b1ea948939a6a8c'] = 'Introduce un nombre de proveedor de 255 caracteres como máximo, sin saltos de línea ni letras acentuadas: se envía con cada solicitud como cabecera. Se ha mantenido el nombre de proveedor guardado anteriormente.';
+$_MODULE['<{twopayment}prestashop>twopayment_56c32ba2433304b27cb9030a0437cb41'] = 'Hay una clave guardada. Deja este campo vacío para conservarla.';
+$_MODULE['<{twopayment}prestashop>twopayment_ee45d770bca608d9a85a9a627ba465b9'] = 'La clave API tampoco se ha cambiado: se guarda junto con su entorno.';
+$_MODULE['<{twopayment}prestashop>twopayment_4505fd7f018c6ef8236eeb47e873906a'] = 'La clave API solo puede contener caracteres imprimibles, sin espacios ni saltos de línea. Se han mantenido la clave y el entorno guardados anteriormente.';
+$_MODULE['<{twopayment}prestashop>twopayment_a167006b4be75840d43ff233483db4da'] = 'Se han mantenido la clave y el entorno guardados anteriormente.';
+$_MODULE['<{twopayment}prestashop>twopayment_967457a1ea18764652eea4bd2a4a9183'] = 'Se han mantenido la clave y el entorno guardados anteriormente, porque fueron los últimos verificados y los nuevos no se han podido comprobar. Vuelve a guardar cuando la comprobación funcione.';

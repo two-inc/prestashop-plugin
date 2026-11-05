@@ -183,7 +183,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_3dfd01dc41ebe6c659f64c1c75b03260'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'Kunne ikke bygge datainnholdet for ordreintensjonen';
 $_MODULE['<{twopayment}prestashop>twopayment_e8eab90af94027d0c5ae97667a307a3e'] = 'Vilkår med slutten av måneden (EOM):';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = 'Denne API-nøkkelen ble avvist av %1$s. Den kan være ugyldig eller utløpt - kontroller nøkkelen i %1$s-portalen din.';
-$_MODULE['<{twopayment}prestashop>twopayment_935a9723572dd90aed81e13b2d4fdd2e'] = 'Den tidligere lagrede nøkkelen ble beholdt.';
 $_MODULE['<{twopayment}prestashop>twopayment_539de410a9a131c0e925dc8e248a29d2'] = 'Betalingsfristen er slutten av inneværende måned pluss X dager fra datoen ordren blir oppfylt. Eksempel: Hvis du oppfyller en ordre 15. januar med vilkåret EOM+30, er betalingsfristen 28. februar (slutten av januar + 30 dager). Dette er vanlig ved B2B-fakturering.';
 $_MODULE['<{twopayment}prestashop>twopayment_fb3ff8dd49a6e7ecf023f6941320801c'] = 'Kunne ikke behandle ordren din med %s-betaling. Velg en annen betalingsmåte eller kontakt butikken.';
 $_MODULE['<{twopayment}prestashop>twopayment_57bd2a90727f3223958f7fd9bc6442f0'] = 'Viktige krav';
@@ -635,3 +634,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] 
 $_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'Tittelen på betalingsmåten i kassen. La feltet stå tomt for å vise «Bedriftsfaktura» på kundens språk.';
 $_MODULE['<{twopayment}prestashop>twopayment_37d1b80601d968add8df172c715c6ceb'] = 'Egendefinerte forespørselsheadere: "%s" brukes allerede av en annen rad. Headernavn skiller ikke mellom store og små bokstaver, så behold én rad per navn.';
 $_MODULE['<{twopayment}prestashop>twopayment_8a80b9e30ea041085b1ea948939a6a8c'] = 'Skriv inn et leverandørnavn på høyst 255 tegn, uten linjeskift eller bokstaver med aksenter: det sendes med hver forespørsel som en header. Det tidligere lagrede leverandørnavnet ble beholdt.';
+$_MODULE['<{twopayment}prestashop>twopayment_56c32ba2433304b27cb9030a0437cb41'] = 'En nøkkel er lagret. La feltet stå tomt for å beholde den.';
+$_MODULE['<{twopayment}prestashop>twopayment_ee45d770bca608d9a85a9a627ba465b9'] = 'API-nøkkelen ble heller ikke endret: den lagres sammen med miljøet sitt.';
+$_MODULE['<{twopayment}prestashop>twopayment_4505fd7f018c6ef8236eeb47e873906a'] = 'API-nøkkelen kan bare inneholde utskrivbare tegn, uten mellomrom eller linjeskift. Den tidligere lagrede nøkkelen og miljøet ble beholdt.';
+$_MODULE['<{twopayment}prestashop>twopayment_a167006b4be75840d43ff233483db4da'] = 'Den tidligere lagrede nøkkelen og miljøet ble beholdt.';
+$_MODULE['<{twopayment}prestashop>twopayment_967457a1ea18764652eea4bd2a4a9183'] = 'Den tidligere lagrede nøkkelen og miljøet ble beholdt, fordi de sist ble bekreftet og de nye ikke kunne kontrolleres. Lagre på nytt når kontrollen lykkes.';

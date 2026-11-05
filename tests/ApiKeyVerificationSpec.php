@@ -27,7 +27,9 @@ final class ApiKeyVerificationSpec
         self::testNoticeIsSilentWhenVerifiedOrUnconfigured();
         self::testNoticeSaysNothingWhileAVerificationIsStillRunning();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
-        self::testARejectedKeyIsTheOnlyValueASaveDiscards();
+        self::testTheKeyAndEnvironmentSaveAsOnePair();
+        self::testTheDefinitiveVerdictIgnoresOutages();
+        self::testTheKeyFieldRendersEmpty();
         self::testAnUnsendableVendorNameIsRefusedAndTheRestSaves();
         self::testAnIdentityChangeRefreshesTheRecordAndNeverClearsIt();
         self::testTheWarningIsRenderedAlongsideTheSaveConfirmation();
@@ -664,54 +666,65 @@ final class ApiKeyVerificationSpec
     }
 
     /**
-     * The general save never blocks on the verification. The form
-     * re-renders from POST, so a blocked save looks like a stored one while
-     * leaving the merchant unable to store the key - or even the vendor name -
-     * that would fix it. A key Two rejected is the one submitted value the save
-     * discards: the stored key stays, everything beside it is written.
+     * The general save never blocks on the verification, and the API key and
+     * environment are written as one pair or not at all (TWO-27107). A key Two
+     * rejected, a malformed key, and a key Two could not judge while the
+     * stored pair last verified all keep the stored pair; every other field
+     * still saves. An empty key field keeps the stored key, re-checked against
+     * the submitted environment.
      */
-    private static function testARejectedKeyIsTheOnlyValueASaveDiscards(): void
+    private static function testTheKeyAndEnvironmentSaveAsOnePair(): void
     {
         $timeoutOutcome = array('response' => false, 'code' => 0, 'error' => 'Operation timed out');
         $idOnlyOutcome = array('response' => json_encode(array('id' => 'm-123')), 'code' => 200, 'error' => '');
-        // [wire outcome, key that must end up stored, short name that must end
-        // up stored, wording the warning must carry (null = no warning), why].
-        // The short name is server-derived, not a form input, so a save that
-        // resolved no merchant must leave the stored one alone.
+        $kept = array('stored-key', 'staging');
+        $fresh = array('freshly-pasted-key', 'production');
+        $stale = array('stored-key', 'production');
+        // [wire outcome, submitted key, stored pair's last definitive verdict,
+        //  [key, environment] stored after, short name stored after, warning
+        //  wording (null = none), verified, why]
         $cases = array(
-            array(self::transportOutcome(), 'freshly-pasted-key', 'old-merchant', 'could not reach', 'a connection failure'),
-            array($timeoutOutcome, 'freshly-pasted-key', 'old-merchant', 'could not reach', 'a timeout'),
-            array(self::httpOutcome(500), 'freshly-pasted-key', 'old-merchant', 'could not verify the API key right now', 'a 500 from the API'),
-            array(self::httpOutcome(401), 'stored-key', 'old-merchant', 'previously saved key was kept', 'a 401 rejection'),
-            array(self::httpOutcome(403), 'stored-key', 'old-merchant', 'previously saved key was kept', 'a 403 rejection'),
-            array(self::okOutcome(), 'freshly-pasted-key', 'acme', null, 'a verified key'),
-            array($idOnlyOutcome, 'freshly-pasted-key', 'old-merchant', null, 'a record with no short name'),
-            array(self::recordlessOutcome(), 'freshly-pasted-key', 'old-merchant', 'unexpected response', 'a 200 carrying no merchant record'),
+            array(self::transportOutcome(), 'freshly-pasted-key', null, $fresh, 'old-merchant', 'could not reach', false, 'a connection failure with no known-good pair saves the new pair'),
+            array(self::transportOutcome(), 'freshly-pasted-key', 'ok', $kept, 'old-merchant', 'last verified', false, 'a connection failure never replaces a pair that last verified'),
+            array($timeoutOutcome, 'freshly-pasted-key', 'ok', $kept, 'old-merchant', 'last verified', false, 'nor does a timeout'),
+            array(self::httpOutcome(500), 'freshly-pasted-key', 'ok', $kept, 'old-merchant', 'last verified', false, 'nor does a 500'),
+            array(self::httpOutcome(500), 'freshly-pasted-key', null, $fresh, 'old-merchant', 'could not verify the API key right now', false, 'a 500 with no definitive verdict saves the new pair'),
+            array(self::httpOutcome(500), 'freshly-pasted-key', 'invalid_key', $fresh, 'old-merchant', 'could not verify the API key right now', false, 'a 500 replaces a pair Two last rejected'),
+            array(self::httpOutcome(401), 'freshly-pasted-key', null, $kept, 'old-merchant', 'previously saved key and environment were kept', false, 'a 401 keeps the key and the environment'),
+            array(self::httpOutcome(403), 'freshly-pasted-key', 'ok', $kept, 'old-merchant', 'previously saved key and environment were kept', false, 'a 403 keeps the key and the environment'),
+            array(self::okOutcome(), 'freshly-pasted-key', 'ok', $fresh, 'acme', null, true, 'a verified key saves the pair'),
+            array($idOnlyOutcome, 'freshly-pasted-key', null, $fresh, 'old-merchant', null, true, 'a record with no short name still verifies'),
+            array(self::recordlessOutcome(), 'freshly-pasted-key', null, $fresh, 'old-merchant', 'unexpected response', false, 'a 200 carrying no merchant record judges nothing'),
+            array(self::okOutcome(), '', 'ok', $stale, 'acme', null, true, 'an empty key field keeps the stored key, verified against the new environment'),
+            array(self::httpOutcome(401), '', 'ok', $kept, 'old-merchant', 'previously saved key and environment were kept', false, 'the stored key rejected for the new environment keeps both'),
+            array(self::okOutcome(), 'bad key', null, $kept, 'old-merchant', 'printable characters', false, 'a malformed key is never sent and keeps the pair'),
         );
 
-        foreach ($cases as list($outcome, $expectedKey, $expectedShortName, $warning, $case)) {
-            $verified = $warning === null;
+        foreach ($cases as list($outcome, $submitted, $definitive, $expectedPair, $expectedShortName, $warning, $verified, $case)) {
             $module = self::module($outcome);
             Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', 'old-merchant');
             Configuration::updateValue('PS_TWO_VENDOR_NAME', 'Old Vendor');
+            Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', $definitive === 'ok' ? '1' : '0');
+            if ($definitive !== null) {
+                $slotKey = new ReflectionMethod(Twopayment::class, 'verificationSlotKey');
+                Configuration::updateValue(Twopayment::CONFIG_API_KEY_DEFINITIVE, json_encode(array(
+                    'status' => $definitive,
+                    'key_hash' => $slotKey->invoke(null, 'stored-key'),
+                )));
+            }
             // Only the three inputs the General form actually posts.
-            Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'freshly-pasted-key');
+            Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', $submitted);
             Tools::setTestValue('PS_TWO_VENDOR_NAME', 'New Vendor');
             Tools::setTestValue('PS_TWO_ENVIRONMENT', 'production');
 
-            // getContent()'s general branch: validate, then save only if clean.
-            TinyAssert::same(
-                0,
-                count($module->validateGeneralFormForTest()),
-                $case . ' must not block the save'
-            );
+            TinyAssert::same(0, count($module->validateGeneralFormForTest()), $case . ' must not block the save');
             $module->saveGeneralFormForTest();
 
             $expected = array(
+                'PS_TWO_MERCHANT_API_KEY' => $expectedPair[0],
+                'PS_TWO_ENVIRONMENT' => $expectedPair[1],
                 'PS_TWO_MERCHANT_SHORT_NAME' => $expectedShortName,
-                'PS_TWO_MERCHANT_API_KEY' => $expectedKey,
                 'PS_TWO_VENDOR_NAME' => 'New Vendor',
-                'PS_TWO_ENVIRONMENT' => 'production',
             );
             foreach ($expected as $key => $value) {
                 TinyAssert::same($value, (string) Configuration::get($key), $case . ' must store ' . $value . ' in ' . $key);
@@ -722,13 +735,14 @@ final class ApiKeyVerificationSpec
             } else {
                 TinyAssert::true(
                     $reported !== null && strpos($reported, $warning) !== false,
-                    $case . ' must warn with the category, not a generic "check your API key"'
+                    $case . ' must warn with "' . $warning . '", got: ' . var_export($reported, true)
                 );
             }
+            $pairKept = $expectedPair === $kept;
             TinyAssert::same(
-                $verified ? '1' : '0',
+                $verified ? '1' : ($pairKept ? ($definitive === 'ok' ? '1' : '0') : '0'),
                 (string) Configuration::get('PS_TWO_API_KEY_VERIFIED'),
-                $case . ' must record whether the key it stored is verified'
+                $case . ' must record whether the key it stored is verified, and leave a kept pair\'s flag alone'
             );
             $published = json_decode((string) Configuration::get(Twopayment::CONFIG_API_KEY_STATUS), true);
             TinyAssert::same(
@@ -736,6 +750,47 @@ final class ApiKeyVerificationSpec
                 is_array($published) && $published['status'] === Twopayment::API_KEY_STATUS_OK,
                 $case . ' must publish a verdict the checkout gate can trust'
             );
+        }
+    }
+
+    /**
+     * TWO-27107: only a judgement about the key moves the definitive slot,
+     * and it is read for the stored pair only.
+     */
+    private static function testTheDefinitiveVerdictIgnoresOutages(): void
+    {
+        $module = self::module(self::okOutcome());
+        TinyAssert::same(null, $module->getTwoLastDefinitiveApiKeyStatus(), 'no verdict yet');
+        // [verdict written for the stored pair, definitive status after, description]
+        $steps = array(
+            array(array('status' => 'ok', 'code' => 200), 'ok', 'an ok verdict is definitive'),
+            array(array('status' => 'unreachable', 'code' => null), 'ok', 'an outage does not move it'),
+            array(array('status' => 'service_error', 'code' => 503), 'ok', 'nor does a 5xx'),
+            array(array('status' => 'invalid_key', 'code' => 401), 'invalid_key', 'a rejection is definitive'),
+        );
+        foreach ($steps as list($verdict, $expected, $description)) {
+            $module->cacheTwoApiKeyVerificationStatus('stored-key', $verdict);
+            TinyAssert::same($expected, $module->getTwoLastDefinitiveApiKeyStatus(), $description);
+        }
+        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'production');
+        TinyAssert::same(null, $module->getTwoLastDefinitiveApiKeyStatus(), 'a verdict about another environment is not the stored pair\'s');
+    }
+
+    /** TWO-27107: the key field never carries the stored key back, and says when one is saved. */
+    private static function testTheKeyFieldRendersEmpty(): void
+    {
+        foreach (array(array('stored-key', true), array('', false)) as list($stored, $saved)) {
+            $module = self::module(self::okOutcome());
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $stored);
+            $values = (new ReflectionMethod(Twopayment::class, 'getTwoGeneralFormValues'))->invoke($module);
+            TinyAssert::same('', $values['PS_TWO_MERCHANT_API_KEY'], 'the key field renders empty');
+            $form = (new ReflectionMethod(Twopayment::class, 'getTwoGeneralForm'))->invoke($module);
+            foreach ($form['form']['input'] as $input) {
+                if (($input['name'] ?? '') === 'PS_TWO_MERCHANT_API_KEY') {
+                    TinyAssert::same(!$saved, $input['required'], 'required only while no key is stored');
+                    TinyAssert::same($saved, strpos($input['desc'], 'A key is saved.') !== false, 'the note shows only when a key is stored');
+                }
+            }
         }
     }
 

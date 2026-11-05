@@ -78,8 +78,14 @@ leaves the merchant unable to store the replacement key that would fix the outag
 or even change the vendor name while it lasts. The verdict is reported as a warning
 beside the save confirmation instead.
 
-- **A key Two rejected (401/403) is the one submitted value a save discards** — the
-  stored key is kept and the warning says so.
+- **The API key and environment are one pair, written together or not at all**
+  (TWO-27107). A key Two rejected (401/403), a malformed key, a refused environment,
+  and a key Two could not judge while the stored pair's last DEFINITIVE verdict
+  (`getTwoLastDefinitiveApiKeyStatus()`, `PS_TWO_API_KEY_DEFINITIVE`, which an outage
+  never moves) was ok, all keep the stored pair; the warning says so. Every other
+  field still saves.
+- **The key field always renders empty**, with a note when a key is stored, and an
+  empty submission keeps the stored key (re-checked against the submitted environment).
 - The merchant short name is derived from the verification response, never
   submitted, so a save that resolved no merchant keeps the stored one.
 - Storing a different key or environment refreshes the cached merchant record and
