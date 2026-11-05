@@ -84,11 +84,11 @@
     </div>
     
     <section class="two-payment-info" style="display: none;">
-        {* Sanitised server-side by TwoAnchorOnlyHtml because the brand fallback
-           carries an inline link; an empty subtitle emits no element at all,
-           since an empty <p> still carries its bottom margin. *}
+        {* Plain text, escaped: the subtitle carries no link. An empty subtitle
+           emits no element at all, since an empty <p> still carries its bottom
+           margin. *}
         {if $subtitle != ''}
-        <p class="two-subtitle">{$subtitle nofilter}</p>
+        <p class="two-subtitle">{$subtitle|escape:'html':'UTF-8'}</p>
         {/if}
         <p class="two-payment-message"></p>
     </section>

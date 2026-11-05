@@ -18,7 +18,6 @@ require_once dirname(__FILE__) . '/classes/TwoCheckoutAmountException.php';
 require_once dirname(__FILE__) . '/classes/TwoSurchargeMethodException.php';
 require_once dirname(__FILE__) . '/classes/TwoRateLimiter.php';
 require_once dirname(__FILE__) . '/classes/TwoStoredTerm.php';
-require_once dirname(__FILE__) . '/classes/TwoAnchorOnlyHtml.php';
 require_once dirname(__FILE__) . '/classes/TwoShippingTaxFallbackGate.php';
 require_once dirname(__FILE__) . '/classes/TwoDiscrepancySnapshot.php';
 require_once dirname(__FILE__) . '/classes/TwoPostcodeFormat.php';
@@ -2267,18 +2266,6 @@ class Twopayment extends PaymentModule
         foreach ($this->languages as $language) {
             if (Tools::isEmpty(Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']))) {
                 $this->errors[] = $this->l('Enter a title.');
-            }
-
-            // Rejected rather than sanitised: the tile emits the subtitle
-            // unescaped through TwoAnchorOnlyHtml, so anything that escaper
-            // would rewrite disappears at checkout with no merchant feedback.
-            $subtitle = (string) Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang']);
-            if (!TwoAnchorOnlyHtml::rendersUnchanged($subtitle)) {
-                $this->errors[] = sprintf(
-                    $this->l('Subtitle accepts plain text and a single link only; "%1$s" would be shown as "%2$s".'),
-                    htmlspecialchars($subtitle, ENT_QUOTES, 'UTF-8'),
-                    htmlspecialchars(TwoAnchorOnlyHtml::escape($subtitle), ENT_QUOTES, 'UTF-8')
-                );
             }
         }
 
@@ -18029,38 +18016,15 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The tile subtitle, escaped: the merchant's per-language Subtitle field,
-     * or the brand's default sentence carrying a "read more" link to its FAQ
-     * page when that field is blank.
-     *
-     * The template emits the result unescaped, so TwoAnchorOnlyHtml is the
-     * whole trust boundary on it: the "read more" link survives and nothing
-     * else does.
-     *
-     * A brand declaring no usable FAQ URL renders no subtitle element at all,
-     * rather than a sentence whose link points back at the checkout page.
+     * The tile subtitle: the merchant's per-language Subtitle field, as plain
+     * text (TWO-27107). The template escapes it, so markup typed into the
+     * field is shown as typed and never becomes a link. Blank shows none.
      *
      * @return string
      */
     private function resolveTwoSubtitle()
     {
-        // Emptiness is judged after escaping: copy that is only markup the
-        // escaper drops would otherwise emit a blank subtitle element.
-        $configured = trim(TwoAnchorOnlyHtml::escape(Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id)));
-        if ($configured !== '') {
-            return $configured;
-        }
-
-        $faqUrl = self::normalizeTwoBrandUrl($this->getTwoBrandConfig('checkout_subtitle_faq_url'));
-        if ($faqUrl === '') {
-            return '';
-        }
-
-        return TwoAnchorOnlyHtml::escape(sprintf(
-            $this->l('For all companies, %1$sread more%2$s.'),
-            '<a href="' . htmlspecialchars($faqUrl, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener">',
-            '</a>'
-        ));
+        return trim((string) Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id));
     }
 
     /**

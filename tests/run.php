@@ -5924,7 +5924,6 @@ require __DIR__ . '/CheckoutTitleSpec.php';
 require __DIR__ . '/CheckoutSubtitleSpec.php';
 require __DIR__ . '/ProductPromoMessageSpec.php';
 require __DIR__ . '/ProductButtonSpec.php';
-require __DIR__ . '/TwoAnchorOnlyHtmlSpec.php';
 require __DIR__ . '/ConfigFallbackSpec.php';
 require __DIR__ . '/TranslationCatalogueSpec.php';
 require __DIR__ . '/CompanyRefusalMessageSpec.php';
@@ -6018,7 +6017,6 @@ $tests = [
     'CheckoutSubtitleSpec::runAll' => [CheckoutSubtitleSpec::class, 'runAll'],
     'ProductPromoMessageSpec::runAll' => [ProductPromoMessageSpec::class, 'runAll'],
     'ProductButtonSpec::runAll' => [ProductButtonSpec::class, 'runAll'],
-    'TwoAnchorOnlyHtmlSpec::runAll' => [TwoAnchorOnlyHtmlSpec::class, 'runAll'],
     'PaymentTileAboutControlSpec::runAll' => [PaymentTileAboutControlSpec::class, 'runAll'],
     'PaymentOptionLogoSpec::runAll' => [PaymentOptionLogoSpec::class, 'runAll'],
     'DiscrepancySnapshotSpec::runAll' => [DiscrepancySnapshotSpec::class, 'runAll'],

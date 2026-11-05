@@ -293,8 +293,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_4568e870a2def0081479b11f806e7d6f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9c51eb50fb79bffa2c795ac4773781dc'] = 'Je betaalgoedkeuring is verlopen. Vernieuw de pagina en probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_9d8c5a3cd608d5590ab3da22a6855f83'] = 'De winkelwagen voor deze betaalpoging kan niet worden geladen.';
 $_MODULE['<{twopayment}prestashop>twopayment_c301872a4d91b5473cc74208e3f853bd'] = 'Optionele ondertitel die bij het afrekenen onder de titel wordt weergegeven.';
-$_MODULE['<{twopayment}prestashop>twopayment_d0b5695eb8c733bf925d2066de816bda'] = 'De ondertitel accepteert alleen platte tekst en één link; "%1$s" wordt weergegeven als "%2$s".';
-$_MODULE['<{twopayment}prestashop>twopayment_0bd1bbf38ae30740b208fa00447e04b2'] = 'Voor alle bedrijven, %1$slees meer%2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_9e727fdd3aec8274f46685441900280d'] = 'Project';
 $_MODULE['<{twopayment}prestashop>twopayment_1ffb19c3b99e1f859648eb7a9a7c3ef3'] = 'Ja (niet aanbevolen)';
 $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] = 'Je betaaltermijn start zodra je bestelling is uitgeleverd';

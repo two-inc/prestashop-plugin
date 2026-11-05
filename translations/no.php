@@ -293,8 +293,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_4568e870a2def0081479b11f806e7d6f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9c51eb50fb79bffa2c795ac4773781dc'] = 'Betalingsgodkjenningen din er utløpt. Oppdater siden og prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_9d8c5a3cd608d5590ab3da22a6855f83'] = 'Kunne ikke laste handlekurven for dette betalingsforsøket.';
 $_MODULE['<{twopayment}prestashop>twopayment_c301872a4d91b5473cc74208e3f853bd'] = 'Valgfri undertittel som vises under tittelen i kassen.';
-$_MODULE['<{twopayment}prestashop>twopayment_d0b5695eb8c733bf925d2066de816bda'] = 'Undertittelen godtar bare ren tekst og én lenke; "%1$s" vises som "%2$s".';
-$_MODULE['<{twopayment}prestashop>twopayment_0bd1bbf38ae30740b208fa00447e04b2'] = 'For alle bedrifter, %1$sles mer%2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_9e727fdd3aec8274f46685441900280d'] = 'Prosjekt';
 $_MODULE['<{twopayment}prestashop>twopayment_1ffb19c3b99e1f859648eb7a9a7c3ef3'] = 'Ja (ikke anbefalt)';
 $_MODULE['<{twopayment}prestashop>twopayment_a002c8066738bc8f9d9394abdcef7ea8'] = 'Betalingsperioden din starter når ordren er oppfylt';
