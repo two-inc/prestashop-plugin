@@ -3721,7 +3721,7 @@ class Twopayment extends PaymentModule
         $key = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
         $slot = self::verificationSlotKey($key);
         $stored = json_decode((string) Configuration::get(self::CONFIG_TAX_CODE_PROFILE), true);
-        $held = is_array($stored) && isset($stored['slot']) && $stored['slot'] === $slot
+        $held = is_array($stored) && isset($stored['slot']) && self::isTwoVerificationSlotFor($stored['slot'], $key)
             ? $stored + array('merchant_id' => '', 'country' => '', 'fetched_at' => 0, 'tried_at' => 0, 'failure' => null)
             : array('slot' => $slot, 'merchant_id' => '', 'country' => '', 'fetched_at' => 0, 'tried_at' => 0, 'failure' => null);
         $profile = is_string($held['merchant_id']) && $held['merchant_id'] !== '' && is_string($held['country']) && preg_match('/^[A-Z]{2}$/', $held['country']) === 1
@@ -15819,7 +15819,7 @@ class Twopayment extends PaymentModule
         // DB clone, direct SQL.
         $previous = $this->readStoredTwoApiKeyStatus();
         $carryable = $previous !== null
-            && $previous['key_hash'] === self::verificationSlotKey($apiKey)
+            && self::isTwoVerificationSlotFor($previous['key_hash'], $apiKey)
             && $previous['status'] !== self::API_KEY_STATUS_VERIFYING
             // Age of the VERDICT, not of the slot write. A zero here (a slot
             // with neither field readable) fails this comparison on its own, so
@@ -15899,7 +15899,7 @@ class Twopayment extends PaymentModule
         // ground than that. A claim still inside its window is served by the
         // branch above, where the carried verdict does count.
         $stored = $this->readStoredTwoApiKeyStatus();
-        if ($stored === null || $stored['claim'] || $stored['key_hash'] !== self::verificationSlotKey((string) Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
+        if ($stored === null || $stored['claim'] || !self::isTwoVerificationSlotFor($stored['key_hash'], (string) Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
             return false;
         }
 
@@ -16033,12 +16033,11 @@ class Twopayment extends PaymentModule
         if ($storedKey === '') {
             return null;
         }
-        $hash = self::verificationSlotKey($storedKey);
         foreach (array(self::CONFIG_API_KEY_DEFINITIVE, self::CONFIG_API_KEY_STATUS) as $key) {
             $slot = json_decode((string) Configuration::get($key), true);
             if (is_array($slot)
                 && isset($slot['key_hash'], $slot['status'])
-                && $slot['key_hash'] === $hash
+                && self::isTwoVerificationSlotFor($slot['key_hash'], $storedKey)
                 && empty($slot['claim'])
                 && in_array($slot['status'], array(self::API_KEY_STATUS_OK, self::API_KEY_STATUS_INVALID), true)
             ) {
@@ -16062,7 +16061,52 @@ class Twopayment extends PaymentModule
      */
     protected static function verificationSlotKey($apiKey)
     {
-        return md5((string) $apiKey . '|' . Tools::strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT')));
+        // The environment the stored value RESOLVES to (TWO-27107), as the
+        // General save compares it: a legacy 'prod' and 'production' are one
+        // slot, so normalising the stored value never orphans a verdict.
+        $raw = (string) Configuration::get('PS_TWO_ENVIRONMENT');
+        $environment = self::recogniseTwoEnvironment($raw);
+
+        return md5((string) $apiKey . '|' . ($environment !== null ? $environment : Tools::strtolower(trim($raw))));
+    }
+
+    /**
+     * Every hash a slot for $apiKey and the stored environment may carry: the
+     * current one, and those written before TWO-27107, when slots were keyed
+     * on the raw lowercased value (so 'prod' and 'production' differed).
+     * Readers accept any of them; writers write only the current one.
+     *
+     * @param string $apiKey
+     *
+     * @return string[]
+     */
+    protected static function verificationSlotKeys($apiKey)
+    {
+        $apiKey = (string) $apiKey;
+        $raw = (string) Configuration::get('PS_TWO_ENVIRONMENT');
+        $keys = array(self::verificationSlotKey($apiKey), md5($apiKey . '|' . Tools::strtolower($raw)));
+        $environment = self::recogniseTwoEnvironment($raw);
+        if ($environment !== null) {
+            $keys[] = md5($apiKey . '|' . $environment);
+            if ($environment === 'production') {
+                $keys[] = md5($apiKey . '|prod');
+            }
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    /**
+     * Whether a stored slot hash belongs to $apiKey and the stored environment.
+     *
+     * @param mixed $hash
+     * @param string $apiKey
+     *
+     * @return bool
+     */
+    protected static function isTwoVerificationSlotFor($hash, $apiKey)
+    {
+        return is_string($hash) && in_array($hash, self::verificationSlotKeys($apiKey), true);
     }
 
     /**
@@ -16130,7 +16174,7 @@ class Twopayment extends PaymentModule
         }
 
         $stored = $this->readStoredTwoApiKeyStatus();
-        if ($stored === null || $stored['key_hash'] !== self::verificationSlotKey($apiKey)) {
+        if ($stored === null || !self::isTwoVerificationSlotFor($stored['key_hash'], $apiKey)) {
             return null;
         }
         $ttl = $stored['claim'] ? self::API_KEY_STATUS_CLAIM_WINDOW : self::statusTtlFor($stored['status']);
@@ -16850,7 +16894,7 @@ class Twopayment extends PaymentModule
             return true;
         }
 
-        return $stamp === self::verificationSlotKey((string) Configuration::get('PS_TWO_MERCHANT_API_KEY'));
+        return self::isTwoVerificationSlotFor($stamp, (string) Configuration::get('PS_TWO_MERCHANT_API_KEY'));
     }
 
     /**
