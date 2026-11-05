@@ -19664,9 +19664,27 @@ class Twopayment extends PaymentModule
      * getTwoSurchargeLineLabel; amounts - not labels - are the parity
      * contract between the two lines.
      *
+     * The shop context is handed back as it was found, also on an exception: a
+     * cart first priced at all shops in the same request loses its carrier, and
+     * with it its shipping (TWO-26280).
+     *
      * @return int new product id (0 on failure)
      */
     protected function createTwoSurchargeCartProduct()
+    {
+        $shopContext = Shop::getContext();
+        $shopContextId = $shopContext === Shop::CONTEXT_GROUP ? Shop::getContextShopGroupID() : Shop::getContextShopID();
+        try {
+            return $this->addTwoSurchargeCartProduct();
+        } finally {
+            Shop::setContext($shopContext, $shopContextId);
+        }
+    }
+
+    /**
+     * @return int new product id (0 on failure)
+     */
+    private function addTwoSurchargeCartProduct()
     {
         $label = $this->getTwoBrandConfig('fee_line_label');
         $label = !empty($label) ? $this->l((string) $label) : $this->l('Payment terms fee');
@@ -19705,7 +19723,9 @@ class Twopayment extends PaymentModule
         }
 
         if (class_exists('StockAvailable')) {
-            StockAvailable::setQuantity((int) $product->id, 0, 1000000);
+            // No stock movement: recording one makes core's first legacy context read, which on 1.7 and 8 puts a
+            // request with an employee and no controller at all shops, and on 1.7 then refuses that (TWO-26280).
+            StockAvailable::setQuantity((int) $product->id, 0, 1000000, null, false);
             if (method_exists('StockAvailable', 'setProductOutOfStock')) {
                 StockAvailable::setProductOutOfStock((int) $product->id, 1);
             }
