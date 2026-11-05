@@ -660,7 +660,7 @@ not in dev mode ignores them even when they are set in its process environment,
 so they never become a way to repoint a live checkout. There is no admin UI for
 any of them.
 
-They resolve **independently** — setting one leaves the other on its
+They resolve **independently**: setting one leaves the other on its
 default. That is the point: the common case is a staging API plus a
 checkout-page you are editing yourself.
 

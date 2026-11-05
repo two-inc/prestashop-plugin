@@ -7,7 +7,7 @@ declare(strict_types=1);
  *
  * PS_TWO_TITLE is stored per language, and a language with no row of its own
  * reads as `false` rather than an empty string, which core's emptiness test
- * does not count as empty — so the default-title fallback has to be driven by
+ * does not count as empty, so the default-title fallback has to be driven by
  * a string comparison rather than by Tools::isEmpty(). Nothing is stored at
  * install, and the fallback is the translated "Business invoice" (TWO-27107).
  *
