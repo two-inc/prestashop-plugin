@@ -29,6 +29,7 @@ final class ApiKeyVerificationSpec
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
         self::testTheKeyAndEnvironmentSaveAsOnePair();
         self::testThePairEdgeCases();
+        self::testALegacyEnvironmentKeepsItsVerdictThroughAnOutage();
         self::testTheDefinitiveVerdictIgnoresOutages();
         self::testTheKeyFieldRendersEmpty();
         self::testAnUnsendableVendorNameIsRefusedAndTheRestSaves();
@@ -805,6 +806,52 @@ final class ApiKeyVerificationSpec
             if ($absent !== null) {
                 TinyAssert::false(strpos($reported, $absent) !== false, $case . ': must not say "' . $absent . '"');
             }
+        }
+    }
+
+    /**
+     * TWO-27107 review round 2: a shop storing a legacy environment value
+     * ('prod') whose key last verified saves General untouched during an
+     * outage, which normalises the stored value; a second save in the same
+     * outage, with a new key, must still keep the working key. The verdict
+     * slot is read whether it was written before this change (keyed on the
+     * raw value) or after it (keyed on the recognised one).
+     */
+    private static function testALegacyEnvironmentKeepsItsVerdictThroughAnOutage(): void
+    {
+        // [stored environment, how the ok verdict was written, description]
+        $cases = array(
+            array('prod', 'legacy', 'a verdict written under the old raw key survives normalising prod'),
+            array('PROD', 'legacy', 'and under an upper-case value'),
+            array('prod', 'current', 'a verdict written under the recognised key survives too'),
+        );
+        foreach ($cases as list($storedEnv, $written, $case)) {
+            $module = self::module(self::transportOutcome());
+            Configuration::updateValue('PS_TWO_ENVIRONMENT', $storedEnv);
+            if ($written === 'legacy') {
+                Configuration::updateValue(Twopayment::CONFIG_API_KEY_DEFINITIVE, json_encode(array(
+                    'status' => 'ok',
+                    'key_hash' => md5('stored-key|' . strtolower($storedEnv)),
+                )));
+            } else {
+                $module->cacheTwoApiKeyVerificationStatus('stored-key', array('status' => 'ok', 'code' => 200));
+            }
+            TinyAssert::same('ok', $module->getTwoLastDefinitiveApiKeyStatus(), $case . ': read before the save');
+
+            // 1. Untouched save during the outage: the stored value normalises.
+            Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', '');
+            Tools::setTestValue('PS_TWO_ENVIRONMENT', 'production');
+            $module->validateGeneralFormForTest();
+            $module->saveGeneralFormForTest();
+            TinyAssert::same('production', (string) Configuration::get('PS_TWO_ENVIRONMENT'), $case . ': the environment normalises');
+            TinyAssert::same('ok', $module->getTwoLastDefinitiveApiKeyStatus(), $case . ': the verdict is still read after it');
+
+            // 2. A new key during the same outage must not replace the working one.
+            Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'freshly-pasted-key');
+            $module->validateGeneralFormForTest();
+            $module->saveGeneralFormForTest();
+            TinyAssert::same('stored-key', (string) Configuration::get('PS_TWO_MERCHANT_API_KEY'), $case . ': the working key is kept');
+            TinyAssert::true(strpos((string) $module->generalFormWarningForTest(), 'last verified') !== false, $case . ': and the warning says why');
         }
     }
 
