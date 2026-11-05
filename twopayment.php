@@ -21680,12 +21680,22 @@ class Twopayment extends PaymentModule
                 }
                 $normalized = $this->normalizeTwoSurchargeNumber($raw);
                 if ($normalized === null || (float) $normalized < 0) {
-                    $this->errors[] = sprintf(
+                    $cell_error = sprintf(
                         $this->l('%1$s for the %2$d-day term must be a non-negative number, but reads "%3$s".'),
                         $this->getTwoSurchargeFieldLabel($suffix),
                         $days,
                         htmlspecialchars(is_scalar($raw) ? trim((string) $raw) : gettype($raw), ENT_QUOTES, 'UTF-8')
                     );
+                    // The grid is hidden while the method is none, so say how
+                    // to reach the cell (TWO-27107): the admin JS shows it as
+                    // soon as another method is chosen, before any save.
+                    if ($type === 'none') {
+                        $cell_error .= ' ' . sprintf(
+                            $this->l('The grid is hidden while Surcharge method is "%1$s": choose another method to show it, correct the cell, then choose "%1$s" again and save.'),
+                            $this->l('No surcharge applied')
+                        );
+                    }
+                    $this->errors[] = $cell_error;
 
                     continue;
                 }
