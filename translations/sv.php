@@ -654,3 +654,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_8b199f7816b1ab780859db6f56f8a4a0'] 
 $_MODULE['<{twopayment}prestashop>twopayment_0d4f9114464ecfdeaa9775dd606112d2'] = '%1$s-ordern %2$s avbröts inte. %1$s har den som %3$s. En levererad order återbetalas, den avbryts inte.';
 $_MODULE['<{twopayment}prestashop>twopayment_2c2946b79215f95fd5be22cb16a61061'] = '%1$s angav detta skäl: %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_75fb34b9ae267a2552f0842d7516deb4'] = 'Tabellen är dold när Metod för tilläggsavgift är "%1$s": välj en annan metod för att visa den, rätta cellen, välj sedan "%1$s" igen och spara.';
+$_MODULE['<{twopayment}prestashop>twopayment_0d8cec0a3e116933ff40f9065b75e6d6'] = 'Modulen skickade inte begäran om att avbryta ordern (%s).';
+$_MODULE['<{twopayment}prestashop>twopayment_44063c53ed18e5845902b11ce974c944'] = 'Begäran om att avbryta ordern nådde inte fram till %s.';

@@ -654,3 +654,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_8b199f7816b1ab780859db6f56f8a4a0'] 
 $_MODULE['<{twopayment}prestashop>twopayment_0d4f9114464ecfdeaa9775dd606112d2'] = '%1$s-bestelling %2$s is niet geannuleerd. %1$s heeft de status %3$s. Een uitgeleverde bestelling wordt terugbetaald, niet geannuleerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_2c2946b79215f95fd5be22cb16a61061'] = '%1$s gaf deze reden: %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_75fb34b9ae267a2552f0842d7516deb4'] = 'Het raster is verborgen zolang Toeslagmethode op "%1$s" staat: kies een andere methode om het te tonen, corrigeer de cel, kies daarna weer "%1$s" en sla op.';
+$_MODULE['<{twopayment}prestashop>twopayment_0d8cec0a3e116933ff40f9065b75e6d6'] = 'De module heeft de annulering niet verstuurd (%s).';
+$_MODULE['<{twopayment}prestashop>twopayment_44063c53ed18e5845902b11ce974c944'] = 'De annulering kon %s niet bereiken.';

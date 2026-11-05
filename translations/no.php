@@ -654,3 +654,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_8b199f7816b1ab780859db6f56f8a4a0'] 
 $_MODULE['<{twopayment}prestashop>twopayment_0d4f9114464ecfdeaa9775dd606112d2'] = '%1$s-ordre %2$s ble ikke kansellert. %1$s har den som %3$s. En oppfylt ordre refunderes, den kanselleres ikke.';
 $_MODULE['<{twopayment}prestashop>twopayment_2c2946b79215f95fd5be22cb16a61061'] = '%1$s oppga denne grunnen: %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_75fb34b9ae267a2552f0842d7516deb4'] = 'Tabellen er skjult når Metode for tillegg er «%1$s»: velg en annen metode for å vise den, rett cellen, velg «%1$s» igjen og lagre.';
+$_MODULE['<{twopayment}prestashop>twopayment_0d8cec0a3e116933ff40f9065b75e6d6'] = 'Modulen sendte ikke kanselleringen (%s).';
+$_MODULE['<{twopayment}prestashop>twopayment_44063c53ed18e5845902b11ce974c944'] = 'Kanselleringen nådde ikke fram til %s.';
