@@ -5784,9 +5784,19 @@ class Twopayment extends PaymentModule
                         } else {
                             $note = sprintf($this->l('%1$s order %2$s not cancelled. %1$s holds it as %3$s. Save the status again to retry.'), $brand, $two_order_id, $cancel_state);
                         }
-                        $reason = $this->getTwoRequestFailureReason($cancel_response);
-                        if ($reason !== '') {
-                            $note .= ' ' . sprintf($this->l('%1$s gave this reason: %2$s'), $brand, $reason);
+                        // Only an answer from Two is Two's reason: a cancel the
+                        // module did not send, or one that never reached Two,
+                        // says so instead, as the fulfil note does.
+                        $cancel_http = is_array($cancel_response) && isset($cancel_response['http_status']) ? (int) $cancel_response['http_status'] : null;
+                        if ($cancel_http === 0 && !empty($cancel_response['error_code'])) {
+                            $note .= ' ' . sprintf($this->l('The module did not send the cancel (%s).'), (string) $cancel_response['error_code']);
+                        } elseif ($cancel_http === 0) {
+                            $note .= ' ' . sprintf($this->l('The cancel could not reach %s.'), $brand);
+                        } else {
+                            $reason = $this->getTwoRequestFailureReason($cancel_response);
+                            if ($reason !== '') {
+                                $note .= ' ' . sprintf($this->l('%1$s gave this reason: %2$s'), $brand, $reason);
+                            }
                         }
                     }
                     $this->addTwoOrderLifecycleNote($id_order, $note);
