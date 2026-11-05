@@ -647,3 +647,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_afa9885d0e5ddf7384c3c22c4fded4cb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c2437b11cac64a6b5d5f90b794467ada'] = '%1$s: el pedido %2$s no se ha completado: no se ha podido consultar su estado en %1$s. Vuelve a guardar el estado para reintentarlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_011452722aa463fdf3fff1c019b6bebb'] = '%1$s: pedido %2$s completado (%3$s).';
 $_MODULE['<{twopayment}prestashop>twopayment_ec918c5a05b20b4d8a5e0e18ec87cc26'] = '%1$s ha rechazado completar el pedido %2$s: %3$s Vuelve a guardar el estado para reintentarlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_c598d6792001799df05a60f995fbcdd8'] = '%1$s: el pedido %2$s ya está %3$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_4ffe5c667f011ac32051115abb2e1b15'] = '%1$s: el pedido %2$s no se ha completado: el módulo no ha enviado la solicitud (%3$s). Consulta el registro del módulo y vuelve a guardar el estado para reintentarlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_9f1cd934c95b9a7d8a997a538e9b552c'] = '%1$s: el pedido %2$s no se ha completado: no se ha podido conectar con %1$s. Vuelve a guardar el estado para reintentarlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_8b199f7816b1ab780859db6f56f8a4a0'] = '%1$s: el pedido %2$s no se ha completado: %3$s Vuelve a guardar el estado para reintentarlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_0d4f9114464ecfdeaa9775dd606112d2'] = '%1$s: el pedido %2$s no se ha cancelado. %1$s lo tiene como %3$s. Un pedido completado se reembolsa, no se cancela.';
+$_MODULE['<{twopayment}prestashop>twopayment_2c2946b79215f95fd5be22cb16a61061'] = '%1$s dio este motivo: %2$s';
