@@ -4170,12 +4170,24 @@ class Twopayment extends PaymentModule
             }
         }
 
+        // Header names are case-insensitive, so a second row naming one
+        // already used is refused (TWO-27107): only one of the two could be
+        // sent, and the read path keeps the first.
+        $seen_header_names = array();
         foreach ((array) self::readTwoCustomHeaderRowsFromPost() as $row) {
+            $lower_name = strtolower($row['name']);
+            $is_duplicate = isset($seen_header_names[$lower_name]);
+            $seen_header_names[$lower_name] = true;
             if (!self::isValidTwoHeaderName($row['name'])) {
                 $this->errors[] = sprintf($this->l('Custom request headers: "%s" is not a valid header name.'), $row['name']);
             } elseif (self::isReservedTwoHeaderName($row['name'])) {
                 $this->errors[] = sprintf(
                     $this->l('Custom request headers: "%s" is reserved and cannot be overridden. Choose a different header name.'),
+                    $row['name']
+                );
+            } elseif ($is_duplicate) {
+                $this->errors[] = sprintf(
+                    $this->l('Custom request headers: "%s" is already used by another row. Header names are not case-sensitive, so keep one row per name.'),
                     $row['name']
                 );
             } elseif ($row['value'] === '') {
@@ -22515,21 +22527,25 @@ class Twopayment extends PaymentModule
         }
 
         $rows = array();
+        $seen = array();
         foreach ($decoded as $row) {
             if (!is_array($row)) {
                 continue;
             }
             $name = isset($row['name']) ? trim((string) $row['name']) : '';
             $value = isset($row['value']) ? trim((string) $row['value']) : '';
-            // Reserved names are refused at save time; re-checked here so a row
-            // stored before that check existed cannot override what we send.
+            // Reserved names and repeated names are refused at save time;
+            // re-checked here so a row stored before those checks existed
+            // cannot override what we send. The first row of a name wins.
             if ($value === ''
                 || !self::isValidTwoHeaderName($name)
                 || self::isReservedTwoHeaderName($name)
                 || !self::isValidTwoHeaderValue($value)
+                || isset($seen[strtolower($name)])
             ) {
                 continue;
             }
+            $seen[strtolower($name)] = true;
             $rows[] = array(
                 'name' => $name,
                 'value' => $value,

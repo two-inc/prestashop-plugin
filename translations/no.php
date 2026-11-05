@@ -633,3 +633,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_83ddb18c833306739ac336402fa25e10'] 
 $_MODULE['<{twopayment}prestashop>twopayment_432e8554207fde91115c532dc5498e01'] = 'Beløpene er i butikkens standardvaluta, %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] = 'Bedriftsfaktura';
 $_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'Tittelen på betalingsmåten i kassen. La feltet stå tomt for å vise «Bedriftsfaktura» på kundens språk.';
+$_MODULE['<{twopayment}prestashop>twopayment_37d1b80601d968add8df172c715c6ceb'] = 'Egendefinerte forespørselsheadere: "%s" brukes allerede av en annen rad. Headernavn skiller ikke mellom store og små bokstaver, så behold én rad per navn.';

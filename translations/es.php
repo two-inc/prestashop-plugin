@@ -633,3 +633,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_83ddb18c833306739ac336402fa25e10'] 
 $_MODULE['<{twopayment}prestashop>twopayment_432e8554207fde91115c532dc5498e01'] = 'Los importes están en la moneda predeterminada de la tienda, %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] = 'Factura para empresas';
 $_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'El título del método de pago que se muestra al finalizar la compra. Déjalo vacío para mostrar "Factura para empresas" en el idioma del cliente.';
+$_MODULE['<{twopayment}prestashop>twopayment_37d1b80601d968add8df172c715c6ceb'] = 'Cabeceras de solicitud personalizadas: "%s" ya lo usa otra fila. Los nombres de cabecera no distinguen mayúsculas de minúsculas, así que deja una sola fila por nombre.';

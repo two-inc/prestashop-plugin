@@ -633,3 +633,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_83ddb18c833306739ac336402fa25e10'] 
 $_MODULE['<{twopayment}prestashop>twopayment_432e8554207fde91115c532dc5498e01'] = 'Bedragen zijn in de standaardvaluta van je winkel, %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] = 'Zakelijke factuur';
 $_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'De titel van de betaalmethode bij het afrekenen. Laat dit leeg om "Zakelijke factuur" in de taal van de klant te tonen.';
+$_MODULE['<{twopayment}prestashop>twopayment_37d1b80601d968add8df172c715c6ceb'] = 'Aangepaste request-headers: "%s" wordt al door een andere rij gebruikt. Headernamen zijn niet hoofdlettergevoelig, dus houd één rij per naam aan.';
