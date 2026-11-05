@@ -802,13 +802,13 @@ class Twopayment extends PaymentModule
     {
         $installData = array();
         foreach ($this->languages as $language) {
-            $installData['PS_TWO_TITLE'][(int) $language['id_lang']] = 'Business invoice';
-            $installData['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = 'Buy now, pay later - instant credit';
             $installData['PS_TWO_PRODUCT_MESSAGE'][(int) $language['id_lang']] = '';
         }
         Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
-        Configuration::updateValue('PS_TWO_TITLE', $installData['PS_TWO_TITLE']);
-        Configuration::updateValue('PS_TWO_SUB_TITLE', $installData['PS_TWO_SUB_TITLE']);
+        // No title or subtitle is stored at install (TWO-27107): an English
+        // default stored for every language would show English to every
+        // shopper. An empty title shows the translated default title, and an
+        // empty subtitle shows none.
         // TWO-25799: opt-in. OFF by default, so no storefront starts
         // advertising on its product pages after an upgrade. The wording
         // override is a separate key and is empty: empty means "use the
@@ -1783,9 +1783,9 @@ class Twopayment extends PaymentModule
             array(
                 'type' => 'text',
                 'label' => $this->l('Title'),
-                'desc' => $this->l('Enter a title which is appear on checkout page as payment method title.'),
+                'desc' => $this->l('The payment method title shown at checkout. Leave it empty to show "Business invoice" in the shopper\'s language.'),
                 'name' => 'PS_TWO_TITLE',
-                'required' => true,
+                'required' => false,
                 'lang' => true,
             ),
             array(
@@ -2263,12 +2263,6 @@ class Twopayment extends PaymentModule
 
     protected function validTwoCheckoutFieldsFormValues()
     {
-        foreach ($this->languages as $language) {
-            if (Tools::isEmpty(Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']))) {
-                $this->errors[] = $this->l('Enter a title.');
-            }
-        }
-
         $this->validTwoProductMessageEnabledValue();
 
         $this->validTwoProductButtonEnabledValue();
@@ -8308,8 +8302,9 @@ class Twopayment extends PaymentModule
         $title = trim((string) Configuration::get('PS_TWO_TITLE', $this->context->language->id));
         $subtitle = $this->resolveTwoSubtitle();
 
+        // The default title in the shopper's language (TWO-27107).
         if ($title === '') {
-            $title = sprintf($this->l('Pay with %s'), $this->getTwoBrandConfig('product_name'));
+            $title = $this->l('Business invoice');
         }
 
         $optional_fields = $this->getOptionalCheckoutFieldsForDisplay();

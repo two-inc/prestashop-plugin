@@ -13,7 +13,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_cf08ddca9326ba095dbdd77a10b9f121'] 
 $_MODULE['<{twopayment}prestashop>twopayment_e6be41d22edf30b30a6258b4a74b7759'] = '%s - Compra ahora, paga después para empresas';
 $_MODULE['<{twopayment}prestashop>twopayment_365ddeaa3ef71ac6ee684a8d68f0071f'] = 'Este módulo permite a cualquier comerciante aceptar pagos con la pasarela de pago %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Título';
-$_MODULE['<{twopayment}prestashop>twopayment_d34347a5f791b2cecfda204f7a0b575d'] = 'Introduce el título que aparecerá en la página de pago como nombre del método de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_c301872a4d91b5473cc74208e3f853bd'] = 'Subtítulo opcional que se muestra debajo del título en la página de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Introduce tu clave API proporcionada por %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Entorno';
@@ -25,7 +24,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_539de410a9a131c0e925dc8e248a29d2'] 
 $_MODULE['<{twopayment}prestashop>twopayment_34d4c5b4f293f3953b9f1cea4ada6a1d'] = 'Selecciona los términos de pago que deseas ofrecer. Los términos estándar se calculan desde la fecha de cumplimiento.';
 $_MODULE['<{twopayment}prestashop>twopayment_de68657d5c597fa395ed600a61c98178'] = 'Selecciona los términos de pago que deseas ofrecer. Los términos EOM (Fin de Mes) se calculan desde el final del mes en que se cumple el pedido, más los días seleccionados. Solo están disponibles términos de 30, 45 y 60 días para EOM.';
 $_MODULE['<{twopayment}prestashop>twopayment_c9cc8cce247e49bae79f15173ce97354'] = 'Guardar';
-$_MODULE['<{twopayment}prestashop>twopayment_12a62151fbf8218ddf2165d1f23821cd'] = 'Introduce un título.';
 $_MODULE['<{twopayment}prestashop>twopayment_cd7cc8b6d9b6160db0e405bc2207b5fb'] = 'Introduce una clave API.';
 $_MODULE['<{twopayment}prestashop>twopayment_1924a6cb5a7ce6a33e93620792fea964'] = 'Debes seleccionar al menos un plazo de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_85925e31c13734f285ce48920c8120b9'] = 'La configuración general se ha actualizado.';
@@ -157,7 +155,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_06e96958c3ac68d916db7da58cdbb5c9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c012e2a8b9e129403f8b93547086500a'] = 'Demasiado corto';
 $_MODULE['<{twopayment}prestashop>twopayment_b2df7887a34999a0fee743420750a9ec'] = 'Demasiado largo';
 $_MODULE['<{twopayment}prestashop>twopayment_c050bd52ad0af81cf819fbcf2863357f'] = 'El teléfono debe coincidir con el país seleccionado';
-$_MODULE['<{twopayment}prestashop>twopayment_35895cff7df70dab18783453e2bd241f'] = 'Pagar con %s';
 $_MODULE['<{twopayment}prestashop>twopayment_7e13e4b7dc934c4f24deede7949d856b'] = 'Reembolso completo emitido desde PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_ea9cf7e47ff33b2be14e6dd07cbcefc6'] = 'Envío';
 $_MODULE['<{twopayment}prestashop>twopayment_2b4ef6e3a316295ab176b9dae7ef46b6'] = 'Coste de envío del pedido';
@@ -636,3 +633,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'No reconocido: se está usando el entorno de pruebas. Selecciona un entorno y guarda.';
 $_MODULE['<{twopayment}prestashop>twopayment_83ddb18c833306739ac336402fa25e10'] = 'El plazo de pago que elegiste no está disponible. Elige otro plazo.';
 $_MODULE['<{twopayment}prestashop>twopayment_432e8554207fde91115c532dc5498e01'] = 'Los importes están en la moneda predeterminada de la tienda, %s.';
+$_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] = 'Factura para empresas';
+$_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'El título del método de pago que se muestra al finalizar la compra. Déjalo vacío para mostrar "Factura para empresas" en el idioma del cliente.';

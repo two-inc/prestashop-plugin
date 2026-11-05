@@ -9,7 +9,7 @@ declare(strict_types=1);
  * the template escapes it, so nothing typed into it becomes markup or a link,
  * and a blank field shows no subtitle at all.
  *
- * The title is a separate field; the save table checks it alongside.
+ * The title is a separate field, optional too: empty shows the default title.
  */
 final class CheckoutSubtitleSpec
 {
@@ -43,7 +43,7 @@ final class CheckoutSubtitleSpec
         }
 
         $cases = [
-            ['PS_TWO_TITLE', true, 'the title is mandatory'],
+            ['PS_TWO_TITLE', false, 'the title is optional: empty shows the default title'],
             ['PS_TWO_SUB_TITLE', false, 'the subtitle is optional'],
         ];
 
@@ -87,7 +87,7 @@ final class CheckoutSubtitleSpec
             ['Pay by invoice', 'Pay later, interest free', '', 'Pay later, interest free', 'a filled subtitle saves unchanged'],
             ['Pay by invoice', '', '', '', 'a cleared subtitle saves as an empty row'],
             ['Pay by invoice', '   ', '', '   ', 'whitespace saves verbatim; the tile trims it away at render'],
-            ['', 'Pay later, interest free', 'Enter a title.', null, 'the title is still mandatory, so the form saves nothing'],
+            ['', 'Pay later, interest free', '', 'Pay later, interest free', 'an empty title no longer blocks the save'],
             ['Pay by invoice', "Don't wait & save", '', "Don't wait & save", 'an apostrophe and an ampersand save as typed'],
             [
                 'Pay by invoice',

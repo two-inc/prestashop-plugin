@@ -108,7 +108,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_11503989a3f470d727d38a6054896940'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3d114d4ced72fd97d0f0abf4e4117777'] = 'Firmaet kan ha nådd kredittgrensen sin eller ikke bestått %ss kredittvurdering';
 $_MODULE['<{twopayment}prestashop>twopayment_1243daf593fa297e07ab03bf06d925af'] = 'Søker ...';
 $_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] = 'Maksbeløpet gjelder hele gebyret: prosentsatsen og det faste beløpet til sammen, ikke bare prosentsatsen. La feltet stå tomt for ingen grense.';
-$_MODULE['<{twopayment}prestashop>twopayment_12a62151fbf8218ddf2165d1f23821cd'] = 'Skriv inn en tittel.';
 $_MODULE['<{twopayment}prestashop>twopayment_12dbe8e446cc6067de4c47a0f3f6d78d'] = 'Ordrereferansen fra betalingsleverandøren mangler for dette forsøket.';
 $_MODULE['<{twopayment}prestashop>twopayment_4bd9ef088a14b5f6fd9ef86e6f33037f'] = 'Trenger du hjelp?';
 $_MODULE['<{twopayment}prestashop>twopayment_144b4dc20a476a4588ff5f481283cfc6'] = 'Adressen som er oppgitt er ugyldig. Gå tilbake og kontroller opplysningene i fakturaadressen din.';
@@ -314,7 +313,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_b4d559d50e616b7eb46089c0734d1b1c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b4e549c7d1dbcd350dffb942b6e35e37'] = 'Commit:';
 $_MODULE['<{twopayment}prestashop>twopayment_777444672172a872fbe496f2f0599660'] = 'Betal om %s dager';
 $_MODULE['<{twopayment}prestashop>twopayment_65112567dfe66bf4a6a4ae4ef0710d89'] = 'Betal om %s dager fra slutten av måneden';
-$_MODULE['<{twopayment}prestashop>twopayment_35895cff7df70dab18783453e2bd241f'] = 'Betal med %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b5f41647401f7d6a7aa511cbd9aa5ecf'] = 'Sporingsnummeret kunne ikke videresendes til fakturaleverandøren; fakturaen sendes uten det.';
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Tittel';
 $_MODULE['<{twopayment}prestashop>twopayment_b7e84545a616108ac9b4496b15a60966'] = 'Kunden må oppgi det offisielt registrerte firmanavnet sitt';
@@ -355,7 +353,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_cf08ddca9326ba095dbdd77a10b9f121'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] = 'Betalingen er godkjent! Velg betalingsvilkår nedenfor.';
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Noen av opplysningene som er oppgitt er ugyldige. Kontroller opplysningene i fakturaadressen din og prøv igjen.';
 $_MODULE['<{twopayment}prestashop>twopayment_d32e67e619603fc5368d087716b1afb4'] = 'Firmaopplysningene som er oppgitt er ugyldige. Gå tilbake til fakturaadressen og søk opp firmanavnet ditt for å velge et gyldig firma.';
-$_MODULE['<{twopayment}prestashop>twopayment_d34347a5f791b2cecfda204f7a0b575d'] = 'Skriv inn en tittel som vises i utsjekken som tittel for betalingsmåten.';
 $_MODULE['<{twopayment}prestashop>twopayment_d40f2c2b7a99b454ace5554f91e54c8c'] = 'Fast beløp og prosent';
 $_MODULE['<{twopayment}prestashop>twopayment_e6be41d22edf30b30a6258b4a74b7759'] = '%s – BNPL for bedrifter';
 $_MODULE['<{twopayment}prestashop>twopayment_d4b644ceb41c3a19d874ee330ac45f97'] = 'Ingen avrunding';
@@ -636,3 +633,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'Ikke gjenkjent: Sandbox brukes. Velg et miljø og lagre.';
 $_MODULE['<{twopayment}prestashop>twopayment_83ddb18c833306739ac336402fa25e10'] = 'Betalingsfristen du valgte er ikke tilgjengelig. Velg en annen frist.';
 $_MODULE['<{twopayment}prestashop>twopayment_432e8554207fde91115c532dc5498e01'] = 'Beløpene er i butikkens standardvaluta, %s.';
+$_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] = 'Bedriftsfaktura';
+$_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'Tittelen på betalingsmåten i kassen. La feltet stå tomt for å vise «Bedriftsfaktura» på kundens språk.';
