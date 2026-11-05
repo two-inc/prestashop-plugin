@@ -27,7 +27,8 @@
  * The `surcharge_*` scenarios put the Default shipping tax code at 21% under the
  * "No tax" carrier's shipping with the buyer fee on: the fee's cart line is
  * written, and create and update send that fee, only when a handler owns the
- * shipping line's check.
+ * shipping line's check. `surcharge_create` makes the fee product in the request that then prices the cart
+ * (TWO-26280).
  *
  * One process per scenario, for the same per-request caches reason as
  * default-shipping-tax-code.php. Requires dev/ci/install-order-postprocessing-fixture.sh.
@@ -463,6 +464,10 @@ function oppRunScenario($name, &$detail)
     $module = new OppProbeTwopayment();
     $checks = array();
     $currency = new Currency((int) $cart->id_currency);
+
+    if ($name === 'surcharge_create') {
+        return oppSurchargeCreateChecks($module, $cart);
+    }
 
     if ($name === 'refund_resplit') {
         // A credit slip refunding the "No tax" carrier's 29.00: the README subscriber re-splits its untaxed share at 21%.
@@ -1005,6 +1010,47 @@ function oppSurchargeChecks(OppProbeTwopayment $module, $handled, Cart $cart, Or
 }
 
 /**
+ * TWO-26280: the request that creates the hidden buyer fee product, as the buyer's fee sync or the self-heal at order
+ * create does, then prices a carrier cart it has not priced yet. Deletes the product the probe made, recreates it in
+ * this process with an employee set (making it records a stock movement), and asserts the shop context is as it was
+ * and the cart keeps its carrier, its 29.00 of shipping and its shipping line, as the `unhandled` scenario sends it.
+ *
+ * @return array<int,array{0:mixed,1:mixed,2:string}>
+ */
+function oppSurchargeCreateChecks(OppProbeTwopayment $module, Cart $cart)
+{
+    $checks = array();
+    $retired = Configuration::get(Twopayment::CONFIG_SURCHARGE_RETIRED_PRODUCT_IDS);
+    Context::getContext()->employee = new Employee((int) Db::getInstance()->getValue('SELECT MIN(id_employee) FROM `' . _DB_PREFIX_ . 'employee`'));
+    $old = $module->getTwoSurchargeCartProductId(false);
+    if ($old > 0) {
+        (new Product($old))->delete();
+    }
+    try {
+        $before = array(Shop::getContext(), Shop::getContextShopID());
+        $created = $module->getTwoSurchargeCartProductId(true);
+        $checks[] = array($created > 0 && $created !== $old, true, 'the fee product is created in this request');
+        $checks[] = array(array(Shop::getContext(), Shop::getContextShopID()), $before, 'the shop context is as it was');
+        $carrier = (int) Configuration::get('TWO_OPP_TEST_ID_CARRIER');
+        $checks[] = array($cart->getDeliveryOption(), array((int) $cart->id_address_delivery => $carrier . ','), 'the cart keeps its carrier');
+        $checks[] = array(round((float) $cart->getOrderTotal(true, Cart::ONLY_SHIPPING), 2), 29.0, 'the cart keeps its shipping');
+        $error = null;
+        $payload = null;
+        try {
+            $payload = $module->getTwoNewOrderData('opp-surcharge-create', $cart, oppMerchantUrls());
+        } catch (Exception $e) {
+            $error = get_class($e) . ': ' . $e->getMessage();
+        }
+        $built = is_array($payload) ? array($payload['net_amount'], $payload['tax_amount'], $payload['gross_amount'], oppLine($payload, 'SHIPPING_FEE')) : $error;
+        $checks[] = array($built, array('129.00', '21.00', '150.00', array('29.00', '0.00', '29.00')), 'the create sends the shipping line');
+    } finally {
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_RETIRED_PRODUCT_IDS, $retired === false ? '' : (string) $retired);
+    }
+
+    return $checks;
+}
+
+/**
  * TWO-26274: the README's outside-carrier handler sends the same lines on an order create and on the update of the
  * order placed from that cart. The probe's own cart gets 29.00 outside any carrier on top of its carrier shipping,
  * which is untaxed (the "No tax" carrier), taxed (the carrier at the 21% group) or none (free shipping), and its
@@ -1257,7 +1303,7 @@ oppSeed();
 Context::getContext()->employee = new Employee((int) Db::getInstance()->getValue('SELECT MIN(id_employee) FROM `' . _DB_PREFIX_ . 'employee`'));
 Module::getInstanceByName('twopayment')->getTwoSurchargeCartProductId(true);
 $exit = 0;
-$scenario_names = array('unhandled', 'unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'no_lines', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match', 'outside_carrier_parity_untaxed', 'outside_carrier_parity_taxed', 'outside_carrier_parity_none', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit', 'surcharge_unhandled', 'surcharge_resplit', 'trace');
+$scenario_names = array('unhandled', 'unarmed', 'context_rate', 'paths', 'resplit', 'gross_change', 'off_by_cent', 'stale_totals', 'stale_subtotals', 'no_lines', 'outside_carrier_line', 'outside_carrier_line_checked', 'outside_carrier_shop_match', 'outside_carrier_parity_untaxed', 'outside_carrier_parity_taxed', 'outside_carrier_parity_none', 'throws', 'throws_prod', 'non_array', 'body_on_cancel', 'relay', 'refund_resplit', 'surcharge_unhandled', 'surcharge_resplit', 'trace', 'surcharge_create');
 // The carrier-less fixture injects through actionFilterDeliveryOptionList, which core only fires from 8.0.
 if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
     $scenario_names[] = 'carrierless';
@@ -1268,7 +1314,7 @@ if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
 $fixture = Module::getInstanceByName('twoorderpostprocessingtest');
 try {
     foreach ($scenario_names as $scenario_name) {
-        in_array($scenario_name, array('unhandled', 'surcharge_unhandled'), true) ? $fixture->disable() : $fixture->enable();
+        in_array($scenario_name, array('unhandled', 'surcharge_unhandled', 'surcharge_create'), true) ? $fixture->disable() : $fixture->enable();
         $status = 0;
         passthru(escapeshellarg(PHP_BINARY) . ' -d memory_limit=512M ' . escapeshellarg(__FILE__) . ' ' . escapeshellarg($scenario_name), $status);
         $exit = $status !== 0 ? 1 : $exit;

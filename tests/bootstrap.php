@@ -330,6 +330,8 @@ namespace {
         public static array $specificPrices = [];
         /** @var array<int,array> StockAvailable writes by product id */
         public static array $stock = [];
+        /** Run by StockAvailable::setQuantity() after its write: PrestaShop 8 can leave the shop context at all shops there (TWO-26280). */
+        public static ?Closure $onSetQuantity = null;
         /** @var array<int,array> Taxes by id */
         public static array $taxes = [];
         /** @var array<int,array> Tax rules groups by id */
@@ -475,6 +477,7 @@ namespace {
             self::$products = [];
             self::$specificPrices = [];
             self::$stock = [];
+            self::$onSetQuantity = null;
             self::$taxes = [];
             self::$taxRulesGroups = [];
             self::$taxRules = [];
@@ -1459,6 +1462,9 @@ namespace {
         public static function setQuantity($idProduct, $idProductAttribute, $quantity, $idShop = null): void
         {
             StubStore::$stock[(int) $idProduct]['quantity'] = (int) $quantity;
+            if (StubStore::$onSetQuantity !== null) {
+                (StubStore::$onSetQuantity)();
+            }
         }
 
         public static function setProductOutOfStock($idProduct, $outOfStock = false, $idShop = null, $idProductAttribute = 0): void
