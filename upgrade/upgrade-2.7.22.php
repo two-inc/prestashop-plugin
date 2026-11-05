@@ -11,13 +11,15 @@
  * nothing, so it cannot weaken the check, and failing the upgrade over it
  * would only stop the module upgrading.
  *
- * It also clears a stored checkout title or subtitle that is still exactly
- * the English text earlier versions stored in every language at install
- * (TWO-27107). Nothing is stored at install any more: an empty title shows
- * the default title in the shopper's language, and an empty subtitle shows
- * none. A value the merchant edited, in any language, is left alone. Every
- * shop tier is read from the configuration table, as upgrade 2.7.8 does,
- * and only rows that exist are touched.
+ * It also clears a stored checkout title that is still exactly one of the
+ * English titles earlier versions stored in every language at install
+ * (TWO-27107): "Business invoice", and "Business invoice 30 days" before
+ * that. Nothing is stored at install any more, and an empty title shows the
+ * default title in the shopper's language. The subtitle is left alone: an
+ * empty subtitle shows none, so clearing it would remove it from every
+ * untouched shop. A title the merchant edited, in any language, stays.
+ * Every shop tier is read from the configuration table, as upgrade 2.7.8
+ * does, and only rows that exist are touched.
  *
  * @author Plugin Developer from Two <jgang@two.inc> <support@two.inc>
  * @copyright Since 2021 Two Team
@@ -33,8 +35,7 @@ function upgrade_module_2_7_22($object)
     Configuration::deleteByName('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK');
 
     $installDefaults = array(
-        'PS_TWO_TITLE' => 'Business invoice',
-        'PS_TWO_SUB_TITLE' => 'Buy now, pay later - instant credit',
+        'PS_TWO_TITLE' => array('Business invoice', 'Business invoice 30 days'),
     );
     $languages = Language::getLanguages(false);
     foreach ($installDefaults as $key => $english) {
@@ -57,7 +58,7 @@ function upgrade_module_2_7_22($object)
             foreach ($languages as $language) {
                 $idLang = (int) $language['id_lang'];
                 if (!Configuration::hasKey($key, $idLang, $group, $shop)
-                    || (string) Configuration::get($key, $idLang, $group, $shop) !== $english
+                    || !in_array((string) Configuration::get($key, $idLang, $group, $shop), $english, true)
                 ) {
                     continue;
                 }

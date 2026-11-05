@@ -22,7 +22,7 @@ final class CheckoutTitleSpec
     {
         self::testRendersTheConfiguredTitle();
         self::testDefaultTitleIsTranslatedNotStored();
-        self::testUpgrade2722ClearsOnlyTheUntouchedEnglishDefaults();
+        self::testUpgrade2722ClearsOnlyTheUntouchedEnglishTitle();
     }
 
     private static function moduleWithTitle($title): object
@@ -49,7 +49,7 @@ final class CheckoutTitleSpec
     {
         $cases = [
             ['Business invoice', 'Business invoice', 'the configured title is rendered verbatim, with no term length appended'],
-            ['Business invoice 30 days', 'Business invoice 30 days', 'a merchant who wants a day count in the title keeps it'],
+            ['Business invoice, 60 days', 'Business invoice, 60 days', 'a merchant who wants a day count in the title keeps it'],
             ['Faktura & "kredit" <30 dagar>', 'Faktura & "kredit" <30 dagar>', 'quotes, ampersands and angle brackets reach core unescaped and unaltered'],
             ['Rabatt 5% på faktura', 'Rabatt 5% på faktura', 'a literal percent is not read as a format placeholder'],
             ['', 'Business invoice', 'an empty title falls back to the default title'],
@@ -94,42 +94,63 @@ final class CheckoutTitleSpec
     }
 
     /**
-     * TWO-27107: upgrade 2.7.22 clears a title or subtitle still holding the
-     * English text earlier installs stored in every language, so those shops
-     * get the per-language default. Anything the merchant edited stays.
+     * TWO-27107: upgrade 2.7.22 clears a title still holding one of the
+     * English titles earlier installs stored in every language, on every
+     * shop tier, so those shops get the per-language default. A title the
+     * merchant edited stays, and the subtitle is never touched (blank shows
+     * none). Running it twice changes nothing more.
      */
-    private static function testUpgrade2722ClearsOnlyTheUntouchedEnglishDefaults(): void
+    private static function testUpgrade2722ClearsOnlyTheUntouchedEnglishTitle(): void
     {
         require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.22.php';
-        $title = 'Business invoice';
-        $subtitle = 'Buy now, pay later - instant credit';
-        // [stored per language [id_lang => [title, subtitle]] (null = no row),
-        //  expected after, description]
+        $sub = 'Buy now, pay later - instant credit';
+        // [multistore, global tier [id_lang => [title, subtitle]] (null = no row),
+        //  shop 3's own tier [id_lang => title] (null = no row), expected global,
+        //  expected shop 3, description]
         $cases = [
-            [[1 => [$title, $subtitle], 2 => [$title, $subtitle]], [1 => ['', ''], 2 => ['', '']], 'untouched defaults are cleared in every language'],
-            [[1 => ['Pay by invoice', $subtitle], 2 => [$title, 'Betala senare']], [1 => ['Pay by invoice', ''], 2 => ['', 'Betala senare']], 'an edited value stays, per language and per field'],
-            [[1 => ['Business invoice 30 days', $subtitle . '!'], 2 => [$title, $subtitle]], [1 => ['Business invoice 30 days', $subtitle . '!'], 2 => ['', '']], 'only an exact match is a default'],
-            [[1 => [null, null], 2 => [$title, null]], [1 => [null, null], 2 => ['', null]], 'a language with no row gets none'],
+            [false, [1 => ['Business invoice', $sub], 2 => ['Business invoice', $sub]], [], [1 => ['', $sub], 2 => ['', $sub]], [], 'the current default title is cleared and the subtitle kept'],
+            [false, [1 => ['Business invoice 30 days', $sub], 2 => ['Business invoice', $sub]], [], [1 => ['', $sub], 2 => ['', $sub]], [], 'the older default title is cleared too'],
+            [false, [1 => ['Pay by invoice', $sub], 2 => ['Business invoice', 'Betala senare']], [], [1 => ['Pay by invoice', $sub], 2 => ['', 'Betala senare']], [], 'an edited title stays, per language'],
+            [false, [1 => ['Business invoice, 60 days', null], 2 => ['business invoice', null]], [], [1 => ['Business invoice, 60 days', null], 2 => ['business invoice', null]], [], 'only an exact match is a default'],
+            [false, [1 => [null, null], 2 => ['Business invoice', null]], [], [1 => [null, null], 2 => ['', null]], [], 'a language with no row gets none'],
+            [true, [1 => ['Pay by invoice', $sub], 2 => ['Business invoice', $sub]], [1 => 'Business invoice 30 days', 2 => 'Faktura'], [1 => ['Pay by invoice', $sub], 2 => ['', $sub]], [1 => '', 2 => 'Faktura'], 'a shop tier is cleared on its own terms under multistore'],
         ];
-        foreach ($cases as [$stored, $expected, $description]) {
-            StubStore::reset();
-            StubStore::$languages = [['id_lang' => 1, 'iso_code' => 'en'], ['id_lang' => 2, 'iso_code' => 'sv']];
-            foreach ($stored as $idLang => [$t, $st]) {
-                if ($t !== null) {
-                    StubStore::$configurationLang[$idLang]['PS_TWO_TITLE'] = $t;
+        foreach ($cases as [$multistore, $global, $shopTier, $expectedGlobal, $expectedShop, $description]) {
+            foreach ([1, 2] as $run) {
+                if ($run === 1) {
+                    StubStore::reset();
+                    StubStore::$languages = [['id_lang' => 1, 'iso_code' => 'en'], ['id_lang' => 2, 'iso_code' => 'sv']];
+                    StubStore::$multistore = $multistore;
+                    foreach ($global as $idLang => [$t, $st]) {
+                        if ($t !== null) {
+                            StubStore::$configurationLang[$idLang]['PS_TWO_TITLE'] = $t;
+                        }
+                        if ($st !== null) {
+                            StubStore::$configurationLang[$idLang]['PS_TWO_SUB_TITLE'] = $st;
+                        }
+                    }
+                    if ($shopTier !== []) {
+                        // The shop's own configuration row, which the tier query finds.
+                        StubStore::$shops[3] = 1;
+                        StubStore::$configurationShop[3]['PS_TWO_TITLE'] = '';
+                        foreach ($shopTier as $idLang => $t) {
+                            StubStore::$configurationLangShop[3][$idLang]['PS_TWO_TITLE'] = $t;
+                        }
+                    }
                 }
-                if ($st !== null) {
-                    StubStore::$configurationLang[$idLang]['PS_TWO_SUB_TITLE'] = $st;
+                $label = $description . ($run === 2 ? ' (rerun)' : '');
+                TinyAssert::true(upgrade_module_2_7_22(new TwopaymentTestHarness()), $label . ': the upgrade succeeds');
+                foreach ($expectedGlobal as $idLang => [$t, $st]) {
+                    foreach (['PS_TWO_TITLE' => $t, 'PS_TWO_SUB_TITLE' => $st] as $key => $want) {
+                        TinyAssert::same(
+                            $want,
+                            Configuration::hasKey($key, $idLang) ? (string) Configuration::get($key, $idLang) : null,
+                            $label . ': ' . $key . ' for language ' . $idLang
+                        );
+                    }
                 }
-            }
-            TinyAssert::true(upgrade_module_2_7_22(new TwopaymentTestHarness()), $description . ': the upgrade succeeds');
-            foreach ($expected as $idLang => [$t, $st]) {
-                foreach (['PS_TWO_TITLE' => $t, 'PS_TWO_SUB_TITLE' => $st] as $key => $want) {
-                    TinyAssert::same(
-                        $want,
-                        Configuration::hasKey($key, $idLang) ? (string) Configuration::get($key, $idLang) : null,
-                        $description . ': ' . $key . ' for language ' . $idLang
-                    );
+                foreach ($expectedShop as $idLang => $want) {
+                    TinyAssert::same($want, (string) Configuration::get('PS_TWO_TITLE', $idLang, null, 3), $label . ': shop 3 title for language ' . $idLang);
                 }
             }
         }
