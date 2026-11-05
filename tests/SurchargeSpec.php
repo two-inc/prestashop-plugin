@@ -2148,6 +2148,12 @@ final class SurchargeSpec
             TinyAssert::count(count($expectedErrors), $errors, $description . ' (got: ' . implode(' | ', $errors) . ')');
             foreach ($expectedErrors as $index => $fragment) {
                 TinyAssert::true(strpos($errors[$index], $fragment) !== false, $description);
+                // The grid is hidden under none, so the error says how to reach it.
+                TinyAssert::same(
+                    $method === 'none',
+                    strpos($errors[$index], 'The grid is hidden while Surcharge method is "No surcharge applied"') !== false,
+                    $description . ': the how-to-reach hint shows only while the grid is hidden'
+                );
             }
         }
         Tools::resetTestValues();

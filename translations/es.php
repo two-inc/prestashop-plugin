@@ -653,3 +653,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_9f1cd934c95b9a7d8a997a538e9b552c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8b199f7816b1ab780859db6f56f8a4a0'] = '%1$s: el pedido %2$s no se ha completado: %3$s Vuelve a guardar el estado para reintentarlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_0d4f9114464ecfdeaa9775dd606112d2'] = '%1$s: el pedido %2$s no se ha cancelado. %1$s lo tiene como %3$s. Un pedido completado se reembolsa, no se cancela.';
 $_MODULE['<{twopayment}prestashop>twopayment_2c2946b79215f95fd5be22cb16a61061'] = '%1$s dio este motivo: %2$s';
+$_MODULE['<{twopayment}prestashop>twopayment_75fb34b9ae267a2552f0842d7516deb4'] = 'La tabla está oculta mientras Método de recargo es "%1$s": elige otro método para mostrarla, corrige la celda, vuelve a elegir "%1$s" y guarda.';
