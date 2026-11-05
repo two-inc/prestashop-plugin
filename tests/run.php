@@ -5921,6 +5921,7 @@ require __DIR__ . '/ValidateTaxSubtotalsSpec.php';
 require __DIR__ . '/CompanySearchLocationConfigSpec.php';
 require __DIR__ . '/CompanySearchLocationKeyMigrationSpec.php';
 require __DIR__ . '/SkipConfirmTokenKeyMigrationSpec.php';
+require __DIR__ . '/OrderLifecycleNoteSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
 require __DIR__ . '/IntentApprovedNoticeSpec.php';
 require __DIR__ . '/BrandTokenSpec.php';
@@ -6014,6 +6015,7 @@ $tests = [
     'CompanySearchLocationConfigSpec::runAll' => [CompanySearchLocationConfigSpec::class, 'runAll'],
     'CompanySearchLocationKeyMigrationSpec::runAll' => [CompanySearchLocationKeyMigrationSpec::class, 'runAll'],
     'SkipConfirmTokenKeyMigrationSpec::runAll' => [SkipConfirmTokenKeyMigrationSpec::class, 'runAll'],
+    'OrderLifecycleNoteSpec::runAll' => [OrderLifecycleNoteSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
     'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
     'BrandTokenSpec::runAll' => [BrandTokenSpec::class, 'runAll'],

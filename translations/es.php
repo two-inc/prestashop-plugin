@@ -639,3 +639,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_ee45d770bca608d9a85a9a627ba465b9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4505fd7f018c6ef8236eeb47e873906a'] = 'La clave API solo puede contener caracteres imprimibles, sin espacios ni saltos de línea. Se han mantenido la clave y el entorno guardados anteriormente.';
 $_MODULE['<{twopayment}prestashop>twopayment_a167006b4be75840d43ff233483db4da'] = 'Se han mantenido la clave y el entorno guardados anteriormente.';
 $_MODULE['<{twopayment}prestashop>twopayment_967457a1ea18764652eea4bd2a4a9183'] = 'Se han mantenido la clave y el entorno guardados anteriormente, porque fueron los últimos verificados y los nuevos no se han podido comprobar. Vuelve a guardar cuando la comprobación funcione.';
+$_MODULE['<{twopayment}prestashop>twopayment_37731aac59421dd07842103e04d236eb'] = '%1$s: el pedido %2$s ya está cancelado.';
+$_MODULE['<{twopayment}prestashop>twopayment_a1041e9fd9f513bcaea2cb1b5454aa52'] = '%1$s: pedido %2$s cancelado.';
+$_MODULE['<{twopayment}prestashop>twopayment_8aa56687782c5cdd74720be2c10f7065'] = '%1$s: el pedido %2$s no se ha cancelado y no se ha podido consultar su estado en %1$s. Vuelve a guardar el estado para reintentarlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_d6d18686a029c9f3cbf6bf0d7465221d'] = '%1$s: el pedido %2$s no se ha cancelado. %1$s lo tiene como %3$s. Vuelve a guardar el estado para reintentarlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_afa9885d0e5ddf7384c3c22c4fded4cb'] = '%1$s tiene el pedido %2$s como %3$s, así que no se ha completado.';
+$_MODULE['<{twopayment}prestashop>twopayment_c2437b11cac64a6b5d5f90b794467ada'] = '%1$s: el pedido %2$s no se ha completado: no se ha podido consultar su estado en %1$s. Vuelve a guardar el estado para reintentarlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_011452722aa463fdf3fff1c019b6bebb'] = '%1$s: pedido %2$s completado (%3$s).';
+$_MODULE['<{twopayment}prestashop>twopayment_ec918c5a05b20b4d8a5e0e18ec87cc26'] = '%1$s ha rechazado completar el pedido %2$s: %3$s Vuelve a guardar el estado para reintentarlo.';
