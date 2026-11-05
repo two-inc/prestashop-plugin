@@ -1031,17 +1031,11 @@ class TwopaymentOrderintentModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * DEBUG ESCAPE HATCH (TWO-25386): PS_TWO_SKIP_CONFIRM_TOKEN_CHECK, when
-     * enabled, skips this token check entirely on every action on this
-     * controller. Default OFF - matches the pre-existing always-checked
-     * behaviour.
+     * The token check runs on every action on this controller, with no switch
+     * to skip it (TWO-27107).
      */
     public function validateAjaxToken()
     {
-        if ($this->module->isTwoSkipConfirmTokenCheckEnabled()) {
-            return true;
-        }
-
         $token = Tools::getValue('token');
         if (empty($token)) {
             return false;

@@ -416,7 +416,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_86fd11dde72d89b72fa81284611b7faa'] 
 $_MODULE['<{twopayment}prestashop>twopayment_e1459bb98511cce5d23cd0776fccabcf'] = 'Als je JA kiest, roept het afrekenen %1$s aan om de ordergoedkeuring vooraf te bekijken voordat de koper de betaling indient, en toont het resultaat in de betaaltegel. Als je NEE kiest, wordt deze vooraf-aanroep overgeslagen - de koper doorloopt nog steeds de echte goedkeuringscontrole van %1$s bij het indienen van de betaling.';
 $_MODULE['<{twopayment}prestashop>twopayment_b225a7c34ad4043b83b1c54322112056'] = '-- Automatisch (aanbevolen) --';
 $_MODULE['<{twopayment}prestashop>twopayment_991986a40e760b716f318af6b58acc1e'] = 'Optioneel. Een lager nummer toont %s eerder tussen de betaalmethoden die bij het afrekenen worden aangeboden. Laat leeg om de eigen volgorde van PrestaShop (Betaling > Voorkeuren) te gebruiken.';
-$_MODULE['<{twopayment}prestashop>twopayment_b0aeeee23a0905fde43980eebe726ee7'] = 'WAARSCHUWING: ALLEEN VOOR DEBUGGEN. Bij JA wordt de CSRF-achtige tokencontrole van de order-intent-controller overgeslagen. Schakel dit nooit in op een live productiewinkel.';
 $_MODULE['<{twopayment}prestashop>twopayment_7c5014deb8a0afa34ddda803c470e3ad'] = 'Instellingen wissen bij verwijderen';
 $_MODULE['<{twopayment}prestashop>twopayment_280e233eb42005b2916f8f53327c9fe2'] = 'Als je JA kiest, verwijdert het verwijderen van deze module al zijn opgeslagen instellingen (API-sleutel, termijnen, toeslagconfiguratie, enz.). Als je NEE kiest, blijven de instellingen bewaard, zodat een latere herinstallatie verdergaat waar je was gebleven.';
 $_MODULE['<{twopayment}prestashop>twopayment_2365f9d6614b9f34f41e33f1f46329b2'] = 'Foutenlogboek';
@@ -471,7 +470,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_b71c1fc70853defd937483989b0193e4'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1209b4672407cabf760e430e4def42aa'] = 'Bedrijfszoekopdracht';
 $_MODULE['<{twopayment}prestashop>twopayment_003770b5e9bcb9eec50073ca81931e60'] = 'Foutopsporingslogboek inschakelen';
 $_MODULE['<{twopayment}prestashop>twopayment_3951ed94b8135c04c46595f35b62b120'] = 'SSL-verificatie uitschakelen';
-$_MODULE['<{twopayment}prestashop>twopayment_ca9cc321260fe768fa26533f1dbf2949'] = 'Gebruikersvalidatie bij orderbevestiging overslaan';
 $_MODULE['<{twopayment}prestashop>twopayment_5fc3e9e97cedfc13cb70e6a4b92107a5'] = 'Toeslagmethode';
 $_MODULE['<{twopayment}prestashop>configuration_20b5fb4a29eee650e5632baf935b9baf'] = 'API-sleutel controleren…';
 $_MODULE['<{twopayment}prestashop>configuration_edc77959424216f03ffb88d76a1842c8'] = 'API-sleutel geverifieerd';
