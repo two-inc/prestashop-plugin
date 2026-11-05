@@ -19,6 +19,23 @@
 
 ---
 
+## [2026-11-05] No Portal Links, So No Portal Override (TWO-27107)
+
+**Context**: This plugin alone linked to Two's merchant and buyer portals, from the admin order
+panel and tab, the buyer's order pages and the configuration page, with a per-environment host map
+for each and a dev-mode `TWO_PORTAL_BASE_URL` override. No other plugin has the links.
+**Decision**: Removed the links, both host maps, their getters and `TWO_PORTAL_BASE_URL`. The dev
+overrides left are `TWO_API_BASE_URL` and `TWO_CHECKOUT_BASE_URL`, the names the Magento plugin
+uses, both behind `_PS_MODE_DEV_` through the one shared gate. Text telling a merchant to act in
+the portal stays.
+**Alternatives Considered**: adding the links to every other plugin; keeping them here as an
+exception, which nothing about the platform forces.
+**Rationale**: Parity across the plugins, and no one to QA the links today.
+**Consequences**: Merchants lose the one-click "view on portal" link and buyers the buyer-portal
+link. The 2026-08-14 entry below describes three overrides; two remain.
+
+---
+
 ## [2026-10-23] Environment Options Match The Other Plugins (TWO-26604)
 
 **Context**: PrestaShop hid Sandbox from merchants, while WooCommerce and Magento offer Production and Sandbox. The unreleased 2.7.8 upgrade rewrote the released default `development` (always sandbox hosts) away from sandbox, which would have moved live merchants onto a different API.
@@ -150,6 +167,9 @@ state; the merchant portal is the authority for that.
 ---
 
 ## [2026-08-14] All Three Service URLs Are Independently Dev-Overridable Through One Shared Gate
+
+> Superseded in part (2026-11-05, TWO-27107): `TWO_PORTAL_BASE_URL` and the portal host map are
+> removed; the gate and the other two overrides are unchanged.
 
 **Context**: The plugin talks to three Two services - the checkout API, the merchant portal and
 the hosted checkout-page app that serves the sole-trader signup. Two of them already honoured a
