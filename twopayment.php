@@ -1647,6 +1647,11 @@ class Twopayment extends PaymentModule
         $posted = trim((string) Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
         $apiKey = $posted === '' ? $storedKey : $posted;
         $env = (string) Tools::getValue('PS_TWO_ENVIRONMENT');
+        // Recognised, not raw: a legacy stored 'prod' is the same environment
+        // as a submitted 'production', so it is not a new pair.
+        $recognisedEnv = self::recogniseTwoEnvironment($env);
+        $sameEnvironment = $recognisedEnv !== null
+            && $recognisedEnv === self::recogniseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'));
         $this->credentialsKey = $apiKey;
         $this->credentialsOutcome = null;
         if ($this->environmentRefused) {
@@ -1670,8 +1675,7 @@ class Twopayment extends PaymentModule
             // Published only for the STORED key and environment, which the slot
             // is keyed to: a verdict about a dropdown the shop has not moved to
             // yet would take Two off a healthy checkout.
-            if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
-                && (string) $env === (string) Configuration::get('PS_TWO_ENVIRONMENT')) {
+            if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY') && $sameEnvironment) {
                 $this->cacheTwoApiKeyVerificationStatus($apiKey, $verify);
             }
             if ($verify['status'] !== self::API_KEY_STATUS_OK) {
@@ -1680,7 +1684,7 @@ class Twopayment extends PaymentModule
                 // Never blocking, a rejection included: refusing the save
                 // discards the values submitted beside the key.
                 $this->apiKeyVerificationWarning = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
-                $unchangedPair = $apiKey === $storedKey && $env === (string) Configuration::get('PS_TWO_ENVIRONMENT');
+                $unchangedPair = $apiKey === $storedKey && $sameEnvironment;
                 if ($verify['status'] === self::API_KEY_STATUS_INVALID) {
                     $this->credentialsOutcome = self::CREDENTIALS_KEPT_REJECTED;
                     $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key and environment were kept.');
