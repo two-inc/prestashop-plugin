@@ -5,6 +5,28 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.22] - Unreleased
+
+### Changed
+- **The API key and environment are saved as one pair, or not at all** (TWO-27107). A key is only good against the environment it was issued for. A key Two rejects, a malformed key, a refused environment, and a key Two could not check while the saved pair last verified all keep the saved key and environment; every other General setting still saves, and the warning says what happened. The last definitive verdict about the saved pair is kept apart from the status an outage overwrites (`PS_TWO_API_KEY_DEFINITIVE`). A rejected or kept pair no longer clears the saved key's verified flag.
+- **The API key field is always empty** (TWO-27107). The saved key is never sent back to the browser; a note says when one is saved, and leaving the field empty keeps it.
+- **The checkout subtitle is plain text with no link** (TWO-27107). PrestaShop strips tags from the field when it is saved, and the template escapes whatever is stored, so the subtitle never renders markup or a link; the save no longer refuses markup, since core removes it. This supersedes the 2.7.21 subtitle sanitiser and the brand's FAQ link fallback (`checkout_subtitle_faq_url`), both removed. A blank subtitle shows none.
+- **No English title or subtitle is stored at install** (TWO-27107). An empty title shows "Business invoice" from the module's translations, in the shopper's language, and may now be left empty on save. Upgrade 2.7.22 clears a title that is still exactly one of the English titles earlier versions stored at install ("Business invoice", and "Business invoice 30 days" before it), in every language and on every shop tier, so existing shops get the per-language default title too; a title the merchant edited stays. A stored subtitle is never cleared, since an empty one shows none.
+- **Fulfil and cancel outcomes are noted on the order** (TWO-27107). Each one a status change sends leaves a private message on the order as well as the module log line: done, refused with Two's reason, not sent because of the state Two holds the order in, or not sent because Two could not be asked.
+- **The surcharge grid names its currency**: the shop's default currency, shown with the grid (TWO-27107).
+- **The tooltips switch sits below the optional checkout field switches** it refers to (TWO-27107).
+- The `.env.local` developer layer is gone: `start-proxy.sh` reads its frp settings from `.env` (TWO-27107).
+
+### Removed
+- **The merchant and buyer portal links** (TWO-27107): on the admin order panel and tab, the buyer's order detail and payment return pages and the configuration page, with the per-environment portal host maps and the developer-only `TWO_PORTAL_BASE_URL` override. Text that tells a merchant to act in the portal is unchanged.
+- **The switch that skipped the order-intent token check** (TWO-27107). The check always runs; upgrade 2.7.22 deletes `PS_TWO_SKIP_CONFIRM_TOKEN_CHECK`.
+
+### Fixed
+- **Surcharge grid cells are checked whatever the surcharge method** (TWO-27107). A non-numeric or negative value typed while the method is none was stored, and became a live fee when the method was switched on.
+- **A second custom header row with a name already used is refused** (TWO-27107), matched case-insensitively; on read the first row of a name wins.
+- **The vendor name is checked on save** (TWO-27107): printable ASCII, at most 255 characters, since it is sent as a header. A refused name keeps the saved one and the other settings still save; it is checked again where it is sent.
+- Three admin help texts: "API key" capitalised, the title help reworded, and the fulfilment status help's bracket closed (TWO-27107).
+
 ## [2.7.21] - Unreleased
 
 ### Added

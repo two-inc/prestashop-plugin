@@ -5,17 +5,12 @@ declare(strict_types=1);
 /**
  * The checkout tile's subtitle.
  *
- * The field is optional and per-language: a merchant who clears it gets an
- * empty stored row for every language, and the tile then falls back to the
- * brand's tagline - a translated sentence carrying a "read more" link to the
- * brand's 'checkout_subtitle_faq_url'. A brand declaring no such URL renders
- * no subtitle element at all.
+ * The field is optional and per-language, and it is plain text (TWO-27107):
+ * core strips tags when the field is saved, and the template escapes whatever
+ * is stored, so nothing in it becomes markup or a link,
+ * and a blank field shows no subtitle at all.
  *
- * Whatever reaches the template is sanitised by TwoAnchorOnlyHtml
- * (TwoAnchorOnlyHtmlSpec), since the template emits it unescaped.
- *
- * The title is a separate field and is still mandatory; the last row of the
- * save table exists so relaxing the subtitle cannot quietly relax it too.
+ * The title is a separate field, optional too: empty shows the default title.
  */
 final class CheckoutSubtitleSpec
 {
@@ -24,8 +19,10 @@ final class CheckoutSubtitleSpec
     public static function runAll(): void
     {
         self::testFieldRequiredness();
-        self::testAdminSaveRejectsWhatTheTileWouldStrip();
-        self::testTileSubtitleFallsBackToTheBrandTagline();
+        self::testAdminSaveStoresTheSubtitleAsTyped();
+        self::testTileSubtitleIsThePlainStoredText();
+        self::testTemplateEscapesTheSubtitle();
+        self::testTooltipsSwitchFollowsTheOptionalFields();
     }
 
     /**
@@ -48,7 +45,7 @@ final class CheckoutSubtitleSpec
         }
 
         $cases = [
-            ['PS_TWO_TITLE', true, 'the title is mandatory'],
+            ['PS_TWO_TITLE', false, 'the title is optional: empty shows the default title'],
             ['PS_TWO_SUB_TITLE', false, 'the subtitle is optional'],
         ];
 
@@ -83,51 +80,27 @@ final class CheckoutSubtitleSpec
     }
 
     /**
-     * Given a subtitle the escaper would rewrite; When the merchant saves;
-     * Then the save is refused with a message naming the rendered form,
-     * rather than the copy vanishing silently at checkout.
+     * Given any subtitle; When the merchant saves; Then the module stores it
+     * without refusing it. On a real shop core's Configuration::updateValue()
+     * strips tags on the way in; the stub here does not, so the rows below
+     * check only that the module itself refuses nothing.
      */
-    private static function testAdminSaveRejectsWhatTheTileWouldStrip(): void
+    private static function testAdminSaveStoresTheSubtitleAsTyped(): void
     {
-        $rejection = 'Subtitle accepts plain text and a single link only; "%s" would be shown as "%s".';
-
         $cases = [
             ['Pay by invoice', 'Pay later, interest free', '', 'Pay later, interest free', 'a filled subtitle saves unchanged'],
             ['Pay by invoice', '', '', '', 'a cleared subtitle saves as an empty row'],
             ['Pay by invoice', '   ', '', '   ', 'whitespace saves verbatim; the tile trims it away at render'],
-            ['', 'Pay later, interest free', 'Enter a title.', null, 'the title is still mandatory, so the form saves nothing'],
-            [
-                'Pay by invoice',
-                "Don't wait & save",
-                '',
-                "Don't wait & save",
-                'an apostrophe and an ampersand are plain text, not markup to reject',
-            ],
+            ['', 'Pay later, interest free', '', 'Pay later, interest free', 'an empty title no longer blocks the save'],
+            ['Pay by invoice', "Don't wait & save", '', "Don't wait & save", 'an apostrophe and an ampersand save as typed'],
             [
                 'Pay by invoice',
                 '<a href="https://faq.example.test/x">read more</a>',
                 '',
                 '<a href="https://faq.example.test/x">read more</a>',
-                'the one link the tile allows saves unchanged',
+                'a link is not refused by the module',
             ],
-            [
-                'Pay by invoice',
-                '<b>Pay</b> later',
-                sprintf($rejection, '&lt;b&gt;Pay&lt;/b&gt; later', 'Pay later'),
-                null,
-                'a dropped tag is refused, and nothing is stored',
-            ],
-            [
-                'Pay by invoice',
-                '<a href="https://faq.example.test/x" onclick="steal()">read more</a>',
-                sprintf(
-                    $rejection,
-                    '&lt;a href=&quot;https://faq.example.test/x&quot; onclick=&quot;steal()&quot;&gt;read more&lt;/a&gt;',
-                    '&lt;a href=&quot;https://faq.example.test/x&quot;&gt;read more&lt;/a&gt;'
-                ),
-                null,
-                'a link stripped of an attribute is refused rather than quietly rewritten',
-            ],
+            ['Pay by invoice', '<b>Pay</b> later', '', '<b>Pay</b> later', 'markup is no longer refused by the module'],
         ];
 
         foreach ($cases as list($title, $subtitle, $expectedError, $expectedStored, $description)) {
@@ -171,33 +144,19 @@ final class CheckoutSubtitleSpec
         }
     }
 
-    private static function testTileSubtitleFallsBackToTheBrandTagline(): void
+    private static function testTileSubtitleIsThePlainStoredText(): void
     {
-        $faqUrl = 'https://brand.example/faq';
-        $tagline = 'For all companies, <a href="' . $faqUrl . '" target="_blank" rel="noopener">read more</a>.';
-
-        // [stored subtitle, brand FAQ URL, tagline translation (null = shipped), assigned subtitle, why].
+        // [stored subtitle, assigned subtitle, why].
         $cases = [
-            ['Pay later, interest free', $faqUrl, null, 'Pay later, interest free', 'a stored subtitle wins over the brand tagline'],
-            ['0', $faqUrl, null, '0', 'a subtitle of "0" is content, not emptiness'],
-            ['', $faqUrl, null, $tagline, 'an empty subtitle falls back to the brand tagline'],
-            ['   ', $faqUrl, null, $tagline, 'a whitespace-only subtitle is emptiness and falls back too'],
-            [null, $faqUrl, null, $tagline, 'a language with no subtitle row at all falls back'],
-            ['', null, null, '', 'a brand with no FAQ URL renders no subtitle element'],
-            ['', 'javascript:alert(1)', null, '', 'a rejected URL is the same as none, never a dead sentence'],
-            ['Pay later', null, null, 'Pay later', 'the merchant field is unaffected by the brand having no URL'],
-            ['<b>Pay</b> later', $faqUrl, null, 'Pay later', 'merchant markup is reduced to what the escaper allows'],
-            ['<b> </b>', $faqUrl, null, $tagline, 'copy whose only content is markup the escaper drops is emptiness too'],
-            [
-                '',
-                $faqUrl,
-                'For all companies, %1$sread more%2$s.<img src=x onerror=alert(1)>',
-                $tagline,
-                'a translation is copy like any other: markup in it reaches the page only through the escaper',
-            ],
+            ['Pay later, interest free', 'Pay later, interest free', 'a stored subtitle is shown'],
+            ['0', '0', 'a subtitle of "0" is content, not emptiness'],
+            ['', '', 'an empty subtitle shows none'],
+            ['   ', '', 'a whitespace-only subtitle shows none'],
+            [null, '', 'a language with no subtitle row at all shows none'],
+            ['<a href="https://x.test">read more</a>', '<a href="https://x.test">read more</a>', 'a stored value with markup (an import) is handed over for the template to escape'],
         ];
 
-        foreach ($cases as list($stored, $brandUrl, $translated, $expected, $description)) {
+        foreach ($cases as list($stored, $expected, $description)) {
             self::reset();
             StubStore::$languages = self::LANGUAGES;
             if ($stored !== null) {
@@ -205,53 +164,39 @@ final class CheckoutSubtitleSpec
             }
             StubStore::$configurationLang[2]['PS_TWO_SUB_TITLE'] = 'Another language';
 
-            $module = self::moduleWithSubtitleFaqUrl($brandUrl, $translated);
+            $module = new TwopaymentTestHarness();
             $module->_path = '/modules/twopayment/';
 
             TinyAssert::same($expected, $module->exposeTwoPaymentOptionAssigned('subtitle'), $description);
         }
     }
 
-    /**
-     * @param mixed $declared the brand's 'checkout_subtitle_faq_url'
-     * @param string|null $translated stands in for the tagline's translated
-     *                    sentence, null to use the shipped one
-     */
-    private static function moduleWithSubtitleFaqUrl($declared, $translated = null): object
+    /** The template is the escaping boundary, so it must escape the subtitle and never emit it raw. */
+    private static function testTemplateEscapesTheSubtitle(): void
     {
-        return new class ($declared, $translated) extends TwopaymentTestHarness {
-            /** @var mixed */
-            private $declared;
+        $template = (string) file_get_contents(dirname(__DIR__) . '/views/templates/hook/paymentinfo.tpl');
+        TinyAssert::true(strpos($template, "{\$subtitle|escape:'html':'UTF-8'}") !== false, 'the subtitle is escaped as HTML');
+        TinyAssert::false((bool) preg_match('/\$subtitle[^}]*nofilter/', $template), 'the subtitle is never emitted unescaped');
+    }
 
-            /** @var string|null */
-            private $translated;
-
-            /**
-             * @param mixed $declared
-             * @param string|null $translated
-             */
-            public function __construct($declared, $translated = null)
-            {
-                parent::__construct();
-                $this->declared = $declared;
-                $this->translated = $translated;
-            }
-
-            public function getTwoBrandConfig($key)
-            {
-                return $key === 'checkout_subtitle_faq_url'
-                    ? $this->declared
-                    : parent::getTwoBrandConfig($key);
-            }
-
-            public function l($string)
-            {
-                if ($this->translated !== null && strpos($string, 'For all companies,') === 0) {
-                    return $this->translated;
-                }
-
-                return parent::l($string);
-            }
-        };
+    /**
+     * TWO-27107: the tooltips switch's help speaks of "the optional checkout
+     * fields above", so it sits after the four field switches.
+     */
+    private static function testTooltipsSwitchFollowsTheOptionalFields(): void
+    {
+        self::reset();
+        StubStore::$languages = self::LANGUAGES;
+        $form = (new ReflectionMethod(Twopayment::class, 'getTwoCheckoutFieldsForm'))->invoke(new TwopaymentTestHarness());
+        $names = array_values(array_filter(array_map(static function ($input) {
+            return $input['name'] ?? null;
+        }, $form['form']['input'])));
+        $expected = ['PS_TWO_ENABLE_INVOICE_EMAIL', 'PS_TWO_ENABLE_PO_NUMBER', 'PS_TWO_ENABLE_PROJECT', 'PS_TWO_ENABLE_DEPARTMENT', 'PS_TWO_DISPLAY_TOOLTIPS'];
+        $positions = array_map(static function ($name) use ($names) {
+            return array_search($name, $names, true);
+        }, $expected);
+        $sorted = $positions;
+        sort($sorted);
+        TinyAssert::same($sorted, $positions, 'field switches then tooltips, got: ' . implode(', ', $names));
     }
 }

@@ -111,7 +111,8 @@ final class OrderBuilderSpec
         self::testIsTwoAttemptCallbackAuthorizedWithMatchingKey();
         self::testIsTwoAttemptCallbackAuthorizedFallsBackToContextCustomerKeyWhenRequestKeyMissing();
         self::testIsTwoAttemptCallbackAuthorizedRejectsMismatchedKeys();
-        self::testGetTwoBuyerPortalUrlUsesEnvironmentSpecificBuyerDomains();
+        self::testNoPortalLinksAreRendered();
+        self::testAdminHelpTextTypos();
         self::testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId();
         self::testResolveTwoAttemptOrderIdForCancellationFallsBackToCartOrderId();
         self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
@@ -4200,21 +4201,40 @@ final class OrderBuilderSpec
         TinyAssert::false($module->isTwoAttemptCallbackAuthorized($attempt, '', 41, 'secure-key-42'));
     }
 
-    private static function testGetTwoBuyerPortalUrlUsesEnvironmentSpecificBuyerDomains(): void
+    /** TWO-27107: the admin help text carries none of the old typos. */
+    private static function testAdminHelpTextTypos(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        // [typo, corrected, description]
+        $cases = [
+            ['which is appear on checkout page', 'The payment method title shown at checkout.', 'title help grammar'],
+            ['Enter your api key', 'Enter your API key', 'API key casing'],
+            ['(Hold Ctrl/Cmd to select multiple. Default', '(hold Ctrl/Cmd to select multiple). Default', 'fulfilment help bracket closed'],
+        ];
+        foreach ($cases as [$typo, $corrected, $description]) {
+            TinyAssert::false(strpos($source, $typo) !== false, $description . ': typo still present');
+            TinyAssert::true(strpos($source, $corrected) !== false, $description . ': corrected text missing');
+        }
+    }
 
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'production');
-        TinyAssert::same('https://buyer.two.inc/login', $module->getTwoBuyerPortalUrl());
-
-        // Any unmapped value (the removed 'development', or anything else not
-        // in BUYER_PORTAL_HOSTS) falls back to sandbox - TWO-25455.
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'not-a-real-environment');
-        TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
-
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
-        TinyAssert::same('https://buyer.staging.two.inc/login', $module->getTwoBuyerPortalUrl());
+    /**
+     * TWO-27107: no plugin links to the merchant or buyer portal, so this one
+     * does not either. The getters are gone and no template is handed a
+     * portal URL.
+     */
+    private static function testNoPortalLinksAreRendered(): void
+    {
+        foreach (['getTwoPortalUrl', 'getTwoBuyerPortalUrl'] as $method) {
+            TinyAssert::false(method_exists('Twopayment', $method), $method . ' must not exist');
+        }
+        $root = dirname(__DIR__);
+        $files = array_merge(glob($root . '/views/templates/hook/*.tpl'), glob($root . '/views/templates/front/*.tpl') ?: [], [$root . '/twopayment.php']);
+        foreach ($files as $file) {
+            TinyAssert::false(
+                (bool) preg_match('/two_(buyer_)?portal_url|PORTAL_HOSTS|TWO_PORTAL_BASE_URL/', (string) file_get_contents($file)),
+                basename($file) . ' must not carry a portal link'
+            );
+        }
     }
 
     private static function testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId(): void
@@ -5901,6 +5921,7 @@ require __DIR__ . '/ValidateTaxSubtotalsSpec.php';
 require __DIR__ . '/CompanySearchLocationConfigSpec.php';
 require __DIR__ . '/CompanySearchLocationKeyMigrationSpec.php';
 require __DIR__ . '/SkipConfirmTokenKeyMigrationSpec.php';
+require __DIR__ . '/OrderLifecycleNoteSpec.php';
 require __DIR__ . '/OrgNumberPreVerificationSpec.php';
 require __DIR__ . '/IntentApprovedNoticeSpec.php';
 require __DIR__ . '/BrandTokenSpec.php';
@@ -5921,7 +5942,6 @@ require __DIR__ . '/CheckoutTitleSpec.php';
 require __DIR__ . '/CheckoutSubtitleSpec.php';
 require __DIR__ . '/ProductPromoMessageSpec.php';
 require __DIR__ . '/ProductButtonSpec.php';
-require __DIR__ . '/TwoAnchorOnlyHtmlSpec.php';
 require __DIR__ . '/ConfigFallbackSpec.php';
 require __DIR__ . '/TranslationCatalogueSpec.php';
 require __DIR__ . '/CompanyRefusalMessageSpec.php';
@@ -5995,6 +6015,7 @@ $tests = [
     'CompanySearchLocationConfigSpec::runAll' => [CompanySearchLocationConfigSpec::class, 'runAll'],
     'CompanySearchLocationKeyMigrationSpec::runAll' => [CompanySearchLocationKeyMigrationSpec::class, 'runAll'],
     'SkipConfirmTokenKeyMigrationSpec::runAll' => [SkipConfirmTokenKeyMigrationSpec::class, 'runAll'],
+    'OrderLifecycleNoteSpec::runAll' => [OrderLifecycleNoteSpec::class, 'runAll'],
     'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
     'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
     'BrandTokenSpec::runAll' => [BrandTokenSpec::class, 'runAll'],
@@ -6015,7 +6036,6 @@ $tests = [
     'CheckoutSubtitleSpec::runAll' => [CheckoutSubtitleSpec::class, 'runAll'],
     'ProductPromoMessageSpec::runAll' => [ProductPromoMessageSpec::class, 'runAll'],
     'ProductButtonSpec::runAll' => [ProductButtonSpec::class, 'runAll'],
-    'TwoAnchorOnlyHtmlSpec::runAll' => [TwoAnchorOnlyHtmlSpec::class, 'runAll'],
     'PaymentTileAboutControlSpec::runAll' => [PaymentTileAboutControlSpec::class, 'runAll'],
     'PaymentOptionLogoSpec::runAll' => [PaymentOptionLogoSpec::class, 'runAll'],
     'DiscrepancySnapshotSpec::runAll' => [DiscrepancySnapshotSpec::class, 'runAll'],

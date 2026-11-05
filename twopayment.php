@@ -18,7 +18,6 @@ require_once dirname(__FILE__) . '/classes/TwoCheckoutAmountException.php';
 require_once dirname(__FILE__) . '/classes/TwoSurchargeMethodException.php';
 require_once dirname(__FILE__) . '/classes/TwoRateLimiter.php';
 require_once dirname(__FILE__) . '/classes/TwoStoredTerm.php';
-require_once dirname(__FILE__) . '/classes/TwoAnchorOnlyHtml.php';
 require_once dirname(__FILE__) . '/classes/TwoShippingTaxFallbackGate.php';
 require_once dirname(__FILE__) . '/classes/TwoDiscrepancySnapshot.php';
 require_once dirname(__FILE__) . '/classes/TwoPostcodeFormat.php';
@@ -209,6 +208,23 @@ class Twopayment extends PaymentModule
     // merchant-facing notice stays silent for it, because "still asking" is not
     // a diagnosis.
     const API_KEY_STATUS_VERIFYING = 'verifying';
+
+    /**
+     * The last DEFINITIVE verdict (ok or invalid_key) for the stored key and
+     * environment, kept apart from CONFIG_API_KEY_STATUS, which an outage
+     * overwrites (TWO-27107). A save reads it to decide whether a key Two
+     * could not judge may replace the stored one.
+     */
+    const CONFIG_API_KEY_DEFINITIVE = 'PS_TWO_API_KEY_DEFINITIVE';
+
+    /** General-save outcomes for the API key and environment pair (TWO-27107). */
+    const CREDENTIALS_SAVED = 'saved';
+    const CREDENTIALS_SAVED_UNVERIFIED = 'saved_unverified';
+    const CREDENTIALS_MISSING = 'missing';
+    const CREDENTIALS_KEPT_MALFORMED = 'kept_malformed';
+    const CREDENTIALS_KEPT_REJECTED = 'kept_rejected';
+    const CREDENTIALS_KEPT_UNVERIFIED = 'kept_unverified';
+    const CREDENTIALS_KEPT_ENVIRONMENT = 'kept_environment';
 
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
@@ -513,7 +529,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.21';
+        $this->version = '2.7.22';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -568,19 +584,6 @@ class Twopayment extends PaymentModule
             return true;
         }
         return ((int) $value) === 1;
-    }
-
-    /**
-     * Effective value of the "skip confirm-order token check" debug toggle
-     * (TWO-25386, PS_TWO_SKIP_CONFIRM_TOKEN_CHECK). Default OFF - see
-     * isTwoOrderIntentPreviewEnabled() for why this is a method rather than a
-     * direct property read.
-     *
-     * @return bool
-     */
-    public function isTwoSkipConfirmTokenCheckEnabled()
-    {
-        return ((int) Configuration::get('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK')) === 1;
     }
 
     /**
@@ -803,13 +806,13 @@ class Twopayment extends PaymentModule
     {
         $installData = array();
         foreach ($this->languages as $language) {
-            $installData['PS_TWO_TITLE'][(int) $language['id_lang']] = 'Business invoice';
-            $installData['PS_TWO_SUB_TITLE'][(int) $language['id_lang']] = 'Buy now, pay later - instant credit';
             $installData['PS_TWO_PRODUCT_MESSAGE'][(int) $language['id_lang']] = '';
         }
         Configuration::updateValue('PS_TWO_TAB_VALUE', 1);
-        Configuration::updateValue('PS_TWO_TITLE', $installData['PS_TWO_TITLE']);
-        Configuration::updateValue('PS_TWO_SUB_TITLE', $installData['PS_TWO_SUB_TITLE']);
+        // No title or subtitle is stored at install (TWO-27107): an English
+        // default stored for every language would show English to every
+        // shopper. An empty title shows the translated default title, and an
+        // empty subtitle shows none.
         // TWO-25799: opt-in. OFF by default, so no storefront starts
         // advertising on its product pages after an upgrade. The wording
         // override is a separate key and is empty: empty means "use the
@@ -1135,6 +1138,7 @@ class Twopayment extends PaymentModule
         // behind belongs to a key this shop no longer has.
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS);
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS_TS);
+        Configuration::deleteByName(self::CONFIG_API_KEY_DEFINITIVE);
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS');
         // Pre-2.7.6 name of the same setting (TWO-40). A one-release cleanup
@@ -1273,6 +1277,9 @@ class Twopayment extends PaymentModule
                 }
                 if ($this->environmentRefused) {
                     $this->output .= $this->displayError($this->l('Select a valid environment.'));
+                }
+                if ($this->vendorNameRefused) {
+                    $this->output .= $this->displayError($this->l('Enter a vendor name of at most 255 characters, without line breaks or accented letters: it is sent with each request as a header. The previously saved vendor name was kept.'));
                 }
             } else {
                 foreach ($this->errors as $err) {
@@ -1501,6 +1508,7 @@ class Twopayment extends PaymentModule
 
     protected function getTwoGeneralForm()
     {
+        $keySaved = trim((string) Configuration::get('PS_TWO_MERCHANT_API_KEY')) !== '';
         $fields_form = array(
             'form' => array(
                 'legend' => array(
@@ -1520,15 +1528,19 @@ class Twopayment extends PaymentModule
                             'name' => 'name'
                         )
                     ),
+                    // Always rendered empty (TWO-27107): the stored key never
+                    // goes back to the browser. Required only while none is
+                    // stored, since an empty submission keeps the stored key.
                     array(
                         'type' => 'password',
                         'label' => $this->l('API key'),
                         'name' => 'PS_TWO_MERCHANT_API_KEY',
-                        'required' => true,
-                        'desc' => sprintf($this->l('Enter your api key which is provided by %s.'), $this->getTwoBrandConfig('product_name')),
+                        'required' => $keySaved === false,
+                        'desc' => sprintf($this->l('Enter your API key which is provided by %s.'), $this->getTwoBrandConfig('product_name'))
+                            . ($keySaved ? ' ' . $this->l('A key is saved. Leave this field empty to keep it.') : ''),
                     ),
-                    // Multi-site vendor/site name (TWO-25386). Free text, no
-                    // validation - only meaningful for merchants running Two
+                    // Multi-site vendor/site name (TWO-25386). Printable ASCII,
+                    // at most 255 characters (TWO-27107) - only meaningful for merchants running Two
                     // across more than one site/vendor identity. Sent as the
                     // X-Vendor-Name request header, never shown to buyers.
                     // Empty is the normal single-site state and is never sent.
@@ -1595,8 +1607,13 @@ class Twopayment extends PaymentModule
     {
         $fields_values = array();
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
-        $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
-        $fields_values['PS_TWO_VENDOR_NAME'] = Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
+        // Never sent back to the browser (TWO-27107): the field always renders
+        // empty, and an empty submission keeps the stored key.
+        $fields_values['PS_TWO_MERCHANT_API_KEY'] = '';
+        // A refused vendor name was not stored, so the form shows the stored one.
+        $fields_values['PS_TWO_VENDOR_NAME'] = $this->vendorNameRefused
+            ? Configuration::get('PS_TWO_VENDOR_NAME')
+            : Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
         // A refused environment was not stored, so the form shows the stored one,
         // as the environment it resolves to: a legacy value matches no option and
         // would otherwise show, and save, as Production.
@@ -1609,23 +1626,46 @@ class Twopayment extends PaymentModule
 
     protected function validTwoGeneralFormValues()
     {
-        if (Tools::isEmpty(Tools::getValue('PS_TWO_MERCHANT_API_KEY'))) {
-            $this->errors[] = $this->l('Enter an API key.');
-        }
-        
         // Validate environment
         // Refused field by field, as the WooCommerce and Magento plugins do
-        // (TWO-26604): the stored environment stays, every other field saves,
-        // and the key is verified against the environment that will be stored.
+        // (TWO-26604): the stored environment stays and every other field
+        // saves. The API key stays with it, as its pair (TWO-27107).
         $this->environmentRefused = !self::isTwoEnvironmentSaveAllowed(
             Tools::getValue('PS_TWO_ENVIRONMENT'),
             Configuration::get('PS_TWO_ENVIRONMENT')
         );
+
+        // Refused field by field too (TWO-27107): it is sent as a header
+        // value, so it must be printable ASCII. Empty means none is sent.
+        $vendor = trim((string) Tools::getValue('PS_TWO_VENDOR_NAME'));
+        $this->vendorNameRefused = $vendor !== '' && !self::isSendableTwoVendorName($vendor);
         
-        // Verify API key with Two against selected environment and capture merchant id and short name
-        $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
-        $env = $this->getTwoEnvironmentToSave();
-        if (!empty($apiKey)) {
+        // The API key and environment are one pair (TWO-27107): a key is only
+        // good against the environment it was issued for, so they are stored
+        // together or not at all. An empty key field keeps the stored key.
+        $storedKey = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        $posted = trim((string) Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
+        $apiKey = $posted === '' ? $storedKey : $posted;
+        $env = (string) Tools::getValue('PS_TWO_ENVIRONMENT');
+        // Recognised, not raw: a legacy stored 'prod' is the same environment
+        // as a submitted 'production', so it is not a new pair.
+        $recognisedEnv = self::recogniseTwoEnvironment($env);
+        $sameEnvironment = $recognisedEnv !== null
+            && $recognisedEnv === self::recogniseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'));
+        $this->credentialsKey = $apiKey;
+        $this->credentialsOutcome = null;
+        if ($this->environmentRefused) {
+            $this->credentialsOutcome = self::CREDENTIALS_KEPT_ENVIRONMENT;
+            $this->apiKeyVerificationWarning = $this->l('The API key was not changed either: it is saved together with its environment.');
+        } elseif ($apiKey === '') {
+            // Nothing stored and nothing typed: no key to protect, so the
+            // environment still saves.
+            $this->credentialsOutcome = self::CREDENTIALS_MISSING;
+            $this->apiKeyVerificationWarning = $this->l('Enter an API key.');
+        } elseif (!self::isWellFormedTwoApiKey($apiKey)) {
+            $this->credentialsOutcome = self::CREDENTIALS_KEPT_MALFORMED;
+            $this->apiKeyVerificationWarning = $this->l('The API key may only contain printable characters, with no spaces or line breaks. The previously saved key and environment were kept.');
+        } else {
             $verify = $this->verifyTwoApiKey($apiKey, $env);
             // Held for the SAVE to publish, not published here (TWO-25326).
             // Validation can still fail on an unrelated field - an empty title,
@@ -1635,8 +1675,7 @@ class Twopayment extends PaymentModule
             // Published only for the STORED key and environment, which the slot
             // is keyed to: a verdict about a dropdown the shop has not moved to
             // yet would take Two off a healthy checkout.
-            if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY')
-                && (string) $env === (string) Configuration::get('PS_TWO_ENVIRONMENT')) {
+            if ((string) $apiKey === (string) Configuration::get('PS_TWO_MERCHANT_API_KEY') && $sameEnvironment) {
                 $this->cacheTwoApiKeyVerificationStatus($apiKey, $verify);
             }
             if ($verify['status'] !== self::API_KEY_STATUS_OK) {
@@ -1645,10 +1684,24 @@ class Twopayment extends PaymentModule
                 // Never blocking, a rejection included: refusing the save
                 // discards the values submitted beside the key.
                 $this->apiKeyVerificationWarning = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
+                $unchangedPair = $apiKey === $storedKey && $sameEnvironment;
                 if ($verify['status'] === self::API_KEY_STATUS_INVALID) {
-                    $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key was kept.');
+                    $this->credentialsOutcome = self::CREDENTIALS_KEPT_REJECTED;
+                    $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key and environment were kept.');
+                } elseif (!$unchangedPair
+                    && $storedKey !== ''
+                    && $this->getTwoLastDefinitiveApiKeyStatus() === self::API_KEY_STATUS_OK
+                ) {
+                    // A key Two could not judge never replaces one whose last
+                    // definitive answer was ok: an outage must not swap a
+                    // working checkout for an unchecked key.
+                    $this->credentialsOutcome = self::CREDENTIALS_KEPT_UNVERIFIED;
+                    $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key and environment were kept, because they last verified and the new ones could not be checked. Save again once the check succeeds.');
+                } else {
+                    $this->credentialsOutcome = self::CREDENTIALS_SAVED_UNVERIFIED;
                 }
             } else {
+                $this->credentialsOutcome = self::CREDENTIALS_SAVED;
                 // An 'ok' verdict guarantees an id; a short name is optional,
                 // and an empty one withholds Two at checkout on its own.
                 $body = $verify['body'];
@@ -1658,23 +1711,45 @@ class Twopayment extends PaymentModule
         }
     }
 
-    /** The submitted environment, or the stored one when the submission was refused (TWO-26604). */
-    protected function getTwoEnvironmentToSave()
+    /**
+     * Whether the credential pair this save judged is written: a verified or
+     * unverifiable-but-unprotected pair, or a missing key (whose environment
+     * still saves). Rejected, malformed, kept-unverified and refused-environment
+     * outcomes keep both stored values (TWO-27107).
+     *
+     * @return bool
+     */
+    protected function isTwoCredentialPairSaved()
     {
-        return $this->environmentRefused
-            ? Configuration::get('PS_TWO_ENVIRONMENT')
-            : Tools::getValue('PS_TWO_ENVIRONMENT');
+        return in_array(
+            $this->credentialsOutcome,
+            array(self::CREDENTIALS_SAVED, self::CREDENTIALS_SAVED_UNVERIFIED, self::CREDENTIALS_MISSING),
+            true
+        );
+    }
+
+    /**
+     * Whether a key may be sent to Two at all: printable ASCII with no
+     * spaces, since it goes as a header value.
+     *
+     * @param string $apiKey
+     *
+     * @return bool
+     */
+    public static function isWellFormedTwoApiKey($apiKey)
+    {
+        return preg_match('/^[\x21-\x7E]+\z/', (string) $apiKey) === 1;
     }
 
     protected function saveTwoGeneralFormValues()
     {
-        $submittedApiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
-        $submittedEnv = $this->getTwoEnvironmentToSave();
-        // The one submitted value a save may not commit: it would take Two off
-        // a checkout the stored key still serves.
-        $rejected = is_array($this->verifiedApiKeyResult)
-            && $this->verifiedApiKeyResult['status'] === self::API_KEY_STATUS_INVALID;
-        $apiKeyToSave = $rejected ? (string) Configuration::get('PS_TWO_MERCHANT_API_KEY') : $submittedApiKey;
+        // The key and environment are written together or not at all
+        // (TWO-27107); see validTwoGeneralFormValues() for which outcomes keep
+        // the stored pair.
+        $pairSaved = $this->isTwoCredentialPairSaved();
+        $submittedApiKey = $this->credentialsKey;
+        $submittedEnv = $pairSaved ? Tools::getValue('PS_TWO_ENVIRONMENT') : Configuration::get('PS_TWO_ENVIRONMENT');
+        $apiKeyToSave = $pairSaved ? $submittedApiKey : (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
         // Keyed on what is stored, not what was submitted: a reverted key
         // leaves the shop on the identity the cached record describes
         // (TWO-24813).
@@ -1698,7 +1773,9 @@ class Twopayment extends PaymentModule
         // Two answers 404 (TWO-26304).
         $this->merchant_short_name = $shortNameToSave;
         $this->api_key = $apiKeyToSave;
-        Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
+        if (!$this->vendorNameRefused) {
+            Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
+        }
         Configuration::updateValue('PS_TWO_ENVIRONMENT', $submittedEnv);
 
         if ($identityChanged) {
@@ -1716,15 +1793,16 @@ class Twopayment extends PaymentModule
         // return to checkout at once instead of waiting out the TTL. Skipped
         // when a rejected key was reverted, since the verdict then describes a
         // key this shop does not have.
-        if (is_array($this->verifiedApiKeyResult) && $apiKeyToSave === $submittedApiKey) {
+        if ($pairSaved && is_array($this->verifiedApiKeyResult) && $apiKeyToSave === $submittedApiKey) {
             $this->cacheTwoApiKeyVerificationStatus($apiKeyToSave, $this->verifiedApiKeyResult);
         }
 
         if ($this->verifiedMerchantId) {
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
-        } else {
-            // Ensure flag not stale when verification fails/non-run
+        } elseif ($pairSaved) {
+            // Ensure flag not stale when verification fails/non-run. A kept
+            // pair keeps its own flag: nothing about it changed (TWO-27107).
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         }
 
@@ -1784,9 +1862,9 @@ class Twopayment extends PaymentModule
             array(
                 'type' => 'text',
                 'label' => $this->l('Title'),
-                'desc' => $this->l('Enter a title which is appear on checkout page as payment method title.'),
+                'desc' => $this->l('The payment method title shown at checkout. Leave it empty to show "Business invoice" in the shopper\'s language.'),
                 'name' => 'PS_TWO_TITLE',
-                'required' => true,
+                'required' => false,
                 'lang' => true,
             ),
             array(
@@ -1923,22 +2001,6 @@ class Twopayment extends PaymentModule
                 array('id' => 'PS_TWO_SHOW_ABOUT_LINK_OFF', 'value' => 0, 'label' => $this->l('No')),
             ),
         );
-        // Display input tooltips (TWO-25386): whether the optional checkout
-        // field inputs (invoice email, PO number, project, department) show a
-        // help tooltip on their label. Default OFF.
-        $inputs[] = array(
-            'type' => 'switch',
-            'label' => $this->l('Display input tooltips'),
-            'name' => 'PS_TWO_DISPLAY_TOOLTIPS',
-            'is_bool' => true,
-            'desc' => $this->l('If you choose YES then the optional checkout fields above show a short help tooltip on their label.'),
-            'required' => true,
-            'values' => array(
-                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_ON', 'value' => 1, 'label' => $this->l('Yes')),
-                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_OFF', 'value' => 0, 'label' => $this->l('No')),
-            ),
-        );
-
         // Optional buyer inputs. All four render inside the Two payment
         // tile at the payment step, NOT in the billing address block.
         // PrestaShop asks for the SHIPPING address first and only reveals
@@ -2034,6 +2096,22 @@ class Twopayment extends PaymentModule
                     'value' => 0,
                     'label' => $this->l('No')
                 ),
+            ),
+        );
+        // Display input tooltips (TWO-25386): whether the optional checkout
+        // field inputs (invoice email, PO number, project, department) show a
+        // help tooltip on their label. Default OFF. Below the four switches
+        // it refers to, as its help text says (TWO-27107).
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Display input tooltips'),
+            'name' => 'PS_TWO_DISPLAY_TOOLTIPS',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then the optional checkout fields above show a short help tooltip on their label.'),
+            'required' => true,
+            'values' => array(
+                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_ON', 'value' => 1, 'label' => $this->l('Yes')),
+                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_OFF', 'value' => 0, 'label' => $this->l('No')),
             ),
         );
 
@@ -2264,24 +2342,6 @@ class Twopayment extends PaymentModule
 
     protected function validTwoCheckoutFieldsFormValues()
     {
-        foreach ($this->languages as $language) {
-            if (Tools::isEmpty(Tools::getValue('PS_TWO_TITLE_' . (int) $language['id_lang']))) {
-                $this->errors[] = $this->l('Enter a title.');
-            }
-
-            // Rejected rather than sanitised: the tile emits the subtitle
-            // unescaped through TwoAnchorOnlyHtml, so anything that escaper
-            // would rewrite disappears at checkout with no merchant feedback.
-            $subtitle = (string) Tools::getValue('PS_TWO_SUB_TITLE_' . (int) $language['id_lang']);
-            if (!TwoAnchorOnlyHtml::rendersUnchanged($subtitle)) {
-                $this->errors[] = sprintf(
-                    $this->l('Subtitle accepts plain text and a single link only; "%1$s" would be shown as "%2$s".'),
-                    htmlspecialchars($subtitle, ENT_QUOTES, 'UTF-8'),
-                    htmlspecialchars(TwoAnchorOnlyHtml::escape($subtitle), ENT_QUOTES, 'UTF-8')
-                );
-            }
-        }
-
         $this->validTwoProductMessageEnabledValue();
 
         $this->validTwoProductButtonEnabledValue();
@@ -3113,22 +3173,6 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    // Skip confirm-order token check (TWO-25386).
-                    // DEBUG ONLY - gates the CSRF-style token check
-                    // (validateAjaxToken()) on the order-intent front
-                    // controller's confirm/save-result actions. Default OFF.
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Skip user validation at order confirmation'),
-                        'name' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK',
-                        'is_bool' => true,
-                        'desc' => $this->l('WARNING: FOR DEBUGGING ONLY. When YES, the order-intent controller\'s CSRF-style token check is skipped. Never enable this on a live production shop.'),
-                        'required' => true,
-                        'values' => array(
-                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_ON', 'value' => 1, 'label' => $this->l('Yes (not recommended)')),
-                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_OFF', 'value' => 0, 'label' => $this->l('No (secure)')),
-                        ),
-                    ),
                     // Trusted proxies (TWO-25386), ported from
                     // woocommerce-plugin/magento-plugin: exempts the
                     // merchant's own reverse proxy/CDN egress addresses from
@@ -3677,7 +3721,7 @@ class Twopayment extends PaymentModule
         $key = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
         $slot = self::verificationSlotKey($key);
         $stored = json_decode((string) Configuration::get(self::CONFIG_TAX_CODE_PROFILE), true);
-        $held = is_array($stored) && isset($stored['slot']) && $stored['slot'] === $slot
+        $held = is_array($stored) && isset($stored['slot']) && self::isTwoVerificationSlotFor($stored['slot'], $key)
             ? $stored + array('merchant_id' => '', 'country' => '', 'fetched_at' => 0, 'tried_at' => 0, 'failure' => null)
             : array('slot' => $slot, 'merchant_id' => '', 'country' => '', 'fetched_at' => 0, 'tried_at' => 0, 'failure' => null);
         $profile = is_string($held['merchant_id']) && $held['merchant_id'] !== '' && is_string($held['country']) && preg_match('/^[A-Z]{2}$/', $held['country']) === 1
@@ -4197,7 +4241,6 @@ class Twopayment extends PaymentModule
         $fields_values = array();
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
-        $fields_values['PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'] = Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', Configuration::get('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'));
         $fields_values['PS_TWO_TRUSTED_PROXIES'] = Tools::getValue('PS_TWO_TRUSTED_PROXIES', Configuration::get('PS_TWO_TRUSTED_PROXIES'));
         $fields_values['PS_TWO_DISABLE_RATE_LIMIT'] = Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', Configuration::get('PS_TWO_DISABLE_RATE_LIMIT'));
         $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) $this->shouldClearTwoSettingsOnUninstall());
@@ -4219,12 +4262,24 @@ class Twopayment extends PaymentModule
             }
         }
 
+        // Header names are case-insensitive, so a second row naming one
+        // already used is refused (TWO-27107): only one of the two could be
+        // sent, and the read path keeps the first.
+        $seen_header_names = array();
         foreach ((array) self::readTwoCustomHeaderRowsFromPost() as $row) {
+            $lower_name = strtolower($row['name']);
+            $is_duplicate = isset($seen_header_names[$lower_name]);
+            $seen_header_names[$lower_name] = true;
             if (!self::isValidTwoHeaderName($row['name'])) {
                 $this->errors[] = sprintf($this->l('Custom request headers: "%s" is not a valid header name.'), $row['name']);
             } elseif (self::isReservedTwoHeaderName($row['name'])) {
                 $this->errors[] = sprintf(
                     $this->l('Custom request headers: "%s" is reserved and cannot be overridden. Choose a different header name.'),
+                    $row['name']
+                );
+            } elseif ($is_duplicate) {
+                $this->errors[] = sprintf(
+                    $this->l('Custom request headers: "%s" is already used by another row. Header names are not case-sensitive, so keep one row per name.'),
                     $row['name']
                 );
             } elseif ($row['value'] === '') {
@@ -4245,7 +4300,6 @@ class Twopayment extends PaymentModule
     {
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
-        Configuration::updateValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', (int) Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', 0));
         Configuration::updateValue('PS_TWO_TRUSTED_PROXIES', trim((string) Tools::getValue('PS_TWO_TRUSTED_PROXIES')));
         Configuration::updateValue('PS_TWO_DISABLE_RATE_LIMIT', (int) Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', 0));
         $header_rows = self::readTwoCustomHeaderRowsFromPost();
@@ -4364,7 +4418,6 @@ class Twopayment extends PaymentModule
                 <ul>
                     <li><strong>' . $this->l('Email:') . '</strong> <a href="mailto:support@two.inc">support@two.inc</a></li>
                     <li><strong>' . $this->l('Documentation:') . '</strong> <a href="https://docs.two.inc" target="_blank">docs.two.inc</a></li>
-                    <li><strong>' . $this->l('Merchant Portal:') . '</strong> <a href="' . $this->getTwoPortalUrl() . '" target="_blank">' . sprintf($this->l('Open %s Portal'), $this->getTwoBrandConfig('product_name')) . '</a></li>
                 </ul>
                 <p style="margin-top:15px;"><small class="text-muted">' . $version_line . '</small></p>
             </div>
@@ -5102,7 +5155,7 @@ class Twopayment extends PaymentModule
      */
     protected function buildFulfillmentStatusDescription()
     {
-        $base_desc = sprintf($this->l('Select one or more order statuses that should trigger %1$s fulfillment. When any of these statuses are set, the order will be marked as fulfilled with %1$s. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (Hold Ctrl/Cmd to select multiple. Default: Shipped'), $this->getTwoBrandConfig('product_name'));
+        $base_desc = sprintf($this->l('Select one or more order statuses that should trigger %1$s fulfillment. When any of these statuses are set, the order will be marked as fulfilled with %1$s. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (hold Ctrl/Cmd to select multiple). Default: Shipped'), $this->getTwoBrandConfig('product_name'));
         
         // Get currently selected statuses. An empty map is the legitimate
         // "never auto-fulfils" state - it must not be shown as Shipped.
@@ -5570,6 +5623,50 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Why an order request did not succeed, from its response, or '' when it
+     * succeeded or says nothing (TWO-27107). Sentence-terminated.
+     *
+     * @param mixed $response
+     *
+     * @return string
+     */
+    protected function getTwoRequestFailureReason($response)
+    {
+        if (!is_array($response)) {
+            return '';
+        }
+        $status = isset($response['http_status']) ? (int) $response['http_status'] : null;
+        if ($status !== null && $status >= 200 && $status < 300) {
+            return '';
+        }
+        foreach (array('error_message', 'message', 'error') as $key) {
+            if (isset($response[$key]) && is_scalar($response[$key]) && trim((string) $response[$key]) !== '') {
+                return rtrim(trim((string) $response[$key]), '.') . '.';
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * A fulfil or cancel outcome, written to the order's private notes as well
+     * as the module log (TWO-27107), so the merchant sees it on the order page.
+     * Never breaks the status change it reports on.
+     *
+     * @param int $idOrder
+     * @param string $text
+     */
+    protected function addTwoOrderLifecycleNote($idOrder, $text)
+    {
+        $text = trim((string) $text);
+        try {
+            $this->addTwoOrderPrivateNote((int) $idOrder, $text);
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog('TwoPayment: could not note the order ' . (int) $idOrder . ' - ' . $e->getMessage(), 2);
+        }
+    }
+
+    /**
      * Tell the merchant, on the order page and in its private notes, that a credit slip did not reach Two (TWO-26093).
      * Core drops a hook's back-office warnings on some versions, so the note is what lasts.
      *
@@ -5667,10 +5764,42 @@ class Twopayment extends PaymentModule
                             ': it is already cancelled at Two (stored state=CANCELLED)',
                             1
                         );
+                        $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s is already cancelled.'), $this->getTwoBrandConfig('product_name'), $two_order_id));
                         return;
                     }
-                    $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
+                    $cancel_response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
                     $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+                    // The outcome is judged from the order Two holds after the
+                    // cancel, and noted on the order as well as logged (TWO-27107).
+                    $cancel_state = isset($response['state']) ? strtoupper(trim((string) $response['state'])) : '';
+                    $brand = $this->getTwoBrandConfig('product_name');
+                    if ($cancel_state === 'CANCELLED') {
+                        $note = sprintf($this->l('%1$s order %2$s cancelled.'), $brand, $two_order_id);
+                    } else {
+                        if ($cancel_state === '') {
+                            $note = sprintf($this->l('%1$s order %2$s not cancelled, and %1$s could not be asked for its state. Save the status again to retry.'), $brand, $two_order_id);
+                        } elseif (in_array($cancel_state, array('FULFILLED', 'PARTIALLY_FULFILLED'), true)) {
+                            // A retry can never cancel a fulfilled order.
+                            $note = sprintf($this->l('%1$s order %2$s not cancelled. %1$s holds it as %3$s. A fulfilled order is refunded, not cancelled.'), $brand, $two_order_id, $cancel_state);
+                        } else {
+                            $note = sprintf($this->l('%1$s order %2$s not cancelled. %1$s holds it as %3$s. Save the status again to retry.'), $brand, $two_order_id, $cancel_state);
+                        }
+                        // Only an answer from Two is Two's reason: a cancel the
+                        // module did not send, or one that never reached Two,
+                        // says so instead, as the fulfil note does.
+                        $cancel_http = is_array($cancel_response) && isset($cancel_response['http_status']) ? (int) $cancel_response['http_status'] : null;
+                        if ($cancel_http === 0 && !empty($cancel_response['error_code'])) {
+                            $note .= ' ' . sprintf($this->l('The module did not send the cancel (%s).'), (string) $cancel_response['error_code']);
+                        } elseif ($cancel_http === 0) {
+                            $note .= ' ' . sprintf($this->l('The cancel could not reach %s.'), $brand);
+                        } else {
+                            $reason = $this->getTwoRequestFailureReason($cancel_response);
+                            if ($reason !== '') {
+                                $note .= ' ' . sprintf($this->l('%1$s gave this reason: %2$s'), $brand, $reason);
+                            }
+                        }
+                    }
+                    $this->addTwoOrderLifecycleNote($id_order, $note);
                     if (isset($response['id']) && $response['id']) {
                         $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse(
                             $response,
@@ -5691,6 +5820,7 @@ class Twopayment extends PaymentModule
                     }
                 } else if ($this->isFulfillmentTriggerStatus($new_order_status->id)) {
                     // Complete fulfillment using the new fulfillments endpoint - wrapped in try-catch for safety
+                    $fulfil_done = false;
                     try {
                         PrestaShopLogger::addLog('TwoPayment: Initiating complete fulfillment for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Triggered by status: ' . $new_order_status->name . ' (ID: ' . $new_order_status->id . ')', 1);
 
@@ -5703,6 +5833,7 @@ class Twopayment extends PaymentModule
                                 ' (stored state=' . $stored_two_state . '). Fulfillment status change will be forced to cancelled for order ' . $id_order,
                                 2
                             );
+                            $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s holds order %2$s as %3$s, so it was not fulfilled.'), $this->getTwoBrandConfig('product_name'), $two_order_id, $stored_two_state));
                             return;
                         }
                         
@@ -5710,6 +5841,7 @@ class Twopayment extends PaymentModule
                         $current_two_order = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                         if (!$current_two_order || !isset($current_two_order['state'])) {
                             PrestaShopLogger::addLog('TwoPayment: Cannot retrieve Two order state for fulfillment. Two order ID: ' . $two_order_id, 3);
+                            $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s not fulfilled: %1$s could not be asked for its state. Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id));
                             return;
                         }
 
@@ -5738,6 +5870,7 @@ class Twopayment extends PaymentModule
                                 ' (provider state=' . $provider_two_state . '). Fulfillment status change will be forced to cancelled for order ' . $id_order,
                                 2
                             );
+                            $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s holds order %2$s as %3$s, so it was not fulfilled.'), $this->getTwoBrandConfig('product_name'), $two_order_id, $provider_two_state));
                             return;
                         }
                         
@@ -5745,6 +5878,12 @@ class Twopayment extends PaymentModule
                         // Only CONFIRMED orders can be fulfilled (VERIFIED orders must be confirmed first to ensure they have been sent to the checkout success page)
                         if (!$this->isTwoOrderFulfillableState($provider_two_state)) {
                             PrestaShopLogger::addLog('TwoPayment: Two order not in fulfillable state. Current state: ' . $provider_two_state . ', Expected: CONFIRMED. Two order ID: ' . $two_order_id, 2);
+                            // A status re-saved on an order already fulfilled is
+                            // not a failure, so it does not read as one.
+                            $already = in_array($provider_two_state, array('FULFILLED', 'PARTIALLY_FULFILLED'), true);
+                            $this->addTwoOrderLifecycleNote($id_order, $already
+                                ? sprintf($this->l('%1$s order %2$s is already %3$s.'), $this->getTwoBrandConfig('product_name'), $two_order_id, $provider_two_state)
+                                : sprintf($this->l('%1$s holds order %2$s as %3$s, so it was not fulfilled.'), $this->getTwoBrandConfig('product_name'), $two_order_id, $provider_two_state));
                             return;
                         }
                         
@@ -5752,6 +5891,8 @@ class Twopayment extends PaymentModule
                         
                         if (isset($response['fulfilled_order']['id']) && $response['fulfilled_order']['id']) {
                             PrestaShopLogger::addLog('TwoPayment: Fulfillment successful for Two order ID: ' . $two_order_id . ', Fulfilled order ID: ' . $response['fulfilled_order']['id'], 1);
+                            $fulfil_done = true;
+                            $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s fulfilled (%3$s).'), $this->getTwoBrandConfig('product_name'), $two_order_id, (string) $response['fulfilled_order']['id']));
                             // Refresh order data from Two to avoid overwriting the stored Two order ID with fulfillment ID
                             $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                             if (isset($order_after['id']) && $order_after['id']) {
@@ -5820,13 +5961,29 @@ class Twopayment extends PaymentModule
                                 ', Response Summary: ' . json_encode($response_summary),
                                 3
                             );
-                            
+                            // Only an answer from Two is Two refusing: a request
+                            // the module did not send, or one that never reached
+                            // Two, says so instead.
+                            $fulfil_http = isset($response['http_status']) ? (int) $response['http_status'] : null;
+                            if ($fulfil_http === 0 && !empty($response['error_code'])) {
+                                $fulfil_note = sprintf($this->l('%1$s order %2$s not fulfilled: the module did not send the request (%3$s). See the module log, then save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, (string) $response['error_code']);
+                            } elseif ($fulfil_http === 0) {
+                                $fulfil_note = sprintf($this->l('%1$s order %2$s not fulfilled: %1$s could not be reached. Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id);
+                            } else {
+                                $fulfil_note = sprintf($this->l('%1$s refused to fulfil order %2$s: %3$s Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, rtrim((string) $error_message, '.') . '.');
+                            }
+                            $this->addTwoOrderLifecycleNote($id_order, $fulfil_note);
+
                             // Don't interfere with PrestaShop's status change process
-                            // Just log the error - admin can check logs for fulfillment issues
                         }
                     } catch (Exception $e) {
                         // Catch any exceptions to prevent breaking the order status change
                         PrestaShopLogger::addLog('TwoPayment: Exception during fulfillment for Two order ID: ' . $two_order_id . ', Exception: ' . $e->getMessage(), 3);
+                        // Only when no fulfil went through: a failure after one (the
+                        // invoice upload) is not a refused fulfil.
+                        if (!$fulfil_done) {
+                            $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s not fulfilled: %3$s Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, rtrim($e->getMessage(), '.') . '.'));
+                        }
                     }
                 } else if ($new_order_status->id == Configuration::get('PS_TWO_OS_REFUNDED_MAP')) {
                     // Full refund: issue refund call with no request body - wrapped in try-catch for safety
@@ -8322,8 +8479,9 @@ class Twopayment extends PaymentModule
         $title = trim((string) Configuration::get('PS_TWO_TITLE', $this->context->language->id));
         $subtitle = $this->resolveTwoSubtitle();
 
+        // The default title in the shopper's language (TWO-27107).
         if ($title === '') {
-            $title = sprintf($this->l('Pay with %s'), $this->getTwoBrandConfig('product_name'));
+            $title = $this->l('Business invoice');
         }
 
         $optional_fields = $this->getOptionalCheckoutFieldsForDisplay();
@@ -8400,7 +8558,6 @@ class Twopayment extends PaymentModule
             'payment_enable' => true, // Always enable, frontend will handle approval
             'message' => '',
             'module_dir' => $this->_path, // Module directory path for assets
-            'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
             // Optional buyer reference fields, rendered inside the tile rather
             // than in the billing address block.
             'two_optional_fields' => $optional_fields,
@@ -15442,20 +15599,6 @@ class Twopayment extends PaymentModule
         'staging' => 'https://api.staging.two.inc',
     );
 
-    /** Explicit environment -> merchant portal host map, mirroring ENVIRONMENT_HOSTS. */
-    private const PORTAL_HOSTS = array(
-        'production' => 'https://portal.two.inc',
-        'sandbox' => 'https://portal.sandbox.two.inc',
-        'staging' => 'https://portal.staging.two.inc',
-    );
-
-    /** Explicit environment -> buyer portal login URL map, mirroring ENVIRONMENT_HOSTS. */
-    private const BUYER_PORTAL_HOSTS = array(
-        'production' => 'https://buyer.two.inc/login',
-        'sandbox' => 'https://buyer.sandbox.two.inc/login',
-        'staging' => 'https://buyer.staging.two.inc/login',
-    );
-
     /**
      * Get base API host for a specific environment value (without relying on saved config)
      */
@@ -15484,14 +15627,14 @@ class Twopayment extends PaymentModule
     /**
      * The dev-mode gate itself, callable without a module instance.
      *
-     * Exists because the three service URLs this plugin talks to are not all
+     * Exists because the two service URLs this plugin talks to are not both
      * resolved from the module class: the hosted sole-trader signup page is
      * resolved by TwoSoleTrader::getSignupPageUrl(), which is static and has no
      * $this. Rather than duplicate the `_PS_MODE_DEV_` check there (a
      * duplicated security gate is a gate that gets half-removed), both callers
-     * go through this one method, so each of TWO_API_BASE_URL,
-     * TWO_PORTAL_BASE_URL and TWO_CHECKOUT_BASE_URL is independently
-     * overridable and all three are gated identically.
+     * go through this one method, so TWO_API_BASE_URL and
+     * TWO_CHECKOUT_BASE_URL are each independently overridable and both are
+     * gated identically.
      *
      * Returns null whenever _PS_MODE_DEV_ is undefined or false, so a
      * production shop ignores these variables even if they are set in its
@@ -15686,7 +15829,7 @@ class Twopayment extends PaymentModule
         // DB clone, direct SQL.
         $previous = $this->readStoredTwoApiKeyStatus();
         $carryable = $previous !== null
-            && $previous['key_hash'] === self::verificationSlotKey($apiKey)
+            && self::isTwoVerificationSlotFor($previous['key_hash'], $apiKey)
             && $previous['status'] !== self::API_KEY_STATUS_VERIFYING
             // Age of the VERDICT, not of the slot write. A zero here (a slot
             // with neither field readable) fails this comparison on its own, so
@@ -15766,7 +15909,7 @@ class Twopayment extends PaymentModule
         // ground than that. A claim still inside its window is served by the
         // branch above, where the carried verdict does count.
         $stored = $this->readStoredTwoApiKeyStatus();
-        if ($stored === null || $stored['claim'] || $stored['key_hash'] !== self::verificationSlotKey((string) Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
+        if ($stored === null || $stored['claim'] || !self::isTwoVerificationSlotFor($stored['key_hash'], (string) Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
             return false;
         }
 
@@ -15873,6 +16016,46 @@ class Twopayment extends PaymentModule
             'verified_on' => $verifiedOn === null ? time() : (int) $verifiedOn,
         )));
         Configuration::updateValue(self::CONFIG_API_KEY_STATUS_TS, time());
+
+        // Only a judgement about the key is definitive: an outage, a 5xx or a
+        // claim never moves it (TWO-27107).
+        if (!$asClaim && ($status === self::API_KEY_STATUS_OK || $status === self::API_KEY_STATUS_INVALID)) {
+            Configuration::updateValue(self::CONFIG_API_KEY_DEFINITIVE, json_encode(array(
+                'status' => (string) $status,
+                'key_hash' => self::verificationSlotKey($apiKey),
+            )));
+        }
+    }
+
+    /**
+     * The last definitive verdict (ok or invalid_key) Two gave about the
+     * STORED key and environment, however old, or null when it never gave one
+     * (TWO-27107). Outages never change it, so it says whether the stored key
+     * is known good even while Two is down. A shop that last verified before
+     * this slot existed is read from the status slot, when that slot holds a
+     * definitive verdict for the stored pair.
+     *
+     * @return string|null
+     */
+    public function getTwoLastDefinitiveApiKeyStatus()
+    {
+        $storedKey = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        if ($storedKey === '') {
+            return null;
+        }
+        foreach (array(self::CONFIG_API_KEY_DEFINITIVE, self::CONFIG_API_KEY_STATUS) as $key) {
+            $slot = json_decode((string) Configuration::get($key), true);
+            if (is_array($slot)
+                && isset($slot['key_hash'], $slot['status'])
+                && self::isTwoVerificationSlotFor($slot['key_hash'], $storedKey)
+                && empty($slot['claim'])
+                && in_array($slot['status'], array(self::API_KEY_STATUS_OK, self::API_KEY_STATUS_INVALID), true)
+            ) {
+                return (string) $slot['status'];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -15888,7 +16071,52 @@ class Twopayment extends PaymentModule
      */
     protected static function verificationSlotKey($apiKey)
     {
-        return md5((string) $apiKey . '|' . Tools::strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT')));
+        // The environment the stored value RESOLVES to (TWO-27107), as the
+        // General save compares it: a legacy 'prod' and 'production' are one
+        // slot, so normalising the stored value never orphans a verdict.
+        $raw = (string) Configuration::get('PS_TWO_ENVIRONMENT');
+        $environment = self::recogniseTwoEnvironment($raw);
+
+        return md5((string) $apiKey . '|' . ($environment !== null ? $environment : Tools::strtolower(trim($raw))));
+    }
+
+    /**
+     * Every hash a slot for $apiKey and the stored environment may carry: the
+     * current one, and those written before TWO-27107, when slots were keyed
+     * on the raw lowercased value (so 'prod' and 'production' differed).
+     * Readers accept any of them; writers write only the current one.
+     *
+     * @param string $apiKey
+     *
+     * @return string[]
+     */
+    protected static function verificationSlotKeys($apiKey)
+    {
+        $apiKey = (string) $apiKey;
+        $raw = (string) Configuration::get('PS_TWO_ENVIRONMENT');
+        $keys = array(self::verificationSlotKey($apiKey), md5($apiKey . '|' . Tools::strtolower($raw)));
+        $environment = self::recogniseTwoEnvironment($raw);
+        if ($environment !== null) {
+            $keys[] = md5($apiKey . '|' . $environment);
+            if ($environment === 'production') {
+                $keys[] = md5($apiKey . '|prod');
+            }
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    /**
+     * Whether a stored slot hash belongs to $apiKey and the stored environment.
+     *
+     * @param mixed $hash
+     * @param string $apiKey
+     *
+     * @return bool
+     */
+    protected static function isTwoVerificationSlotFor($hash, $apiKey)
+    {
+        return is_string($hash) && in_array($hash, self::verificationSlotKeys($apiKey), true);
     }
 
     /**
@@ -15956,7 +16184,7 @@ class Twopayment extends PaymentModule
         }
 
         $stored = $this->readStoredTwoApiKeyStatus();
-        if ($stored === null || $stored['key_hash'] !== self::verificationSlotKey($apiKey)) {
+        if ($stored === null || !self::isTwoVerificationSlotFor($stored['key_hash'], $apiKey)) {
             return null;
         }
         $ttl = $stored['claim'] ? self::API_KEY_STATUS_CLAIM_WINDOW : self::statusTtlFor($stored['status']);
@@ -16031,26 +16259,6 @@ class Twopayment extends PaymentModule
 
         return $message . ' '
             . sprintf($this->l('%s is hidden from checkout until the key verifies.'), $this->getTwoBrandConfig('product_name'));
-    }
-
-    /**
-     * @return string Portal URL for the current environment
-     */
-    public function getTwoPortalUrl()
-    {
-        $override = $this->getDevEnvOverride('TWO_PORTAL_BASE_URL');
-        if ($override !== null) {
-            return $override;
-        }
-        return self::PORTAL_HOSTS[self::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'))];
-    }
-
-    /**
-     * @return string Buyer portal login URL for the current environment
-     */
-    public function getTwoBuyerPortalUrl()
-    {
-        return self::BUYER_PORTAL_HOSTS[self::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'))];
     }
 
     /**
@@ -16696,7 +16904,7 @@ class Twopayment extends PaymentModule
             return true;
         }
 
-        return $stamp === self::verificationSlotKey((string) Configuration::get('PS_TWO_MERCHANT_API_KEY'));
+        return self::isTwoVerificationSlotFor($stamp, (string) Configuration::get('PS_TWO_MERCHANT_API_KEY'));
     }
 
     /**
@@ -17967,6 +18175,12 @@ class Twopayment extends PaymentModule
      */
     protected $verifiedApiKeyResult = null;
 
+    /** @var string|null this General save's CREDENTIALS_* outcome (TWO-27107) */
+    protected $credentialsOutcome = null;
+
+    /** @var string the API key this General save judged: the typed one, else the stored one */
+    protected $credentialsKey = '';
+
     /**
      * Non-blocking wording for a general-form verification that did not come
      * back OK. Null when there is none.
@@ -17977,6 +18191,28 @@ class Twopayment extends PaymentModule
 
     /** Whether the submitted Environment was refused, so the stored one is kept (TWO-26604). */
     protected $environmentRefused = false;
+
+    /** Whether the submitted Vendor name was refused, so the stored one is kept (TWO-27107). */
+    protected $vendorNameRefused = false;
+
+    /** The longest vendor name sent as a header value (TWO-27107). */
+    const VENDOR_NAME_MAX_LENGTH = 255;
+
+    /**
+     * Whether a vendor name may be sent as the X-Vendor-Name header value:
+     * printable ASCII (no line breaks, control bytes or accented letters) and
+     * at most VENDOR_NAME_MAX_LENGTH characters. Checked on save and again
+     * where it is sent.
+     *
+     * @param string $vendor already trimmed
+     *
+     * @return bool
+     */
+    public static function isSendableTwoVendorName($vendor)
+    {
+        return preg_match('/^[\x20-\x7E]+\z/', (string) $vendor) === 1
+            && strlen((string) $vendor) <= self::VENDOR_NAME_MAX_LENGTH;
+    }
 
     /**
      * Whether this instance has already logged that it is withholding Two over
@@ -18065,38 +18301,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The tile subtitle, escaped: the merchant's per-language Subtitle field,
-     * or the brand's default sentence carrying a "read more" link to its FAQ
-     * page when that field is blank.
-     *
-     * The template emits the result unescaped, so TwoAnchorOnlyHtml is the
-     * whole trust boundary on it: the "read more" link survives and nothing
-     * else does.
-     *
-     * A brand declaring no usable FAQ URL renders no subtitle element at all,
-     * rather than a sentence whose link points back at the checkout page.
+     * The tile subtitle: the merchant's per-language Subtitle field, as plain
+     * text (TWO-27107). Core strips tags when the field is saved, and the
+     * template escapes whatever is stored (an import, a hand-edited row), so
+     * it never renders markup or a link. Blank shows none.
      *
      * @return string
      */
     private function resolveTwoSubtitle()
     {
-        // Emptiness is judged after escaping: copy that is only markup the
-        // escaper drops would otherwise emit a blank subtitle element.
-        $configured = trim(TwoAnchorOnlyHtml::escape(Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id)));
-        if ($configured !== '') {
-            return $configured;
-        }
-
-        $faqUrl = self::normalizeTwoBrandUrl($this->getTwoBrandConfig('checkout_subtitle_faq_url'));
-        if ($faqUrl === '') {
-            return '';
-        }
-
-        return TwoAnchorOnlyHtml::escape(sprintf(
-            $this->l('For all companies, %1$sread more%2$s.'),
-            '<a href="' . htmlspecialchars($faqUrl, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener">',
-            '</a>'
-        ));
+        return trim((string) Configuration::get('PS_TWO_SUB_TITLE', $this->context->language->id));
     }
 
     /**
@@ -21273,6 +21487,21 @@ class Twopayment extends PaymentModule
             )
             . '</p>';
 
+        // Which currency the fixed fee and cap are in (TWO-27107): the shop's
+        // own default currency, which is what the calculator reads them as
+        // before converting to the basket's. Shown and hidden with the grid.
+        $currency_iso = $this->getTwoShopDefaultCurrencyIso();
+        if ($currency_iso !== '') {
+            $html .= '<p id="two-surcharge-currency-note" class="help-block" style="margin-top:8px;'
+                . ($has_offered_term ? '' : 'display:none;') . '">'
+                . htmlspecialchars(
+                    sprintf($this->l('Amounts are in the shop\'s default currency, %s.'), $currency_iso),
+                    ENT_QUOTES,
+                    'UTF-8'
+                )
+                . '</p>';
+        }
+
         // Cap semantics, stated where the cap is entered. Both sentences
         // exist because the grid otherwise invites exactly the mistake it
         // then refuses on save (TWO-25289).
@@ -21447,6 +21676,10 @@ class Twopayment extends PaymentModule
             return;
         }
         $type = TwoSurchargeCalculator::mapKnownType($postedType);
+        // Grid cells are checked whatever the method (TWO-27107): a junk value
+        // typed while the method is none would otherwise be stored, and
+        // surface as a live fee the moment the method is switched on.
+        $this->validateTwoSurchargeGridCells($type);
         if ($type === 'none') {
             return;
         }
@@ -21482,6 +21715,17 @@ class Twopayment extends PaymentModule
                 }
             }
         }
+    }
+
+    /**
+     * Refuse a non-numeric or negative surcharge grid cell, naming the field
+     * and the term, and a zero cap while the cap column is visible. Runs for
+     * every surcharge method, none included. Appends to $this->errors.
+     *
+     * @param string $type the posted surcharge method, already mapped
+     */
+    protected function validateTwoSurchargeGridCells($type)
+    {
         // The RENDERED term set, not getConfigurableTermSet(): the grid
         // renders (and therefore posts) a row per OFFERABLE term, and the
         // ticked subset is rewritten by saveTwoPaymentTermsFormValues()
@@ -21515,12 +21759,22 @@ class Twopayment extends PaymentModule
                 }
                 $normalized = $this->normalizeTwoSurchargeNumber($raw);
                 if ($normalized === null || (float) $normalized < 0) {
-                    $this->errors[] = sprintf(
+                    $cell_error = sprintf(
                         $this->l('%1$s for the %2$d-day term must be a non-negative number, but reads "%3$s".'),
                         $this->getTwoSurchargeFieldLabel($suffix),
                         $days,
                         htmlspecialchars(is_scalar($raw) ? trim((string) $raw) : gettype($raw), ENT_QUOTES, 'UTF-8')
                     );
+                    // The grid is hidden while the method is none, so say how
+                    // to reach the cell (TWO-27107): the admin JS shows it as
+                    // soon as another method is chosen, before any save.
+                    if ($type === 'none') {
+                        $cell_error .= ' ' . sprintf(
+                            $this->l('The grid is hidden while Surcharge method is "%1$s": choose another method to show it, correct the cell, then choose "%1$s" again and save.'),
+                            $this->l('No surcharge applied')
+                        );
+                    }
+                    $this->errors[] = $cell_error;
 
                     continue;
                 }
@@ -22613,21 +22867,25 @@ class Twopayment extends PaymentModule
         }
 
         $rows = array();
+        $seen = array();
         foreach ($decoded as $row) {
             if (!is_array($row)) {
                 continue;
             }
             $name = isset($row['name']) ? trim((string) $row['name']) : '';
             $value = isset($row['value']) ? trim((string) $row['value']) : '';
-            // Reserved names are refused at save time; re-checked here so a row
-            // stored before that check existed cannot override what we send.
+            // Reserved names and repeated names are refused at save time;
+            // re-checked here so a row stored before those checks existed
+            // cannot override what we send. The first row of a name wins.
             if ($value === ''
                 || !self::isValidTwoHeaderName($name)
                 || self::isReservedTwoHeaderName($name)
                 || !self::isValidTwoHeaderValue($value)
+                || isset($seen[strtolower($name)])
             ) {
                 continue;
             }
+            $seen[strtolower($name)] = true;
             $rows[] = array(
                 'name' => $name,
                 'value' => $value,
@@ -22811,8 +23069,10 @@ class Twopayment extends PaymentModule
         // endpoint's payload shape. Only ever sent alongside the API key -
         // never useful, and never sent, on the unauthenticated order-intent
         // preview path.
+        // Re-checked where it is sent: a stored value that no save validated
+        // (an import, a hand-edited row) never reaches the wire unsendable.
         $vendorName = trim((string) Configuration::get('PS_TWO_VENDOR_NAME'));
-        if ($includeApiKey && $vendorName !== '') {
+        if ($includeApiKey && $vendorName !== '' && self::isSendableTwoVendorName($vendorName)) {
             $headers[] = 'X-Vendor-Name:' . $vendorName;
         }
 
@@ -24949,7 +25209,6 @@ class Twopayment extends PaymentModule
             
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_buyer_portal_url' => $this->getTwoBuyerPortalUrl(),
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayPaymentReturnBuyer.tpl');
@@ -25501,7 +25760,6 @@ class Twopayment extends PaymentModule
 
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_portal_url' => $this->getTwoPortalUrl(),
                 'two_pdf_url' => $pdf_url,
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
@@ -25533,7 +25791,6 @@ class Twopayment extends PaymentModule
             
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_portal_url' => $this->getTwoPortalUrl(),
                 'two_pdf_url' => $pdf_url,
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
@@ -25581,7 +25838,6 @@ class Twopayment extends PaymentModule
             
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_portal_url' => $this->getTwoPortalUrl(),
                 'two_pdf_url' => $pdf_url,
                 // Show the upload-status section when the merchant currently
                 // has the feature OR this order already carries upload history

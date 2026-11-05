@@ -1,9 +1,10 @@
 /**
  * The subtitle element is emitted only when there is something to put
  * in it: `.two-subtitle` carries a 12px bottom margin (views/css/two.css), so
- * an empty `<p>` still moves everything below it. What twopayment.php resolves
- * is already sanitised, and the template emits it unescaped, so the brand
- * fallback's inline link renders as a link rather than as its own source.
+ * an empty `<p>` still moves everything below it. The subtitle is plain text
+ * (TWO-27107): core strips tags when it is saved, and the template escapes
+ * whatever is stored, so a value carrying markup (an import, a hand-edited
+ * row) never becomes a link.
  *
  * Rendered from the shipped `views/templates/hook/paymentinfo.tpl` via the
  * harness, so deleting the guard in the real template is what fails this.
@@ -18,14 +19,13 @@ describe('payment tile subtitle', () => {
         global.document.body.innerHTML = '';
     });
 
-    const FALLBACK =
-        'For all companies, <a href="https://brand.example/faq" target="_blank" rel="noopener">read more</a>.';
+    const MARKUP = '<a href="https://brand.example/faq">read more</a> & save';
 
     const cases = [
         ['Buy now, pay later', 'Buy now, pay later', null, 'a merchant subtitle is rendered verbatim'],
         ['0', '0', null, 'a subtitle of "0" is content, not emptiness'],
         ['', null, null, 'an empty subtitle emits no element'],
-        [FALLBACK, 'For all companies, read more.', 'https://brand.example/faq', 'the brand fallback renders its link as markup'],
+        [MARKUP, MARKUP, null, 'a stored value with markup is escaped and never becomes a link'],
     ];
 
     cases.forEach(([subtitle, expectedText, expectedHref, description]) => {

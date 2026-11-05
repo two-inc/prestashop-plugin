@@ -73,7 +73,6 @@ final class SkipConfirmTokenKeyMigrationSpec
         self::upgrade($module);
 
         TinyAssert::same('1', (string) Configuration::get(self::NEW_KEY));
-        TinyAssert::true($module->isTwoSkipConfirmTokenCheckEnabled());
         self::assertOldRowGone();
     }
 
@@ -86,7 +85,6 @@ final class SkipConfirmTokenKeyMigrationSpec
         self::upgrade($module);
 
         TinyAssert::same('0', (string) Configuration::get(self::NEW_KEY));
-        TinyAssert::false($module->isTwoSkipConfirmTokenCheckEnabled());
         self::assertOldRowGone();
     }
 
@@ -101,7 +99,6 @@ final class SkipConfirmTokenKeyMigrationSpec
             Configuration::hasKey(self::NEW_KEY),
             'nothing to carry must mean no row is written, not a row written with a junk value'
         );
-        TinyAssert::false($module->isTwoSkipConfirmTokenCheckEnabled());
         self::assertOldRowGone();
     }
 
@@ -117,7 +114,6 @@ final class SkipConfirmTokenKeyMigrationSpec
             Configuration::hasKey(self::NEW_KEY),
             'an empty old row carries nothing and must not be copied'
         );
-        TinyAssert::false($module->isTwoSkipConfirmTokenCheckEnabled());
         self::assertOldRowGone();
     }
 

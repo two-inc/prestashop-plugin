@@ -121,6 +121,8 @@ namespace {
         public static array $configurationShop = [];
         /** Per-language Configuration rows, keyed by id_lang then key. */
         public static array $configurationLang = [];
+        /** Per-language values at a shop's own tier: [id_shop][id_lang][key]. Read only when a shop id is passed. */
+        public static array $configurationLangShop = [];
         /** What Language::getLanguages() answers, and which ids count as a language id. */
         public static array $languages = [];
         /** Shop::isFeatureActive(): the multistore feature on AND more than one shop. */
@@ -413,6 +415,7 @@ namespace {
             self::$configurationGroup = [];
             self::$configurationShop = [];
             self::$configurationLang = [];
+            self::$configurationLangShop = [];
             self::$languages = [];
             self::$multistore = false;
             self::$shops = [1 => 1];
@@ -901,6 +904,13 @@ namespace {
         public static function get($key, $idLang = null, $idShopGroup = null, $idShop = null, $default = false)
         {
             if (self::isLangKey($key)) {
+                // Core reads a shop's own row first, then falls back.
+                if ((int) $idShop > 0 && isset(StubStore::$configurationLangShop[(int) $idShop][(int) $idLang])
+                    && array_key_exists($key, StubStore::$configurationLangShop[(int) $idShop][(int) $idLang])
+                ) {
+                    return StubStore::$configurationLangShop[(int) $idShop][(int) $idLang][$key];
+                }
+
                 return StubStore::$configurationLang[(int) $idLang][$key] ?? $default;
             }
 
@@ -936,7 +946,11 @@ namespace {
             // id_lang, which is how the title/subtitle settings are saved.
             if (is_array($value)) {
                 foreach ($value as $idLang => $langValue) {
-                    StubStore::$configurationLang[(int) $idLang][$key] = $langValue;
+                    if ((int) $idShop > 0) {
+                        StubStore::$configurationLangShop[(int) $idShop][(int) $idLang][$key] = $langValue;
+                    } else {
+                        StubStore::$configurationLang[(int) $idLang][$key] = $langValue;
+                    }
                 }
 
                 return true;
@@ -973,6 +987,12 @@ namespace {
         public static function hasKey($key, $idLang = null, $idShopGroup = null, $idShop = null): bool
         {
             if ($idLang !== null) {
+                // Exact tier, as core's hasKey(): a shop id asks about that shop's own row.
+                if ((int) $idShop > 0) {
+                    return isset(StubStore::$configurationLangShop[(int) $idShop][(int) $idLang])
+                        && array_key_exists($key, StubStore::$configurationLangShop[(int) $idShop][(int) $idLang]);
+                }
+
                 return isset(StubStore::$configurationLang[(int) $idLang])
                     && array_key_exists($key, StubStore::$configurationLang[(int) $idLang]);
             }
