@@ -1922,22 +1922,6 @@ class Twopayment extends PaymentModule
                 array('id' => 'PS_TWO_SHOW_ABOUT_LINK_OFF', 'value' => 0, 'label' => $this->l('No')),
             ),
         );
-        // Display input tooltips (TWO-25386): whether the optional checkout
-        // field inputs (invoice email, PO number, project, department) show a
-        // help tooltip on their label. Default OFF.
-        $inputs[] = array(
-            'type' => 'switch',
-            'label' => $this->l('Display input tooltips'),
-            'name' => 'PS_TWO_DISPLAY_TOOLTIPS',
-            'is_bool' => true,
-            'desc' => $this->l('If you choose YES then the optional checkout fields above show a short help tooltip on their label.'),
-            'required' => true,
-            'values' => array(
-                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_ON', 'value' => 1, 'label' => $this->l('Yes')),
-                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_OFF', 'value' => 0, 'label' => $this->l('No')),
-            ),
-        );
-
         // Optional buyer inputs. All four render inside the Two payment
         // tile at the payment step, NOT in the billing address block.
         // PrestaShop asks for the SHIPPING address first and only reveals
@@ -2033,6 +2017,22 @@ class Twopayment extends PaymentModule
                     'value' => 0,
                     'label' => $this->l('No')
                 ),
+            ),
+        );
+        // Display input tooltips (TWO-25386): whether the optional checkout
+        // field inputs (invoice email, PO number, project, department) show a
+        // help tooltip on their label. Default OFF. Below the four switches
+        // it refers to, as its help text says (TWO-27107).
+        $inputs[] = array(
+            'type' => 'switch',
+            'label' => $this->l('Display input tooltips'),
+            'name' => 'PS_TWO_DISPLAY_TOOLTIPS',
+            'is_bool' => true,
+            'desc' => $this->l('If you choose YES then the optional checkout fields above show a short help tooltip on their label.'),
+            'required' => true,
+            'values' => array(
+                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_ON', 'value' => 1, 'label' => $this->l('Yes')),
+                array('id' => 'PS_TWO_DISPLAY_TOOLTIPS_OFF', 'value' => 0, 'label' => $this->l('No')),
             ),
         );
 

@@ -21,6 +21,7 @@ final class CheckoutSubtitleSpec
         self::testAdminSaveStoresTheSubtitleAsTyped();
         self::testTileSubtitleIsThePlainStoredText();
         self::testTemplateEscapesTheSubtitle();
+        self::testTooltipsSwitchFollowsTheOptionalFields();
     }
 
     /**
@@ -173,5 +174,26 @@ final class CheckoutSubtitleSpec
         $template = (string) file_get_contents(dirname(__DIR__) . '/views/templates/hook/paymentinfo.tpl');
         TinyAssert::true(strpos($template, "{\$subtitle|escape:'html':'UTF-8'}") !== false, 'the subtitle is escaped as HTML');
         TinyAssert::false((bool) preg_match('/\$subtitle[^}]*nofilter/', $template), 'the subtitle is never emitted unescaped');
+    }
+
+    /**
+     * TWO-27107: the tooltips switch's help speaks of "the optional checkout
+     * fields above", so it sits after the four field switches.
+     */
+    private static function testTooltipsSwitchFollowsTheOptionalFields(): void
+    {
+        self::reset();
+        StubStore::$languages = self::LANGUAGES;
+        $form = (new ReflectionMethod(Twopayment::class, 'getTwoCheckoutFieldsForm'))->invoke(new TwopaymentTestHarness());
+        $names = array_values(array_filter(array_map(static function ($input) {
+            return $input['name'] ?? null;
+        }, $form['form']['input'])));
+        $expected = ['PS_TWO_ENABLE_INVOICE_EMAIL', 'PS_TWO_ENABLE_PO_NUMBER', 'PS_TWO_ENABLE_PROJECT', 'PS_TWO_ENABLE_DEPARTMENT', 'PS_TWO_DISPLAY_TOOLTIPS'];
+        $positions = array_map(static function ($name) use ($names) {
+            return array_search($name, $names, true);
+        }, $expected);
+        $sorted = $positions;
+        sort($sorted);
+        TinyAssert::same($sorted, $positions, 'field switches then tooltips, got: ' . implode(', ', $names));
     }
 }
