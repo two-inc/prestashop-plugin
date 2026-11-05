@@ -1524,7 +1524,7 @@ class Twopayment extends PaymentModule
                         'label' => $this->l('API key'),
                         'name' => 'PS_TWO_MERCHANT_API_KEY',
                         'required' => true,
-                        'desc' => sprintf($this->l('Enter your api key which is provided by %s.'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('Enter your API key which is provided by %s.'), $this->getTwoBrandConfig('product_name')),
                     ),
                     // Multi-site vendor/site name (TWO-25386). Free text, no
                     // validation - only meaningful for merchants running Two
@@ -5082,7 +5082,7 @@ class Twopayment extends PaymentModule
      */
     protected function buildFulfillmentStatusDescription()
     {
-        $base_desc = sprintf($this->l('Select one or more order statuses that should trigger %1$s fulfillment. When any of these statuses are set, the order will be marked as fulfilled with %1$s. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (Hold Ctrl/Cmd to select multiple. Default: Shipped'), $this->getTwoBrandConfig('product_name'));
+        $base_desc = sprintf($this->l('Select one or more order statuses that should trigger %1$s fulfillment. When any of these statuses are set, the order will be marked as fulfilled with %1$s. Buyer payment terms become active and payout cycle begins. You can select multiple statuses (hold Ctrl/Cmd to select multiple). Default: Shipped'), $this->getTwoBrandConfig('product_name'));
         
         // Get currently selected statuses. An empty map is the legitimate
         // "never auto-fulfils" state - it must not be shown as Shipped.

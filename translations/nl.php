@@ -120,7 +120,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_1bee0d8aaede29ac319901e96850adee'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1cda9ad7574b6a8fcfd2490b27ad18f2'] = 'Koper afgewezen?';
 $_MODULE['<{twopayment}prestashop>twopayment_1d17cb9923b99f823da9f5a16dc460e5'] = 'Afdeling';
 $_MODULE['<{twopayment}prestashop>twopayment_ffc942dc1331bc90ca42a1534c0dae70'] = 'Je factuur bij %s kan op dit moment niet worden goedgekeurd';
-$_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Vul de API-sleutel in die je van %s hebt gekregen.';
+$_MODULE['<{twopayment}prestashop>twopayment_6300d7f48d339e8a67dfb426a4cc21e3'] = 'Vul de API-sleutel in die je van %s hebt gekregen.';
 $_MODULE['<{twopayment}prestashop>twopayment_8e67cbbf0c476ed7957e5377ffedd2f9'] = 'Wacht op verificatie koper → %s: Wacht op verificatie koper';
 $_MODULE['<{twopayment}prestashop>twopayment_22008c36020d2d76ff6ff3c988b4fa58'] = 'De bedrijfsgegevens zijn onvolledig. Ga terug naar je factuuradres en selecteer je bedrijf uit de zoekresultaten.';
 $_MODULE['<{twopayment}prestashop>twopayment_0dfd3b67b856d108d9a4ec8864d4b40e'] = 'Als je JA kiest, zien klanten een veld voor het e-mailadres van de factuur in het %s-betaalgedeelte tijdens het afrekenen. Het staat bij de betaalmethode in plaats van bij het adres, zodat de koper wordt aangezet om een apart factuuradres te overwegen, ook als het factuur- en verzendadres hetzelfde zijn.';
@@ -139,7 +139,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_2b340063734382803d14ef2234a59b46'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2b4ef6e3a316295ab176b9dae7ef46b6'] = 'Verzendkosten voor bestelling';
 $_MODULE['<{twopayment}prestashop>twopayment_2db402469dd03ef70d28a292f12eb8c7'] = 'Bedrijf zoeken en valideren tijdens het afrekenen (autocomplete)';
 $_MODULE['<{twopayment}prestashop>twopayment_d2430a6dcc29a7c2af9f06c42b418da8'] = 'Goedkeuring garanderen - %s voert realtime kredietchecks uit';
-$_MODULE['<{twopayment}prestashop>twopayment_dbda4ec01ebe40844f0dc502f45fd397'] = 'Selecteer een of meer bestelstatussen die uitlevering bij %1$s moeten activeren. Zodra een van deze statussen wordt ingesteld, wordt de bestelling bij %1$s als uitgeleverd gemarkeerd. De betaaltermijnen van de koper worden actief en de uitbetalingscyclus start. Je kunt meerdere statussen selecteren (houd Ctrl/Cmd ingedrukt om meerdere te selecteren. Standaard: Verzonden';
+$_MODULE['<{twopayment}prestashop>twopayment_4c45f1f87f53a81eafad04418168a508'] = 'Selecteer een of meer bestelstatussen die uitlevering bij %1$s moeten activeren. Zodra een van deze statussen wordt ingesteld, wordt de bestelling bij %1$s als uitgeleverd gemarkeerd. De betaaltermijnen van de koper worden actief en de uitbetalingscyclus start. Je kunt meerdere statussen selecteren (houd Ctrl/Cmd ingedrukt om meerdere te selecteren). Standaard: Verzonden';
 $_MODULE['<{twopayment}prestashop>twopayment_2e92ae79ff32b37fee4368a594792183'] = 'Verbindingsfout';
 $_MODULE['<{twopayment}prestashop>twopayment_2f6653d72084d1585721cb272597728f'] = 'Fouten door niet-kloppende bedragen?';
 $_MODULE['<{twopayment}prestashop>twopayment_31a1931b5703e90cf392686134f4aae1'] = 'PrestaShop:';
