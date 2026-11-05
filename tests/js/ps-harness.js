@@ -804,8 +804,8 @@ function buildPaymentTileWithSoleTraderAnswer(answer, countryIso) {
  * The same tile with the subtitle resolved, so a test can tell an
  * empty subtitle apart from an unevaluated one.
  *
- * @param {string} subtitle the sanitised value twopayment.php assigned to
- *        `$subtitle`; it may carry the brand fallback's inline link
+ * @param {string} subtitle the plain text twopayment.php assigned to
+ *        `$subtitle`, which the template escapes
  * @returns {HTMLElement} the `.two-payment-container` that was appended
  */
 function buildPaymentTileWithSubtitle(subtitle) {
@@ -871,7 +871,16 @@ function renderPaymentTile(soleTrader, subtitle, about) {
                 /\{if \$subtitle != ''\}([\s\S]*?)\{\/if\}/g,
                 subtitle === '' ? '' : '$1'
             )
-            .replace(/\{\$subtitle nofilter\}/g, subtitle);
+            // The template's own escape modifier, as Smarty applies it
+            // (TWO-27107): the subtitle is plain text.
+            .replace(/\{\$subtitle\|escape:'html':'UTF-8'\}/g, () =>
+                subtitle
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;')
+            );
     }
     if (about) {
         // The about `{if}`s nest, inner first, so the outer non-greedy pattern
