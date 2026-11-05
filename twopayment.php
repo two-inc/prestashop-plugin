@@ -4364,7 +4364,6 @@ class Twopayment extends PaymentModule
                 <ul>
                     <li><strong>' . $this->l('Email:') . '</strong> <a href="mailto:support@two.inc">support@two.inc</a></li>
                     <li><strong>' . $this->l('Documentation:') . '</strong> <a href="https://docs.two.inc" target="_blank">docs.two.inc</a></li>
-                    <li><strong>' . $this->l('Merchant Portal:') . '</strong> <a href="' . $this->getTwoPortalUrl() . '" target="_blank">' . sprintf($this->l('Open %s Portal'), $this->getTwoBrandConfig('product_name')) . '</a></li>
                 </ul>
                 <p style="margin-top:15px;"><small class="text-muted">' . $version_line . '</small></p>
             </div>
@@ -8400,7 +8399,6 @@ class Twopayment extends PaymentModule
             'payment_enable' => true, // Always enable, frontend will handle approval
             'message' => '',
             'module_dir' => $this->_path, // Module directory path for assets
-            'two_portal_url' => $this->getTwoPortalUrl(), // Dynamic portal URL based on environment
             // Optional buyer reference fields, rendered inside the tile rather
             // than in the billing address block.
             'two_optional_fields' => $optional_fields,
@@ -15442,20 +15440,6 @@ class Twopayment extends PaymentModule
         'staging' => 'https://api.staging.two.inc',
     );
 
-    /** Explicit environment -> merchant portal host map, mirroring ENVIRONMENT_HOSTS. */
-    private const PORTAL_HOSTS = array(
-        'production' => 'https://portal.two.inc',
-        'sandbox' => 'https://portal.sandbox.two.inc',
-        'staging' => 'https://portal.staging.two.inc',
-    );
-
-    /** Explicit environment -> buyer portal login URL map, mirroring ENVIRONMENT_HOSTS. */
-    private const BUYER_PORTAL_HOSTS = array(
-        'production' => 'https://buyer.two.inc/login',
-        'sandbox' => 'https://buyer.sandbox.two.inc/login',
-        'staging' => 'https://buyer.staging.two.inc/login',
-    );
-
     /**
      * Get base API host for a specific environment value (without relying on saved config)
      */
@@ -15484,14 +15468,14 @@ class Twopayment extends PaymentModule
     /**
      * The dev-mode gate itself, callable without a module instance.
      *
-     * Exists because the three service URLs this plugin talks to are not all
+     * Exists because the two service URLs this plugin talks to are not both
      * resolved from the module class: the hosted sole-trader signup page is
      * resolved by TwoSoleTrader::getSignupPageUrl(), which is static and has no
      * $this. Rather than duplicate the `_PS_MODE_DEV_` check there (a
      * duplicated security gate is a gate that gets half-removed), both callers
-     * go through this one method, so each of TWO_API_BASE_URL,
-     * TWO_PORTAL_BASE_URL and TWO_CHECKOUT_BASE_URL is independently
-     * overridable and all three are gated identically.
+     * go through this one method, so TWO_API_BASE_URL and
+     * TWO_CHECKOUT_BASE_URL are each independently overridable and both are
+     * gated identically.
      *
      * Returns null whenever _PS_MODE_DEV_ is undefined or false, so a
      * production shop ignores these variables even if they are set in its
@@ -16031,26 +16015,6 @@ class Twopayment extends PaymentModule
 
         return $message . ' '
             . sprintf($this->l('%s is hidden from checkout until the key verifies.'), $this->getTwoBrandConfig('product_name'));
-    }
-
-    /**
-     * @return string Portal URL for the current environment
-     */
-    public function getTwoPortalUrl()
-    {
-        $override = $this->getDevEnvOverride('TWO_PORTAL_BASE_URL');
-        if ($override !== null) {
-            return $override;
-        }
-        return self::PORTAL_HOSTS[self::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'))];
-    }
-
-    /**
-     * @return string Buyer portal login URL for the current environment
-     */
-    public function getTwoBuyerPortalUrl()
-    {
-        return self::BUYER_PORTAL_HOSTS[self::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'))];
     }
 
     /**
@@ -24959,7 +24923,6 @@ class Twopayment extends PaymentModule
             
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_buyer_portal_url' => $this->getTwoBuyerPortalUrl(),
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayPaymentReturnBuyer.tpl');
@@ -25511,7 +25474,6 @@ class Twopayment extends PaymentModule
 
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_portal_url' => $this->getTwoPortalUrl(),
                 'two_pdf_url' => $pdf_url,
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
             ));
@@ -25543,7 +25505,6 @@ class Twopayment extends PaymentModule
             
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_portal_url' => $this->getTwoPortalUrl(),
                 'two_pdf_url' => $pdf_url,
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
@@ -25591,7 +25552,6 @@ class Twopayment extends PaymentModule
             
             $this->context->smarty->assign(array(
                 'twopaymentdata' => $twopaymentdata,
-                'two_portal_url' => $this->getTwoPortalUrl(),
                 'two_pdf_url' => $pdf_url,
                 // Show the upload-status section when the merchant currently
                 // has the feature OR this order already carries upload history

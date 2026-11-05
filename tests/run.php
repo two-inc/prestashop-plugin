@@ -111,7 +111,7 @@ final class OrderBuilderSpec
         self::testIsTwoAttemptCallbackAuthorizedWithMatchingKey();
         self::testIsTwoAttemptCallbackAuthorizedFallsBackToContextCustomerKeyWhenRequestKeyMissing();
         self::testIsTwoAttemptCallbackAuthorizedRejectsMismatchedKeys();
-        self::testGetTwoBuyerPortalUrlUsesEnvironmentSpecificBuyerDomains();
+        self::testNoPortalLinksAreRendered();
         self::testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId();
         self::testResolveTwoAttemptOrderIdForCancellationFallsBackToCartOrderId();
         self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
@@ -4200,21 +4200,24 @@ final class OrderBuilderSpec
         TinyAssert::false($module->isTwoAttemptCallbackAuthorized($attempt, '', 41, 'secure-key-42'));
     }
 
-    private static function testGetTwoBuyerPortalUrlUsesEnvironmentSpecificBuyerDomains(): void
+    /**
+     * TWO-27107: no plugin links to the merchant or buyer portal, so this one
+     * does not either. The getters are gone and no template is handed a
+     * portal URL.
+     */
+    private static function testNoPortalLinksAreRendered(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'production');
-        TinyAssert::same('https://buyer.two.inc/login', $module->getTwoBuyerPortalUrl());
-
-        // Any unmapped value (the removed 'development', or anything else not
-        // in BUYER_PORTAL_HOSTS) falls back to sandbox - TWO-25455.
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'not-a-real-environment');
-        TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
-
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
-        TinyAssert::same('https://buyer.staging.two.inc/login', $module->getTwoBuyerPortalUrl());
+        foreach (['getTwoPortalUrl', 'getTwoBuyerPortalUrl'] as $method) {
+            TinyAssert::false(method_exists('Twopayment', $method), $method . ' must not exist');
+        }
+        $root = dirname(__DIR__);
+        $files = array_merge(glob($root . '/views/templates/hook/*.tpl'), glob($root . '/views/templates/front/*.tpl') ?: [], [$root . '/twopayment.php']);
+        foreach ($files as $file) {
+            TinyAssert::false(
+                (bool) preg_match('/two_(buyer_)?portal_url|PORTAL_HOSTS|TWO_PORTAL_BASE_URL/', (string) file_get_contents($file)),
+                basename($file) . ' must not carry a portal link'
+            );
+        }
     }
 
     private static function testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId(): void

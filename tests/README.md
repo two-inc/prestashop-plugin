@@ -36,9 +36,9 @@ This folder contains deterministic tests for order-building and payload safety l
 - Debug Mode's API call log (`DebugApiLoggingSpec`, TWO-26340): one line per call with the request's and response's body, headers and status, the API key and custom header values redacted, error severity at HTTP 400 and above or on a connection error, and nothing with Debug Mode off
 - Parity with the WooCommerce and Magento plugins (TWO-26340): the whole-order tolerance of max(0.02, (lines + 1) x 0.005) (`ReconciliationDriftMessageSpec`), refunds sending `tax_subtotals` only while Validate tax subtotals is on, with the split recorded either way (`RefundSpec`), and the buyer fee line typed `BUYER_FEE`
 - Company-details postcodes fitted to the country's `zip_code_format` before the checkout copies them (`PostcodeFormatSpec`, TWO-26257), checked against core's `Country::checkZipCode()`
-- Dev-mode service URL overrides (`TWO_API_BASE_URL`, `TWO_PORTAL_BASE_URL`,
-  `TWO_CHECKOUT_BASE_URL`): each resolves independently of the other two, and every
-  one of them is ignored unless `_PS_MODE_DEV_` is true
+- Dev-mode service URL overrides (`TWO_API_BASE_URL`, `TWO_CHECKOUT_BASE_URL`):
+  each resolves independently of the other, and both are ignored unless
+  `_PS_MODE_DEV_` is true
 
 `TwoSoleTraderSpec` resolves those URLs in a **child PHP process**
 (`tests/fixtures/dev-mode-url-probe.php`, invoked with `PROBE_PS_MODE_DEV=1|0|unset`):

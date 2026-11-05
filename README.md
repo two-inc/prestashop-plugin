@@ -631,7 +631,7 @@ make test-integration  # real-engine probes (see tests/integration/README.md)
 
 #### Service URL overrides
 
-Three of the hosts the module resolves can each be repointed with their own
+Two of the hosts the module resolves can each be repointed with their own
 environment variable. Each falls back to its own environment-keyed default when
 unset — `production` and `staging` have explicit hosts, everything else
 (including an empty setting) resolves to sandbox:
@@ -639,13 +639,9 @@ unset — `production` and `staging` have explicit hosts, everything else
 | Variable | Service | `production` | `staging` | otherwise |
 | --- | --- | --- | --- | --- |
 | `TWO_API_BASE_URL` | checkout API | `api.two.inc` | `api.staging.two.inc` | `api.sandbox.two.inc` |
-| `TWO_PORTAL_BASE_URL` | merchant portal | `portal.two.inc` | `portal.staging.two.inc` | `portal.sandbox.two.inc` |
 | `TWO_CHECKOUT_BASE_URL` | hosted checkout-page app (sole-trader signup) | `checkout.two.inc` | `checkout.staging.two.inc` | `checkout.sandbox.two.inc` |
 
-(The buyer portal login host has no override; it always follows the configured
-environment.)
-
-`make install` and `make run` print the resolved API / portal / checkout-page
+`make install` and `make run` print the resolved API / checkout-page
 hosts (honouring the overrides above and the `_PS_MODE_DEV_` gate) in their
 status block, so you can see at a glance which real hosts your local instance
 will actually talk to without having to run `dev/probe-hosts.php` yourself.
@@ -655,14 +651,14 @@ will actually talk to without having to run `dev/probe-hosts.php` yourself.
 that is the **API**. `TWO_CHECKOUT_BASE_URL` is the hosted checkout-page **app**
 that serves the sole-trader signup page. Setting one does not move the other.
 
-All three are **only honoured when the shop is in dev mode** (`_PS_MODE_DEV_`,
+Both are **only honoured when the shop is in dev mode** (`_PS_MODE_DEV_`,
 which the local `docker-compose.yml` sets via `PS_DEV_MODE=1`). A shop that is
 not in dev mode ignores them even when they are set in its process environment,
 so they never become a way to repoint a live checkout. There is no admin UI for
 any of them.
 
-They resolve **independently** — setting one leaves the other two on their
-defaults. That is the point: the common case is a staging API plus a
+They resolve **independently** — setting one leaves the other on its
+default. That is the point: the common case is a staging API plus a
 checkout-page you are editing yourself.
 
 Note that the container reads these at **creation** time. `make run` only starts
@@ -672,7 +668,7 @@ the supported way to do that — be aware that it runs `clean` first, so it drop
 the database volume and rebuilds the shop (and it is also what re-runs the
 module install, the country/carrier seeding and the storefront proxy patch).
 
-**Everything on your machine.** The API and portal hosts are fetched
+**Everything on your machine.** The API host is fetched
 *server-side*, from inside the container, which reaches your machine through
 `host.docker.internal` (mapped in `docker-compose.yml`). The signup page is
 different: the module only hands its URL to the browser, which opens it in a
@@ -683,7 +679,6 @@ popup and then origin-checks the `postMessage` that comes back — so
 ```bash
 make install \
   TWO_API_BASE_URL=http://host.docker.internal:8080 \
-  TWO_PORTAL_BASE_URL=http://host.docker.internal:8081 \
   TWO_CHECKOUT_BASE_URL=http://localhost:3000
 ```
 

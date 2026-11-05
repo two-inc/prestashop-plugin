@@ -114,12 +114,6 @@
         <div class="two-section">
             <h4 class="two-section-title">{l s='Actions' mod='twopayment'}</h4>
             <div class="two-info-cards">
-                {if $twopaymentdata.two_order_id && $two_portal_url}
-                <div class="two-info-card">
-                    <span class="two-info-label">{l s='View in %s Portal' mod='twopayment' sprintf=[$two_product_name]}</span>
-                    <span class="two-info-value"><a href="{$two_portal_url|escape:'html':'UTF-8'}/merchant/orders/{$twopaymentdata.two_order_id|escape:'url':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Open' mod='twopayment'}</a></span>
-                </div>
-                {/if}
                 {if $two_invoice_actions_available && $two_pdf_url}
                 <div class="two-info-card">
                     <span class="two-info-label">{l s='Invoice PDF' mod='twopayment'}</span>
@@ -136,12 +130,6 @@
                 <div class="two-info-card">
                     <span class="two-info-label">{l s='Invoice links' mod='twopayment'}</span>
                     <span class="two-info-value text-muted">{l s='Available after %s order fulfillment' mod='twopayment' sprintf=[$two_product_name]}</span>
-                </div>
-                {/if}
-                {if $two_portal_url}
-                <div class="two-info-card">
-                    <span class="two-info-label">{l s='%s Portal' mod='twopayment' sprintf=[$two_product_name]}</span>
-                    <span class="two-info-value"><a href="{$two_portal_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Open' mod='twopayment'}</a></span>
                 </div>
                 {/if}
             </div>

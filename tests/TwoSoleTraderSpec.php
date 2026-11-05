@@ -384,7 +384,7 @@ final class TwoSoleTraderSpec
      * @param string $psModeDev '1', '0' or 'unset'
      * @param array<string, string> $env override vars to export
      *
-     * @return array{signup: string, api: string, portal: string}
+     * @return array{signup: string, api: string}
      */
     private static function resolveUrls(string $psModeDev, array $env, string $environment = 'staging'): array
     {
@@ -427,7 +427,7 @@ final class TwoSoleTraderSpec
 
     /**
      * TWO_CHECKOUT_BASE_URL repoints the hosted signup page in dev mode while
-     * leaving the API and portal alone.
+     * leaving the API alone.
      */
     private static function testSignupUrlHonoursCheckoutOverrideInDevMode(): void
     {
@@ -446,9 +446,8 @@ final class TwoSoleTraderSpec
         $urls = self::resolveUrls('1', ['PROBE_EMPTY_VARS' => 'TWO_CHECKOUT_BASE_URL']);
         TinyAssert::same('https://checkout.staging.two.inc/soletrader/signup', $urls['signup']);
 
-        $urls = self::resolveUrls('1', ['PROBE_EMPTY_VARS' => 'TWO_API_BASE_URL,TWO_PORTAL_BASE_URL']);
+        $urls = self::resolveUrls('1', ['PROBE_EMPTY_VARS' => 'TWO_API_BASE_URL']);
         TinyAssert::same('https://api.staging.two.inc', $urls['api']);
-        TinyAssert::same('https://portal.staging.two.inc', $urls['portal']);
     }
 
     /**
@@ -465,46 +464,29 @@ final class TwoSoleTraderSpec
         $urls = self::resolveUrls('unset', $env, 'production');
         TinyAssert::same('https://checkout.two.inc/soletrader/signup', $urls['signup']);
 
-        $urls = self::resolveUrls(
-            '0',
-            [
-                'TWO_API_BASE_URL' => 'http://attacker.example/api',
-                'TWO_PORTAL_BASE_URL' => 'http://attacker.example/portal',
-            ],
-            'production'
-        );
+        $urls = self::resolveUrls('0', ['TWO_API_BASE_URL' => 'http://attacker.example/api'], 'production');
         TinyAssert::same('https://api.two.inc', $urls['api']);
-        TinyAssert::same('https://portal.two.inc', $urls['portal']);
     }
 
     /**
      * Staging API plus a locally-served checkout page is the whole point of
-     * splitting the three overrides.
+     * splitting the two overrides.
      */
     private static function testServiceUrlOverridesResolveIndependently(): void
     {
         $urls = self::resolveUrls('1', ['TWO_CHECKOUT_BASE_URL' => 'https://checkout.local.test']);
         TinyAssert::same('https://checkout.local.test/soletrader/signup', $urls['signup']);
         TinyAssert::same('https://api.staging.two.inc', $urls['api']);
-        TinyAssert::same('https://portal.staging.two.inc', $urls['portal']);
 
         $urls = self::resolveUrls('1', ['TWO_API_BASE_URL' => 'http://host.docker.internal:8080']);
         TinyAssert::same('http://host.docker.internal:8080', $urls['api']);
         TinyAssert::same('https://checkout.staging.two.inc/soletrader/signup', $urls['signup']);
-        TinyAssert::same('https://portal.staging.two.inc', $urls['portal']);
-
-        $urls = self::resolveUrls('1', ['TWO_PORTAL_BASE_URL' => 'http://host.docker.internal:8081']);
-        TinyAssert::same('http://host.docker.internal:8081', $urls['portal']);
-        TinyAssert::same('https://api.staging.two.inc', $urls['api']);
-        TinyAssert::same('https://checkout.staging.two.inc/soletrader/signup', $urls['signup']);
 
         $urls = self::resolveUrls('1', [
             'TWO_API_BASE_URL' => 'http://host.docker.internal:8080',
-            'TWO_PORTAL_BASE_URL' => 'http://host.docker.internal:8081',
             'TWO_CHECKOUT_BASE_URL' => 'http://localhost:3000',
         ]);
         TinyAssert::same('http://host.docker.internal:8080', $urls['api']);
-        TinyAssert::same('http://host.docker.internal:8081', $urls['portal']);
         TinyAssert::same('http://localhost:3000/soletrader/signup', $urls['signup']);
     }
 

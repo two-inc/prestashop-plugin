@@ -21,14 +21,8 @@
                 {if $twopaymentdata.two_invoice_url}
                     <tr><td><strong>{l s='%s Invoice Url' mod='twopayment' sprintf=[$two_product_name]}</strong></td> <td><a href="{$twopaymentdata.two_invoice_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer">{$twopaymentdata.two_invoice_url|escape:'html':'UTF-8'}</a></td></tr>
                 {/if}
-                {if $twopaymentdata.two_order_id && $two_portal_url}
-                    <tr><td><strong>{l s='View Order on Portal' mod='twopayment'}</strong></td> <td><a href="{$two_portal_url|escape:'html':'UTF-8'}/merchant/orders/{$twopaymentdata.two_order_id|escape:'url':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='View order details' mod='twopayment'}</a></td></tr>
-                {/if}
                 {if $two_pdf_url}
                     <tr><td><strong>{l s='Download PDF Invoice' mod='twopayment'}</strong></td> <td><a href="{$two_pdf_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Download invoice PDF' mod='twopayment'}</a></td></tr>
-                {/if}
-                {if $two_portal_url}
-                    <tr><td><strong>{l s='%s Portal' mod='twopayment' sprintf=[$two_product_name]}</strong></td> <td><a href="{$two_portal_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Manage your %s account' mod='twopayment' sprintf=[$two_product_name]}</a></td></tr>
                 {/if}
             </tbody>
         </table>
