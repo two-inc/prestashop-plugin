@@ -2,8 +2,9 @@
  * The subtitle element is emitted only when there is something to put
  * in it: `.two-subtitle` carries a 12px bottom margin (views/css/two.css), so
  * an empty `<p>` still moves everything below it. The subtitle is plain text
- * (TWO-27107): the template escapes it, so markup in it shows as typed and
- * never becomes a link.
+ * (TWO-27107): core strips tags when it is saved, and the template escapes
+ * whatever is stored, so a value carrying markup (an import, a hand-edited
+ * row) never becomes a link.
  *
  * Rendered from the shipped `views/templates/hook/paymentinfo.tpl` via the
  * harness, so deleting the guard in the real template is what fails this.
@@ -24,7 +25,7 @@ describe('payment tile subtitle', () => {
         ['Buy now, pay later', 'Buy now, pay later', null, 'a merchant subtitle is rendered verbatim'],
         ['0', '0', null, 'a subtitle of "0" is content, not emptiness'],
         ['', null, null, 'an empty subtitle emits no element'],
-        [MARKUP, MARKUP, null, 'markup is shown as text and never becomes a link'],
+        [MARKUP, MARKUP, null, 'a stored value with markup is escaped and never becomes a link'],
     ];
 
     cases.forEach(([subtitle, expectedText, expectedHref, description]) => {

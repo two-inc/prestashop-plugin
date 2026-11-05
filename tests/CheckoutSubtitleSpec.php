@@ -6,7 +6,8 @@ declare(strict_types=1);
  * The checkout tile's subtitle.
  *
  * The field is optional and per-language, and it is plain text (TWO-27107):
- * the template escapes it, so nothing typed into it becomes markup or a link,
+ * core strips tags when the field is saved, and the template escapes whatever
+ * is stored, so nothing in it becomes markup or a link,
  * and a blank field shows no subtitle at all.
  *
  * The title is a separate field, optional too: empty shows the default title.
@@ -79,8 +80,10 @@ final class CheckoutSubtitleSpec
     }
 
     /**
-     * Given any subtitle; When the merchant saves; Then it is stored as typed.
-     * Markup is not refused: it is text, and the tile shows it as text.
+     * Given any subtitle; When the merchant saves; Then the module stores it
+     * without refusing it. On a real shop core's Configuration::updateValue()
+     * strips tags on the way in; the stub here does not, so the rows below
+     * check only that the module itself refuses nothing.
      */
     private static function testAdminSaveStoresTheSubtitleAsTyped(): void
     {
@@ -95,9 +98,9 @@ final class CheckoutSubtitleSpec
                 '<a href="https://faq.example.test/x">read more</a>',
                 '',
                 '<a href="https://faq.example.test/x">read more</a>',
-                'a link saves as text; the tile escapes it',
+                'a link is not refused by the module',
             ],
-            ['Pay by invoice', '<b>Pay</b> later', '', '<b>Pay</b> later', 'markup is no longer refused on save'],
+            ['Pay by invoice', '<b>Pay</b> later', '', '<b>Pay</b> later', 'markup is no longer refused by the module'],
         ];
 
         foreach ($cases as list($title, $subtitle, $expectedError, $expectedStored, $description)) {
@@ -150,7 +153,7 @@ final class CheckoutSubtitleSpec
             ['', '', 'an empty subtitle shows none'],
             ['   ', '', 'a whitespace-only subtitle shows none'],
             [null, '', 'a language with no subtitle row at all shows none'],
-            ['<a href="https://x.test">read more</a>', '<a href="https://x.test">read more</a>', 'markup is handed over as text for the template to escape'],
+            ['<a href="https://x.test">read more</a>', '<a href="https://x.test">read more</a>', 'a stored value with markup (an import) is handed over for the template to escape'],
         ];
 
         foreach ($cases as list($stored, $expected, $description)) {

@@ -18248,8 +18248,9 @@ class Twopayment extends PaymentModule
 
     /**
      * The tile subtitle: the merchant's per-language Subtitle field, as plain
-     * text (TWO-27107). The template escapes it, so markup typed into the
-     * field is shown as typed and never becomes a link. Blank shows none.
+     * text (TWO-27107). Core strips tags when the field is saved, and the
+     * template escapes whatever is stored (an import, a hand-edited row), so
+     * it never renders markup or a link. Blank shows none.
      *
      * @return string
      */
