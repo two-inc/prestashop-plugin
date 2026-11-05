@@ -1260,6 +1260,9 @@ class Twopayment extends PaymentModule
                 if ($this->environmentRefused) {
                     $this->output .= $this->displayError($this->l('Select a valid environment.'));
                 }
+                if ($this->vendorNameRefused) {
+                    $this->output .= $this->displayError($this->l('Enter a vendor name of at most 255 characters, without line breaks or accented letters: it is sent with each request as a header. The previously saved vendor name was kept.'));
+                }
             } else {
                 foreach ($this->errors as $err) {
                     $this->output .= $this->displayError($err);
@@ -1513,8 +1516,8 @@ class Twopayment extends PaymentModule
                         'required' => true,
                         'desc' => sprintf($this->l('Enter your API key which is provided by %s.'), $this->getTwoBrandConfig('product_name')),
                     ),
-                    // Multi-site vendor/site name (TWO-25386). Free text, no
-                    // validation - only meaningful for merchants running Two
+                    // Multi-site vendor/site name (TWO-25386). Printable ASCII,
+                    // at most 255 characters (TWO-27107) - only meaningful for merchants running Two
                     // across more than one site/vendor identity. Sent as the
                     // X-Vendor-Name request header, never shown to buyers.
                     // Empty is the normal single-site state and is never sent.
@@ -1582,7 +1585,10 @@ class Twopayment extends PaymentModule
         $fields_values = array();
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
         $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
-        $fields_values['PS_TWO_VENDOR_NAME'] = Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
+        // A refused vendor name was not stored, so the form shows the stored one.
+        $fields_values['PS_TWO_VENDOR_NAME'] = $this->vendorNameRefused
+            ? Configuration::get('PS_TWO_VENDOR_NAME')
+            : Tools::getValue('PS_TWO_VENDOR_NAME', Configuration::get('PS_TWO_VENDOR_NAME'));
         // A refused environment was not stored, so the form shows the stored one,
         // as the environment it resolves to: a legacy value matches no option and
         // would otherwise show, and save, as Production.
@@ -1607,6 +1613,11 @@ class Twopayment extends PaymentModule
             Tools::getValue('PS_TWO_ENVIRONMENT'),
             Configuration::get('PS_TWO_ENVIRONMENT')
         );
+
+        // Refused field by field too (TWO-27107): it is sent as a header
+        // value, so it must be printable ASCII. Empty means none is sent.
+        $vendor = trim((string) Tools::getValue('PS_TWO_VENDOR_NAME'));
+        $this->vendorNameRefused = $vendor !== '' && !self::isSendableTwoVendorName($vendor);
         
         // Verify API key with Two against selected environment and capture merchant id and short name
         $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
@@ -1684,7 +1695,9 @@ class Twopayment extends PaymentModule
         // Two answers 404 (TWO-26304).
         $this->merchant_short_name = $shortNameToSave;
         $this->api_key = $apiKeyToSave;
-        Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
+        if (!$this->vendorNameRefused) {
+            Configuration::updateValue('PS_TWO_VENDOR_NAME', trim((string) Tools::getValue('PS_TWO_VENDOR_NAME')));
+        }
         Configuration::updateValue('PS_TWO_ENVIRONMENT', $submittedEnv);
 
         if ($identityChanged) {
@@ -17905,6 +17918,28 @@ class Twopayment extends PaymentModule
     /** Whether the submitted Environment was refused, so the stored one is kept (TWO-26604). */
     protected $environmentRefused = false;
 
+    /** Whether the submitted Vendor name was refused, so the stored one is kept (TWO-27107). */
+    protected $vendorNameRefused = false;
+
+    /** The longest vendor name sent as a header value (TWO-27107). */
+    const VENDOR_NAME_MAX_LENGTH = 255;
+
+    /**
+     * Whether a vendor name may be sent as the X-Vendor-Name header value:
+     * printable ASCII (no line breaks, control bytes or accented letters) and
+     * at most VENDOR_NAME_MAX_LENGTH characters. Checked on save and again
+     * where it is sent.
+     *
+     * @param string $vendor already trimmed
+     *
+     * @return bool
+     */
+    public static function isSendableTwoVendorName($vendor)
+    {
+        return preg_match('/^[\x20-\x7E]+\z/', (string) $vendor) === 1
+            && strlen((string) $vendor) <= self::VENDOR_NAME_MAX_LENGTH;
+    }
+
     /**
      * Whether this instance has already logged that it is withholding Two over
      * a verification failure (TWO-25326). PrestaShop asks for payment options
@@ -22729,8 +22764,10 @@ class Twopayment extends PaymentModule
         // endpoint's payload shape. Only ever sent alongside the API key -
         // never useful, and never sent, on the unauthenticated order-intent
         // preview path.
+        // Re-checked where it is sent: a stored value that no save validated
+        // (an import, a hand-edited row) never reaches the wire unsendable.
         $vendorName = trim((string) Configuration::get('PS_TWO_VENDOR_NAME'));
-        if ($includeApiKey && $vendorName !== '') {
+        if ($includeApiKey && $vendorName !== '' && self::isSendableTwoVendorName($vendorName)) {
             $headers[] = 'X-Vendor-Name:' . $vendorName;
         }
 
