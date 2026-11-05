@@ -1192,6 +1192,8 @@ final class SurchargeCartLineSpec
         TinyAssert::same(1, (int) $product->available_for_order);
         TinyAssert::same(1, (int) $product->out_of_stock);
         TinyAssert::same(Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, (string) $product->reference);
+        // TWO-26280: no stock movement, so core makes no legacy context read that moves the shop context.
+        TinyAssert::same(false, StubStore::$stock[$productId]['add_movement'], 'the fee stock is set without a stock movement');
 
         // Lazy-create is itself idempotent: same id on every subsequent call.
         TinyAssert::same($productId, $module->getTwoSurchargeCartProductId(true));
