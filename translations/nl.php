@@ -108,7 +108,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_11503989a3f470d727d38a6054896940'] 
 $_MODULE['<{twopayment}prestashop>twopayment_3d114d4ced72fd97d0f0abf4e4117777'] = 'Het bedrijf heeft mogelijk zijn kredietlimiet bereikt of de kredietcheck van %s niet doorstaan';
 $_MODULE['<{twopayment}prestashop>twopayment_1243daf593fa297e07ab03bf06d925af'] = 'Zoeken...';
 $_MODULE['<{twopayment}prestashop>twopayment_128ce19a81ca82c86adfed35ed88578a'] = 'Het maximum geldt voor de hele vergoeding: het percentage en het vaste bedrag samen, niet alleen het percentage. Laat leeg voor geen maximum.';
-$_MODULE['<{twopayment}prestashop>twopayment_12a62151fbf8218ddf2165d1f23821cd'] = 'Vul een titel in.';
 $_MODULE['<{twopayment}prestashop>twopayment_12dbe8e446cc6067de4c47a0f3f6d78d'] = 'Bestelreferentie van de provider ontbreekt voor deze poging.';
 $_MODULE['<{twopayment}prestashop>twopayment_4bd9ef088a14b5f6fd9ef86e6f33037f'] = 'Hulp nodig?';
 $_MODULE['<{twopayment}prestashop>twopayment_144b4dc20a476a4588ff5f481283cfc6'] = 'Het opgegeven adres is ongeldig. Ga terug en controleer de gegevens van je factuuradres.';
@@ -314,7 +313,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_b4d559d50e616b7eb46089c0734d1b1c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b4e549c7d1dbcd350dffb942b6e35e37'] = 'Commit:';
 $_MODULE['<{twopayment}prestashop>twopayment_777444672172a872fbe496f2f0599660'] = 'Betaal in %s dagen';
 $_MODULE['<{twopayment}prestashop>twopayment_65112567dfe66bf4a6a4ae4ef0710d89'] = 'Betaal in %s dagen vanaf einde van de maand';
-$_MODULE['<{twopayment}prestashop>twopayment_35895cff7df70dab18783453e2bd241f'] = 'Betaal met %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b5f41647401f7d6a7aa511cbd9aa5ecf'] = 'Het trackingnummer kon niet worden doorgegeven aan de factuurprovider; de factuur wordt zonder trackingnummer verzonden.';
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Titel';
 $_MODULE['<{twopayment}prestashop>twopayment_b7e84545a616108ac9b4496b15a60966'] = 'De klant moet de officieel geregistreerde bedrijfsnaam invullen';
@@ -355,7 +353,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_cf08ddca9326ba095dbdd77a10b9f121'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d2f68faa84d4bab378419dae024f85f9'] = 'Betaling goedgekeurd! Kies hieronder je betaaltermijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_d314a00556eb88a960abf8a0de8b45f8'] = 'Een deel van de opgegeven informatie is ongeldig. Controleer de gegevens van je factuuradres en probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_d32e67e619603fc5368d087716b1afb4'] = 'De opgegeven bedrijfsgegevens zijn ongeldig. Ga terug naar je factuuradres en zoek op je bedrijfsnaam om een geldig bedrijf te selecteren.';
-$_MODULE['<{twopayment}prestashop>twopayment_d34347a5f791b2cecfda204f7a0b575d'] = 'Vul een titel in die op de afrekenpagina wordt weergegeven als titel van de betaalmethode.';
 $_MODULE['<{twopayment}prestashop>twopayment_d40f2c2b7a99b454ace5554f91e54c8c'] = 'Vast bedrag en percentage';
 $_MODULE['<{twopayment}prestashop>twopayment_e6be41d22edf30b30a6258b4a74b7759'] = '%s - BNPL voor bedrijven';
 $_MODULE['<{twopayment}prestashop>twopayment_d4b644ceb41c3a19d874ee330ac45f97'] = 'Geen afronding';
@@ -636,3 +633,5 @@ $_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'Niet herkend: Sandbox wordt gebruikt. Selecteer een omgeving en sla op.';
 $_MODULE['<{twopayment}prestashop>twopayment_83ddb18c833306739ac336402fa25e10'] = 'De betaaltermijn die je hebt gekozen is niet beschikbaar. Kies een andere termijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_432e8554207fde91115c532dc5498e01'] = 'Bedragen zijn in de standaardvaluta van je winkel, %s.';
+$_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] = 'Zakelijke factuur';
+$_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'De titel van de betaalmethode bij het afrekenen. Laat dit leeg om "Zakelijke factuur" in de taal van de klant te tonen.';
