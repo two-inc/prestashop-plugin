@@ -108,7 +108,6 @@ if command -v rsync &> /dev/null; then
         --exclude='*.swo' \
         --exclude='*~' \
         --exclude='.env' \
-        --exclude='.env.local' \
         --exclude='composer.lock' \
         --exclude='package.json' \
         --exclude='package-lock.json' \
