@@ -67,11 +67,6 @@
         </div>
 
         <div class="two-actions-section">
-            {if $twopaymentdata.two_order_id && $two_portal_url}
-            <a href="{$two_portal_url|escape:'html':'UTF-8'}/merchant/orders/{$twopaymentdata.two_order_id|escape:'url':'UTF-8'}" target="_blank" rel="noopener noreferrer" class="two-action-link two-action-primary">
-                <i class="icon-external-link"></i> {l s='View in Portal' mod='twopayment'}
-            </a>
-            {/if}
             {if $two_invoice_actions_available && $two_pdf_url}
             <a href="{$two_pdf_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer" class="two-action-link two-action-secondary">
                 <i class="icon-download"></i> {l s='Download invoice' mod='twopayment'}

@@ -15,12 +15,6 @@
                         </td>
                     </tr>
                 {/if}
-                {if $two_buyer_portal_url}
-                    <tr>
-                        <td><strong>{l s='%s Buyer Portal' mod='twopayment' sprintf=[$two_product_name]}</strong></td>
-                        <td><a href="{$two_buyer_portal_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Access your %s buyer portal to view this order once fulfilled' mod='twopayment' sprintf=[$two_product_name]}</a></td>
-                    </tr>
-                {/if}
             </tbody>
         </table>
     </div>

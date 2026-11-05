@@ -438,10 +438,10 @@ class TwoSoleTrader
      * environment.
      *
      * TWO_CHECKOUT_BASE_URL overrides the host when the shop is in dev mode
-     * (_PS_MODE_DEV_), independently of the API and portal overrides, so a dev
+     * (_PS_MODE_DEV_), independently of the API override, so a dev
      * can mix a staging API with a locally-served checkout-page. The gate lives
      * in Twopayment::getDevModeEnvOverride() — one implementation shared with
-     * TWO_API_BASE_URL and TWO_PORTAL_BASE_URL, never honoured off dev mode.
+     * TWO_API_BASE_URL, never honoured off dev mode.
      *
      * @return string
      */
