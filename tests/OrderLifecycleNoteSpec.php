@@ -18,17 +18,24 @@ final class OrderLifecycleNoteSpec
 
     public static function runAll(): void
     {
+        $hookCode = 'TWO_ORDER_POSTPROCESSING_HOOK_FAILED';
         // [new status, stored Two state, state Two's GET answers (null = unreadable),
-        //  fulfil response, expected note, description]
+        //  response to the fulfil or cancel POST, expected note, description]
         $rows = [
-            [self::FULFILLED, 'CONFIRMED', 'CONFIRMED', ['fulfilled_order' => ['id' => 'ful-1']], 'Two order two-order-7904 fulfilled (ful-1).', 'a fulfil that goes through'],
-            [self::FULFILLED, 'CONFIRMED', 'CONFIRMED', ['message' => 'Order is not complete'], 'Two refused to fulfil order two-order-7904: Order is not complete. Save the status again to retry.', 'a fulfil Two refuses, with its reason'],
+            [self::FULFILLED, 'CONFIRMED', 'CONFIRMED', ['http_status' => 200, 'fulfilled_order' => ['id' => 'ful-1']], 'Two order two-order-7904 fulfilled (ful-1).', 'a fulfil that goes through'],
+            [self::FULFILLED, 'CONFIRMED', 'CONFIRMED', ['http_status' => 400, 'message' => 'Order is not complete'], 'Two refused to fulfil order two-order-7904: Order is not complete. Save the status again to retry.', 'a fulfil Two refuses, with its reason'],
+            [self::FULFILLED, 'CONFIRMED', 'CONFIRMED', ['http_status' => 0, 'error' => $hookCode, 'error_code' => $hookCode, 'error_message' => $hookCode], 'Two order two-order-7904 not fulfilled: the module did not send the request (' . $hookCode . '). See the module log, then save the status again to retry.', 'a fulfil a subscriber stopped never reached Two'],
+            [self::FULFILLED, 'CONFIRMED', 'CONFIRMED', ['http_status' => 0, 'error' => 'Connection error', 'error_message' => 'Unable to connect to Two API'], 'Two order two-order-7904 not fulfilled: Two could not be reached. Save the status again to retry.', 'a fulfil that never reached Two is not a refusal'],
             [self::FULFILLED, 'CONFIRMED', null, [], 'Two order two-order-7904 not fulfilled: Two could not be asked for its state. Save the status again to retry.', 'a fulfil when the order cannot be read'],
             [self::FULFILLED, 'CONFIRMED', 'VERIFIED', [], 'Two holds order two-order-7904 as VERIFIED, so it was not fulfilled.', 'a fulfil of an order not yet confirmed'],
+            [self::FULFILLED, 'CONFIRMED', 'FULFILLED', [], 'Two order two-order-7904 is already FULFILLED.', 'a status re-saved on a fulfilled order is not a failure'],
             [self::FULFILLED, 'CANCELLED', 'CANCELLED', [], 'Two holds order two-order-7904 as CANCELLED, so it was not fulfilled.', 'a fulfil of an order stored as cancelled'],
-            [self::CANCELLED, 'CONFIRMED', 'CANCELLED', [], 'Two order two-order-7904 cancelled.', 'a cancel that goes through'],
-            [self::CANCELLED, 'CONFIRMED', 'FULFILLED', [], 'Two order two-order-7904 not cancelled. Two holds it as FULFILLED. Save the status again to retry.', 'a cancel Two does not apply'],
-            [self::CANCELLED, 'CONFIRMED', null, [], 'Two order two-order-7904 not cancelled, and Two could not be asked for its state. Save the status again to retry.', 'a cancel when the order cannot be read afterwards'],
+            [self::CANCELLED, 'CONFIRMED', 'CANCELLED', ['http_status' => 200], 'Two order two-order-7904 cancelled.', 'a cancel that goes through'],
+            [self::CANCELLED, 'CONFIRMED', 'CONFIRMED', ['http_status' => 200], 'Two order two-order-7904 not cancelled. Two holds it as CONFIRMED. Save the status again to retry.', 'a cancel Two did not apply, with no reason given'],
+            [self::CANCELLED, 'CONFIRMED', 'CONFIRMED', ['http_status' => 503, 'message' => 'Service unavailable'], 'Two order two-order-7904 not cancelled. Two holds it as CONFIRMED. Save the status again to retry. Two gave this reason: Service unavailable.', 'a cancel Two refused carries its reason'],
+            [self::CANCELLED, 'CONFIRMED', 'FULFILLED', ['http_status' => 400, 'message' => 'Order is fulfilled'], 'Two order two-order-7904 not cancelled. Two holds it as FULFILLED. A fulfilled order is refunded, not cancelled. Two gave this reason: Order is fulfilled.', 'a fulfilled order is never told to retry the cancel'],
+            [self::CANCELLED, 'CONFIRMED', 'PARTIALLY_FULFILLED', ['http_status' => 400], 'Two order two-order-7904 not cancelled. Two holds it as PARTIALLY_FULFILLED. A fulfilled order is refunded, not cancelled.', 'nor is a partly fulfilled one'],
+            [self::CANCELLED, 'CONFIRMED', null, ['http_status' => 200], 'Two order two-order-7904 not cancelled, and Two could not be asked for its state. Save the status again to retry.', 'a cancel when the order cannot be read afterwards'],
             [self::CANCELLED, 'CANCELLED', 'CANCELLED', [], 'Two order two-order-7904 is already cancelled.', 'a cancel of an order already cancelled at Two'],
         ];
         $failures = [];
@@ -75,7 +82,7 @@ final class OrderLifecycleNoteSpec
 
             public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null, $twoOrder = null)
             {
-                if (substr((string) $endpoint, -13) === '/fulfillments') {
+                if (substr((string) $endpoint, -13) === '/fulfillments' || substr((string) $endpoint, -7) === '/cancel') {
                     return $this->fulfilResponse;
                 }
 

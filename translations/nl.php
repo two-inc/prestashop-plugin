@@ -647,3 +647,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_afa9885d0e5ddf7384c3c22c4fded4cb'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c2437b11cac64a6b5d5f90b794467ada'] = '%1$s-bestelling %2$s is niet uitgeleverd: de status kon niet bij %1$s worden opgevraagd. Sla de status opnieuw op om het nog eens te proberen.';
 $_MODULE['<{twopayment}prestashop>twopayment_011452722aa463fdf3fff1c019b6bebb'] = '%1$s-bestelling %2$s uitgeleverd (%3$s).';
 $_MODULE['<{twopayment}prestashop>twopayment_ec918c5a05b20b4d8a5e0e18ec87cc26'] = '%1$s heeft het uitleveren van bestelling %2$s geweigerd: %3$s Sla de status opnieuw op om het nog eens te proberen.';
+$_MODULE['<{twopayment}prestashop>twopayment_c598d6792001799df05a60f995fbcdd8'] = '%1$s-bestelling %2$s is al %3$s.';
+$_MODULE['<{twopayment}prestashop>twopayment_4ffe5c667f011ac32051115abb2e1b15'] = '%1$s-bestelling %2$s is niet uitgeleverd: de module heeft het verzoek niet verstuurd (%3$s). Bekijk het modulelogboek en sla de status daarna opnieuw op om het nog eens te proberen.';
+$_MODULE['<{twopayment}prestashop>twopayment_9f1cd934c95b9a7d8a997a538e9b552c'] = '%1$s-bestelling %2$s is niet uitgeleverd: %1$s was niet bereikbaar. Sla de status opnieuw op om het nog eens te proberen.';
+$_MODULE['<{twopayment}prestashop>twopayment_8b199f7816b1ab780859db6f56f8a4a0'] = '%1$s-bestelling %2$s is niet uitgeleverd: %3$s Sla de status opnieuw op om het nog eens te proberen.';
+$_MODULE['<{twopayment}prestashop>twopayment_0d4f9114464ecfdeaa9775dd606112d2'] = '%1$s-bestelling %2$s is niet geannuleerd. %1$s heeft de status %3$s. Een uitgeleverde bestelling wordt terugbetaald, niet geannuleerd.';
+$_MODULE['<{twopayment}prestashop>twopayment_2c2946b79215f95fd5be22cb16a61061'] = '%1$s gaf deze reden: %2$s';

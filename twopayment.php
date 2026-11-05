@@ -5619,6 +5619,32 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Why an order request did not succeed, from its response, or '' when it
+     * succeeded or says nothing (TWO-27107). Sentence-terminated.
+     *
+     * @param mixed $response
+     *
+     * @return string
+     */
+    protected function getTwoRequestFailureReason($response)
+    {
+        if (!is_array($response)) {
+            return '';
+        }
+        $status = isset($response['http_status']) ? (int) $response['http_status'] : null;
+        if ($status !== null && $status >= 200 && $status < 300) {
+            return '';
+        }
+        foreach (array('error_message', 'message', 'error') as $key) {
+            if (isset($response[$key]) && is_scalar($response[$key]) && trim((string) $response[$key]) !== '') {
+                return rtrim(trim((string) $response[$key]), '.') . '.';
+            }
+        }
+
+        return '';
+    }
+
+    /**
      * A fulfil or cancel outcome, written to the order's private notes as well
      * as the module log (TWO-27107), so the merchant sees it on the order page.
      * Never breaks the status change it reports on.
@@ -5628,6 +5654,7 @@ class Twopayment extends PaymentModule
      */
     protected function addTwoOrderLifecycleNote($idOrder, $text)
     {
+        $text = trim((string) $text);
         try {
             $this->addTwoOrderPrivateNote((int) $idOrder, $text);
         } catch (Throwable $e) {
@@ -5736,18 +5763,29 @@ class Twopayment extends PaymentModule
                         $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s is already cancelled.'), $this->getTwoBrandConfig('product_name'), $two_order_id));
                         return;
                     }
-                    $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
+                    $cancel_response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'status_change', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
                     $response = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
                     // The outcome is judged from the order Two holds after the
                     // cancel, and noted on the order as well as logged (TWO-27107).
                     $cancel_state = isset($response['state']) ? strtoupper(trim((string) $response['state'])) : '';
+                    $brand = $this->getTwoBrandConfig('product_name');
                     if ($cancel_state === 'CANCELLED') {
-                        $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s cancelled.'), $this->getTwoBrandConfig('product_name'), $two_order_id));
-                    } elseif ($cancel_state === '') {
-                        $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s not cancelled, and %1$s could not be asked for its state. Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id));
+                        $note = sprintf($this->l('%1$s order %2$s cancelled.'), $brand, $two_order_id);
                     } else {
-                        $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s not cancelled. %1$s holds it as %3$s. Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, $cancel_state));
+                        if ($cancel_state === '') {
+                            $note = sprintf($this->l('%1$s order %2$s not cancelled, and %1$s could not be asked for its state. Save the status again to retry.'), $brand, $two_order_id);
+                        } elseif (in_array($cancel_state, array('FULFILLED', 'PARTIALLY_FULFILLED'), true)) {
+                            // A retry can never cancel a fulfilled order.
+                            $note = sprintf($this->l('%1$s order %2$s not cancelled. %1$s holds it as %3$s. A fulfilled order is refunded, not cancelled.'), $brand, $two_order_id, $cancel_state);
+                        } else {
+                            $note = sprintf($this->l('%1$s order %2$s not cancelled. %1$s holds it as %3$s. Save the status again to retry.'), $brand, $two_order_id, $cancel_state);
+                        }
+                        $reason = $this->getTwoRequestFailureReason($cancel_response);
+                        if ($reason !== '') {
+                            $note .= ' ' . sprintf($this->l('%1$s gave this reason: %2$s'), $brand, $reason);
+                        }
                     }
+                    $this->addTwoOrderLifecycleNote($id_order, $note);
                     if (isset($response['id']) && $response['id']) {
                         $resolved_terms = $this->resolveTwoPaymentTermsFromOrderResponse(
                             $response,
@@ -5826,7 +5864,12 @@ class Twopayment extends PaymentModule
                         // Only CONFIRMED orders can be fulfilled (VERIFIED orders must be confirmed first to ensure they have been sent to the checkout success page)
                         if (!$this->isTwoOrderFulfillableState($provider_two_state)) {
                             PrestaShopLogger::addLog('TwoPayment: Two order not in fulfillable state. Current state: ' . $provider_two_state . ', Expected: CONFIRMED. Two order ID: ' . $two_order_id, 2);
-                            $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s holds order %2$s as %3$s, so it was not fulfilled.'), $this->getTwoBrandConfig('product_name'), $two_order_id, $provider_two_state));
+                            // A status re-saved on an order already fulfilled is
+                            // not a failure, so it does not read as one.
+                            $already = in_array($provider_two_state, array('FULFILLED', 'PARTIALLY_FULFILLED'), true);
+                            $this->addTwoOrderLifecycleNote($id_order, $already
+                                ? sprintf($this->l('%1$s order %2$s is already %3$s.'), $this->getTwoBrandConfig('product_name'), $two_order_id, $provider_two_state)
+                                : sprintf($this->l('%1$s holds order %2$s as %3$s, so it was not fulfilled.'), $this->getTwoBrandConfig('product_name'), $two_order_id, $provider_two_state));
                             return;
                         }
                         
@@ -5904,7 +5947,18 @@ class Twopayment extends PaymentModule
                                 ', Response Summary: ' . json_encode($response_summary),
                                 3
                             );
-                            $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s refused to fulfil order %2$s: %3$s Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, rtrim((string) $error_message, '.') . '.'));
+                            // Only an answer from Two is Two refusing: a request
+                            // the module did not send, or one that never reached
+                            // Two, says so instead.
+                            $fulfil_http = isset($response['http_status']) ? (int) $response['http_status'] : null;
+                            if ($fulfil_http === 0 && !empty($response['error_code'])) {
+                                $fulfil_note = sprintf($this->l('%1$s order %2$s not fulfilled: the module did not send the request (%3$s). See the module log, then save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, (string) $response['error_code']);
+                            } elseif ($fulfil_http === 0) {
+                                $fulfil_note = sprintf($this->l('%1$s order %2$s not fulfilled: %1$s could not be reached. Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id);
+                            } else {
+                                $fulfil_note = sprintf($this->l('%1$s refused to fulfil order %2$s: %3$s Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, rtrim((string) $error_message, '.') . '.');
+                            }
+                            $this->addTwoOrderLifecycleNote($id_order, $fulfil_note);
 
                             // Don't interfere with PrestaShop's status change process
                         }
@@ -5914,7 +5968,7 @@ class Twopayment extends PaymentModule
                         // Only when no fulfil went through: a failure after one (the
                         // invoice upload) is not a refused fulfil.
                         if (!$fulfil_done) {
-                            $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s refused to fulfil order %2$s: %3$s Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, rtrim($e->getMessage(), '.') . '.'));
+                            $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s not fulfilled: %3$s Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, rtrim($e->getMessage(), '.') . '.'));
                         }
                     }
                 } else if ($new_order_status->id == Configuration::get('PS_TWO_OS_REFUNDED_MAP')) {
