@@ -38,6 +38,7 @@ final class SurchargeCartLineSpec
         self::testStaleGuardKeepsLegitimateLine();
         self::testStaleGuardLeavesGuestCheckoutStateRestorable();
         self::testHiddenProductShapeAndLazyCreation();
+        self::testFeeProductCreationRestoresTheShopContext();
         self::testStaleSequencedSyncRequestIsIgnoredServerSide();
         self::testAuthoritativeSyncBypassesSequenceGuard();
         self::testSequencedSyncFailsSoftWhenLockHeldByConcurrentRequest();
@@ -1191,6 +1192,8 @@ final class SurchargeCartLineSpec
         TinyAssert::same(1, (int) $product->available_for_order);
         TinyAssert::same(1, (int) $product->out_of_stock);
         TinyAssert::same(Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, (string) $product->reference);
+        // TWO-26280: no stock movement, so core makes no legacy context read that moves the shop context.
+        TinyAssert::same(false, StubStore::$stock[$productId]['add_movement'], 'the fee stock is set without a stock movement');
 
         // Lazy-create is itself idempotent: same id on every subsequent call.
         TinyAssert::same($productId, $module->getTwoSurchargeCartProductId(true));
@@ -1202,6 +1205,40 @@ final class SurchargeCartLineSpec
         $recreated = $module->getTwoSurchargeCartProductId(true);
         TinyAssert::notSame(9401, $recreated);
         TinyAssert::true($recreated > 0);
+    }
+
+    /**
+     * TWO-26280: creating the fee product hands the shop context back as it found it, also when the stock call throws.
+     */
+    private static function testFeeProductCreationRestoresTheShopContext(): void
+    {
+        $toAll = static function (): void {
+            Shop::setContext(Shop::CONTEXT_ALL);
+        };
+        $toAllThenThrow = static function (): void {
+            Shop::setContext(Shop::CONTEXT_ALL);
+            throw new RuntimeException('stock write failed');
+        };
+        $cases = [
+            // [context type, context id, setQuantity side effect, created, description]
+            [Shop::CONTEXT_SHOP, 2, $toAll, true, 'shop 2: stock write leaves all shops'],
+            [Shop::CONTEXT_GROUP, 2, $toAll, true, 'group 2: stock write leaves all shops'],
+            [Shop::CONTEXT_SHOP, 1, $toAllThenThrow, false, 'shop 1: stock write leaves all shops, then throws'],
+        ];
+        foreach ($cases as [$type, $id, $sideEffect, $created, $description]) {
+            $module = self::makeModule();
+            self::makeCart();
+            StubStore::$multistore = true;
+            StubStore::$shops = [1 => 1, 2 => 2];
+            Shop::setContext($type, $id);
+            StubStore::$onSetQuantity = $sideEffect;
+
+            $productId = $module->getTwoSurchargeCartProductId(true);
+
+            TinyAssert::same($created, $productId > 0, $description . ': created');
+            $contextId = $type === Shop::CONTEXT_GROUP ? Shop::getContextShopGroupID() : Shop::getContextShopID();
+            TinyAssert::same([$type, $id], [Shop::getContext(), $contextId], $description . ': shop context restored');
+        }
     }
 
     /* ---- actionPresentCart: surcharge as its own totals row ---- */
