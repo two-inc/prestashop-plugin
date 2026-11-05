@@ -21253,6 +21253,21 @@ class Twopayment extends PaymentModule
             )
             . '</p>';
 
+        // Which currency the fixed fee and cap are in (TWO-27107): the shop's
+        // own default currency, which is what the calculator reads them as
+        // before converting to the basket's. Shown and hidden with the grid.
+        $currency_iso = $this->getTwoShopDefaultCurrencyIso();
+        if ($currency_iso !== '') {
+            $html .= '<p id="two-surcharge-currency-note" class="help-block" style="margin-top:8px;'
+                . ($has_offered_term ? '' : 'display:none;') . '">'
+                . htmlspecialchars(
+                    sprintf($this->l('Amounts are in the shop\'s default currency, %s.'), $currency_iso),
+                    ENT_QUOTES,
+                    'UTF-8'
+                )
+                . '</p>';
+        }
+
         // Cap semantics, stated where the cap is entered. Both sentences
         // exist because the grid otherwise invites exactly the mistake it
         // then refuses on save (TWO-25289).
@@ -21427,6 +21442,10 @@ class Twopayment extends PaymentModule
             return;
         }
         $type = TwoSurchargeCalculator::mapKnownType($postedType);
+        // Grid cells are checked whatever the method (TWO-27107): a junk value
+        // typed while the method is none would otherwise be stored, and
+        // surface as a live fee the moment the method is switched on.
+        $this->validateTwoSurchargeGridCells($type);
         if ($type === 'none') {
             return;
         }
@@ -21462,6 +21481,17 @@ class Twopayment extends PaymentModule
                 }
             }
         }
+    }
+
+    /**
+     * Refuse a non-numeric or negative surcharge grid cell, naming the field
+     * and the term, and a zero cap while the cap column is visible. Runs for
+     * every surcharge method, none included. Appends to $this->errors.
+     *
+     * @param string $type the posted surcharge method, already mapped
+     */
+    protected function validateTwoSurchargeGridCells($type)
+    {
         // The RENDERED term set, not getConfigurableTermSet(): the grid
         // renders (and therefore posts) a row per OFFERABLE term, and the
         // ticked subset is rewritten by saveTwoPaymentTermsFormValues()

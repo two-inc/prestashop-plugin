@@ -653,3 +653,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_c21fc3efc594b8be0af22d4da176594c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2431c154912aec783d58f690692ce2a3'] = 'Staging (interne testomgeving van %s). Selecteer Sandbox of Productie.';
 $_MODULE['<{twopayment}prestashop>twopayment_938a5cc239e2df5deace1a3083fc77c3'] = 'Niet herkend: Sandbox wordt gebruikt. Selecteer een omgeving en sla op.';
 $_MODULE['<{twopayment}prestashop>twopayment_83ddb18c833306739ac336402fa25e10'] = 'De betaaltermijn die je hebt gekozen is niet beschikbaar. Kies een andere termijn.';
+$_MODULE['<{twopayment}prestashop>twopayment_432e8554207fde91115c532dc5498e01'] = 'Bedragen zijn in de standaardvaluta van je winkel, %s.';

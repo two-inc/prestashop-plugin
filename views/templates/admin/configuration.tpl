@@ -285,6 +285,7 @@
                 twoHasOfferedTerm = offered.length > 0 || custom > 0;
                 $('#two-surcharge-grid').toggle(twoHasOfferedTerm);
                 $('#two-surcharge-empty').toggle(!twoHasOfferedTerm);
+                $('#two-surcharge-currency-note').toggle(twoHasOfferedTerm);
                 updateSurchargeGridVisibility();
                 updateTwoDefaultTermOptions(offered, custom);
             }
