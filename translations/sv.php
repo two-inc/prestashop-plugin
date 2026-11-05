@@ -120,7 +120,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_1bee0d8aaede29ac319901e96850adee'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1cda9ad7574b6a8fcfd2490b27ad18f2'] = 'Köparen nekad?';
 $_MODULE['<{twopayment}prestashop>twopayment_1d17cb9923b99f823da9f5a16dc460e5'] = 'Avdelning';
 $_MODULE['<{twopayment}prestashop>twopayment_ffc942dc1331bc90ca42a1534c0dae70'] = 'Din faktura hos %s kan inte godkännas just nu';
-$_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Ange din API-nyckel som du fått från %s.';
+$_MODULE['<{twopayment}prestashop>twopayment_6300d7f48d339e8a67dfb426a4cc21e3'] = 'Ange din API-nyckel som du fått från %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_8e67cbbf0c476ed7957e5377ffedd2f9'] = 'Väntar på köparverifiering → %s: Väntar på köparverifiering';
 $_MODULE['<{twopayment}prestashop>twopayment_22008c36020d2d76ff6ff3c988b4fa58'] = 'Företagsuppgifterna är ofullständiga. Gå tillbaka till din fakturaadress och välj ditt företag bland sökresultaten.';
 $_MODULE['<{twopayment}prestashop>twopayment_0dfd3b67b856d108d9a4ec8864d4b40e'] = 'Om du väljer JA ser kunderna ett fält för fakturamejladress i %s-avsnittet i kassan. Det ligger tillsammans med betalningsmetoden i stället för adressen, så att köparen uppmanas att överväga en särskild faktureringsadress även när faktura- och leveransadressen är samma.';
@@ -139,7 +139,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_2b340063734382803d14ef2234a59b46'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2b4ef6e3a316295ab176b9dae7ef46b6'] = 'Fraktkostnad för order';
 $_MODULE['<{twopayment}prestashop>twopayment_2db402469dd03ef70d28a292f12eb8c7'] = 'Företagssökning och validering i kassan (automatisk komplettering)';
 $_MODULE['<{twopayment}prestashop>twopayment_d2430a6dcc29a7c2af9f06c42b418da8'] = 'Garantera godkännande - %s gör kreditkontroller i realtid';
-$_MODULE['<{twopayment}prestashop>twopayment_dbda4ec01ebe40844f0dc502f45fd397'] = 'Välj en eller flera orderstatusar som ska utlösa leveransrapportering till %1$s. När någon av dessa statusar sätts markeras ordern som levererad hos %1$s. Köparens betalningsvillkor aktiveras och utbetalningscykeln startar. Du kan välja flera statusar (håll ned Ctrl/Cmd för att välja flera. Standard: Skickad';
+$_MODULE['<{twopayment}prestashop>twopayment_4c45f1f87f53a81eafad04418168a508'] = 'Välj en eller flera orderstatusar som ska utlösa leveransrapportering till %1$s. När någon av dessa statusar sätts markeras ordern som levererad hos %1$s. Köparens betalningsvillkor aktiveras och utbetalningscykeln startar. Du kan välja flera statusar (håll ned Ctrl/Cmd för att välja flera). Standard: Skickad';
 $_MODULE['<{twopayment}prestashop>twopayment_2e92ae79ff32b37fee4368a594792183'] = 'Anslutningsfel';
 $_MODULE['<{twopayment}prestashop>twopayment_2f6653d72084d1585721cb272597728f'] = 'Fel om beloppsavvikelser?';
 $_MODULE['<{twopayment}prestashop>twopayment_31a1931b5703e90cf392686134f4aae1'] = 'PrestaShop:';

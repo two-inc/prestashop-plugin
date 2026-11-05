@@ -14,7 +14,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_e6be41d22edf30b30a6258b4a74b7759'] 
 $_MODULE['<{twopayment}prestashop>twopayment_365ddeaa3ef71ac6ee684a8d68f0071f'] = 'Este módulo permite a cualquier comerciante aceptar pagos con la pasarela de pago %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b78a3223503896721cca1303f776159b'] = 'Título';
 $_MODULE['<{twopayment}prestashop>twopayment_c301872a4d91b5473cc74208e3f853bd'] = 'Subtítulo opcional que se muestra debajo del título en la página de pago.';
-$_MODULE['<{twopayment}prestashop>twopayment_a754083c1f275488dfa754b0df434a4d'] = 'Introduce tu clave API proporcionada por %s.';
+$_MODULE['<{twopayment}prestashop>twopayment_6300d7f48d339e8a67dfb426a4cc21e3'] = 'Introduce tu clave API proporcionada por %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_0ba29c6a1afacf586b03a26162c72274'] = 'Entorno';
 $_MODULE['<{twopayment}prestashop>twopayment_756d97bb256b8580d4d71ee0c547804e'] = 'Producción';
 $_MODULE['<{twopayment}prestashop>twopayment_7af191b62135c0adab07f2c26940a68a'] = '%s permanece oculto en el proceso de pago hasta que la clave se verifique.';
@@ -104,7 +104,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_8f81441778b6e1fb85956f2a908ae8a7'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2b340063734382803d14ef2234a59b46'] = 'Ninguno seleccionado';
 $_MODULE['<{twopayment}prestashop>twopayment_54c42cad3f396fd13c7398fea66fe0e7'] = 'El mapeo de estados de pedido de %s se ha actualizado correctamente.';
 $_MODULE['<{twopayment}prestashop>twopayment_779cdd79fa95885841e60852c8d17b1f'] = 'Estados de activación de cumplimiento actualmente activos:';
-$_MODULE['<{twopayment}prestashop>twopayment_dbda4ec01ebe40844f0dc502f45fd397'] = 'Selecciona uno o más estados del pedido que deban activar el cumplimiento en %1$s. Cuando se establezca cualquiera de estos estados, el pedido se marcará como cumplido en %1$s. Los términos de pago para el comprador se activarán y comenzará el ciclo de pagos. Puedes seleccionar múltiples estados (mantén presionado Ctrl/Cmd para seleccionar varios. Predeterminado: Shipped)';
+$_MODULE['<{twopayment}prestashop>twopayment_4c45f1f87f53a81eafad04418168a508'] = 'Selecciona uno o más estados del pedido que deban activar el cumplimiento en %1$s. Cuando se establezca cualquiera de estos estados, el pedido se marcará como cumplido en %1$s. Los términos de pago para el comprador se activarán y comenzará el ciclo de pagos. Puedes seleccionar múltiples estados (mantén presionado Ctrl/Cmd para seleccionar varios). Predeterminado: Shipped';
 $_MODULE['<{twopayment}prestashop>twopayment_3d773cd2133003c21b5348d17b400f3f'] = 'Actualmente activos:';
 $_MODULE['<{twopayment}prestashop>twopayment_a9454d87ea658d800d3f3f686e98a4c3'] = 'Comprobando la elegibilidad para el pago con %s...';
 $_MODULE['<{twopayment}prestashop>twopayment_9397d7f54ed01d00e59b0e49f0900586'] = 'Por favor, espera un momento mientras verificamos los datos de tu empresa.';

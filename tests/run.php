@@ -112,6 +112,7 @@ final class OrderBuilderSpec
         self::testIsTwoAttemptCallbackAuthorizedFallsBackToContextCustomerKeyWhenRequestKeyMissing();
         self::testIsTwoAttemptCallbackAuthorizedRejectsMismatchedKeys();
         self::testNoPortalLinksAreRendered();
+        self::testAdminHelpTextTypos();
         self::testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId();
         self::testResolveTwoAttemptOrderIdForCancellationFallsBackToCartOrderId();
         self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
@@ -4198,6 +4199,22 @@ final class OrderBuilderSpec
 
         TinyAssert::false($module->isTwoAttemptCallbackAuthorized($attempt, 'invalid-key', 42, 'secure-key-42'));
         TinyAssert::false($module->isTwoAttemptCallbackAuthorized($attempt, '', 41, 'secure-key-42'));
+    }
+
+    /** TWO-27107: the admin help text carries none of the old typos. */
+    private static function testAdminHelpTextTypos(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        // [typo, corrected, description]
+        $cases = [
+            ['which is appear on checkout page', 'The payment method title shown at checkout.', 'title help grammar'],
+            ['Enter your api key', 'Enter your API key', 'API key casing'],
+            ['(Hold Ctrl/Cmd to select multiple. Default', '(hold Ctrl/Cmd to select multiple). Default', 'fulfilment help bracket closed'],
+        ];
+        foreach ($cases as [$typo, $corrected, $description]) {
+            TinyAssert::false(strpos($source, $typo) !== false, $description . ': typo still present');
+            TinyAssert::true(strpos($source, $corrected) !== false, $description . ': corrected text missing');
+        }
     }
 
     /**
