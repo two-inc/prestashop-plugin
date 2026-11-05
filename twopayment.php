@@ -209,6 +209,23 @@ class Twopayment extends PaymentModule
     // a diagnosis.
     const API_KEY_STATUS_VERIFYING = 'verifying';
 
+    /**
+     * The last DEFINITIVE verdict (ok or invalid_key) for the stored key and
+     * environment, kept apart from CONFIG_API_KEY_STATUS, which an outage
+     * overwrites (TWO-27107). A save reads it to decide whether a key Two
+     * could not judge may replace the stored one.
+     */
+    const CONFIG_API_KEY_DEFINITIVE = 'PS_TWO_API_KEY_DEFINITIVE';
+
+    /** General-save outcomes for the API key and environment pair (TWO-27107). */
+    const CREDENTIALS_SAVED = 'saved';
+    const CREDENTIALS_SAVED_UNVERIFIED = 'saved_unverified';
+    const CREDENTIALS_MISSING = 'missing';
+    const CREDENTIALS_KEPT_MALFORMED = 'kept_malformed';
+    const CREDENTIALS_KEPT_REJECTED = 'kept_rejected';
+    const CREDENTIALS_KEPT_UNVERIFIED = 'kept_unverified';
+    const CREDENTIALS_KEPT_ENVIRONMENT = 'kept_environment';
+
     // Constants for API timeouts (seconds)
     const API_TIMEOUT_SHORT = 30; // Standard API timeout
     const API_TIMEOUT_LONG = 60; // Extended timeout for file uploads
@@ -1121,6 +1138,7 @@ class Twopayment extends PaymentModule
         // behind belongs to a key this shop no longer has.
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS);
         Configuration::deleteByName(self::CONFIG_API_KEY_STATUS_TS);
+        Configuration::deleteByName(self::CONFIG_API_KEY_DEFINITIVE);
         Configuration::deleteByName('PS_TWO_DISABLE_SSL_VERIFY');
         Configuration::deleteByName('PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS');
         // Pre-2.7.6 name of the same setting (TWO-40). A one-release cleanup
@@ -1490,6 +1508,7 @@ class Twopayment extends PaymentModule
 
     protected function getTwoGeneralForm()
     {
+        $keySaved = trim((string) Configuration::get('PS_TWO_MERCHANT_API_KEY')) !== '';
         $fields_form = array(
             'form' => array(
                 'legend' => array(
@@ -1509,12 +1528,16 @@ class Twopayment extends PaymentModule
                             'name' => 'name'
                         )
                     ),
+                    // Always rendered empty (TWO-27107): the stored key never
+                    // goes back to the browser. Required only while none is
+                    // stored, since an empty submission keeps the stored key.
                     array(
                         'type' => 'password',
                         'label' => $this->l('API key'),
                         'name' => 'PS_TWO_MERCHANT_API_KEY',
-                        'required' => true,
-                        'desc' => sprintf($this->l('Enter your API key which is provided by %s.'), $this->getTwoBrandConfig('product_name')),
+                        'required' => $keySaved === false,
+                        'desc' => sprintf($this->l('Enter your API key which is provided by %s.'), $this->getTwoBrandConfig('product_name'))
+                            . ($keySaved ? ' ' . $this->l('A key is saved. Leave this field empty to keep it.') : ''),
                     ),
                     // Multi-site vendor/site name (TWO-25386). Printable ASCII,
                     // at most 255 characters (TWO-27107) - only meaningful for merchants running Two
@@ -1584,7 +1607,9 @@ class Twopayment extends PaymentModule
     {
         $fields_values = array();
         $fields_values['PS_TWO_MERCHANT_SHORT_NAME'] = Tools::getValue('PS_TWO_MERCHANT_SHORT_NAME', Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'));
-        $fields_values['PS_TWO_MERCHANT_API_KEY'] = Tools::getValue('PS_TWO_MERCHANT_API_KEY', Configuration::get('PS_TWO_MERCHANT_API_KEY'));
+        // Never sent back to the browser (TWO-27107): the field always renders
+        // empty, and an empty submission keeps the stored key.
+        $fields_values['PS_TWO_MERCHANT_API_KEY'] = '';
         // A refused vendor name was not stored, so the form shows the stored one.
         $fields_values['PS_TWO_VENDOR_NAME'] = $this->vendorNameRefused
             ? Configuration::get('PS_TWO_VENDOR_NAME')
@@ -1601,10 +1626,6 @@ class Twopayment extends PaymentModule
 
     protected function validTwoGeneralFormValues()
     {
-        if (Tools::isEmpty(Tools::getValue('PS_TWO_MERCHANT_API_KEY'))) {
-            $this->errors[] = $this->l('Enter an API key.');
-        }
-        
         // Validate environment
         // Refused field by field, as the WooCommerce and Magento plugins do
         // (TWO-26604): the stored environment stays, every other field saves,
@@ -1619,10 +1640,27 @@ class Twopayment extends PaymentModule
         $vendor = trim((string) Tools::getValue('PS_TWO_VENDOR_NAME'));
         $this->vendorNameRefused = $vendor !== '' && !self::isSendableTwoVendorName($vendor);
         
-        // Verify API key with Two against selected environment and capture merchant id and short name
-        $apiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
-        $env = $this->getTwoEnvironmentToSave();
-        if (!empty($apiKey)) {
+        // The API key and environment are one pair (TWO-27107): a key is only
+        // good against the environment it was issued for, so they are stored
+        // together or not at all. An empty key field keeps the stored key.
+        $storedKey = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        $posted = trim((string) Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
+        $apiKey = $posted === '' ? $storedKey : $posted;
+        $env = (string) Tools::getValue('PS_TWO_ENVIRONMENT');
+        $this->credentialsKey = $apiKey;
+        $this->credentialsOutcome = null;
+        if ($this->environmentRefused) {
+            $this->credentialsOutcome = self::CREDENTIALS_KEPT_ENVIRONMENT;
+            $this->apiKeyVerificationWarning = $this->l('The API key was not changed either: it is saved together with its environment.');
+        } elseif ($apiKey === '') {
+            // Nothing stored and nothing typed: no key to protect, so the
+            // environment still saves.
+            $this->credentialsOutcome = self::CREDENTIALS_MISSING;
+            $this->apiKeyVerificationWarning = $this->l('Enter an API key.');
+        } elseif (!self::isWellFormedTwoApiKey($apiKey)) {
+            $this->credentialsOutcome = self::CREDENTIALS_KEPT_MALFORMED;
+            $this->apiKeyVerificationWarning = $this->l('The API key may only contain printable characters, with no spaces or line breaks. The previously saved key and environment were kept.');
+        } else {
             $verify = $this->verifyTwoApiKey($apiKey, $env);
             // Held for the SAVE to publish, not published here (TWO-25326).
             // Validation can still fail on an unrelated field - an empty title,
@@ -1642,10 +1680,24 @@ class Twopayment extends PaymentModule
                 // Never blocking, a rejection included: refusing the save
                 // discards the values submitted beside the key.
                 $this->apiKeyVerificationWarning = $this->getTwoApiKeyFailureMessage($verify['status'], $verify['code']);
+                $unchangedPair = $apiKey === $storedKey && $env === (string) Configuration::get('PS_TWO_ENVIRONMENT');
                 if ($verify['status'] === self::API_KEY_STATUS_INVALID) {
-                    $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key was kept.');
+                    $this->credentialsOutcome = self::CREDENTIALS_KEPT_REJECTED;
+                    $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key and environment were kept.');
+                } elseif (!$unchangedPair
+                    && $storedKey !== ''
+                    && $this->getTwoLastDefinitiveApiKeyStatus() === self::API_KEY_STATUS_OK
+                ) {
+                    // A key Two could not judge never replaces one whose last
+                    // definitive answer was ok: an outage must not swap a
+                    // working checkout for an unchecked key.
+                    $this->credentialsOutcome = self::CREDENTIALS_KEPT_UNVERIFIED;
+                    $this->apiKeyVerificationWarning .= ' ' . $this->l('The previously saved key and environment were kept, because they last verified and the new ones could not be checked. Save again once the check succeeds.');
+                } else {
+                    $this->credentialsOutcome = self::CREDENTIALS_SAVED_UNVERIFIED;
                 }
             } else {
+                $this->credentialsOutcome = self::CREDENTIALS_SAVED;
                 // An 'ok' verdict guarantees an id; a short name is optional,
                 // and an empty one withholds Two at checkout on its own.
                 $body = $verify['body'];
@@ -1655,23 +1707,45 @@ class Twopayment extends PaymentModule
         }
     }
 
-    /** The submitted environment, or the stored one when the submission was refused (TWO-26604). */
-    protected function getTwoEnvironmentToSave()
+    /**
+     * Whether the credential pair this save judged is written: a verified or
+     * unverifiable-but-unprotected pair, or a missing key (whose environment
+     * still saves). Rejected, malformed, kept-unverified and refused-environment
+     * outcomes keep both stored values (TWO-27107).
+     *
+     * @return bool
+     */
+    protected function isTwoCredentialPairSaved()
     {
-        return $this->environmentRefused
-            ? Configuration::get('PS_TWO_ENVIRONMENT')
-            : Tools::getValue('PS_TWO_ENVIRONMENT');
+        return in_array(
+            $this->credentialsOutcome,
+            array(self::CREDENTIALS_SAVED, self::CREDENTIALS_SAVED_UNVERIFIED, self::CREDENTIALS_MISSING),
+            true
+        );
+    }
+
+    /**
+     * Whether a key may be sent to Two at all: printable ASCII with no
+     * spaces, since it goes as a header value.
+     *
+     * @param string $apiKey
+     *
+     * @return bool
+     */
+    public static function isWellFormedTwoApiKey($apiKey)
+    {
+        return preg_match('/^[\x21-\x7E]+\z/', (string) $apiKey) === 1;
     }
 
     protected function saveTwoGeneralFormValues()
     {
-        $submittedApiKey = trim(Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
-        $submittedEnv = $this->getTwoEnvironmentToSave();
-        // The one submitted value a save may not commit: it would take Two off
-        // a checkout the stored key still serves.
-        $rejected = is_array($this->verifiedApiKeyResult)
-            && $this->verifiedApiKeyResult['status'] === self::API_KEY_STATUS_INVALID;
-        $apiKeyToSave = $rejected ? (string) Configuration::get('PS_TWO_MERCHANT_API_KEY') : $submittedApiKey;
+        // The key and environment are written together or not at all
+        // (TWO-27107); see validTwoGeneralFormValues() for which outcomes keep
+        // the stored pair.
+        $pairSaved = $this->isTwoCredentialPairSaved();
+        $submittedApiKey = $this->credentialsKey;
+        $submittedEnv = $pairSaved ? Tools::getValue('PS_TWO_ENVIRONMENT') : Configuration::get('PS_TWO_ENVIRONMENT');
+        $apiKeyToSave = $pairSaved ? $submittedApiKey : (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
         // Keyed on what is stored, not what was submitted: a reverted key
         // leaves the shop on the identity the cached record describes
         // (TWO-24813).
@@ -1715,15 +1789,16 @@ class Twopayment extends PaymentModule
         // return to checkout at once instead of waiting out the TTL. Skipped
         // when a rejected key was reverted, since the verdict then describes a
         // key this shop does not have.
-        if (is_array($this->verifiedApiKeyResult) && $apiKeyToSave === $submittedApiKey) {
+        if ($pairSaved && is_array($this->verifiedApiKeyResult) && $apiKeyToSave === $submittedApiKey) {
             $this->cacheTwoApiKeyVerificationStatus($apiKeyToSave, $this->verifiedApiKeyResult);
         }
 
         if ($this->verifiedMerchantId) {
             Configuration::updateValue('PS_TWO_MERCHANT_ID', $this->verifiedMerchantId);
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 1);
-        } else {
-            // Ensure flag not stale when verification fails/non-run
+        } elseif ($pairSaved) {
+            // Ensure flag not stale when verification fails/non-run. A kept
+            // pair keeps its own flag: nothing about it changed (TWO-27107).
             Configuration::updateValue('PS_TWO_API_KEY_VERIFIED', 0);
         }
 
@@ -15833,6 +15908,47 @@ class Twopayment extends PaymentModule
             'verified_on' => $verifiedOn === null ? time() : (int) $verifiedOn,
         )));
         Configuration::updateValue(self::CONFIG_API_KEY_STATUS_TS, time());
+
+        // Only a judgement about the key is definitive: an outage, a 5xx or a
+        // claim never moves it (TWO-27107).
+        if (!$asClaim && ($status === self::API_KEY_STATUS_OK || $status === self::API_KEY_STATUS_INVALID)) {
+            Configuration::updateValue(self::CONFIG_API_KEY_DEFINITIVE, json_encode(array(
+                'status' => (string) $status,
+                'key_hash' => self::verificationSlotKey($apiKey),
+            )));
+        }
+    }
+
+    /**
+     * The last definitive verdict (ok or invalid_key) Two gave about the
+     * STORED key and environment, however old, or null when it never gave one
+     * (TWO-27107). Outages never change it, so it says whether the stored key
+     * is known good even while Two is down. A shop that last verified before
+     * this slot existed is read from the status slot, when that slot holds a
+     * definitive verdict for the stored pair.
+     *
+     * @return string|null
+     */
+    public function getTwoLastDefinitiveApiKeyStatus()
+    {
+        $storedKey = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        if ($storedKey === '') {
+            return null;
+        }
+        $hash = self::verificationSlotKey($storedKey);
+        foreach (array(self::CONFIG_API_KEY_DEFINITIVE, self::CONFIG_API_KEY_STATUS) as $key) {
+            $slot = json_decode((string) Configuration::get($key), true);
+            if (is_array($slot)
+                && isset($slot['key_hash'], $slot['status'])
+                && $slot['key_hash'] === $hash
+                && empty($slot['claim'])
+                && in_array($slot['status'], array(self::API_KEY_STATUS_OK, self::API_KEY_STATUS_INVALID), true)
+            ) {
+                return (string) $slot['status'];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -17906,6 +18022,12 @@ class Twopayment extends PaymentModule
      * @var null|array{status:string,code:int|null,body:array|null}
      */
     protected $verifiedApiKeyResult = null;
+
+    /** @var string|null this General save's CREDENTIALS_* outcome (TWO-27107) */
+    protected $credentialsOutcome = null;
+
+    /** @var string the API key this General save judged: the typed one, else the stored one */
+    protected $credentialsKey = '';
 
     /**
      * Non-blocking wording for a general-form verification that did not come

@@ -114,6 +114,10 @@ final class FxRatesSpec
 
             public function saveGeneralForTest(): void
             {
+                // Stands in for the validator, as the injected merchant id
+                // does: the posted key is taken as verified, or as missing.
+                $this->credentialsKey = trim((string) Tools::getValue('PS_TWO_MERCHANT_API_KEY'));
+                $this->credentialsOutcome = $this->credentialsKey === '' ? self::CREDENTIALS_MISSING : self::CREDENTIALS_SAVED;
                 $this->saveTwoGeneralFormValues();
             }
         };

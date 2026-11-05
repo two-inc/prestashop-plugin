@@ -183,7 +183,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_3dfd01dc41ebe6c659f64c1c75b03260'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4f40188f22dbc3f6b5f5ea06152782ca'] = 'De payload voor de order intent kon niet worden opgebouwd';
 $_MODULE['<{twopayment}prestashop>twopayment_e8eab90af94027d0c5ae97667a307a3e'] = 'Einde-van-de-maand (EOM) termijnen:';
 $_MODULE['<{twopayment}prestashop>twopayment_3a0c5e2bdce061b37cb6888280037851'] = 'Deze API-sleutel is geweigerd door %1$s. Mogelijk is de sleutel ongeldig of verlopen - controleer de sleutel in je %1$s-portaal.';
-$_MODULE['<{twopayment}prestashop>twopayment_935a9723572dd90aed81e13b2d4fdd2e'] = 'De eerder opgeslagen sleutel is behouden.';
 $_MODULE['<{twopayment}prestashop>twopayment_539de410a9a131c0e925dc8e248a29d2'] = 'Betaling vervalt aan het einde van de maand plus X dagen, gerekend vanaf de uitleverdatum. Voorbeeld: lever je een bestelling uit op 15 januari met EOM+30, dan vervalt de betaling op 28 februari (einde januari + 30 dagen). Dit is gebruikelijk bij B2B-facturatie.';
 $_MODULE['<{twopayment}prestashop>twopayment_fb3ff8dd49a6e7ecf023f6941320801c'] = 'Je bestelling kan niet worden verwerkt met %s-betaling. Kies een andere betaalmethode of neem contact op met de winkel.';
 $_MODULE['<{twopayment}prestashop>twopayment_57bd2a90727f3223958f7fd9bc6442f0'] = 'Belangrijke vereisten';
@@ -635,3 +634,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_387619f20c56d5ab63426a5da9d3f778'] 
 $_MODULE['<{twopayment}prestashop>twopayment_52426ac22c07307074bf5a9698aef617'] = 'De titel van de betaalmethode bij het afrekenen. Laat dit leeg om "Zakelijke factuur" in de taal van de klant te tonen.';
 $_MODULE['<{twopayment}prestashop>twopayment_37d1b80601d968add8df172c715c6ceb'] = 'Aangepaste request-headers: "%s" wordt al door een andere rij gebruikt. Headernamen zijn niet hoofdlettergevoelig, dus houd één rij per naam aan.';
 $_MODULE['<{twopayment}prestashop>twopayment_8a80b9e30ea041085b1ea948939a6a8c'] = 'Vul een leveranciersnaam in van maximaal 255 tekens, zonder regeleinden of letters met accenten: die wordt bij elk verzoek als header meegestuurd. De eerder opgeslagen leveranciersnaam is behouden.';
+$_MODULE['<{twopayment}prestashop>twopayment_56c32ba2433304b27cb9030a0437cb41'] = 'Er is een sleutel opgeslagen. Laat dit veld leeg om die te behouden.';
+$_MODULE['<{twopayment}prestashop>twopayment_ee45d770bca608d9a85a9a627ba465b9'] = 'De API-sleutel is ook niet gewijzigd: die wordt samen met de omgeving opgeslagen.';
+$_MODULE['<{twopayment}prestashop>twopayment_4505fd7f018c6ef8236eeb47e873906a'] = 'De API-sleutel mag alleen afdrukbare tekens bevatten, zonder spaties of regeleinden. De eerder opgeslagen sleutel en omgeving zijn behouden.';
+$_MODULE['<{twopayment}prestashop>twopayment_a167006b4be75840d43ff233483db4da'] = 'De eerder opgeslagen sleutel en omgeving zijn behouden.';
+$_MODULE['<{twopayment}prestashop>twopayment_967457a1ea18764652eea4bd2a4a9183'] = 'De eerder opgeslagen sleutel en omgeving zijn behouden, omdat die als laatste geverifieerd zijn en de nieuwe niet gecontroleerd konden worden. Sla opnieuw op zodra de controle lukt.';
