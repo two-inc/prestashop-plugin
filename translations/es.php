@@ -481,7 +481,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_a49e05d4125474b3a6cfc0caacc5a48f'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a5428d68edede974fe71ad98080b8b5d'] = 'Datos de carrito o cliente no válidos.';
 $_MODULE['<{twopayment}prestashop>twopayment_a95edf05f05366d86c50ad5df2cbaa2b'] = 'Pasarela de pago %s - últimos registros del log';
 $_MODULE['<{twopayment}prestashop>twopayment_aba389b990ffe03bfed6463dcc50bcb7'] = 'el método de recargo guardado no se reconoce. Revisa Método de recargo.';
-$_MODULE['<{twopayment}prestashop>twopayment_b0aeeee23a0905fde43980eebe726ee7'] = 'ADVERTENCIA: SOLO PARA DEPURACIÓN. Cuando está en SÍ, se omite la comprobación del token de tipo CSRF del controlador de intención de pedido. No actives esto nunca en una tienda de producción en vivo.';
 $_MODULE['<{twopayment}prestashop>twopayment_b0cae1eeaf2cfa9431e5ff2f74865d14'] = 'no hay ninguna clave API guardada. Compruebe Clave API.';
 $_MODULE['<{twopayment}prestashop>twopayment_b1434efcff57bf2bd531c5b528feeab9'] = 'Los plazos de pago personalizados (días) solo se pueden eliminar, no modificar.';
 $_MODULE['<{twopayment}prestashop>twopayment_b20826df55201d61c92b18aec347d36f'] = 'Añade una comisión de compensación de precio al comprador para el plazo de pago seleccionado. El importe de la comisión lo calcula %s; el plugin solo envía la configuración.';
@@ -504,7 +503,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_c3d132002979d91f2cb910ab3e8c3985'] 
 $_MODULE['<{twopayment}prestashop>twopayment_c3d38f77a364bef3afec146aece7a3b3'] = 'se ofrece solo a compradores en %s';
 $_MODULE['<{twopayment}prestashop>twopayment_c6379ce2b59119f7ace353f293a2ddeb'] = 'Seleccione su empresa antes de pagar con %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_c7e434d941189ee98ead7791831e7a8d'] = 'No (seguro)';
-$_MODULE['<{twopayment}prestashop>twopayment_ca9cc321260fe768fa26533f1dbf2949'] = 'Omitir la validación del usuario en la confirmación del pedido';
 $_MODULE['<{twopayment}prestashop>twopayment_cb9e2f0ad15da45e41555cd56e747d79'] = 'Si eliges SÍ, los clientes verán un campo de departamento en la sección de pago de %s del proceso de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_cc4d7e72dda2f971cf3de3046c77afe2'] = 'El código de impuesto de envío predeterminado debe ser "No tax" o uno de los grupos de reglas de impuestos existentes en la tienda.';
 $_MODULE['<{twopayment}prestashop>twopayment_cdca48ec5dde79b84b395c0c557bb290'] = '%d días';

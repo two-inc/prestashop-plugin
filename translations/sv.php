@@ -416,7 +416,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_86fd11dde72d89b72fa81284611b7faa'] 
 $_MODULE['<{twopayment}prestashop>twopayment_e1459bb98511cce5d23cd0776fccabcf'] = 'Om du väljer JA anropar kassan %1$s för att förhandsgranska ordergodkännande innan köparen skickar betalningen, och visar resultatet i betalningsplattan. Om du väljer NEJ hoppas detta förhandsanrop över - köparen genomgår fortfarande %1$ss verkliga godkännandekontroll när betalningen skickas.';
 $_MODULE['<{twopayment}prestashop>twopayment_b225a7c34ad4043b83b1c54322112056'] = '-- Automatiskt (rekommenderas) --';
 $_MODULE['<{twopayment}prestashop>twopayment_991986a40e760b716f318af6b58acc1e'] = 'Valfritt. Ett lägre tal visar %s tidigare bland betalningsmetoderna som erbjuds i kassan. Lämna tomt för att använda PrestaShops egen ordning (Betalning > Inställningar).';
-$_MODULE['<{twopayment}prestashop>twopayment_b0aeeee23a0905fde43980eebe726ee7'] = 'VARNING: ENDAST FÖR FELSÖKNING. Vid JA hoppas orderavsiktskontrollens CSRF-liknande tokenkontroll över. Aktivera aldrig detta i en skarp produktionsbutik.';
 $_MODULE['<{twopayment}prestashop>twopayment_7c5014deb8a0afa34ddda803c470e3ad'] = 'Rensa inställningar vid avinstallation';
 $_MODULE['<{twopayment}prestashop>twopayment_280e233eb42005b2916f8f53327c9fe2'] = 'Om du väljer JA raderas alla lagrade inställningar (API-nyckel, villkor, tilläggskonfiguration osv.) när denna modul avinstalleras. Om du väljer NEJ behålls inställningarna så att en senare ominstallation fortsätter där du slutade.';
 $_MODULE['<{twopayment}prestashop>twopayment_2365f9d6614b9f34f41e33f1f46329b2'] = 'Fellogg';
@@ -471,7 +470,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_b71c1fc70853defd937483989b0193e4'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1209b4672407cabf760e430e4def42aa'] = 'Företagssökning';
 $_MODULE['<{twopayment}prestashop>twopayment_003770b5e9bcb9eec50073ca81931e60'] = 'Aktivera felsökningsloggning';
 $_MODULE['<{twopayment}prestashop>twopayment_3951ed94b8135c04c46595f35b62b120'] = 'Avaktivera SSL-verifiering';
-$_MODULE['<{twopayment}prestashop>twopayment_ca9cc321260fe768fa26533f1dbf2949'] = 'Hoppa över användarvalidering vid orderbekräftelse';
 $_MODULE['<{twopayment}prestashop>twopayment_5fc3e9e97cedfc13cb70e6a4b92107a5'] = 'Metod för tilläggsavgift';
 $_MODULE['<{twopayment}prestashop>configuration_20b5fb4a29eee650e5632baf935b9baf'] = 'Kontrollerar API-nyckel…';
 $_MODULE['<{twopayment}prestashop>configuration_edc77959424216f03ffb88d76a1842c8'] = 'API-nyckel verifierad';

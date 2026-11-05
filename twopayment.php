@@ -570,19 +570,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Effective value of the "skip confirm-order token check" debug toggle
-     * (TWO-25386, PS_TWO_SKIP_CONFIRM_TOKEN_CHECK). Default OFF - see
-     * isTwoOrderIntentPreviewEnabled() for why this is a method rather than a
-     * direct property read.
-     *
-     * @return bool
-     */
-    public function isTwoSkipConfirmTokenCheckEnabled()
-    {
-        return ((int) Configuration::get('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK')) === 1;
-    }
-
-    /**
      * Ensure custom Two order states exist, create them if they don't
      * This handles existing installations that didn't have custom states
      */
@@ -3094,22 +3081,6 @@ class Twopayment extends PaymentModule
                             ),
                         ),
                     ),
-                    // Skip confirm-order token check (TWO-25386).
-                    // DEBUG ONLY - gates the CSRF-style token check
-                    // (validateAjaxToken()) on the order-intent front
-                    // controller's confirm/save-result actions. Default OFF.
-                    array(
-                        'type' => 'switch',
-                        'label' => $this->l('Skip user validation at order confirmation'),
-                        'name' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK',
-                        'is_bool' => true,
-                        'desc' => $this->l('WARNING: FOR DEBUGGING ONLY. When YES, the order-intent controller\'s CSRF-style token check is skipped. Never enable this on a live production shop.'),
-                        'required' => true,
-                        'values' => array(
-                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_ON', 'value' => 1, 'label' => $this->l('Yes (not recommended)')),
-                            array('id' => 'PS_TWO_SKIP_CONFIRM_TOKEN_CHECK_OFF', 'value' => 0, 'label' => $this->l('No (secure)')),
-                        ),
-                    ),
                     // Trusted proxies (TWO-25386), ported from
                     // woocommerce-plugin/magento-plugin: exempts the
                     // merchant's own reverse proxy/CDN egress addresses from
@@ -4178,7 +4149,6 @@ class Twopayment extends PaymentModule
         $fields_values = array();
         $fields_values['PS_TWO_DEBUG_MODE'] = Tools::getValue('PS_TWO_DEBUG_MODE', Configuration::get('PS_TWO_DEBUG_MODE'));
         $fields_values['PS_TWO_DISABLE_SSL_VERIFY'] = Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
-        $fields_values['PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'] = Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', Configuration::get('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK'));
         $fields_values['PS_TWO_TRUSTED_PROXIES'] = Tools::getValue('PS_TWO_TRUSTED_PROXIES', Configuration::get('PS_TWO_TRUSTED_PROXIES'));
         $fields_values['PS_TWO_DISABLE_RATE_LIMIT'] = Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', Configuration::get('PS_TWO_DISABLE_RATE_LIMIT'));
         $fields_values['PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION'] = Tools::getValue('PS_TWO_CLEAR_SETTINGS_ON_DEACTIVATION', (int) $this->shouldClearTwoSettingsOnUninstall());
@@ -4226,7 +4196,6 @@ class Twopayment extends PaymentModule
     {
         Configuration::updateValue('PS_TWO_DEBUG_MODE', Tools::getValue('PS_TWO_DEBUG_MODE'));
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', (int) Tools::getValue('PS_TWO_DISABLE_SSL_VERIFY', 0));
-        Configuration::updateValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', (int) Tools::getValue('PS_TWO_SKIP_CONFIRM_TOKEN_CHECK', 0));
         Configuration::updateValue('PS_TWO_TRUSTED_PROXIES', trim((string) Tools::getValue('PS_TWO_TRUSTED_PROXIES')));
         Configuration::updateValue('PS_TWO_DISABLE_RATE_LIMIT', (int) Tools::getValue('PS_TWO_DISABLE_RATE_LIMIT', 0));
         $header_rows = self::readTwoCustomHeaderRowsFromPost();
