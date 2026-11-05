@@ -5768,6 +5768,7 @@ class Twopayment extends PaymentModule
                     }
                 } else if ($this->isFulfillmentTriggerStatus($new_order_status->id)) {
                     // Complete fulfillment using the new fulfillments endpoint - wrapped in try-catch for safety
+                    $fulfil_done = false;
                     try {
                         PrestaShopLogger::addLog('TwoPayment: Initiating complete fulfillment for Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Triggered by status: ' . $new_order_status->name . ' (ID: ' . $new_order_status->id . ')', 1);
 
@@ -5833,6 +5834,7 @@ class Twopayment extends PaymentModule
                         
                         if (isset($response['fulfilled_order']['id']) && $response['fulfilled_order']['id']) {
                             PrestaShopLogger::addLog('TwoPayment: Fulfillment successful for Two order ID: ' . $two_order_id . ', Fulfilled order ID: ' . $response['fulfilled_order']['id'], 1);
+                            $fulfil_done = true;
                             $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s order %2$s fulfilled (%3$s).'), $this->getTwoBrandConfig('product_name'), $two_order_id, (string) $response['fulfilled_order']['id']));
                             // Refresh order data from Two to avoid overwriting the stored Two order ID with fulfillment ID
                             $order_after = $this->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
@@ -5911,7 +5913,7 @@ class Twopayment extends PaymentModule
                         PrestaShopLogger::addLog('TwoPayment: Exception during fulfillment for Two order ID: ' . $two_order_id . ', Exception: ' . $e->getMessage(), 3);
                         // Only when no fulfil went through: a failure after one (the
                         // invoice upload) is not a refused fulfil.
-                        if (!isset($response['fulfilled_order']['id'])) {
+                        if (!$fulfil_done) {
                             $this->addTwoOrderLifecycleNote($id_order, sprintf($this->l('%1$s refused to fulfil order %2$s: %3$s Save the status again to retry.'), $this->getTwoBrandConfig('product_name'), $two_order_id, rtrim($e->getMessage(), '.') . '.'));
                         }
                     }
