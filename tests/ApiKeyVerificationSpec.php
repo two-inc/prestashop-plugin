@@ -28,6 +28,7 @@ final class ApiKeyVerificationSpec
         self::testNoticeSaysNothingWhileAVerificationIsStillRunning();
         self::testSaveReportsTheCategoryAndPublishesTheVerdict();
         self::testTheKeyAndEnvironmentSaveAsOnePair();
+        self::testThePairEdgeCases();
         self::testTheDefinitiveVerdictIgnoresOutages();
         self::testTheKeyFieldRendersEmpty();
         self::testAnUnsendableVendorNameIsRefusedAndTheRestSaves();
@@ -750,6 +751,60 @@ final class ApiKeyVerificationSpec
                 is_array($published) && $published['status'] === Twopayment::API_KEY_STATUS_OK,
                 $case . ' must publish a verdict the checkout gate can trust'
             );
+        }
+    }
+
+    /**
+     * TWO-27107 review round 1: a refused environment keeps a typed key too
+     * and asks Two nothing; a shop upgraded before the definitive slot existed
+     * is read from its status slot; a legacy stored environment value is the
+     * same environment as its recognised form, so it is not a new pair.
+     */
+    private static function testThePairEdgeCases(): void
+    {
+        $slotKey = new ReflectionMethod(Twopayment::class, 'verificationSlotKey');
+        // [stored environment, submitted key, submitted environment, wire outcome,
+        //  status slot for the stored pair (null = none), key and environment
+        //  stored after, verify calls (null = not pinned: a saved new pair also
+        //  refreshes the merchant record, which may resolve it through the
+        //  same endpoint), warning wording, wording that must be
+        //  absent, description]
+        $cases = array(
+            array('staging', 'freshly-pasted-key', 'not-an-environment', self::okOutcome(), null, array('stored-key', 'staging'), 0, 'The API key was not changed either', null, 'a refused environment keeps a typed key and asks Two nothing'),
+            array('staging', 'freshly-pasted-key', 'production', self::transportOutcome(), 'ok', array('stored-key', 'staging'), null, 'last verified', null, 'no definitive slot yet: an ok status slot still protects the stored pair'),
+            array('staging', 'freshly-pasted-key', 'production', self::transportOutcome(), 'service_error', array('freshly-pasted-key', 'production'), null, 'could not reach', 'last verified', 'a status slot holding no judgement protects nothing'),
+            array('prod', '', 'production', self::transportOutcome(), 'ok', array('stored-key', 'production'), null, 'could not reach', 'last verified', 'a legacy stored prod re-saved as production is the same pair'),
+        );
+        foreach ($cases as list($storedEnv, $key, $env, $outcome, $statusSlot, $expectedPair, $calls, $warning, $absent, $case)) {
+            $module = self::module($outcome);
+            Configuration::updateValue('PS_TWO_ENVIRONMENT', $storedEnv);
+            if ($statusSlot !== null) {
+                Configuration::updateValue(Twopayment::CONFIG_API_KEY_STATUS, json_encode(array(
+                    'status' => $statusSlot,
+                    'code' => 200,
+                    'key_hash' => $slotKey->invoke(null, 'stored-key'),
+                    'claim' => false,
+                    'verified_on' => time(),
+                )));
+            }
+            Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', $key);
+            Tools::setTestValue('PS_TWO_VENDOR_NAME', 'New Vendor');
+            Tools::setTestValue('PS_TWO_ENVIRONMENT', $env);
+
+            TinyAssert::same(0, count($module->validateGeneralFormForTest()), $case . ': the save is not blocked');
+            $module->saveGeneralFormForTest();
+
+            TinyAssert::same($expectedPair[0], (string) Configuration::get('PS_TWO_MERCHANT_API_KEY'), $case . ': key');
+            TinyAssert::same($expectedPair[1], (string) Configuration::get('PS_TWO_ENVIRONMENT'), $case . ': environment');
+            TinyAssert::same('New Vendor', (string) Configuration::get('PS_TWO_VENDOR_NAME'), $case . ': other fields still save');
+            if ($calls !== null) {
+                TinyAssert::same($calls, $module->verifyCalls, $case . ': calls to Two');
+            }
+            $reported = (string) $module->generalFormWarningForTest();
+            TinyAssert::true(strpos($reported, $warning) !== false, $case . ': warns "' . $warning . '", got: ' . $reported);
+            if ($absent !== null) {
+                TinyAssert::false(strpos($reported, $absent) !== false, $case . ': must not say "' . $absent . '"');
+            }
         }
     }
 
