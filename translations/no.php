@@ -639,3 +639,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_ee45d770bca608d9a85a9a627ba465b9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4505fd7f018c6ef8236eeb47e873906a'] = 'API-nøkkelen kan bare inneholde utskrivbare tegn, uten mellomrom eller linjeskift. Den tidligere lagrede nøkkelen og miljøet ble beholdt.';
 $_MODULE['<{twopayment}prestashop>twopayment_a167006b4be75840d43ff233483db4da'] = 'Den tidligere lagrede nøkkelen og miljøet ble beholdt.';
 $_MODULE['<{twopayment}prestashop>twopayment_967457a1ea18764652eea4bd2a4a9183'] = 'Den tidligere lagrede nøkkelen og miljøet ble beholdt, fordi de sist ble bekreftet og de nye ikke kunne kontrolleres. Lagre på nytt når kontrollen lykkes.';
+$_MODULE['<{twopayment}prestashop>twopayment_37731aac59421dd07842103e04d236eb'] = '%1$s-ordre %2$s er allerede kansellert.';
+$_MODULE['<{twopayment}prestashop>twopayment_a1041e9fd9f513bcaea2cb1b5454aa52'] = '%1$s-ordre %2$s kansellert.';
+$_MODULE['<{twopayment}prestashop>twopayment_8aa56687782c5cdd74720be2c10f7065'] = '%1$s-ordre %2$s ble ikke kansellert, og statusen kunne ikke hentes fra %1$s. Lagre statusen på nytt for å prøve igjen.';
+$_MODULE['<{twopayment}prestashop>twopayment_d6d18686a029c9f3cbf6bf0d7465221d'] = '%1$s-ordre %2$s ble ikke kansellert. %1$s har den som %3$s. Lagre statusen på nytt for å prøve igjen.';
+$_MODULE['<{twopayment}prestashop>twopayment_afa9885d0e5ddf7384c3c22c4fded4cb'] = '%1$s har ordre %2$s som %3$s, så den ble ikke oppfylt.';
+$_MODULE['<{twopayment}prestashop>twopayment_c2437b11cac64a6b5d5f90b794467ada'] = '%1$s-ordre %2$s ble ikke oppfylt: statusen kunne ikke hentes fra %1$s. Lagre statusen på nytt for å prøve igjen.';
+$_MODULE['<{twopayment}prestashop>twopayment_011452722aa463fdf3fff1c019b6bebb'] = '%1$s-ordre %2$s oppfylt (%3$s).';
+$_MODULE['<{twopayment}prestashop>twopayment_ec918c5a05b20b4d8a5e0e18ec87cc26'] = '%1$s avviste å oppfylle ordre %2$s: %3$s Lagre statusen på nytt for å prøve igjen.';

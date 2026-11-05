@@ -639,3 +639,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_ee45d770bca608d9a85a9a627ba465b9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4505fd7f018c6ef8236eeb47e873906a'] = 'API-nyckeln får bara innehålla utskrivbara tecken, utan mellanslag eller radbrytningar. Den tidigare sparade nyckeln och miljön behölls.';
 $_MODULE['<{twopayment}prestashop>twopayment_a167006b4be75840d43ff233483db4da'] = 'Den tidigare sparade nyckeln och miljön behölls.';
 $_MODULE['<{twopayment}prestashop>twopayment_967457a1ea18764652eea4bd2a4a9183'] = 'Den tidigare sparade nyckeln och miljön behölls, eftersom de senast verifierades och de nya inte kunde kontrolleras. Spara igen när kontrollen lyckas.';
+$_MODULE['<{twopayment}prestashop>twopayment_37731aac59421dd07842103e04d236eb'] = '%1$s-ordern %2$s är redan avbruten.';
+$_MODULE['<{twopayment}prestashop>twopayment_a1041e9fd9f513bcaea2cb1b5454aa52'] = '%1$s-ordern %2$s avbruten.';
+$_MODULE['<{twopayment}prestashop>twopayment_8aa56687782c5cdd74720be2c10f7065'] = '%1$s-ordern %2$s avbröts inte, och dess status kunde inte hämtas från %1$s. Spara statusen igen för att försöka på nytt.';
+$_MODULE['<{twopayment}prestashop>twopayment_d6d18686a029c9f3cbf6bf0d7465221d'] = '%1$s-ordern %2$s avbröts inte. %1$s har den som %3$s. Spara statusen igen för att försöka på nytt.';
+$_MODULE['<{twopayment}prestashop>twopayment_afa9885d0e5ddf7384c3c22c4fded4cb'] = '%1$s har ordern %2$s som %3$s, så den levererades inte.';
+$_MODULE['<{twopayment}prestashop>twopayment_c2437b11cac64a6b5d5f90b794467ada'] = '%1$s-ordern %2$s levererades inte: dess status kunde inte hämtas från %1$s. Spara statusen igen för att försöka på nytt.';
+$_MODULE['<{twopayment}prestashop>twopayment_011452722aa463fdf3fff1c019b6bebb'] = '%1$s-ordern %2$s levererad (%3$s).';
+$_MODULE['<{twopayment}prestashop>twopayment_ec918c5a05b20b4d8a5e0e18ec87cc26'] = '%1$s vägrade att leverera ordern %2$s: %3$s Spara statusen igen för att försöka på nytt.';

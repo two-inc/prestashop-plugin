@@ -639,3 +639,11 @@ $_MODULE['<{twopayment}prestashop>twopayment_ee45d770bca608d9a85a9a627ba465b9'] 
 $_MODULE['<{twopayment}prestashop>twopayment_4505fd7f018c6ef8236eeb47e873906a'] = 'De API-sleutel mag alleen afdrukbare tekens bevatten, zonder spaties of regeleinden. De eerder opgeslagen sleutel en omgeving zijn behouden.';
 $_MODULE['<{twopayment}prestashop>twopayment_a167006b4be75840d43ff233483db4da'] = 'De eerder opgeslagen sleutel en omgeving zijn behouden.';
 $_MODULE['<{twopayment}prestashop>twopayment_967457a1ea18764652eea4bd2a4a9183'] = 'De eerder opgeslagen sleutel en omgeving zijn behouden, omdat die als laatste geverifieerd zijn en de nieuwe niet gecontroleerd konden worden. Sla opnieuw op zodra de controle lukt.';
+$_MODULE['<{twopayment}prestashop>twopayment_37731aac59421dd07842103e04d236eb'] = '%1$s-bestelling %2$s is al geannuleerd.';
+$_MODULE['<{twopayment}prestashop>twopayment_a1041e9fd9f513bcaea2cb1b5454aa52'] = '%1$s-bestelling %2$s geannuleerd.';
+$_MODULE['<{twopayment}prestashop>twopayment_8aa56687782c5cdd74720be2c10f7065'] = '%1$s-bestelling %2$s is niet geannuleerd, en de status kon niet bij %1$s worden opgevraagd. Sla de status opnieuw op om het nog eens te proberen.';
+$_MODULE['<{twopayment}prestashop>twopayment_d6d18686a029c9f3cbf6bf0d7465221d'] = '%1$s-bestelling %2$s is niet geannuleerd. %1$s heeft de status %3$s. Sla de status opnieuw op om het nog eens te proberen.';
+$_MODULE['<{twopayment}prestashop>twopayment_afa9885d0e5ddf7384c3c22c4fded4cb'] = '%1$s heeft bestelling %2$s met de status %3$s, dus die is niet uitgeleverd.';
+$_MODULE['<{twopayment}prestashop>twopayment_c2437b11cac64a6b5d5f90b794467ada'] = '%1$s-bestelling %2$s is niet uitgeleverd: de status kon niet bij %1$s worden opgevraagd. Sla de status opnieuw op om het nog eens te proberen.';
+$_MODULE['<{twopayment}prestashop>twopayment_011452722aa463fdf3fff1c019b6bebb'] = '%1$s-bestelling %2$s uitgeleverd (%3$s).';
+$_MODULE['<{twopayment}prestashop>twopayment_ec918c5a05b20b4d8a5e0e18ec87cc26'] = '%1$s heeft het uitleveren van bestelling %2$s geweigerd: %3$s Sla de status opnieuw op om het nog eens te proberen.';

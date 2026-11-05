@@ -428,8 +428,10 @@ Retired ids are recorded whenever the fee product is replaced. Ids from before t
 - Order must have a valid Two order ID stored in PrestaShop
 - Module must have valid API credentials configured
 
+**Order notes:** every fulfil and cancel a status change sends is noted on the order as a private message, as well as in the module log: fulfilled, refused (with Two's reason), not sent because of the state Two holds the order in, or not sent because Two could not be asked. The note says when saving the status again retries it.
+
 **Troubleshooting Fulfillment:**
-- Check PrestaShop logs for fulfillment errors (search for "TwoPayment: Fulfillment")
+- Read the order's private messages first, then check PrestaShop logs for fulfillment errors (search for "TwoPayment: Fulfillment")
 - Verify order is in `CONFIRMED` state before fulfillment (not `VERIFIED`)
 - If order is `VERIFIED`, it must be confirmed first (either manually in Two Merchant Portal or via Two's confirmation flow)
 - Verify fulfillment status is correctly mapped in module configuration
