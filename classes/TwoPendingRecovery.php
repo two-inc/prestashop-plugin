@@ -292,6 +292,13 @@ class TwoPendingRecovery
             return $this->result(self::OUTCOME_FAILED, $this->module->l('Unable to load cart for this payment attempt.'));
         }
 
+        $context = Context::getContext();
+        if (!$buyer && isset($context->shop->id) && (int) $cart->id_shop > 0 && (int) $cart->id_shop !== (int) $context->shop->id) {
+            // The API key and the URLs the snapshot is built from are the cart's shop's own, so
+            // nothing here may read, confirm or cancel at Two with this shop's key.
+            return $this->result(self::OUTCOME_OTHER_SHOP);
+        }
+
         // A newer attempt already placed this cart's order: this attempt can never be placed, and
         // its Two order is a duplicate (TWO-26300). Checked before the snapshot and the confirm.
         $duplicate_order_id = $this->foreignCartOrderId($cart, $attempt);
@@ -732,19 +739,35 @@ class TwoPendingRecovery
     {
         $two_order_id = (string) $attempt['two_order_id'];
         $two_order = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+        $closed = true;
         if ($this->module->isTwoOrderCancelledResponse($two_order)) {
             $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', array('two_order_state' => 'CANCELLED'));
             $sent = 'nothing sent to Two, which holds it cancelled';
         } else {
-            $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'rebinding_guard', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', $cart);
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            $sent = 'cancelled the duplicate at Two';
+            $cancel = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'rebinding_guard', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', $cart);
+            $http_status = is_array($cancel) && isset($cancel['http_status']) ? (int) $cancel['http_status'] : 0;
+            if ($http_status > 0 && $http_status < Twopayment::HTTP_STATUS_BAD_REQUEST) {
+                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED', array('two_order_state' => 'CANCELLED'));
+                $sent = 'cancelled the duplicate at Two';
+            } else {
+                // Left waiting: the next check reads and cancels it again.
+                $closed = false;
+                $sent = 'the cancel at Two failed (HTTP ' . $http_status . '); the next check tries again';
+            }
         }
-        PrestaShopLogger::addLog(
-            'TwoPayment: Rebinding guard: cart ' . (int) $cart->id . ' already has order ' . (int) $other_order_id
-                . ' from another checkout; attempt ' . $attempt_token . ', Two order ' . $two_order_id . ' not placed, ' . $sent . ' (' . $trigger . ')',
-            3
-        );
+        if ($closed || $trigger !== self::TRIGGER_SCHEDULED || empty($attempt['pending_logged_at'])
+            || time() - (int) strtotime((string) $attempt['pending_logged_at']) >= self::FAILURE_LOG_INTERVAL_SECONDS) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Rebinding guard: cart ' . (int) $cart->id . ' already has order ' . (int) $other_order_id
+                    . ' from another checkout; attempt ' . $attempt_token . ', Two order ' . $two_order_id . ' not placed, ' . $sent . ' (' . $trigger . ')',
+                3
+            );
+        }
+        if (!$closed && $trigger !== self::TRIGGER_BUYER_RETURN) {
+            $this->stamp($attempt_token, self::OUTCOME_DUPLICATE_PENDING, $trigger === self::TRIGGER_SCHEDULED ? array('pending_logged_at' => date('Y-m-d H:i:s')) : array());
+
+            return $this->result(self::OUTCOME_DUPLICATE_PENDING, '', (int) $other_order_id);
+        }
         if ($trigger !== self::TRIGGER_BUYER_RETURN) {
             $this->stamp($attempt_token, self::OUTCOME_DUPLICATE);
 
