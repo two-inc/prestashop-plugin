@@ -10968,9 +10968,12 @@ class Twopayment extends PaymentModule
         }
         if ($existingOrderId > 0) {
             if ($this->isTwoOrderCompletelyPlaced($existingOrderId)) {
-                // validateOrder() wrote the whole order, and something after that threw.
+                // validateOrder() wrote the whole order, and something after that threw. It
+                // is still an order found rather than one this call is known to have
+                // written, so the caller checks it is not another checkout's (TWO-26300).
                 $result['success'] = true;
                 $result['id_order'] = $existingOrderId;
+                $result['recovered_existing'] = true;
                 return $result;
             }
             $result['error'] = 'incomplete_order';
