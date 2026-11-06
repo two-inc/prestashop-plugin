@@ -11,7 +11,8 @@
  * that (the cron URL, the resolver, validateOrder outside a buyer session, the admin button) is
  * the real module.
  *
- *   seed [minutes-old]          a waiting attempt, created that many minutes ago (default 31)
+ *   seed [minutes-old] [fee]    a waiting attempt, created that many minutes ago (default 31);
+ *                               with "fee", on a 30-day term carrying the payment-terms fee line
  *   state <attempt-token>       the attempt, the cart's order and the status ids to compare
  *   checked-ago <token> <min>   pretend the last check ran that many minutes ago
  *   two-state <order> <state>   set the stub order's state
@@ -77,6 +78,18 @@ $command = isset($argv[1]) ? $argv[1] : '';
 
 if ($command === 'seed') {
     $minutes = isset($argv[2]) ? (int) $argv[2] : 31;
+    $with_fee = isset($argv[3]) && $argv[3] === 'fee';
+    if ($with_fee) {
+        // A 5% buyer fee on the 30-day term, taxed by the shop's first tax rules group.
+        $group = (int) Db::getInstance()->getValue(
+            'SELECT `id_tax_rules_group` FROM `' . _DB_PREFIX_ . 'tax_rules_group` WHERE `active` = 1 AND `deleted` = 0 ORDER BY `id_tax_rules_group` ASC'
+        );
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, (string) $group);
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', '1');
+        $module->setTwoChosenTermOverride(30);
+    }
     $customer = new Customer();
     $customer->firstname = 'Test';
     $customer->lastname = 'Buyer';
@@ -148,7 +161,7 @@ if ($command === 'seed') {
         'two_order_reference' => '',
         'two_order_state' => 'UNVERIFIED',
         'two_order_status' => 'APPROVED',
-        'two_day_on_invoice' => '30',
+        'two_day_on_invoice' => $with_fee ? '30' : (string) $module->getSelectedPaymentTerm(),
         'two_payment_term_type' => 'STANDARD',
         'status' => 'REDIRECTED',
     ));
@@ -156,7 +169,14 @@ if ($command === 'seed') {
     Db::getInstance()->update('twopayment_attempt', array('created_at' => pSQL($created_at)), 'attempt_token = "' . pSQL($token) . '"');
     $id_attempt = (int) Db::getInstance()->getValue('SELECT `id_attempt` FROM `' . _DB_PREFIX_ . 'twopayment_attempt` WHERE `attempt_token` = "' . pSQL($token) . '"');
 
-    out(array('token' => $token, 'id_attempt' => $id_attempt, 'id_cart' => (int) $cart->id, 'two_order_id' => $created['id'], 'gross_amount' => $payload['gross_amount']));
+    out(array(
+        'token' => $token,
+        'id_attempt' => $id_attempt,
+        'id_cart' => (int) $cart->id,
+        'two_order_id' => $created['id'],
+        'gross_amount' => $payload['gross_amount'],
+        'fee_line' => $module->getTwoSurchargeCartLine(new Cart((int) $cart->id)) !== null,
+    ));
 }
 
 if ($command === 'state') {
@@ -170,6 +190,13 @@ if ($command === 'state') {
         'current_state' => $id_order > 0 ? (int) $order->current_state : 0,
         'verified_status' => (int) $module->getTwoVerifiedStatusIdForConfirmation(),
         'payment' => $id_order > 0 ? $module->getTwoOrderPaymentData($id_order) : null,
+        'fee_rows' => $id_order > 0 ? (int) Db::getInstance()->getValue(
+            'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'order_detail` WHERE `id_order` = ' . $id_order
+                . ' AND `product_reference` = "' . pSQL(Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE) . '"'
+        ) : 0,
+        'detail_rows' => $id_order > 0 ? (int) Db::getInstance()->getValue(
+            'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'order_detail` WHERE `id_order` = ' . $id_order
+        ) : 0,
     ));
 }
 
