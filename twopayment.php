@@ -18277,7 +18277,7 @@ class Twopayment extends PaymentModule
         }
         $level = in_array($code, array(TwoPendingRecovery::OUTCOME_PLACED, TwoPendingRecovery::OUTCOME_WAITING), true)
             ? 'success'
-            : (in_array($code, array(TwoPendingRecovery::OUTCOME_LOOKUP_FAILED, TwoPendingRecovery::OUTCOME_PLACE_FAILED, TwoPendingRecovery::OUTCOME_FAILED), true) ? 'danger' : 'warning');
+            : (in_array($code, array(TwoPendingRecovery::OUTCOME_LOOKUP_FAILED, TwoPendingRecovery::OUTCOME_PLACE_FAILED, TwoPendingRecovery::OUTCOME_CONFIRM_FAILED, TwoPendingRecovery::OUTCOME_FAILED), true) ? 'danger' : 'warning');
 
         return array('level' => $level, 'message' => $this->getTwoPendingRecovery()->describeOutcome($code));
     }

@@ -46,6 +46,9 @@ class TwoPendingRecovery
     const OUTCOME_BUSY = 'busy';
     const OUTCOME_NOT_WAITING = 'not_waiting';
     const OUTCOME_DUPLICATE = 'duplicate';
+    const OUTCOME_DUPLICATE_PENDING = 'duplicate_pending';
+    const OUTCOME_CONFIRM_FAILED = 'confirm_failed';
+    const OUTCOME_SINGLE_SHOP = 'single_shop';
 
     const ACTION_CONFIRM = 'confirm';
     const ACTION_PLACE = 'place';
@@ -164,7 +167,7 @@ class TwoPendingRecovery
                 $summary['cancelled']++;
             } elseif ($outcome === self::OUTCOME_BUSY) {
                 $summary['busy']++;
-            } elseif (in_array($outcome, array(self::OUTCOME_LOOKUP_FAILED, self::OUTCOME_CART_CHANGED, self::OUTCOME_PLACE_FAILED, self::OUTCOME_FAILED), true)) {
+            } elseif (in_array($outcome, array(self::OUTCOME_LOOKUP_FAILED, self::OUTCOME_CART_CHANGED, self::OUTCOME_PLACE_FAILED, self::OUTCOME_CONFIRM_FAILED, self::OUTCOME_DUPLICATE_PENDING, self::OUTCOME_FAILED), true)) {
                 $summary['failed']++;
             }
         }
@@ -420,6 +423,12 @@ class TwoPendingRecovery
                 $confirmed_here = true;
                 $final_state = $confirm_result['state'];
                 $final_status = $confirm_result['status'] ?: $final_status;
+            } elseif (!$buyer) {
+                // No buyer is waiting: place nothing Two has not confirmed. The next check confirms
+                // again, places it if Two confirmed it meanwhile, or cancels it if Two cancelled it.
+                $this->stampWithDailyLog($attempt_token, $attempt, $trigger, self::OUTCOME_CONFIRM_FAILED, 'confirming with Two failed; nothing placed, the next check tries again');
+
+                return $this->result(self::OUTCOME_CONFIRM_FAILED, '', 0, $two_state);
             }
         }
 
@@ -1068,6 +1077,12 @@ class TwoPendingRecovery
                 return $this->module->l('The order could not be created here. Nothing else was changed; see the module log. The next check tries again.');
             case self::OUTCOME_DUPLICATE:
                 return sprintf($this->module->l('Another checkout already placed an order for this cart, so this payment was not placed and was cancelled with %s.'), $brand);
+            case self::OUTCOME_DUPLICATE_PENDING:
+                return sprintf($this->module->l('Another checkout already placed an order for this cart, so this payment was not placed. Cancelling it with %s failed; the next check tries again.'), $brand);
+            case self::OUTCOME_CONFIRM_FAILED:
+                return sprintf($this->module->l('Confirming the order with %s failed, so nothing was placed. The next check tries again; see the module log.'), $brand);
+            case self::OUTCOME_SINGLE_SHOP:
+                return $this->module->l('Switch to the order\'s shop to check it.');
             case self::OUTCOME_OTHER_SHOP:
                 return $this->module->l('This payment belongs to another shop. Switch to that shop to check it.');
             case self::OUTCOME_BUSY:
@@ -1129,11 +1144,13 @@ class TwoPendingRecovery
             $confirmed_here = false;
             if ($action === self::ACTION_CONFIRM) {
                 $confirm_result = $this->module->confirmTwoOrder($two_order_id, self::TRIGGER_ADMIN, null, new Order($id_order));
-                if ($confirm_result['success']) {
-                    $confirmed_here = true;
-                    $final_state = $confirm_result['state'];
-                    $final_status = $confirm_result['status'] ?: $final_status;
+                if (!$confirm_result['success']) {
+                    // Nothing moves on an order Two has not confirmed.
+                    return self::OUTCOME_CONFIRM_FAILED;
                 }
+                $confirmed_here = true;
+                $final_state = $confirm_result['state'];
+                $final_status = $confirm_result['status'] ?: $final_status;
             }
             $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
                 $response,
