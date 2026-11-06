@@ -16,6 +16,28 @@ final class CartRuleTracingSpec
         self::testTracesEachRuleShape();
         self::testPlacedOrderReplayTracesTheStoredRule();
         self::testDiscountLineTakesItsLinesTaxRulesGroup();
+        self::testCartDiscountTotalIsSharedByRuleValue();
+    }
+
+    private static function testCartDiscountTotalIsSharedByRuleValue(): void
+    {
+        $two = [['name' => 'A', 'value_real' => 6.00], ['name' => 'B', 'value_real' => 4.00]];
+        $cases = [
+            [$two, 10.00, 'A 6.00; B 4.00', 'values that add up to the total are kept exactly'],
+            [$two, 9.00, 'A 5.40; B 3.60', 'a total below the values is shared by value'],
+            [$two, 11.00, 'A 6.60; B 4.40', 'a total above the values is shared by value'],
+            [[['name' => 'Ship', 'free_shipping' => 1], ['name' => 'Other']], 10.00, 'Ship (+1 more) 10.00 untraced free_shipping',
+                'no rule states a value: one untraced discount that waives shipping first'],
+        ];
+        $module = new TwopaymentTestHarness();
+        $share = new ReflectionMethod(Twopayment::class, 'buildTwoDiscountLinesFromCartRules');
+        foreach ($cases as [$rules, $total, $want, $description]) {
+            $got = implode('; ', array_map(function ($entry) {
+                return trim($entry['descriptor']['name'] . ' ' . number_format($entry['gross'], 2, '.', '')
+                    . (empty($entry['rule']['untraced']) ? '' : ' untraced') . (empty($entry['rule']['free_shipping']) ? '' : ' free_shipping'));
+            }, $share->invoke($module, $rules, $total)));
+            TinyAssert::same($want, $got, $description);
+        }
     }
 
     private static function testDiscountLineTakesItsLinesTaxRulesGroup(): void
