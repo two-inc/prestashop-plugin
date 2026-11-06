@@ -32,6 +32,12 @@ $context->shop = new Shop((int) Configuration::get('PS_SHOP_DEFAULT'));
 if (!isset($context->link) || !$context->link) {
     $context->link = new Link();
 }
+// CLI has no controller; core's pricing reads its type and needs a cart or an employee in context.
+if (!isset($context->controller) || !$context->controller) {
+    $context->controller = new stdClass();
+    $context->controller->controller_type = 'front';
+    $context->controller->php_self = 'order';
+}
 
 function out($data)
 {
@@ -76,7 +82,9 @@ if ($command === 'seed') {
     $address->phone = '+447777777777';
     $address->add();
 
-    $products = Product::getProducts($id_lang, 0, 1, 'id_product', 'ASC', false, true);
+    $id_product = (int) Db::getInstance()->getValue(
+        'SELECT `id_product` FROM `' . _DB_PREFIX_ . 'product` WHERE `active` = 1 AND `is_virtual` = 0 ORDER BY `id_product` ASC'
+    );
     $carriers = Carrier::getCarriers($id_lang, true, false, false, null, Carrier::ALL_CARRIERS);
 
     $cart = new Cart();
@@ -90,7 +98,10 @@ if ($command === 'seed') {
     $cart->secure_key = $customer->secure_key;
     $cart->id_carrier = (int) $carriers[0]['id_carrier'];
     $cart->add();
-    $cart->updateQty(1, (int) $products[0]['id_product']);
+    $context->cart = $cart;
+    $context->customer = $customer;
+    $context->country = new Country((int) $address->id_country);
+    $cart->updateQty(1, $id_product);
     $cart->setDeliveryOption(array((int) $address->id => (int) $carriers[0]['id_carrier'] . ','));
     $cart->update();
 
