@@ -5759,7 +5759,8 @@ class Twopayment extends PaymentModule
             }
         }
 
-        return trim((string)$order->shipping_number);
+        // PrestaShop 1.7.6's Order has no shipping_number; reading it warns, which dev mode prints.
+        return isset($order->shipping_number) ? trim((string)$order->shipping_number) : '';
     }
 
     public function hookActionOrderStatusUpdate($params)
