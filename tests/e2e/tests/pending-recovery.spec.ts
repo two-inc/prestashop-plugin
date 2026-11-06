@@ -1,6 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { STORE_URL } from "../config.js";
@@ -55,8 +54,8 @@ test.describe("Payments the buyer verified but never returned from", () => {
   test.skip(SFX === "", "needs the CI container (SFX)");
 
   test.beforeAll(() => {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    execFileSync("docker", ["cp", path.resolve(here, "../../../dev/ci/e2e-pending-attempt.php"), `${CONTAINER}:${HELPER}`]);
+    // The e2e package is CommonJS, so __dirname; import.meta would load this file as ESM.
+    execFileSync("docker", ["cp", path.resolve(__dirname, "../../../dev/ci/e2e-pending-attempt.php"), `${CONTAINER}:${HELPER}`]);
   });
 
   test("the scheduled check places a verified payment, confirming it with Two once", async ({ page }) => {
