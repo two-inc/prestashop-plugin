@@ -9411,7 +9411,8 @@ class Twopayment extends PaymentModule
      * 1. the buyer is in another EU country with a VAT number: the line's tax rules group's exempt row;
      * 2. the 0% tax rule core picks for the tax address: that rule's row;
      * 3. no rule of the group matches the tax address: the group's no-rule row;
-     * 4. a line with no tax rules group (a discount, shipping with no one group, wrapping under PS_ATCP_SHIPWRAP):
+     * 4. a line with no tax rules group (a discount over lines of more than one group, shipping with no one group,
+     *    wrapping under PS_ATCP_SHIPWRAP):
      *    the one code the order's lines coded by steps 1 to 3 share, none when they disagree.
      * A matched row on (none), or a line no step codes, gives no code: the plugin never picks a code itself, and Two's
      * API refuses a 0% line that needs one. Runs in the builder, so the postprocessing hook sees the codes and can
@@ -12322,7 +12323,7 @@ class Twopayment extends PaymentModule
         $this->tagTwoLineTaxKeys($items, 'wrapping', $this->isTwoAtcpShipWrapEnabled() ? 0 : (int) Configuration::get('PS_GIFT_WRAPPING_TAX_RULES_GROUP'));
         foreach ($discount_lines as $discount_line) {
             $items[] = $discount_line['line'];
-            $this->tagTwoDiscountLineTaxKey($items, $discount_line['sources']);
+            $this->tagTwoDiscountLineTaxKey(count($items) - 1, $discount_line['sources']);
         }
 
         return $items;
@@ -12345,25 +12346,26 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Describe a discount line just appended (TWO-27129): it takes the descriptor of the lines it discounts when they
-     * all share one tax rules group's row, so a 0% part is coded as its line is; otherwise it stays keyless, for step 4.
+     * Describe a discount line (TWO-27129): when the lines it discounts are all taxed by one tax rules group, it takes
+     * that group, and the first of them's key, so a 0% part is coded as its lines are; otherwise it stays keyless, for
+     * step 4.
      *
-     * @param array $items the lines built so far, the discount line last
+     * @param int $index the discount line's index
      * @param int[] $sources the indexes of the lines it discounts
      * @return void
      */
-    private function tagTwoDiscountLineTaxKey(array $items, array $sources)
+    private function tagTwoDiscountLineTaxKey($index, array $sources)
     {
         $shared = null;
         foreach ($sources as $i) {
             $key = isset($this->twoLineTaxKeys[$i]) ? $this->twoLineTaxKeys[$i] : null;
-            if ($key === null || $key['group'] <= 0 || $key['discount'] || ($shared !== null && $shared !== $key)) {
+            if ($key === null || $key['group'] <= 0 || $key['discount'] || ($shared !== null && $shared['group'] !== $key['group'])) {
                 $shared = null;
                 break;
             }
-            $shared = $key;
+            $shared = $shared !== null ? $shared : $key;
         }
-        $this->twoLineTaxKeys[count($items) - 1] = $shared !== null ? $shared : array('key' => null, 'group' => 0, 'discount' => true);
+        $this->twoLineTaxKeys[(int) $index] = $shared !== null ? $shared : array('key' => null, 'group' => 0, 'discount' => true);
     }
 
     /**

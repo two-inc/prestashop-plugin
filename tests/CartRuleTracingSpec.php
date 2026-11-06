@@ -15,6 +15,31 @@ final class CartRuleTracingSpec
     {
         self::testTracesEachRuleShape();
         self::testPlacedOrderReplayTracesTheStoredRule();
+        self::testDiscountLineTakesItsLinesTaxRulesGroup();
+    }
+
+    private static function testDiscountLineTakesItsLinesTaxRulesGroup(): void
+    {
+        $p1 = ['key' => 'product:1', 'group' => 5, 'discount' => false];
+        $p2 = ['key' => 'product:2', 'group' => 5, 'discount' => false];
+        $p3 = ['key' => 'product:3', 'group' => 6, 'discount' => false];
+        $ship = ['key' => 'shipping', 'group' => 0, 'discount' => false];
+        $keyless = ['key' => null, 'group' => 0, 'discount' => true];
+        $lines = [$p1, $p2, $p3, $ship];
+        $cases = [
+            [[0, 1], $p1, 'two products of one group: that group, the first one\'s key'],
+            [[1], $p2, 'one product: its own descriptor'],
+            [[0, 2], $keyless, 'products of two groups: keyless, for step 4'],
+            [[3], $keyless, 'shipping with no one group: keyless'],
+        ];
+        $module = new TwopaymentTestHarness();
+        $keys = new ReflectionProperty(Twopayment::class, 'twoLineTaxKeys');
+        $tag = new ReflectionMethod(Twopayment::class, 'tagTwoDiscountLineTaxKey');
+        foreach ($cases as [$sources, $want, $description]) {
+            $keys->setValue($module, $lines);
+            $tag->invoke($module, 4, $sources);
+            TinyAssert::same($want, $keys->getValue($module)[4], $description);
+        }
     }
 
     /** A positive payload line. */
