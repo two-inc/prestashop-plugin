@@ -71,6 +71,24 @@ Core differences by version: 1.7.6's cart-rule calculator ignores
 free gift at its discounted unit price, while `getContextualValue()` honours it on every
 version; tracing follows `getContextualValue()`, which is where the value comes from.
 
+1.7.6 (every 1.7.6.x) records a cheapest-product percentage's tax-excluded value as its
+tax-included one, so the cart's own net total is short by that discount's tax. The
+discount line's net is its gross at the product's rate, so on 1.7.6 such a cart is off
+the cart's net by more than the tolerance and the whole-order check refuses it. That is
+deliberate: core's own total is wrong. Before tracing, the same cart sent a 0% line or
+failed outright.
+
+Known limits:
+- Shipping lines are one per tax rate, not per carrier, so free shipping restricted to
+  one carrier of a multi-carrier delivery option is spread over every shipping line by
+  value. A delivery option with one carrier, however many rates, is exact.
+- A product's ecotax line is discounted with its product, at the ecotax rate, where core
+  taxes the whole row's discount at the product's rate. Where the two rates are the same,
+  as usual, there is no difference; otherwise the net is a few cents off core's.
+- A placed order's shipping lines are per rate across the whole multi-carrier split, so a
+  free-shipping row waives the group's shipping by value, while its other parts stay on
+  its own order's products.
+
 ## Order updates
 
 An update (tracking save, back-office edit, the confirmation sync) carries the order
