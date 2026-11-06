@@ -32,9 +32,13 @@ type State = {
 type Request = { method: string; path: string };
 
 function helper<T>(...args: string[]): T {
-  const out = execFileSync("docker", ["exec", "-u", "www-data", CONTAINER, "php", HELPER, ...args], {
-    encoding: "utf8"
-  });
+  let out: string;
+  try {
+    out = execFileSync("docker", ["exec", "-u", "www-data", CONTAINER, "php", HELPER, ...args], { encoding: "utf8" });
+  } catch (e) {
+    const failed = e as { stdout?: string; stderr?: string };
+    throw new Error(`helper ${args.join(" ")} failed: ${String(failed.stdout ?? "").slice(-3000)} ${String(failed.stderr ?? "").slice(-3000)}`);
+  }
   const line = out.trim().split("\n").pop() ?? "";
   return JSON.parse(line) as T;
 }
