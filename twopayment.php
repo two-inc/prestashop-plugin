@@ -18036,6 +18036,28 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * An order's admin page. PrestaShop 1.7.7 and later route it through Symfony; 1.7.6 has no
+     * such route and getAdminLink() throws for it, so that version gets the legacy controller link.
+     *
+     * @param int $id_order
+     * @return string
+     */
+    protected function getTwoAdminOrderUrl($id_order)
+    {
+        $id_order = (int) $id_order;
+        try {
+            return $this->context->link->getAdminLink(
+                'AdminOrders',
+                true,
+                array('route' => 'admin_orders_view', 'orderId' => $id_order),
+                array('id_order' => $id_order, 'vieworder' => 1)
+            );
+        } catch (Exception $e) {
+            return $this->context->link->getAdminLink('AdminOrders', true, array(), array('id_order' => $id_order, 'vieworder' => 1));
+        }
+    }
+
+    /**
      * The module configuration URL the pending-payment buttons post to; AdminModules checks its token.
      *
      * @return string
@@ -18138,12 +18160,7 @@ class Twopayment extends PaymentModule
         $id_order = (int) Tools::getValue('two_pending_order');
         if ($id_order > 0) {
             $outcome = $this->getTwoPendingRecovery()->resolveLegacyOrder($id_order);
-            $url = $this->context->link->getAdminLink(
-                'AdminOrders',
-                true,
-                array('route' => 'admin_orders_view', 'orderId' => $id_order),
-                array('id_order' => $id_order, 'vieworder' => 1)
-            );
+            $url = $this->getTwoAdminOrderUrl($id_order);
             $this->redirectTwoAdmin($url . (strpos($url, '?') === false ? '?' : '&') . http_build_query(array('two_pending_notice' => $outcome)));
 
             return '';
@@ -18185,12 +18202,7 @@ class Twopayment extends PaymentModule
         $message = htmlspecialchars($notice['message'], ENT_QUOTES, 'UTF-8');
         $id_order = (int) Tools::getValue('two_pending_placed');
         if ($id_order > 0) {
-            $url = $this->context->link->getAdminLink(
-                'AdminOrders',
-                true,
-                array('route' => 'admin_orders_view', 'orderId' => $id_order),
-                array('id_order' => $id_order, 'vieworder' => 1)
-            );
+            $url = $this->getTwoAdminOrderUrl($id_order);
             $message .= ' <a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '">'
                 . htmlspecialchars(sprintf($this->l('View order %d'), $id_order), ENT_QUOTES, 'UTF-8') . '</a>';
         }
