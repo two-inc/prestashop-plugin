@@ -1356,6 +1356,8 @@ class Twopayment extends PaymentModule
         if (((bool) Tools::isSubmit('submitTwoPendingCheck')) == true) {
             Configuration::updateValue('PS_TWO_TAB_VALUE', 6);
             $this->output .= $this->processTwoPendingCheck();
+        } else {
+            $this->output .= $this->renderTwoPendingCheckLanding();
         }
 
         if (((bool) Tools::isSubmit('submitTwoDiagnosticsForm')) == true) {
@@ -18155,30 +18157,48 @@ class Twopayment extends PaymentModule
             return $this->displayError($this->l('That payment could not be found.'));
         }
 
-        $recovery = $this->getTwoPendingRecovery();
-        $result = $recovery->resolveAttempt($token, TwoPendingRecovery::TRIGGER_ADMIN);
+        $result = $this->getTwoPendingRecovery()->resolveAttempt($token, TwoPendingRecovery::TRIGGER_ADMIN);
         $outcome = $result['outcome'] === TwoPendingRecovery::OUTCOME_UNCHANGED
             ? TwoPendingRecovery::OUTCOME_UNCHANGED . ':' . $result['two_state']
             : $result['outcome'];
-        $message = htmlspecialchars($recovery->describeOutcome($outcome), ENT_QUOTES, 'UTF-8');
-        if ($result['id_order'] > 0) {
+        // Post, redirect, get: the outcome is shown on the page the redirect lands on, so a reload
+        // never checks the payment again, and no version's configure POST handling can drop it.
+        $this->redirectTwoAdmin($this->getTwoConfigureUrl() . '&' . http_build_query(array(
+            'two_pending_notice' => $outcome,
+            'two_pending_placed' => (int) $result['id_order'],
+        )));
+
+        return '';
+    }
+
+    /**
+     * The Diagnostics button's outcome, on the configuration page its redirect lands on.
+     *
+     * @return string
+     */
+    protected function renderTwoPendingCheckLanding()
+    {
+        $notice = $this->getTwoPendingNoticeFromRequest();
+        if ($notice === null) {
+            return '';
+        }
+        $message = htmlspecialchars($notice['message'], ENT_QUOTES, 'UTF-8');
+        $id_order = (int) Tools::getValue('two_pending_placed');
+        if ($id_order > 0) {
             $url = $this->context->link->getAdminLink(
                 'AdminOrders',
                 true,
-                array('route' => 'admin_orders_view', 'orderId' => (int) $result['id_order']),
-                array('id_order' => (int) $result['id_order'], 'vieworder' => 1)
+                array('route' => 'admin_orders_view', 'orderId' => $id_order),
+                array('id_order' => $id_order, 'vieworder' => 1)
             );
             $message .= ' <a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '">'
-                . htmlspecialchars(sprintf($this->l('View order %d'), (int) $result['id_order']), ENT_QUOTES, 'UTF-8') . '</a>';
+                . htmlspecialchars(sprintf($this->l('View order %d'), $id_order), ENT_QUOTES, 'UTF-8') . '</a>';
         }
-        if (in_array($result['outcome'], array(TwoPendingRecovery::OUTCOME_PLACED, TwoPendingRecovery::OUTCOME_WAITING), true)) {
+        if ($notice['level'] === 'success') {
             return $this->displayConfirmation($message);
         }
-        if (in_array($result['outcome'], array(TwoPendingRecovery::OUTCOME_LOOKUP_FAILED, TwoPendingRecovery::OUTCOME_PLACE_FAILED, TwoPendingRecovery::OUTCOME_FAILED), true)) {
-            return $this->displayError($message);
-        }
 
-        return $this->displayWarning($message);
+        return $notice['level'] === 'danger' ? $this->displayError($message) : $this->displayWarning($message);
     }
 
     /**
@@ -18205,7 +18225,7 @@ class Twopayment extends PaymentModule
         }
         $level = in_array($code, array(TwoPendingRecovery::OUTCOME_PLACED, TwoPendingRecovery::OUTCOME_WAITING), true)
             ? 'success'
-            : (in_array($code, array(TwoPendingRecovery::OUTCOME_LOOKUP_FAILED, TwoPendingRecovery::OUTCOME_FAILED), true) ? 'danger' : 'warning');
+            : (in_array($code, array(TwoPendingRecovery::OUTCOME_LOOKUP_FAILED, TwoPendingRecovery::OUTCOME_PLACE_FAILED, TwoPendingRecovery::OUTCOME_FAILED), true) ? 'danger' : 'warning');
 
         return array('level' => $level, 'message' => $this->getTwoPendingRecovery()->describeOutcome($code));
     }
