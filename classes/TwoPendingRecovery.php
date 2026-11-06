@@ -200,8 +200,16 @@ class TwoPendingRecovery
             'language' => isset($context->language) ? $context->language : null,
         );
         try {
+            if ($trigger !== self::TRIGGER_BUYER_RETURN) {
+                // The session here is the employee's or the cron's, not the buyer's: rebuild the order on
+                // the term the buyer chose, or the payload, the fee line and the snapshot would differ.
+                $pinned = $this->module->getTwoCheckoutAttempt($attempt_token);
+                $days = is_array($pinned) && isset($pinned['two_day_on_invoice']) ? (int) $pinned['two_day_on_invoice'] : 0;
+                $this->module->setTwoChosenTermOverride($days > 0 ? $days : null);
+            }
             $result = $this->resolveLocked($attempt_token, $trigger);
         } finally {
+            $this->module->setTwoChosenTermOverride(null);
             if ($trigger !== self::TRIGGER_BUYER_RETURN) {
                 // The admin page renders after the check in the employee's own language and context.
                 foreach ($saved as $key => $value) {
