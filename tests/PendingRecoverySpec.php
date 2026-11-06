@@ -30,6 +30,217 @@ final class PendingRecoverySpec
         self::testBuyerReturnWhileACheckHoldsTheLock();
         self::testBuyerReturnOnUnverifiedKeepsTheRefusal();
         self::testAnOldAttemptNeverPlacesASecondOrderForItsCart();
+        self::testAFailedConfirmNeverPlaces();
+        self::testADuplicateIsClosedOnlyWhenTwoCancelledIt();
+        self::testAnIncompleteOrderIsNeverAdopted();
+        self::testTheModulesOwnPlacementPassesTheFeeGuard();
+        self::testUnattendedChecksRebuildOnTheBuyersTerm();
+        self::testLegacyOrderCheck();
+        TinyAssert::same(0, strpos(TwoPendingRecovery::lockName(['id_cart' => 1], 't'), TwoPendingRecovery::lockScope() . '_cart_'), 'lock names are scoped to the database');
+        TinyAssert::true(strlen(TwoPendingRecovery::lockName([], str_repeat('x', 80))) <= 64, 'lock names fit GET_LOCK');
+    }
+
+    /** No buyer is waiting, so the cron and the button place nothing Two has not confirmed. */
+    private static function testAFailedConfirmNeverPlaces(): void
+    {
+        $verified = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'VERIFIED', 'status' => 'APPROVED', 'gross_amount' => '120.00'];
+        $transport = ['http_status' => 0, 'error' => 'Connection error', 'error_message' => 'Unable to connect to Two API'];
+        $refused = ['http_status' => 400, 'error_code' => 'INVALID_STATE', 'error_message' => 'Order expired'];
+        // [trigger, confirm response, description]
+        $rows = [
+            [TwoPendingRecovery::TRIGGER_SCHEDULED, $transport, 'scheduled, confirm unreachable'],
+            [TwoPendingRecovery::TRIGGER_SCHEDULED, $refused, 'scheduled, confirm refused with a 4xx'],
+            [TwoPendingRecovery::TRIGGER_ADMIN, $transport, 'button, confirm unreachable'],
+            [TwoPendingRecovery::TRIGGER_ADMIN, $refused, 'button, confirm refused with a 4xx'],
+        ];
+        foreach ($rows as [$trigger, $confirm, $description]) {
+            $module = self::module([]);
+            $module->get = $verified;
+            $module->confirmResponse = $confirm;
+            $result = $module->getTwoPendingRecovery()->resolveAttempt(self::TOKEN, $trigger);
+            TinyAssert::same(TwoPendingRecovery::OUTCOME_CONFIRM_FAILED, $result['outcome'], $description . ': outcome');
+            TinyAssert::same('REDIRECTED', $module->attempt['status'], $description . ': the payment keeps waiting');
+            TinyAssert::same(TwoPendingRecovery::OUTCOME_CONFIRM_FAILED, $module->attempt['pending_outcome'], $description . ': recorded');
+            TinyAssert::same(0, $module->created, $description . ': no order');
+            TinyAssert::same([], $module->notes, $description . ': no note');
+            TinyAssert::same(1, count($module->confirms), $description . ': one confirm tried');
+        }
+    }
+
+    /**
+     * Another shop's payment is never read or cancelled with this shop's key, and a duplicate is
+     * closed only once its cancel succeeded, or Two already reads it cancelled.
+     */
+    private static function testADuplicateIsClosedOnlyWhenTwoCancelledIt(): void
+    {
+        $verified = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'VERIFIED', 'status' => 'APPROVED', 'gross_amount' => '120.00'];
+        // [cancel HTTP status, cart's shop, outcome, attempt status, cancel POSTs, Two reads, description]
+        $rows = [
+            [200, 1, TwoPendingRecovery::OUTCOME_DUPLICATE, 'FAILED', ['rebinding_guard'], 1, 'the cancel succeeds: closed'],
+            [500, 1, TwoPendingRecovery::OUTCOME_DUPLICATE_PENDING, 'REDIRECTED', ['rebinding_guard'], 1, 'the cancel fails: left waiting for the next check'],
+            [0, 1, TwoPendingRecovery::OUTCOME_DUPLICATE_PENDING, 'REDIRECTED', ['rebinding_guard'], 1, 'the cancel is unreachable: left waiting'],
+            [200, 2, TwoPendingRecovery::OUTCOME_OTHER_SHOP, 'REDIRECTED', [], 0, 'another shop\'s cart: nothing read or cancelled with this shop\'s key'],
+        ];
+        foreach ($rows as [$cancelHttp, $shop, $outcome, $status, $cancels, $reads, $description]) {
+            $module = self::module([]);
+            $module->get = $verified;
+            $module->cancelHttp = $cancelHttp;
+            StubStore::$carts[self::CART]['id_shop'] = $shop;
+            StubStore::$orders[self::OTHER_ORDER] = ['id_cart' => self::CART, 'id_customer' => self::CUSTOMER, 'module' => 'twopayment'];
+            StubStore::$twoPaymentRows[self::OTHER_ORDER] = ['id_order' => self::OTHER_ORDER, 'two_order_id' => 'two-order-later', 'two_order_state' => 'CONFIRMED'];
+            $module->orderIdByCart = self::OTHER_ORDER;
+            $result = $module->getTwoPendingRecovery()->resolveAttempt(self::TOKEN, TwoPendingRecovery::TRIGGER_ADMIN);
+            TinyAssert::same($outcome, $result['outcome'], $description . ': outcome');
+            TinyAssert::same($status, $module->attempt['status'], $description . ': attempt status');
+            TinyAssert::same($cancels, $module->cancels, $description . ': cancel POSTs');
+            TinyAssert::same($reads, $module->gets, $description . ': reads of Two');
+        }
+    }
+
+    /** An order validateOrder() left part way is never adopted as this payment's order. */
+    private static function testAnIncompleteOrderIsNeverAdopted(): void
+    {
+        $module = self::module([]);
+        $module->get = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'CONFIRMED', 'status' => 'APPROVED', 'gross_amount' => '120.00'];
+        StubStore::$orders[self::PLACED_ORDER] = ['id_cart' => self::CART, 'id_customer' => self::CUSTOMER, 'module' => 'twopayment'];
+        $module->orderIdByCart = self::PLACED_ORDER;
+        $module->complete = false;
+        $result = $module->getTwoPendingRecovery()->resolveAttempt(self::TOKEN, TwoPendingRecovery::TRIGGER_ADMIN);
+        TinyAssert::same(TwoPendingRecovery::OUTCOME_PLACE_FAILED, $result['outcome'], 'an incomplete order on the cart: not adopted');
+        TinyAssert::same([], $module->statusChanges, 'the incomplete order is not moved');
+        TinyAssert::false(isset(StubStore::$twoPaymentRows[self::PLACED_ORDER]), 'no Two data is written onto it');
+        TinyAssert::same('REDIRECTED', $module->attempt['status'], 'the payment keeps waiting');
+    }
+
+    /**
+     * The button places from the back office, where the fee line's hook refuses manual adds: the
+     * module's own validateOrder() passes it, and an order it leaves part way is never "recovered".
+     */
+    private static function testTheModulesOwnPlacementPassesTheFeeGuard(): void
+    {
+        try {
+            // [what validateOrder does, the cart's order before, complete, success, recovered, error, description]
+            $rows = [
+                ['fee', 0, true, true, false, '', 'admin placement of a fee cart passes the hook'],
+                ['throw', 0, false, false, false, 'incomplete_order', 'a throw that leaves a half-built order: never recovered'],
+                ['throw', 0, true, true, false, '', 'a throw after the whole order was written: placed'],
+                ['throw', self::OTHER_ORDER, true, true, true, '', 'the cart was already ordered: recovered as that order'],
+            ];
+            foreach ($rows as [$does, $before, $complete, $success, $recovered, $error, $description]) {
+                StubStore::reset();
+                StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+                StubStore::$carts[self::CART] = ['id_customer' => self::CUSTOMER, 'id_currency' => 978, 'id_address_invoice' => 0, 'id_address_delivery' => 0, 'id_carrier' => 0, 'id_lang' => 1];
+                // The back office: StubStore::reset() may replace the context, so set it after.
+                Context::getContext()->controller = (object) ['controller_type' => 'admin'];
+                $module = new class ($does, $before, $complete) extends TwopaymentTestHarness {
+                    private string $does;
+                    private int $before;
+                    private bool $complete;
+                    public bool $hookThrew = false;
+                    private int $calls = 0;
+
+                    public function __construct(string $does, int $before, bool $complete)
+                    {
+                        parent::__construct();
+                        $this->does = $does;
+                        $this->before = $before;
+                        $this->complete = $complete;
+                    }
+
+                    public function getTwoSurchargeProductIds()
+                    {
+                        return [555];
+                    }
+
+                    public function getTwoOrderIdByCart($id_cart)
+                    {
+                        // Before the call: the cart's order, if any. After it: the one validateOrder() wrote.
+                        return $this->calls++ === 0 ? $this->before : ($this->before > 0 ? $this->before : 9201);
+                    }
+
+                    public function isTwoOrderCompletelyPlaced($id_order)
+                    {
+                        return $this->complete;
+                    }
+
+                    public function validateOrder($id_cart, $id_order_state, $amount_paid, $payment_method = 'Unknown', $message = null, $extra_vars = array(), $currency_special = null, $dont_touch_amount = false, $secure_key = false, $shop = null)
+                    {
+                        try {
+                            $this->hookActionObjectOrderDetailAddBefore(['object' => (object) ['product_id' => 555, 'product_reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, 'id_order' => 0]]);
+                        } catch (PrestaShopException $e) {
+                            $this->hookThrew = true;
+                            throw $e;
+                        }
+                        if ($this->does === 'throw') {
+                            throw new PrestaShopException('a later hook failed');
+                        }
+                        $this->currentOrder = 9201;
+
+                        return true;
+                    }
+                };
+                $customer = new Customer(self::CUSTOMER);
+                $customer->secure_key = 'k';
+                $result = $module->createTwoLocalOrderAfterProviderVerification(new Cart(self::CART), $customer, 3, 120.0);
+                TinyAssert::false($module->hookThrew, $description . ': the fee hook lets the module\'s own placement through');
+                TinyAssert::same($success, $result['success'], $description . ': success');
+                TinyAssert::same($recovered, $result['recovered_existing'], $description . ': recovered_existing');
+                TinyAssert::same($error, $result['success'] ? '' : $result['error'], $description . ': error');
+            }
+
+            // Outside the module's own placement the hook still refuses a manual back-office add.
+            Context::getContext()->controller = (object) ['controller_type' => 'admin'];
+            $module = new class extends TwopaymentTestHarness {
+                public function getTwoSurchargeProductIds()
+                {
+                    return [555];
+                }
+            };
+            TinyAssert::throws(static function () use ($module) {
+                $module->hookActionObjectOrderDetailAddBefore(['object' => (object) ['product_id' => 555, 'product_reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, 'id_order' => 0]]);
+            }, 'cannot be added to an order manually');
+        } finally {
+            Context::getContext()->controller = null;
+        }
+    }
+
+    /** The cron's and the employee's sessions hold no term choice: the attempt's own term is used. */
+    private static function testUnattendedChecksRebuildOnTheBuyersTerm(): void
+    {
+        foreach ([TwoPendingRecovery::TRIGGER_SCHEDULED, TwoPendingRecovery::TRIGGER_ADMIN] as $trigger) {
+            $module = self::module(['two_day_on_invoice' => '60']);
+            $module->get = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'VERIFIED', 'status' => 'APPROVED', 'gross_amount' => '120.00'];
+            Context::getContext()->cookie->two_payment_term = 14;
+            $module->getTwoPendingRecovery()->resolveAttempt(self::TOKEN, $trigger);
+            TinyAssert::same([60], array_values(array_unique($module->buildTerms)), $trigger . ': the order is rebuilt on the buyer\'s 60 days, not the session\'s 14');
+            TinyAssert::same(14, $module->getChosenPaymentTermDays(), $trigger . ': the session\'s choice is back afterwards');
+        }
+    }
+
+    /** A legacy order: a failed confirm moves nothing, and a placement keeps the stored invoice id. */
+    private static function testLegacyOrderCheck(): void
+    {
+        // [Two's state, confirm response, outcome, status changes, description]
+        $rows = [
+            ['VERIFIED', ['http_status' => 400, 'error_code' => 'INVALID_STATE', 'error_message' => 'expired'], TwoPendingRecovery::OUTCOME_CONFIRM_FAILED, [], 'confirm refused: nothing moves'],
+            ['CONFIRMED', null, TwoPendingRecovery::OUTCOME_PLACED, [self::PLACED_ORDER], 'already confirmed: moved on, invoice id kept'],
+        ];
+        foreach ($rows as [$state, $confirm, $outcome, $changes, $description]) {
+            $module = self::module([]);
+            $module->get = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => $state, 'status' => 'APPROVED'];
+            if ($confirm !== null) {
+                $module->confirmResponse = $confirm;
+            }
+            $module->legacy = true;
+            StubStore::$orders[self::PLACED_ORDER] = ['id_cart' => self::CART, 'id_customer' => self::CUSTOMER, 'module' => 'twopayment'];
+            StubStore::$twoPaymentRows[self::PLACED_ORDER] = [
+                'id_order' => self::PLACED_ORDER, 'two_order_id' => self::TWO_ORDER, 'two_order_reference' => 'ref', 'two_order_state' => 'VERIFIED',
+                'two_order_status' => 'APPROVED', 'two_day_on_invoice' => '30', 'two_payment_term_type' => 'STANDARD', 'two_invoice_url' => '', 'two_invoice_id' => 'inv-1',
+            ];
+            TinyAssert::same($outcome, $module->getTwoPendingRecovery()->resolveLegacyOrder(self::PLACED_ORDER), $description);
+            TinyAssert::same($changes, $module->statusChanges, $description . ': status changes');
+            TinyAssert::same('inv-1', StubStore::$twoPaymentRows[self::PLACED_ORDER]['two_invoice_id'], $description . ': invoice id');
+        }
     }
 
     /**
@@ -340,6 +551,12 @@ final class PendingRecoverySpec
             public array $statusChanges = [];
             public int $orderIdByCart = 0;
             public int $recoverExisting = 0;
+            public array $confirmResponse = ['http_status' => 200, 'state' => 'CONFIRMED', 'status' => 'APPROVED'];
+            public int $cancelHttp = 200;
+            public bool $complete = true;
+            public bool $legacy = false;
+            /** @var int[] the term each payload build saw */
+            public array $buildTerms = [];
             public array $candidates = [];
             public array $candidateArgs = [];
             private int $placedOrder;
@@ -363,10 +580,12 @@ final class PendingRecoverySpec
                 if (substr((string) $endpoint, -8) === '/confirm') {
                     $this->confirms[] = (string) $trigger;
 
-                    return ['http_status' => 200, 'state' => 'CONFIRMED', 'status' => 'APPROVED'];
+                    return $this->confirmResponse;
                 }
                 if (substr((string) $endpoint, -7) === '/cancel') {
                     $this->cancels[] = (string) $trigger;
+
+                    return ['http_status' => $this->cancelHttp];
                 }
 
                 return ['http_status' => 200];
@@ -400,6 +619,8 @@ final class PendingRecoverySpec
 
             public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null, $syncSurchargeCartLine = true, $trigger = 'checkout')
             {
+                $this->buildTerms[] = (int) $this->getChosenPaymentTermDays();
+
                 return ['merchant_order_id' => (string) $merchant_order_id];
             }
 
@@ -460,6 +681,21 @@ final class PendingRecoverySpec
 
             public function clearTwoOrderIntentSession()
             {
+            }
+
+            public function isTwoOrderCompletelyPlaced($id_order)
+            {
+                return $this->complete;
+            }
+
+            public function isTwoLegacyOrderAwaitingVerification($id_order)
+            {
+                return $this->legacy;
+            }
+
+            public function getTwoOrderPaymentData($id_order)
+            {
+                return StubStore::$twoPaymentRows[(int) $id_order] ?? false;
             }
         };
     }

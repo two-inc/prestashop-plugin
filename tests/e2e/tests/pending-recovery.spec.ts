@@ -19,13 +19,15 @@ const HELPER = "/tmp/e2e-pending-attempt.php";
 const ADMIN_EMAIL = "exampleuser@two.inc";
 const ADMIN_PASSWORD = "examplepassword123";
 
-type Seeded = { token: string; id_attempt: number; id_cart: number; two_order_id: string };
+type Seeded = { token: string; id_attempt: number; id_cart: number; two_order_id: string; fee_line: boolean };
 type State = {
   attempt: { status: string; id_order: string | null; two_order_state: string | null; pending_outcome: string | null };
   id_order: number;
   orders_for_cart: number;
   current_state: number;
   verified_status: number;
+  fee_rows: number;
+  detail_rows: number;
 };
 type Request = { method: string; path: string };
 
@@ -114,8 +116,10 @@ test.describe("Payments the buyer verified but never returned from", () => {
     expect(requestsTo(seeded.two_order_id, "/cancel"), "no cancel sent to Two").toHaveLength(0);
   });
 
-  test("the Diagnostics button places a verified payment at any age", async ({ page }) => {
-    const seeded = helper<Seeded>("seed", "2");
+  test("the Diagnostics button places a verified payment at any age, fee line included", async ({ page }) => {
+    // The back office refuses a manual add of the payment-terms fee line; the module's own placement passes.
+    const seeded = helper<Seeded>("seed", "2", "fee");
+    expect(seeded.fee_line, "the seeded cart carries the payment-terms fee line").toBe(true);
     helper("two-state", seeded.two_order_id, "VERIFIED");
 
     await page.goto(`${STORE_URL}/admin-dev/index.php?controller=AdminLogin`);
@@ -139,6 +143,8 @@ test.describe("Payments the buyer verified but never returned from", () => {
     expect(alerts, `the button reports the placed order: ${diagnose(state)}`).toContain("It is now placed");
     expect(state.attempt.status).toBe("CONFIRMED");
     expect(state.current_state).toBe(state.verified_status);
+    expect(state.fee_rows, "the placed order carries the fee line once").toBe(1);
+    expect(state.detail_rows, "and the product line").toBe(2);
     expect(requestsTo(seeded.two_order_id, "/confirm")).toHaveLength(1);
   });
 });
