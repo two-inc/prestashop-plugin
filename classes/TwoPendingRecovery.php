@@ -233,11 +233,25 @@ class TwoPendingRecovery
     public static function lockName($attempt, $attempt_token)
     {
         if (is_array($attempt) && !empty($attempt['id_cart'])) {
-            return 'two_cart_' . (int) $attempt['id_cart'];
+            return self::lockScope() . '_cart_' . (int) $attempt['id_cart'];
         }
 
         // GET_LOCK names are capped at 64 characters; an attempt token may be longer.
-        return 'two_attempt_' . md5((string) $attempt_token);
+        return self::lockScope() . '_attempt_' . md5((string) $attempt_token);
+    }
+
+    /**
+     * GET_LOCK names are server-wide: scope them to this shop's database and table prefix, so two
+     * shops on one MySQL server never wait on each other.
+     *
+     * @return string
+     */
+    public static function lockScope()
+    {
+        $database = defined('_DB_NAME_') ? _DB_NAME_ : '';
+        $prefix = defined('_DB_PREFIX_') ? _DB_PREFIX_ : '';
+
+        return 'two_' . substr(md5($database . '|' . $prefix), 0, 12);
     }
 
     /**
@@ -1134,7 +1148,7 @@ class TwoPendingRecovery
     public function resolveLegacyOrder($id_order)
     {
         $id_order = (int) $id_order;
-        $lock = 'two_legacy_order_' . $id_order;
+        $lock = self::lockScope() . '_legacy_order_' . $id_order;
         if (!$this->module->acquireTwoAttemptLock($lock, self::LOCK_WAIT_SECONDS)) {
             return self::OUTCOME_BUSY;
         }
