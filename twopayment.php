@@ -22540,6 +22540,10 @@ class Twopayment extends PaymentModule
      */
     public function getChosenPaymentTermDays()
     {
+        if ($this->twoChosenTermOverride !== null) {
+            // A check outside the buyer's session rebuilds the order on the term the buyer chose (TWO-26300).
+            return $this->twoChosenTermOverride;
+        }
         $chosen = isset($this->context->cookie->two_payment_term)
             ? (int) (string) $this->context->cookie->two_payment_term
             : 0;
@@ -22549,6 +22553,20 @@ class Twopayment extends PaymentModule
         }
 
         return $chosen;
+    }
+
+    /** @var int|null the term a check outside the buyer's session rebuilds the order on */
+    protected $twoChosenTermOverride = null;
+
+    /**
+     * Rebuild orders on this term instead of the session's choice; null to stop.
+     *
+     * @param int|null $days
+     * @return void
+     */
+    public function setTwoChosenTermOverride($days)
+    {
+        $this->twoChosenTermOverride = $days === null ? null : (int) $days;
     }
 
     /**
