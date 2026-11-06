@@ -149,6 +149,17 @@ if ($command === 'seed') {
         'merchant_invoice_url' => '',
         'merchant_shipping_document_url' => '',
     );
+    if ($with_fee) {
+        // The storefront syncs the fee line onto the cart before the order is built (the checkout's
+        // own sync request); do the same, then build from a freshly loaded cart.
+        try {
+            $module->getTwoNewOrderData($merchant_order_id, $cart, $urls, true, 'checkout');
+        } catch (Exception $e) {
+            // The first build adds the line; the build that counts is the one below.
+        }
+        $cart = new Cart((int) $cart->id);
+        $context->cart = $cart;
+    }
     try {
         $payload = $module->getTwoNewOrderData($merchant_order_id, $cart, $urls, true, 'checkout');
     } catch (Exception $e) {
