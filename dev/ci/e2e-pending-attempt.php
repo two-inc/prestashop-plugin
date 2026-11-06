@@ -94,9 +94,10 @@ if ($command === 'seed') {
     $address->lastname = 'Buyer';
     $address->company = 'RESTAURANT 53 LTD';
     $address->address1 = '123 Test Street';
-    $address->city = 'London';
-    $address->postcode = 'SW1A 1AA';
-    $address->id_country = (int) Country::getByIso('GB');
+    $address->city = 'Testville';
+    // The shop's default country, which is active; the storefront specs use the same postcode.
+    $address->postcode = '10001';
+    $address->id_country = (int) Configuration::get('PS_COUNTRY_DEFAULT');
     $address->phone = '+447777777777';
     $address->add();
 
