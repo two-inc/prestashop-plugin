@@ -10925,7 +10925,11 @@ class Twopayment extends PaymentModule
             return $result;
         }
 
+        // An order the cart already had before this call is another placement's; one that appears
+        // during it is this call's own, and may be half-built if validateOrder() threw part way.
+        $before_order_id = (int) $this->getTwoOrderIdByCart((int) $cart->id);
         try {
+            self::$twoOwnOrderPlacement = true;
             $this->validateOrder(
                 (int)$cart->id,
                 (int)$initial_status,
@@ -10950,18 +10954,54 @@ class Twopayment extends PaymentModule
                 ' - ' . $result['error'],
                 3
             );
+        } finally {
+            self::$twoOwnOrderPlacement = false;
         }
 
-        // Recovery path for idempotent callback retries/races where order was already created.
         $existingOrderId = (int)$this->getTwoOrderIdByCart((int)$cart->id);
-        if ($existingOrderId > 0) {
+        if ($existingOrderId > 0 && $existingOrderId === $before_order_id) {
+            // Recovery path for idempotent callback retries/races where order was already created.
             $result['success'] = true;
             $result['id_order'] = $existingOrderId;
             $result['recovered_existing'] = true;
             return $result;
         }
+        if ($existingOrderId > 0) {
+            if ($this->isTwoOrderCompletelyPlaced($existingOrderId)) {
+                // validateOrder() wrote the whole order, and something after that threw.
+                $result['success'] = true;
+                $result['id_order'] = $existingOrderId;
+                return $result;
+            }
+            $result['error'] = 'incomplete_order';
+            PrestaShopLogger::addLog(
+                'TwoPayment: validateOrder left order ' . $existingOrderId . ' incomplete for cart ' . (int)$cart->id .
+                '; it is not used. Check it by hand.',
+                3,
+                null,
+                'Order',
+                $existingOrderId
+            );
+        }
 
         return $result;
+    }
+
+    /** @var bool set only around the module's own validateOrder() call */
+    protected static $twoOwnOrderPlacement = false;
+
+    /**
+     * Whether validateOrder() finished writing an order: it records the order's first status
+     * last, so an order with no status history was left part way.
+     *
+     * @param int $id_order
+     * @return bool
+     */
+    public function isTwoOrderCompletelyPlaced($id_order)
+    {
+        return (int) Db::getInstance()->getValue(
+            'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'order_history` WHERE `id_order` = ' . (int) $id_order
+        ) > 0;
     }
 
     /**
@@ -21447,7 +21487,10 @@ class Twopayment extends PaymentModule
         // Manual back-office adds are NEVER legitimate for this product:
         // only the module's own automated cart-sync + order creation may
         // materialise it.
-        if ($this->isTwoAdminContext()) {
+        // The module's own placement may run in the back office: the "Check status with Two" button
+        // places a verified payment from its cart there (TWO-26300). It sets the flag around its own
+        // validateOrder() call only.
+        if ($this->isTwoAdminContext() && !self::$twoOwnOrderPlacement) {
             throw new PrestaShopException(
                 'The payment terms fee product is managed automatically by the Two payment module and cannot be added to an order manually.'
             );
