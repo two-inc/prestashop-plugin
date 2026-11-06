@@ -16,11 +16,29 @@
  *   checked-ago <token> <min>   pretend the last check ran that many minutes ago
  *   two-state <order> <state>   set the stub order's state
  *   requests <order>            the order requests the stub saw
+ *   log                         the module's last 25 log lines
  *   cron-token                  the cron URL's token
  *   admin-url <employee-email>  the module configuration URL, with that employee's token
  */
 
 require '/var/www/html/config/config.inc.php';
+
+// PrestaShop 9 prices carts through the Symfony container, which CLI does not boot by itself
+// (the same boot as tests/integration/order-postprocessing-hook.php).
+if (class_exists('PrestaShop\PrestaShop\Adapter\SymfonyContainer')
+    && PrestaShop\PrestaShop\Adapter\SymfonyContainer::getInstance() === null) {
+    foreach (array('FrontKernel', 'AppKernel') as $kernel_class) {
+        if (!class_exists($kernel_class) || (new ReflectionClass($kernel_class))->isAbstract()) {
+            continue;
+        }
+        $kernel = new $kernel_class(defined('_PS_MODE_DEV_') && _PS_MODE_DEV_ ? 'dev' : 'prod', false);
+        $kernel->boot();
+        $GLOBALS['kernel'] = $kernel;
+        PrestaShop\PrestaShop\Adapter\SymfonyContainer::resetStaticCache();
+        Context::getContext()->container = $kernel->getContainer();
+        break;
+    }
+}
 
 $stub = 'http://127.0.0.1:' . (getenv('TWO_API_STUB_PORT') ?: '8099');
 $module = Module::getInstanceByName('twopayment');
@@ -166,6 +184,12 @@ if ($command === 'two-state') {
 
 if ($command === 'requests') {
     out(stub_call($stub . '/_stub/requests?order=' . rawurlencode((string) $argv[2])));
+}
+
+if ($command === 'log') {
+    out(Db::getInstance()->executeS(
+        'SELECT `date_add`, `severity`, `message` FROM `' . _DB_PREFIX_ . 'log` WHERE `message` LIKE "TwoPayment%" ORDER BY `id_log` DESC LIMIT 25'
+    ));
 }
 
 if ($command === 'cron-token') {
