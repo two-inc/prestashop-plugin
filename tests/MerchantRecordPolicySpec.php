@@ -355,26 +355,38 @@ final class MerchantRecordPolicySpec
     }
 
     /**
-     * Given the token, When it is presented faster than the refresh floor, Then
-     * the run is refused without reaching the wire.
+     * The URL is called every 15 minutes for the pending check (TWO-26300). Each accepted call
+     * stamps the schedule as running; the record is fetched only once it is a day old, and a
+     * stale record that keeps failing is retried no faster than the floor.
      */
     private static function testTheScheduledRouteThrottlesAcceptedRuns(): void
     {
-        // [seconds since the last accepted run, status, wire calls, description].
+        $day = Twopayment::CRON_RECORD_REFRESH_AFTER;
+        // [record age or null for none, seconds since the last refresh attempt or null, status, wire calls, description].
         $cases = array(
-            array(null, Twopayment::CRON_STATUS_REFRESHED, 1, 'a first run refreshes'),
-            array(0, Twopayment::CRON_STATUS_THROTTLED, 0, 'an immediate second run is throttled'),
-            array(Twopayment::CRON_MIN_REFRESH_INTERVAL + 1, Twopayment::CRON_STATUS_REFRESHED, 1, 'a run past the floor refreshes'),
+            array(null, null, Twopayment::CRON_STATUS_REFRESHED, 1, 'a first run refreshes'),
+            array(60, 60, Twopayment::CRON_STATUS_FRESH, 0, 'a record under a day old is not fetched'),
+            array($day - 60, null, Twopayment::CRON_STATUS_FRESH, 0, 'a record just under a day old is not fetched'),
+            array($day + 1, null, Twopayment::CRON_STATUS_REFRESHED, 1, 'a record over a day old is refreshed'),
+            array($day + 1, 0, Twopayment::CRON_STATUS_THROTTLED, 0, 'a stale record tried a moment ago is throttled'),
+            array($day + 1, Twopayment::CRON_MIN_REFRESH_INTERVAL + 1, Twopayment::CRON_STATUS_REFRESHED, 1, 'a stale record past the floor is refreshed'),
         );
 
-        foreach ($cases as list($since, $expectedStatus, $expectedCalls, $description)) {
+        foreach ($cases as list($age, $sinceTry, $expectedStatus, $expectedCalls, $description)) {
             $module = self::harness(array(array('http_status' => 200, 'available_terms' => array(30))));
-            if ($since !== null) {
-                Configuration::updateValue(Twopayment::CONFIG_CRON_LAST_RUN_TS, time() - $since);
+            if ($age !== null) {
+                self::seedHeldRecord($age);
+            }
+            if ($sinceTry !== null) {
+                Configuration::updateValue(Twopayment::CONFIG_CRON_LAST_REFRESH_TS, time() - $sinceTry);
             }
 
             TinyAssert::same($expectedStatus, $module->runTwoScheduledRefresh(), 'status: ' . $description);
             TinyAssert::same($expectedCalls, $module->calls, 'wire calls: ' . $description);
+            TinyAssert::true(
+                (int) Configuration::get(Twopayment::CONFIG_CRON_LAST_RUN_TS) >= time() - 5,
+                'every accepted call stamps the schedule as running: ' . $description
+            );
         }
 
         // A shop with no key yet is not an error to report.

@@ -17,6 +17,20 @@
             {$two_invoice_notice.message|escape:'html':'UTF-8'}
         </div>
         {/if}
+        {if isset($two_pending_notice) && $two_pending_notice}
+        <div class="alert alert-{$two_pending_notice.level|escape:'html':'UTF-8'}">
+            {$two_pending_notice.message|escape:'html':'UTF-8'}
+        </div>
+        {/if}
+        {if isset($two_pending_check_url) && $two_pending_check_url}
+        <form method="post" action="{$two_pending_check_url|escape:'html':'UTF-8'}" class="two-pending-check">
+            <input type="hidden" name="two_pending_order" value="{$two_pending_order_id|intval}">
+            <p class="help-block">{$two_pending_check_help|escape:'html':'UTF-8'}</p>
+            <button type="submit" name="submitTwoPendingCheck" value="1" class="btn btn-default">
+                <i class="icon-refresh"></i> {$two_pending_check_label|escape:'html':'UTF-8'}
+            </button>
+        </form>
+        {/if}
         <div class="two-section">
             <h4 class="two-section-title">{l s='Order information' mod='twopayment'}</h4>
             <div class="two-info-cards">

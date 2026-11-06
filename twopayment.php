@@ -27,6 +27,7 @@ require_once dirname(__FILE__) . '/classes/TwoOrderPostprocessingTrace.php';
 require_once dirname(__FILE__) . '/classes/TwoOrderTenders.php';
 require_once dirname(__FILE__) . '/classes/TwoShopTaxCode.php';
 require_once dirname(__FILE__) . '/classes/TwoTaxCodeSection.php';
+require_once dirname(__FILE__) . '/classes/TwoPendingRecovery.php';
 
 class Twopayment extends PaymentModule
 {
@@ -69,10 +70,15 @@ class Twopayment extends PaymentModule
     // Throttles the rejected-request log line on that public URL.
     const CONFIG_CRON_REJECT_LOG_TS = 'PS_TWO_CRON_REJECT_LOG_TS';
     const CRON_REJECT_LOG_INTERVAL = 3600;
-    // Floor between ACCEPTED refreshes, so the token cannot drive one outbound GET per request.
+    // When the cron URL last accepted a call: the schedule is running (TWO-26300).
     const CONFIG_CRON_LAST_RUN_TS = 'PS_TWO_CRON_LAST_RUN_TS';
-    const CRON_MIN_REFRESH_INTERVAL = 900;
+    // The URL is called every 15 minutes and refreshes the record only once it is a day old.
+    const CRON_RECORD_REFRESH_AFTER = 86400;
+    // Floor between refresh ATTEMPTS a stale record makes, so the token cannot drive one outbound GET per request.
+    const CONFIG_CRON_LAST_REFRESH_TS = 'PS_TWO_CRON_LAST_REFRESH_TS';
+    const CRON_MIN_REFRESH_INTERVAL = 600;
     const CRON_STATUS_REFRESHED = 'refreshed';
+    const CRON_STATUS_FRESH = 'fresh';
     const CRON_STATUS_FAILED = 'failed';
     const CRON_STATUS_UNCONFIGURED = 'unconfigured';
     const CRON_STATUS_THROTTLED = 'throttled';
@@ -1021,12 +1027,17 @@ class Twopayment extends PaymentModule
             `status` VARCHAR(32) NOT NULL DEFAULT "CREATED",
             `created_at` DATETIME NOT NULL,
             `updated_at` DATETIME NOT NULL,
+            `pending_checked_at` DATETIME NULL,
+            `pending_outcome` VARCHAR(64) NULL,
+            `pending_not_found_at` DATETIME NULL,
+            `pending_logged_at` DATETIME NULL,
             PRIMARY KEY (`id_attempt`),
             UNIQUE KEY `uniq_attempt_token` (`attempt_token`),
             KEY `idx_attempt_cart` (`id_cart`),
             KEY `idx_attempt_order` (`id_order`),
             KEY `idx_attempt_two_order_id` (`two_order_id`),
-            KEY `idx_attempt_updated_at` (`updated_at`)
+            KEY `idx_attempt_updated_at` (`updated_at`),
+            KEY `idx_attempt_pending` (`status`, `created_at`)
         ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8;';
 
         // Per-cart last-applied surcharge sync sequence (buyer AJAX ordering
@@ -1211,6 +1222,7 @@ class Twopayment extends PaymentModule
         Configuration::deleteByName(self::CONFIG_CRON_TOKEN);
         Configuration::deleteByName(self::CONFIG_CRON_REJECT_LOG_TS);
         Configuration::deleteByName(self::CONFIG_CRON_LAST_RUN_TS);
+        Configuration::deleteByName(self::CONFIG_CRON_LAST_REFRESH_TS);
         Configuration::deleteByName(self::CONFIG_MERCHANT_COUNTRY);
         Configuration::deleteByName(self::CONFIG_MERCHANT_COUNTRY_TRIED_TS);
         Configuration::deleteByName(self::CONFIG_TAX_CODE_MAP);
@@ -1339,6 +1351,11 @@ class Twopayment extends PaymentModule
         if (((bool) Tools::isSubmit('submitTwoOrderStatusForm')) == true) {
             Configuration::updateValue('PS_TWO_TAB_VALUE', 5);
             $this->saveTwoOrderStatusFormValues();
+        }
+
+        if (((bool) Tools::isSubmit('submitTwoPendingCheck')) == true) {
+            Configuration::updateValue('PS_TWO_TAB_VALUE', 6);
+            $this->output .= $this->processTwoPendingCheck();
         }
 
         if (((bool) Tools::isSubmit('submitTwoDiagnosticsForm')) == true) {
@@ -3107,7 +3124,9 @@ class Twopayment extends PaymentModule
             'languages' => $this->context->controller->getLanguages(),
             'id_language' => $this->context->language->id,
         );
-        return $helper->generateForm(array($this->getTwoDiagnosticsForm()));
+        // Its own form after the settings form: a nested form is invalid, and the settings form's
+        // action would save Diagnostics on every button press.
+        return $helper->generateForm(array($this->getTwoDiagnosticsForm())) . $this->renderTwoPendingPaymentsPanel();
     }
 
     /**
@@ -3254,7 +3273,7 @@ class Twopayment extends PaymentModule
                         'type' => 'html',
                         'label' => $this->l('Scheduled refresh URL'),
                         'name' => 'PS_TWO_CRON_URL',
-                        'desc' => $this->l('Call this once a day from your server\'s crontab to refresh the merchant profile. The token may instead be sent as an X-Two-Cron-Token header or a POST field, which keeps it out of process listings and proxy logs. Keep it secret; anyone holding it can trigger the refresh. On a multistore install, schedule one line per shop, each from that shop\'s own tab. While the shop is in maintenance mode, add the calling server\'s IP to Shop Parameters > Maintenance or this URL is served the maintenance page instead.'),
+                        'desc' => $this->l('Call this every 15 minutes from your server\'s crontab. Each call checks payments still waiting for the buyer and places the ones the buyer verified, and refreshes the merchant profile once it is a day old. The token may instead be sent as an X-Two-Cron-Token header or a POST field, which keeps it out of process listings and proxy logs. Keep it secret; anyone holding it can trigger the refresh. On a multistore install, schedule one line per shop, each from that shop\'s own tab. While the shop is in maintenance mode, add the calling server\'s IP to Shop Parameters > Maintenance or this URL is served the maintenance page instead.'),
                         'html_content' => $this->isTwoSingleShopContext()
                             ? '<input type="text" class="form-control" readonly value="'
                                 . htmlspecialchars($this->getTwoCronUrl(), ENT_QUOTES, 'UTF-8') . '">'
@@ -16810,8 +16829,28 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The scheduled refresh: replace the cached merchant record and
-     * keep the FX table warm. Both keep last-known-good on failure.
+     * The pending check the cron URL runs on every accepted call (TWO-26300): payments the buyer
+     * may have verified without coming back. Null on a shop with no key yet.
+     *
+     * @return array<string,int>|null
+     */
+    public function runTwoScheduledPendingCheck()
+    {
+        if (self::isTwoConfigUnset(Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
+            return null;
+        }
+        try {
+            return $this->getTwoPendingRecovery()->runScheduledCheck();
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Pending check failed - ' . $e->getMessage(), 3);
+
+            return array('error' => 1);
+        }
+    }
+
+    /**
+     * The scheduled refresh: replace the cached merchant record once it is a day old, and
+     * keep the FX table warm with it. Both keep last-known-good on failure.
      *
      * @return string One of the CRON_STATUS_* values.
      */
@@ -16820,19 +16859,26 @@ class Twopayment extends PaymentModule
         if (self::isTwoConfigUnset(Configuration::get('PS_TWO_MERCHANT_API_KEY'))) {
             return self::CRON_STATUS_UNCONFIGURED;
         }
-        $last = (int) Configuration::get(self::CONFIG_CRON_LAST_RUN_TS);
+        Configuration::updateValue(self::CONFIG_CRON_LAST_RUN_TS, time());
+        // The schedule is running, so no stand-in a read made is a signal any more.
+        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS, 0);
+
+        // Called every 15 minutes for the pending check (TWO-26300); the record itself is refreshed daily.
+        $fetched_on = (int) Configuration::get(self::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+        if ($this->hasFetchedMerchantRecord() && $fetched_on > 0 && (time() - $fetched_on) < self::CRON_RECORD_REFRESH_AFTER) {
+            return self::CRON_STATUS_FRESH;
+        }
+        $last = (int) Configuration::get(self::CONFIG_CRON_LAST_REFRESH_TS);
         if ($last > 0 && ($last + self::CRON_MIN_REFRESH_INTERVAL) > time()) {
             PrestaShopLogger::addLog(
-                'TwoPayment: Scheduled refresh throttled - one accepted refresh per '
+                'TwoPayment: Scheduled refresh throttled - one refresh attempt per '
                     . self::CRON_MIN_REFRESH_INTERVAL . 's.',
                 2
             );
 
             return self::CRON_STATUS_THROTTLED;
         }
-        Configuration::updateValue(self::CONFIG_CRON_LAST_RUN_TS, time());
-        // The schedule is running, so no stand-in a read made is a signal any more.
-        Configuration::updateValue(self::CONFIG_MERCHANT_RECORD_STOOD_IN_TS, 0);
+        Configuration::updateValue(self::CONFIG_CRON_LAST_REFRESH_TS, time());
 
         $refreshed = $this->refreshMerchantRecord();
         $this->refreshTwoFxRates();
@@ -17984,6 +18030,183 @@ class Twopayment extends PaymentModule
         }
 
         return $result;
+    }
+
+    /**
+     * The module configuration URL the pending-payment buttons post to; AdminModules checks its token.
+     *
+     * @return string
+     */
+    protected function getTwoConfigureUrl()
+    {
+        return $this->context->link->getAdminLink('AdminModules', false)
+            . '&configure=' . $this->name
+            . '&token=' . Tools::getAdminTokenLite('AdminModules');
+    }
+
+    /**
+     * The Diagnostics "Pending payments" list (TWO-26300): attempts redirected to Two whose buyer
+     * has not come back, newest first, each with a "Check status" button. PrestaShop has no order
+     * for them until the buyer returns, so this list is the only place a merchant sees them.
+     *
+     * @return string
+     */
+    protected function renderTwoPendingPaymentsPanel()
+    {
+        $brand = $this->getTwoBrandConfig('product_name');
+        $esc = static function ($value) {
+            return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+        };
+        $html = '<div class="panel" id="two-pending-payments"><div class="panel-heading"><i class="icon-time"></i> '
+            . $esc(sprintf($this->l('Pending %s payments'), $brand)) . '</div>';
+        if (!$this->isTwoSingleShopContext()) {
+            return $html . '<p class="help-block">' . $esc($this->l('Pending payments are listed per shop. Switch to a single shop to see them.')) . '</p></div>';
+        }
+
+        $warning = $this->getTwoPendingScheduleWarning();
+        if ($warning !== '') {
+            $html .= '<div class="alert alert-warning">' . $esc($warning) . '</div>';
+        }
+        $html .= '<p class="help-block">' . $esc(sprintf(
+            $this->l('Payments sent to %s whose buyer has not come back to the shop. PrestaShop creates no order until the buyer returns, or until a check finds the payment verified and places it. The scheduled refresh URL checks them every 15 minutes; use the button to check one now.'),
+            $brand
+        )) . '</p>';
+
+        $rows = $this->getTwoPendingAttemptList();
+        if ($rows === array()) {
+            return $html . '<p>' . $esc($this->l('No payment is waiting for the buyer.')) . '</p></div>';
+        }
+
+        $recovery = $this->getTwoPendingRecovery();
+        $html .= '<form method="post" action="' . $esc($this->getTwoConfigureUrl()) . '">'
+            . '<input type="hidden" name="submitTwoPendingCheck" value="1">'
+            . '<table class="table"><thead><tr>'
+            . '<th>' . $esc($this->l('Started')) . '</th>'
+            . '<th>' . $esc($this->l('Customer')) . '</th>'
+            . '<th>' . $esc($this->l('Cart')) . '</th>'
+            . '<th>' . $esc(sprintf($this->l('%s order'), $brand)) . '</th>'
+            . '<th>' . $esc($this->l('Last checked')) . '</th>'
+            . '<th>' . $esc($this->l('Last result')) . '</th>'
+            . '<th></th></tr></thead><tbody>';
+        foreach ($rows as $row) {
+            $customer = trim((string) $row['company']) !== '' ? $row['company'] . ' (' . $row['email'] . ')' : (string) $row['email'];
+            $html .= '<tr>'
+                . '<td>' . $esc($row['created_at']) . '</td>'
+                . '<td>' . $esc($customer) . '</td>'
+                . '<td>' . (int) $row['id_cart'] . '</td>'
+                . '<td>' . $esc($row['two_order_id']) . '</td>'
+                . '<td>' . $esc(!empty($row['pending_checked_at']) ? $row['pending_checked_at'] : $this->l('Never')) . '</td>'
+                . '<td>' . $esc(!empty($row['pending_outcome']) ? $recovery->describeOutcome($row['pending_outcome']) : '') . '</td>'
+                . '<td><button type="submit" class="btn btn-default" name="two_pending_attempt" value="' . (int) $row['id_attempt'] . '">'
+                . '<i class="icon-refresh"></i> ' . $esc(sprintf($this->l('Check status with %s'), $brand)) . '</button></td>'
+                . '</tr>';
+        }
+
+        return $html . '</tbody></table></form></div>';
+    }
+
+    /**
+     * Payments are due a check but the cron URL has been silent for an hour: the schedule is not
+     * running every 15 minutes, so a payment the buyer verified waits for the next call.
+     *
+     * @return string
+     */
+    protected function getTwoPendingScheduleWarning()
+    {
+        $ran_on = (int) Configuration::get(self::CONFIG_CRON_LAST_RUN_TS);
+        if ($ran_on > 0 && (time() - $ran_on) < TwoPendingRecovery::SCHEDULE_SILENT_AFTER_SECONDS) {
+            return '';
+        }
+        if ($this->countTwoPendingAttemptsDue() <= 0) {
+            return '';
+        }
+
+        return $this->l('Payments are waiting for the buyer, and the scheduled refresh URL has not run in the last hour. Schedule it every 15 minutes so that payments the buyer verified are placed.');
+    }
+
+    /**
+     * The "Check status" buttons: one waiting attempt from Diagnostics, or a legacy order from its
+     * order page, which is sent back there with the outcome.
+     *
+     * @return string the message to show on the configuration page
+     */
+    protected function processTwoPendingCheck()
+    {
+        $id_order = (int) Tools::getValue('two_pending_order');
+        if ($id_order > 0) {
+            $outcome = $this->getTwoPendingRecovery()->resolveLegacyOrder($id_order);
+            $url = $this->context->link->getAdminLink(
+                'AdminOrders',
+                true,
+                array('route' => 'admin_orders_view', 'orderId' => $id_order),
+                array('id_order' => $id_order, 'vieworder' => 1)
+            );
+            $this->redirectTwoAdmin($url . (strpos($url, '?') === false ? '?' : '&') . http_build_query(array('two_pending_notice' => $outcome)));
+
+            return '';
+        }
+
+        if (!$this->isTwoSingleShopContext()) {
+            return $this->displayError($this->l('Pending payments are listed per shop. Switch to a single shop to see them.'));
+        }
+        $token = $this->getTwoAttemptTokenById((int) Tools::getValue('two_pending_attempt'));
+        if ($token === '') {
+            return $this->displayError($this->l('That payment could not be found.'));
+        }
+
+        $recovery = $this->getTwoPendingRecovery();
+        $result = $recovery->resolveAttempt($token, TwoPendingRecovery::TRIGGER_ADMIN);
+        $outcome = $result['outcome'] === TwoPendingRecovery::OUTCOME_UNCHANGED
+            ? TwoPendingRecovery::OUTCOME_UNCHANGED . ':' . $result['two_state']
+            : $result['outcome'];
+        $message = htmlspecialchars($recovery->describeOutcome($outcome), ENT_QUOTES, 'UTF-8');
+        if ($result['id_order'] > 0) {
+            $url = $this->context->link->getAdminLink(
+                'AdminOrders',
+                true,
+                array('route' => 'admin_orders_view', 'orderId' => (int) $result['id_order']),
+                array('id_order' => (int) $result['id_order'], 'vieworder' => 1)
+            );
+            $message .= ' <a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '">'
+                . htmlspecialchars(sprintf($this->l('View order %d'), (int) $result['id_order']), ENT_QUOTES, 'UTF-8') . '</a>';
+        }
+        if (in_array($result['outcome'], array(TwoPendingRecovery::OUTCOME_PLACED, TwoPendingRecovery::OUTCOME_WAITING), true)) {
+            return $this->displayConfirmation($message);
+        }
+        if (in_array($result['outcome'], array(TwoPendingRecovery::OUTCOME_LOOKUP_FAILED, TwoPendingRecovery::OUTCOME_PLACE_FAILED, TwoPendingRecovery::OUTCOME_FAILED), true)) {
+            return $this->displayError($message);
+        }
+
+        return $this->displayWarning($message);
+    }
+
+    /**
+     * Protected so a spec can capture the redirect instead of ending the request.
+     *
+     * @param string $url
+     * @return void
+     */
+    protected function redirectTwoAdmin($url)
+    {
+        Tools::redirectAdmin($url);
+    }
+
+    /**
+     * The outcome a legacy order's "Check status" button sent back to its order page, if any.
+     *
+     * @return array{level:string,message:string}|null
+     */
+    public function getTwoPendingNoticeFromRequest()
+    {
+        $code = (string) Tools::getValue('two_pending_notice');
+        if ($code === '' || !preg_match('/^[a-z_]+(:[A-Z_]{0,40})?$/', $code)) {
+            return null;
+        }
+        $level = in_array($code, array(TwoPendingRecovery::OUTCOME_PLACED, TwoPendingRecovery::OUTCOME_WAITING), true)
+            ? 'success'
+            : (in_array($code, array(TwoPendingRecovery::OUTCOME_LOOKUP_FAILED, TwoPendingRecovery::OUTCOME_FAILED), true) ? 'danger' : 'warning');
+
+        return array('level' => $level, 'message' => $this->getTwoPendingRecovery()->describeOutcome($code));
     }
 
     /**
@@ -24472,6 +24695,309 @@ class Twopayment extends PaymentModule
         );
     }
 
+    /** @var TwoPendingRecovery|null */
+    private $twoPendingRecovery = null;
+
+    /**
+     * The resolver the buyer's return, the scheduled check and the admin button share (TWO-26300).
+     *
+     * @return TwoPendingRecovery
+     */
+    public function getTwoPendingRecovery()
+    {
+        if ($this->twoPendingRecovery === null) {
+            $this->twoPendingRecovery = new TwoPendingRecovery($this);
+        }
+
+        return $this->twoPendingRecovery;
+    }
+
+    /**
+     * @param string $name
+     * @param int $wait_seconds 0 to give up at once
+     * @return bool
+     */
+    public function acquireTwoAttemptLock($name, $wait_seconds)
+    {
+        return $this->acquireTwoDbLock($name, (int) $wait_seconds);
+    }
+
+    /**
+     * @param string $name
+     * @return void
+     */
+    public function releaseTwoAttemptLock($name)
+    {
+        $this->releaseTwoDbLock($name);
+    }
+
+    /**
+     * The attempt columns the pending check keeps (TWO-26300). install() creates them; an install
+     * upgraded from an earlier version gets them here, on the first check or Diagnostics render,
+     * since install() does not re-run on upgrade.
+     *
+     * @return bool
+     */
+    public function ensureTwoPendingRecoveryColumns()
+    {
+        static $ensured = null;
+        if ($ensured !== null) {
+            return $ensured;
+        }
+
+        $table = '`' . _DB_PREFIX_ . 'twopayment_attempt`';
+        $columns = array(
+            'pending_checked_at' => 'DATETIME NULL',
+            'pending_outcome' => 'VARCHAR(64) NULL',
+            'pending_not_found_at' => 'DATETIME NULL',
+            'pending_logged_at' => 'DATETIME NULL',
+        );
+        try {
+            $db = Db::getInstance();
+            $present = array();
+            foreach ((array) $db->executeS('SHOW COLUMNS FROM ' . $table) as $row) {
+                $present[(string) $row['Field']] = true;
+            }
+            $ensured = true;
+            foreach ($columns as $name => $definition) {
+                if (!isset($present[$name])) {
+                    $ensured = $db->execute('ALTER TABLE ' . $table . ' ADD `' . $name . '` ' . $definition) && $ensured;
+                }
+            }
+            $indexed = false;
+            foreach ((array) $db->executeS('SHOW INDEX FROM ' . $table) as $row) {
+                $indexed = $indexed || (string) $row['Key_name'] === 'idx_attempt_pending';
+            }
+            if (!$indexed) {
+                $ensured = $db->execute('ALTER TABLE ' . $table . ' ADD INDEX `idx_attempt_pending` (`status`, `created_at`)') && $ensured;
+            }
+        } catch (Exception $e) {
+            $ensured = false;
+        }
+        if (!$ensured) {
+            PrestaShopLogger::addLog('TwoPayment: Could not add the pending check columns to the checkout attempt table', 3);
+        }
+
+        return $ensured;
+    }
+
+    /**
+     * The shared filter of attempts still waiting for the buyer in the current shop.
+     *
+     * @return string
+     */
+    private function getTwoWaitingAttemptsSql($select)
+    {
+        return 'SELECT ' . $select . ' FROM `' . _DB_PREFIX_ . 'twopayment_attempt` `a`'
+            . ' INNER JOIN `' . _DB_PREFIX_ . 'cart` `c` ON `c`.`id_cart` = `a`.`id_cart`'
+            . ' WHERE `a`.`status` = "REDIRECTED" AND `a`.`two_order_id` IS NOT NULL AND `a`.`two_order_id` <> ""'
+            . ' AND (`a`.`id_order` IS NULL OR `a`.`id_order` = 0)'
+            . ' AND `c`.`id_shop` = ' . (int) $this->context->shop->id;
+    }
+
+    /**
+     * Tokens only, so a run never holds 50 attempt rows: the resolver reads each under its lock.
+     *
+     * @param string $created_before
+     * @param string $created_after
+     * @param string $checked_before
+     * @param int $limit
+     * @return string[]
+     */
+    public function getTwoPendingAttemptCandidates($created_before, $created_after, $checked_before, $limit)
+    {
+        if (!$this->ensureTwoPendingRecoveryColumns()) {
+            return array();
+        }
+        $sql = $this->getTwoWaitingAttemptsSql('`a`.`attempt_token`')
+            . ' AND `a`.`created_at` <= "' . pSQL($created_before) . '" AND `a`.`created_at` >= "' . pSQL($created_after) . '"'
+            . ' AND (`a`.`pending_checked_at` IS NULL OR `a`.`pending_checked_at` <= "' . pSQL($checked_before) . '")'
+            . ' ORDER BY `a`.`pending_checked_at` ASC, `a`.`id_attempt` ASC LIMIT ' . (int) $limit;
+        try {
+            $rows = Db::getInstance()->executeS($sql);
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Pending check could not select attempts - ' . $e->getMessage(), 3);
+
+            return array();
+        }
+
+        return array_map(static function ($row) {
+            return (string) $row['attempt_token'];
+        }, is_array($rows) ? $rows : array());
+    }
+
+    /**
+     * The Diagnostics list: waiting attempts of this shop, newest first.
+     *
+     * @param int $limit
+     * @return array<int,array<string,mixed>>
+     */
+    public function getTwoPendingAttemptList($limit = 50)
+    {
+        if (!$this->ensureTwoPendingRecoveryColumns()) {
+            return array();
+        }
+        $sql = $this->getTwoWaitingAttemptsSql(
+            '`a`.`id_attempt`, `a`.`id_cart`, `a`.`two_order_id`, `a`.`created_at`, `a`.`pending_checked_at`, `a`.`pending_outcome`,'
+                . ' `cu`.`email`, `cu`.`company`'
+        );
+        $sql = str_replace(
+            ' WHERE ',
+            ' LEFT JOIN `' . _DB_PREFIX_ . 'customer` `cu` ON `cu`.`id_customer` = `a`.`id_customer` WHERE ',
+            $sql
+        ) . ' ORDER BY `a`.`created_at` DESC, `a`.`id_attempt` DESC LIMIT ' . (int) $limit;
+        try {
+            $rows = Db::getInstance()->executeS($sql);
+        } catch (Exception $e) {
+            return array();
+        }
+
+        return is_array($rows) ? $rows : array();
+    }
+
+    /**
+     * How many waiting attempts the schedule should be checking now.
+     *
+     * @return int
+     */
+    public function countTwoPendingAttemptsDue()
+    {
+        if (!$this->ensureTwoPendingRecoveryColumns()) {
+            return 0;
+        }
+        $now = time();
+        $sql = $this->getTwoWaitingAttemptsSql('COUNT(*)')
+            . ' AND `a`.`created_at` <= "' . pSQL(date('Y-m-d H:i:s', $now - TwoPendingRecovery::MIN_AGE_SECONDS)) . '"'
+            . ' AND `a`.`created_at` >= "' . pSQL(date('Y-m-d H:i:s', $now - TwoPendingRecovery::MAX_AGE_SECONDS)) . '"';
+        try {
+            return (int) Db::getInstance()->getValue($sql);
+        } catch (Exception $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * @param int $id_attempt
+     * @return string the attempt's token, or '' when there is none
+     */
+    public function getTwoAttemptTokenById($id_attempt)
+    {
+        if ((int) $id_attempt <= 0) {
+            return '';
+        }
+
+        return (string) Db::getInstance()->getValue(
+            'SELECT `attempt_token` FROM `' . _DB_PREFIX_ . 'twopayment_attempt` WHERE `id_attempt` = ' . (int) $id_attempt
+        );
+    }
+
+    /**
+     * A stamp-only write of the pending check's own columns: never the status, never updated_at,
+     * so a check that changes nothing neither moves the attempt nor extends its retention.
+     *
+     * @param string $attempt_token
+     * @param array<string,string|null> $fields
+     * @return bool
+     */
+    public function stampTwoPendingAttempt($attempt_token, array $fields)
+    {
+        $data = array();
+        foreach (array('pending_checked_at', 'pending_outcome', 'pending_not_found_at', 'pending_logged_at') as $key) {
+            if (array_key_exists($key, $fields)) {
+                $data[$key] = $fields[$key] === null ? null : pSQL((string) $fields[$key]);
+            }
+        }
+        if ($data === array()) {
+            return false;
+        }
+        try {
+            return (bool) Db::getInstance()->update(
+                'twopayment_attempt',
+                $data,
+                'attempt_token = "' . pSQL((string) $attempt_token) . '"',
+                0,
+                true
+            );
+        } catch (Exception $e) {
+            // An install whose columns are not added yet; the next Diagnostics render or check adds them.
+            return false;
+        }
+    }
+
+    /**
+     * A merchant-only note on an order the pending check settled.
+     *
+     * @param int $id_order
+     * @param string $text
+     * @return void
+     */
+    public function addTwoPendingRecoveryNote($id_order, $text)
+    {
+        try {
+            $this->addTwoOrderPrivateNote((int) $id_order, (string) $text);
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog('TwoPayment: Could not add a note to order ' . (int) $id_order . ' - ' . $e->getMessage(), 2);
+        }
+    }
+
+    /**
+     * The status a Two order is created in, before it moves to the verified status.
+     *
+     * @return int
+     */
+    public function getTwoInitialAwaitingStatusId()
+    {
+        $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
+        if (!$initial_status) {
+            $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP');
+            if (!$initial_status) {
+                $initial_status = Configuration::get('PS_OS_PREPARATION');
+            }
+        }
+
+        return (int) $initial_status;
+    }
+
+    /**
+     * The status the confirmation moves a verified order to.
+     *
+     * @return int
+     */
+    public function getTwoVerifiedStatusIdForConfirmation()
+    {
+        $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
+        if (!$verified_status) {
+            $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
+            if (!$verified_status) {
+                $verified_status = Configuration::get('PS_OS_PREPARATION');
+            }
+        }
+
+        return (int) $verified_status;
+    }
+
+    /**
+     * A Two order still in the awaiting-verification status it was created in: placed before
+     * checkout attempts existed, or left there by a confirmation that stopped part way.
+     *
+     * @param int $id_order
+     * @return bool
+     */
+    public function isTwoLegacyOrderAwaitingVerification($id_order)
+    {
+        $order = new Order((int) $id_order);
+        if (!Validate::isLoadedObject($order) || (string) $order->module !== $this->name) {
+            return false;
+        }
+        $awaiting = $this->getTwoInitialAwaitingStatusId();
+        if ($awaiting <= 0 || (int) $order->current_state !== $awaiting) {
+            return false;
+        }
+        $payment_data = $this->getTwoOrderPaymentData((int) $id_order);
+
+        return is_array($payment_data) && !empty($payment_data['two_order_id']);
+    }
+
     /**
      * @param int $id_cart
      * @return int
@@ -25848,6 +26374,12 @@ class Twopayment extends PaymentModule
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
+                // TWO-26300: a legacy order still awaiting verification can be checked with Two from here.
+                'two_pending_notice' => $this->getTwoPendingNoticeFromRequest(),
+                'two_pending_check_url' => $this->isTwoLegacyOrderAwaitingVerification((int) $id_order) ? $this->getTwoConfigureUrl() : '',
+                'two_pending_order_id' => (int) $id_order,
+                'two_pending_check_label' => sprintf($this->l('Check status with %s'), $this->getTwoBrandConfig('product_name')),
+                'two_pending_check_help' => sprintf($this->l('This order is still awaiting verification. Check it with %s: a verified order is confirmed and moved on, a cancelled one is cancelled here.'), $this->getTwoBrandConfig('product_name')),
             ));
             return $this->context->smarty->fetch('module:twopayment/views/templates/hook/displayAdminOrderTabContent.tpl');
         }
