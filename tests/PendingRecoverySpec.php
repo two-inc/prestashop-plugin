@@ -28,6 +28,86 @@ final class PendingRecoverySpec
         self::testScheduledSelection();
         self::testBuyerReturnToATwoCancelledAttemptSendsNoCancel();
         self::testBuyerReturnWhileACheckHoldsTheLock();
+        self::testBuyerReturnOnUnverifiedKeepsTheRefusal();
+        self::testAnOldAttemptNeverPlacesASecondOrderForItsCart();
+    }
+
+    /**
+     * The buyer back on UNVERIFIED gets the same refusal and keeps the same cart as before
+     * TWO-26300; only the attempt stays open for the scheduled check.
+     */
+    private static function testBuyerReturnOnUnverifiedKeepsTheRefusal(): void
+    {
+        $module = self::module([]);
+        $module->get = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'UNVERIFIED', 'status' => 'APPROVED'];
+        $controller = new TwopaymentConfirmationModuleFrontController();
+        $controller->module = $module;
+        Tools::resetTestValues();
+        Tools::setTestValue('key', 'key-9102');
+        $redirect = '';
+        try {
+            (new ReflectionMethod($controller, 'handleAttemptTokenConfirmation'))->invoke($controller, self::TOKEN);
+        } catch (StubRedirect $e) {
+            $redirect = $e->getMessage();
+        }
+        TinyAssert::same(['Payment has not been verified yet. Please try again or contact support.'], $controller->errors, 'unverified return: the same refusal');
+        TinyAssert::same('index.php?controller=order', $redirect, 'unverified return: back to checkout');
+        TinyAssert::same(self::CART, (int) Context::getContext()->cookie->id_cart, 'unverified return: the buyer keeps the attempt\'s cart');
+        TinyAssert::same('REDIRECTED', $module->attempt['status'], 'unverified return: the attempt stays open for the scheduled check');
+        TinyAssert::same(0, $module->created, 'unverified return: no order');
+        TinyAssert::same([], $module->cancels, 'unverified return: nothing sent to Two');
+    }
+
+    /**
+     * The buyer abandoned attempt 1, came back and paid the same cart through attempt 2. A later
+     * check of attempt 1 must never place a second order for the cart; its Two order is cancelled
+     * at Two unless Two already holds it cancelled, and the order attempt 2 placed is untouched.
+     */
+    private static function testAnOldAttemptNeverPlacesASecondOrderForItsCart(): void
+    {
+        $verified = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'VERIFIED', 'status' => 'APPROVED', 'gross_amount' => '120.00'];
+        // [Two's state of the old order, module of the cart's order, found before creation (else only by
+        //  validateOrder's duplicate recovery), outcome, attempt status, cancel POSTs, confirm POSTs, description]
+        $rows = [
+            ['VERIFIED', 'twopayment', true, TwoPendingRecovery::OUTCOME_DUPLICATE, 'FAILED', ['rebinding_guard'], 0, 'old attempt VERIFIED, cart ordered by a newer Two attempt: not placed or confirmed, cancelled at Two'],
+            ['UNVERIFIED', 'twopayment', true, TwoPendingRecovery::OUTCOME_DUPLICATE, 'FAILED', ['rebinding_guard'], 0, 'old attempt UNVERIFIED, cart ordered: cancelled at Two'],
+            ['CANCELLED', 'twopayment', true, TwoPendingRecovery::OUTCOME_DUPLICATE, 'CANCELLED', [], 0, 'old attempt Two already cancelled: closed, nothing sent'],
+            ['VERIFIED', 'ps_wirepayment', true, TwoPendingRecovery::OUTCOME_DUPLICATE, 'FAILED', ['rebinding_guard'], 0, 'cart ordered with another payment method: not placed, cancelled at Two'],
+            ['VERIFIED', 'twopayment', false, TwoPendingRecovery::OUTCOME_DUPLICATE, 'FAILED', ['rebinding_guard'], 1, 'cart ordered between the check and validateOrder: the duplicate recovery refuses it'],
+        ];
+        foreach ($rows as [$state, $otherModule, $foundFirst, $outcome, $status, $cancels, $confirms, $description]) {
+            $module = self::module([]);
+            $module->get = ['state' => $state] + $verified;
+            StubStore::$orders[self::OTHER_ORDER] = ['id_cart' => self::CART, 'id_customer' => self::CUSTOMER, 'module' => $otherModule];
+            $later = ['id_order' => self::OTHER_ORDER, 'two_order_id' => 'two-order-later', 'two_order_state' => 'CONFIRMED'];
+            if ($otherModule === 'twopayment') {
+                StubStore::$twoPaymentRows[self::OTHER_ORDER] = $later;
+            }
+            if ($foundFirst) {
+                $module->orderIdByCart = self::OTHER_ORDER;
+            } else {
+                $module->recoverExisting = self::OTHER_ORDER;
+            }
+            $result = $module->getTwoPendingRecovery()->resolveAttempt(self::TOKEN, TwoPendingRecovery::TRIGGER_SCHEDULED);
+            TinyAssert::same($outcome, $result['outcome'], $description . ': outcome');
+            TinyAssert::same($status, $module->attempt['status'], $description . ': old attempt status');
+            TinyAssert::same($cancels, $module->cancels, $description . ': cancel POSTs');
+            TinyAssert::same($confirms, count($module->confirms), $description . ': confirm POSTs');
+            TinyAssert::same($foundFirst ? 0 : 1, $module->created, $description . ': validateOrder calls');
+            TinyAssert::same([], $module->statusChanges, $description . ': the placed order keeps its status');
+            TinyAssert::same([], $module->notes, $description . ': no note on the placed order');
+            TinyAssert::same(
+                $otherModule === 'twopayment' ? $later : null,
+                StubStore::$twoPaymentRows[self::OTHER_ORDER] ?? null,
+                $description . ': the placed order keeps its own Two data'
+            );
+        }
+
+        TinyAssert::same(
+            TwoPendingRecovery::lockName(['id_cart' => self::CART], 'attempt-one'),
+            TwoPendingRecovery::lockName(['id_cart' => self::CART], 'attempt-two'),
+            'two attempts for one cart share one lock'
+        );
     }
 
     private static function testStateMapping(): void
@@ -217,7 +297,7 @@ final class PendingRecoverySpec
         ];
         foreach ($rows as [$status, $message, $description]) {
             $module = self::module(['status' => $status]);
-            StubStore::$dbLocks[TwoPendingRecovery::lockName(self::TOKEN)] = true;
+            StubStore::$dbLocks[TwoPendingRecovery::lockName($module->attempt, self::TOKEN)] = true;
             $controller = new TwopaymentConfirmationModuleFrontController();
             $controller->module = $module;
             Tools::resetTestValues();
@@ -259,6 +339,7 @@ final class PendingRecoverySpec
             public array $notes = [];
             public array $statusChanges = [];
             public int $orderIdByCart = 0;
+            public int $recoverExisting = 0;
             public array $candidates = [];
             public array $candidateArgs = [];
             private int $placedOrder;
@@ -340,6 +421,10 @@ final class PendingRecoverySpec
             public function createTwoLocalOrderAfterProviderVerification($cart, $customer, $initial_status, $provider_gross_amount)
             {
                 $this->created++;
+                if ($this->recoverExisting > 0) {
+                    // Core refuses an ordered cart; the module's duplicate recovery finds its order.
+                    return ['success' => true, 'id_order' => $this->recoverExisting, 'recovered_existing' => true, 'error' => 'cart already ordered'];
+                }
                 StubStore::$orders[$this->placedOrder] = ['id_cart' => (int) $cart->id, 'id_customer' => (int) $customer->id, 'module' => 'twopayment'];
 
                 return ['success' => true, 'id_order' => $this->placedOrder, 'recovered_existing' => false, 'error' => ''];

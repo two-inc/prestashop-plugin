@@ -45,6 +45,7 @@ class TwoPendingRecovery
     const OUTCOME_FAILED = 'failed';
     const OUTCOME_BUSY = 'busy';
     const OUTCOME_NOT_WAITING = 'not_waiting';
+    const OUTCOME_DUPLICATE = 'duplicate';
 
     const ACTION_CONFIRM = 'confirm';
     const ACTION_PLACE = 'place';
@@ -159,7 +160,7 @@ class TwoPendingRecovery
             $outcome = $result['outcome'];
             if ($outcome === self::OUTCOME_PLACED) {
                 $summary['placed']++;
-            } elseif (in_array($outcome, array(self::OUTCOME_CANCELLED, self::OUTCOME_DECLINED, self::OUTCOME_NOT_FOUND), true)) {
+            } elseif (in_array($outcome, array(self::OUTCOME_CANCELLED, self::OUTCOME_DECLINED, self::OUTCOME_NOT_FOUND, self::OUTCOME_DUPLICATE), true)) {
                 $summary['cancelled']++;
             } elseif ($outcome === self::OUTCOME_BUSY) {
                 $summary['busy']++;
@@ -181,7 +182,8 @@ class TwoPendingRecovery
     public function resolveAttempt($attempt_token, $trigger)
     {
         $attempt_token = trim((string) $attempt_token);
-        $lock = self::lockName($attempt_token);
+        // Keyed on the cart: two attempts for one cart must never race through validateOrder().
+        $lock = self::lockName($this->module->getTwoCheckoutAttempt($attempt_token), $attempt_token);
         $wait = $trigger === self::TRIGGER_SCHEDULED ? 0 : self::LOCK_WAIT_SECONDS;
         if (!$this->module->acquireTwoAttemptLock($lock, $wait)) {
             return $this->result(self::OUTCOME_BUSY);
@@ -210,11 +212,19 @@ class TwoPendingRecovery
     }
 
     /**
+     * The lock every trigger takes: per cart, since a cart can carry one order and several
+     * attempts; per token only for an attempt that cannot be read.
+     *
+     * @param mixed $attempt
      * @param string $attempt_token
      * @return string
      */
-    public static function lockName($attempt_token)
+    public static function lockName($attempt, $attempt_token)
     {
+        if (is_array($attempt) && !empty($attempt['id_cart'])) {
+            return 'two_cart_' . (int) $attempt['id_cart'];
+        }
+
         // GET_LOCK names are capped at 64 characters; an attempt token may be longer.
         return 'two_attempt_' . md5((string) $attempt_token);
     }
@@ -269,6 +279,13 @@ class TwoPendingRecovery
             $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
 
             return $this->result(self::OUTCOME_FAILED, $this->module->l('Unable to load cart for this payment attempt.'));
+        }
+
+        // A newer attempt already placed this cart's order: this attempt can never be placed, and
+        // its Two order is a duplicate (TWO-26300). Checked before the snapshot and the confirm.
+        $duplicate_order_id = $this->foreignCartOrderId($cart, $attempt);
+        if ($duplicate_order_id > 0) {
+            return $this->refuseDuplicate($attempt_token, $attempt, $cart, $duplicate_order_id, $trigger);
         }
 
         $context = Context::getContext();
@@ -533,6 +550,10 @@ class TwoPendingRecovery
                 );
             }
             $id_order = isset($create_result['id_order']) ? (int) $create_result['id_order'] : 0;
+            if (!empty($create_result['recovered_existing']) && $this->isForeignOrder($id_order, $attempt)) {
+                // validateOrder() refused the cart because another checkout ordered it.
+                return $this->refuseDuplicate($attempt_token, $attempt, $cart, $id_order, $trigger);
+            }
             if ((bool) (isset($create_result['recovered_existing']) ? $create_result['recovered_existing'] : false)) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Recovered existing local order ' . $id_order .
@@ -631,6 +652,76 @@ class TwoPendingRecovery
         $this->module->clearTwoCartRecords((int) $cart->id);
 
         return $this->result(self::OUTCOME_PLACED, '', (int) $order->id, $two_state);
+    }
+
+    /**
+     * The cart's order when it belongs to another checkout: linked to a different Two order, or
+     * placed with another payment module. An unlinked order of this module is this attempt's own,
+     * left by a confirmation that stopped before writing its Two data.
+     *
+     * @param Cart $cart
+     * @param array $attempt
+     * @return int
+     */
+    private function foreignCartOrderId($cart, array $attempt)
+    {
+        $id_order = (int) $this->module->getTwoOrderIdByCart((int) $cart->id);
+
+        return $id_order > 0 && $this->isForeignOrder($id_order, $attempt) ? $id_order : 0;
+    }
+
+    /**
+     * @param int $id_order
+     * @param array $attempt
+     * @return bool
+     */
+    private function isForeignOrder($id_order, array $attempt)
+    {
+        $order = new Order((int) $id_order);
+        if (!Validate::isLoadedObject($order)) {
+            return false;
+        }
+        if ((string) $order->module !== (string) $this->module->name) {
+            return true;
+        }
+
+        return $this->module->hasTwoOrderRebindingConflict(
+            $this->module->getTwoOrderPaymentData((int) $id_order),
+            (string) $attempt['two_order_id']
+        );
+    }
+
+    /**
+     * This attempt's cart was ordered by another checkout, so its Two order is a duplicate: it is
+     * cancelled at Two, unless Two already holds it cancelled, and the attempt is closed. The other
+     * order is never touched. A returning buyer is sent to the order that was placed.
+     *
+     * @return array{outcome:string,message:string,id_order:int,two_state:string}
+     */
+    private function refuseDuplicate($attempt_token, array $attempt, $cart, $other_order_id, $trigger)
+    {
+        $two_order_id = (string) $attempt['two_order_id'];
+        $two_order = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
+        if ($this->module->isTwoOrderCancelledResponse($two_order)) {
+            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', array('two_order_state' => 'CANCELLED'));
+            $sent = 'nothing sent to Two, which holds it cancelled';
+        } else {
+            $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'rebinding_guard', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', $cart);
+            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
+            $sent = 'cancelled the duplicate at Two';
+        }
+        PrestaShopLogger::addLog(
+            'TwoPayment: Rebinding guard: cart ' . (int) $cart->id . ' already has order ' . (int) $other_order_id
+                . ' from another checkout; attempt ' . $attempt_token . ', Two order ' . $two_order_id . ' not placed, ' . $sent . ' (' . $trigger . ')',
+            3
+        );
+        if ($trigger !== self::TRIGGER_BUYER_RETURN) {
+            $this->stamp($attempt_token, self::OUTCOME_DUPLICATE);
+
+            return $this->result(self::OUTCOME_DUPLICATE, '', (int) $other_order_id);
+        }
+
+        return $this->result(self::OUTCOME_ALREADY_PLACED, '', (int) $other_order_id);
     }
 
     /**
@@ -962,6 +1053,8 @@ class TwoPendingRecovery
                 return sprintf($this->module->l('The cart changed after the buyer verified it, so no order was placed and nothing was sent to %1$s. Check with the buyer, then cancel the order with %1$s.'), $brand);
             case self::OUTCOME_PLACE_FAILED:
                 return $this->module->l('The order could not be created here. Nothing else was changed; see the module log. The next check tries again.');
+            case self::OUTCOME_DUPLICATE:
+                return sprintf($this->module->l('Another checkout already placed an order for this cart, so this payment was not placed and was cancelled with %s.'), $brand);
             case self::OUTCOME_OTHER_SHOP:
                 return $this->module->l('This payment belongs to another shop. Switch to that shop to check it.');
             case self::OUTCOME_BUSY:
