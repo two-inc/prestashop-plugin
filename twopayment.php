@@ -18202,8 +18202,11 @@ class Twopayment extends PaymentModule
     {
         $id_order = (int) Tools::getValue('two_pending_order');
         if ($id_order > 0) {
-            // The API key is the shop's own, so an all-shops or group context checks nothing.
+            // The API key is the shop's own, so an all-shops or group context, or another shop's
+            // order, checks nothing.
+            $order = new Order($id_order);
             $outcome = $this->isTwoSingleShopContext()
+                && (int) $order->id_shop === (int) $this->context->shop->id
                 ? $this->getTwoPendingRecovery()->resolveLegacyOrder($id_order)
                 : TwoPendingRecovery::OUTCOME_SINGLE_SHOP;
             $url = $this->getTwoAdminOrderUrl($id_order);
