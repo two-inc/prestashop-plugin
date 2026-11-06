@@ -37,6 +37,11 @@ function helper<T>(...args: string[]): T {
   return JSON.parse(line) as T;
 }
 
+// What the check recorded and the module logged, for a failure message.
+function diagnose(state: State): string {
+  return JSON.stringify({ attempt: state.attempt, log: helper<unknown[]>("log") });
+}
+
 function requestsTo(order: string, suffix: string): Request[] {
   return helper<Request[]>("requests", order).filter((r) => r.method === "POST" && r.path.endsWith(suffix));
 }
@@ -73,7 +78,7 @@ test.describe("Payments the buyer verified but never returned from", () => {
     await runCron(page);
 
     state = helper<State>("state", seeded.token);
-    expect(state.attempt.status, "the attempt is confirmed").toBe("CONFIRMED");
+    expect(state.attempt.status, `the attempt is confirmed: ${diagnose(state)}`).toBe("CONFIRMED");
     expect(state.id_order, "a PrestaShop order exists").toBeGreaterThan(0);
     expect(state.current_state, "at the verified status").toBe(state.verified_status);
     expect(requestsTo(seeded.two_order_id, "/confirm"), "one confirm request").toHaveLength(1);
@@ -121,8 +126,11 @@ test.describe("Payments the buyer verified but never returned from", () => {
     await expect(row).toBeVisible();
     await row.locator('button[name="two_pending_attempt"]').click();
 
-    await expect(page.locator(".alert-success, .module_confirmation")).toContainText("It is now placed");
     const state = helper<State>("state", seeded.token);
+    await expect(
+      page.locator(".alert-success, .module_confirmation"),
+      `the button reports the placed order: ${diagnose(state)}`
+    ).toContainText("It is now placed");
     expect(state.attempt.status).toBe("CONFIRMED");
     expect(state.current_state).toBe(state.verified_status);
     expect(requestsTo(seeded.two_order_id, "/confirm")).toHaveLength(1);
