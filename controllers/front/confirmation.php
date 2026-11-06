@@ -54,493 +54,52 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
-        $customer = new Customer((int)$attempt['id_customer']);
-        if (!Validate::isLoadedObject($customer)) {
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            $message = $this->module->l('Unable to load customer for this payment attempt.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+        // The scheduled check and the admin button settle attempts through the same resolver, under
+        // the same per-attempt lock (TWO-26300).
+        $result = $this->module->getTwoPendingRecovery()->resolveAttempt($attempt_token, TwoPendingRecovery::TRIGGER_BUYER_RETURN);
+        if ($result['outcome'] === TwoPendingRecovery::OUTCOME_BUSY) {
+            $this->redirectAfterBusyCheck($attempt_token);
         }
-
-        if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
-            return;
-        }
-
-        $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
-        if (is_array($latest_attempt)) {
-            $attempt = $latest_attempt;
-            if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
-                return;
+        if ($result['outcome'] === TwoPendingRecovery::OUTCOME_PLACED || $result['outcome'] === TwoPendingRecovery::OUTCOME_ALREADY_PLACED) {
+            $order = new Order((int) $result['id_order']);
+            if (Validate::isLoadedObject($order)) {
+                $this->redirectToOrderConfirmation($order, new Customer((int) $order->id_customer));
             }
         }
 
-        $existing_attempt_order_id = (int)$attempt['id_order'];
-        if ($existing_attempt_order_id > 0) {
-            $existing_order = new Order($existing_attempt_order_id);
-            if (Validate::isLoadedObject($existing_order)) {
-                $existing_payment_data = $this->module->getTwoOrderPaymentData($existing_order->id);
-                if ($existing_payment_data && isset($existing_payment_data['two_order_id'])) {
-                    $sync_ok = $this->syncTwoMerchantOrderId($existing_order, $existing_payment_data);
-                    if ($sync_ok) {
-                        $this->module->setTwoCheckoutAttemptMerchantOrderId($attempt_token, (string)$existing_order->id);
-                    }
-                }
-                $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
-                if (is_array($latest_attempt)) {
-                    $attempt = $latest_attempt;
-                    if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
-                        return;
-                    }
-                }
-                $this->redirectToOrderConfirmation($existing_order, $customer);
-            }
-        }
-
-        $cart = new Cart((int)$attempt['id_cart']);
-        if (!Validate::isLoadedObject($cart)) {
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            $message = $this->module->l('Unable to load cart for this payment attempt.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-        // Ensure checkout context matches the attempt before creating a local order.
-        $this->context->cart = $cart;
-        $this->context->customer = $customer;
-        $this->context->currency = new Currency((int)$cart->id_currency);
-        $this->context->cookie->id_cart = (int)$cart->id;
-        $this->context->cookie->id_customer = (int)$customer->id;
-        $this->context->cookie->write();
-
-        // Snapshot the buyer company HERE, not beside the write that persists
-        // it (TWO-40): this is the last point where context->cart is provably
-        // the attempt's cart. Taken any later, a rotated context->cart would
-        // make readTwoCartScopedCompany() report absent (and discard the
-        // record), leaving the resolver to fall back to the address's
-        // identifier fields and produce exactly the empty organisation number
-        // this snapshot exists to prevent.
-        $company_snapshot = $this->module->getTwoOrderCompanySnapshot($cart);
-
-        if (empty($attempt['two_order_id'])) {
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            $message = $this->module->l('Missing provider order reference for this attempt.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-        $stored_snapshot_hash = isset($attempt['cart_snapshot_hash']) ? trim((string)$attempt['cart_snapshot_hash']) : '';
-        // Records which URL variant (with/without secure key) the stored hash
-        // matched, so the final pre-validateOrder re-check compares like with
-        // like. Null until a variant matches.
-        $snapshot_includes_secure_key = null;
-        if (!Tools::isEmpty($stored_snapshot_hash)) {
-            try {
-                // EXPLICIT CHOICE: this initial check self-heals the cart's
-                // surcharge line (sync=true) before hashing, so a missed
-                // frontend sync (broken theme JS) reconverges to the state
-                // the stored snapshot was built from instead of failing the
-                // whole checkout on a healable divergence.
-                $current_snapshot_hash = $this->buildAttemptSnapshotHash($attempt_token, $attempt, $cart, true, true);
-            } catch (Exception $e) {
-                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Failed to build cart snapshot for attempt ' . $attempt_token . ' - ' . $e->getMessage(),
-                    3
-                );
-                $message = $this->module->l('Unable to validate cart consistency for this payment. Please try again.');
-                $this->errors[] = $message;
-                $this->redirectWithNotifications('index.php?controller=order');
-            }
-
-            if (hash_equals($stored_snapshot_hash, $current_snapshot_hash)) {
-                $snapshot_includes_secure_key = true;
-            } else {
-                // Compatibility fallback: allow old attempts created before callback key was added.
-                // Comparison-only rebuild: the sync above already ran, do not
-                // mutate the cart again just to compute a hash.
-                try {
-                    $legacy_snapshot_hash = $this->buildAttemptSnapshotHash($attempt_token, $attempt, $cart, false, false);
-                } catch (Exception $e) {
-                    $legacy_snapshot_hash = '';
-                }
-
-                if (!Tools::isEmpty($legacy_snapshot_hash) && hash_equals($stored_snapshot_hash, $legacy_snapshot_hash)) {
-                    $current_snapshot_hash = $legacy_snapshot_hash;
-                    $snapshot_includes_secure_key = false;
-                } else {
-                    // Cart changed between provider order creation and callback finalization.
-                    $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'snapshot_mismatch', '/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST', $cart);
-                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-                    PrestaShopLogger::addLog(
-                        'TwoPayment: Cart snapshot mismatch for attempt ' . $attempt_token . '. Stored=' . $stored_snapshot_hash . ', Current=' . $current_snapshot_hash,
-                        3
-                    );
-                    $message = $this->module->l('Your cart changed during payment verification. Please review your cart and try again.');
-                    $this->errors[] = $message;
-                    $this->redirectWithNotifications('index.php?controller=order');
-                }
-            }
-        }
-
-        $two_order_id = $attempt['two_order_id'];
-        $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
-        $two_err = $this->module->getTwoErrorMessage($response);
-        if ($two_err) {
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            // Two's reason is for the merchant, never the buyer (TWO-26611).
-            $this->logTwoOrderLookupFailure(
-                'cart ' . (int) $cart->id . ', attempt ' . $attempt_token . ', Two order ' . $two_order_id,
-                $response,
-                (int) $cart->id
-            );
-            $this->errors[] = $this->module->l('Unable to retrieve the order payment information please contact store owner.');
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-        $two_state = isset($response['state']) ? strtoupper((string)$response['state']) : '';
-        $valid_states = array('VERIFIED', 'CONFIRMED', 'FULFILLED');
-        if (!in_array($two_state, $valid_states, true)) {
-            $extra_data = array(
-                'two_order_state' => isset($response['state']) ? $response['state'] : '',
-                'two_order_status' => isset($response['status']) ? $response['status'] : '',
-            );
-
-            $resolved_order_id = (int)$this->module->resolveTwoAttemptOrderIdForCancellation($attempt);
-            if ($two_state === 'CANCELLED') {
-                if ($resolved_order_id > 0) {
-                    $extra_data['id_order'] = $resolved_order_id;
-                }
-                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', $extra_data);
-                $this->module->syncLocalOrderStatusFromTwoState($resolved_order_id, $two_state);
-                $message = $this->module->l('Your order is cancelled.');
-            } else {
-                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED', $extra_data);
-                $message = $this->module->l('Payment has not been verified yet. Please try again or contact support.');
-            }
-
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-        $final_state = isset($response['state']) ? $response['state'] : 'VERIFIED';
-        $final_status = isset($response['status']) ? $response['status'] : null;
-        if ($two_state === 'VERIFIED') {
-            $confirm_result = $this->module->confirmTwoOrder($two_order_id, 'confirmation', $cart);
-            if ($confirm_result['success']) {
-                $final_state = $confirm_result['state'];
-                $final_status = $confirm_result['status'] ?: $final_status;
-            }
-        }
-
-        $provider_gross_amount = $this->module->extractTwoProviderGrossAmountForValidation($response);
-        if ($provider_gross_amount === null) {
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            PrestaShopLogger::addLog(
-                'TwoPayment: Missing or invalid provider gross_amount in callback response for attempt ' . $attempt_token,
-                3
-            );
-            $message = $this->module->l('Unable to retrieve the order payment information please contact store owner.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-            return;
-        }
-
-        // Re-read latest attempt status to close cancel/confirm race windows.
-        $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
-        if (is_array($latest_attempt)) {
-            $attempt = $latest_attempt;
-            if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
-                return;
-            }
-        }
-
-        $id_order = (int)$attempt['id_order'];
-        if ($id_order <= 0) {
-            $id_order = (int)$this->module->getTwoOrderIdByCart((int)$cart->id);
-        }
-
-        if ($id_order > 0) {
-            $existing_payment_data = $this->module->getTwoOrderPaymentData((int)$id_order);
-            if ($this->module->hasTwoOrderRebindingConflict($existing_payment_data, (string)$attempt['two_order_id'])) {
-                $existing_two_order_id = isset($existing_payment_data['two_order_id']) ? (string)$existing_payment_data['two_order_id'] : '';
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Rebinding guard blocked callback for attempt ' . $attempt_token .
-                    '. Existing order ' . (int)$id_order . ' already linked to Two order ' . $existing_two_order_id .
-                    ', incoming Two order ' . (string)$attempt['two_order_id'],
-                    3
-                );
-
-                // Best effort: cancel incoming duplicate provider order to avoid orphaned external state.
-                if (!Tools::isEmpty($attempt['two_order_id'])) {
-                    $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'rebinding_guard', '/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST', $cart);
-                }
-
-                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-                $existing_order = new Order((int)$id_order);
-                if (Validate::isLoadedObject($existing_order)) {
-                    $this->redirectToOrderConfirmation($existing_order, $customer);
-                }
-
-                $message = $this->module->l('This payment attempt has already been finalized.');
-                $this->errors[] = $message;
-                $this->redirectWithNotifications('index.php?controller=order');
-            }
-        }
-
-        if ($id_order <= 0) {
-            $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
-            if (is_array($latest_attempt)) {
-                $attempt = $latest_attempt;
-                if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
-                    return;
-                }
-            }
-
-            // FINAL PARITY RE-CHECK, adjacent to the charge: the earlier
-            // snapshot check is separated from validateOrder by two provider
-            // round-trips, during which the cart could theoretically drift.
-            // Re-run the self-healing snapshot build (sync=true also enforces
-            // cart-vs-payload fee parity, failing closed) so the gate's last
-            // word is issued immediately before the money moves.
-            if (!Tools::isEmpty($stored_snapshot_hash) && $snapshot_includes_secure_key !== null) {
-                try {
-                    $final_snapshot_hash = $this->buildAttemptSnapshotHash(
-                        $attempt_token,
-                        $attempt,
-                        $cart,
-                        $snapshot_includes_secure_key,
-                        true
-                    );
-                } catch (Exception $e) {
-                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-                    PrestaShopLogger::addLog(
-                        'TwoPayment: Final pre-order snapshot rebuild failed for attempt ' . $attempt_token . ' - ' . $e->getMessage(),
-                        3
-                    );
-                    $message = $this->module->l('Unable to validate cart consistency for this payment. Please try again.');
-                    $this->errors[] = $message;
-                    $this->redirectWithNotifications('index.php?controller=order');
-                    return;
-                }
-
-                if (!hash_equals($stored_snapshot_hash, $final_snapshot_hash)) {
-                    $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'snapshot_drift', '/v1/order/' . $attempt['two_order_id'] . '/cancel', [], 'POST', $cart);
-                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-                    PrestaShopLogger::addLog(
-                        'TwoPayment: Cart snapshot drifted between verification and order creation for attempt ' . $attempt_token .
-                        '. Stored=' . $stored_snapshot_hash . ', Final=' . $final_snapshot_hash,
-                        3
-                    );
-                    $message = $this->module->l('Your cart changed during payment verification. Please review your cart and try again.');
-                    $this->errors[] = $message;
-                    $this->redirectWithNotifications('index.php?controller=order');
-                    return;
-                }
-            } else {
-                // Legacy attempt without a stored snapshot hash: still run the
-                // same fail-closed parity gate as the hashed path above, since
-                // core validateOrder performs no such check itself. The hash
-                // result is discarded - there is nothing to compare it against.
-                try {
-                    $this->buildAttemptSnapshotHash($attempt_token, $attempt, $cart, false, true);
-                } catch (Exception $e) {
-                    $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-                    PrestaShopLogger::addLog(
-                        'TwoPayment: Legacy (no stored hash) pre-order parity gate failed for attempt ' . $attempt_token . ' - ' . $e->getMessage(),
-                        3
-                    );
-                    $message = $this->module->l('Unable to validate cart consistency for this payment. Please try again.');
-                    $this->errors[] = $message;
-                    $this->redirectWithNotifications('index.php?controller=order');
-                    return;
-                }
-            }
-
-            $initial_status = $this->getInitialAwaitingStatus();
-            $create_result = $this->module->createTwoLocalOrderAfterProviderVerification(
-                $cart,
-                $customer,
-                (int)$initial_status,
-                (float)$provider_gross_amount
-            );
-
-            if (!(bool)$create_result['success']) {
-                $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-                $error_code = isset($create_result['error']) ? (string)$create_result['error'] : '';
-                if ($error_code === 'currency_invalid') {
-                    $message = $this->module->l('Unable to load currency for this payment attempt.');
-                } else {
-                    $message = $this->module->l('Unable to create local order for this payment attempt.');
-                }
-                $this->errors[] = $message;
-                $this->redirectWithNotifications('index.php?controller=order');
-            }
-            $id_order = isset($create_result['id_order']) ? (int)$create_result['id_order'] : 0;
-            if ((bool)(isset($create_result['recovered_existing']) ? $create_result['recovered_existing'] : false)) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Recovered existing local order ' . $id_order .
-                    ' for callback attempt ' . $attempt_token . ' after validateOrder race/duplicate.',
-                    2
-                );
-            }
-        }
-
-        if ($id_order <= 0) {
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            $message = $this->module->l('Unable to create local order for this payment attempt.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-        $order = new Order((int)$id_order);
-        if (!Validate::isLoadedObject($order)) {
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
-            $message = $this->module->l('Unable to load the created order. Please contact support.');
-            $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
-        }
-
-        $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
-        if (is_array($latest_attempt)) {
-            $attempt = $latest_attempt;
-            if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
-                return;
-            }
-        }
-
-        $invoice_id = isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : $attempt['two_invoice_id'];
-        $invoice_url = isset($response['invoice_url']) ? $response['invoice_url'] : $attempt['two_invoice_url'];
-        $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
-            $response,
-            isset($attempt['two_day_on_invoice']) ? (string)$attempt['two_day_on_invoice'] : (string)$this->module->getSelectedPaymentTerm(),
-            isset($attempt['two_payment_term_type']) ? $attempt['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
-        );
-        $payment_data = array(
-            'two_order_id' => isset($response['id']) ? $response['id'] : $attempt['two_order_id'],
-            'two_order_reference' => isset($response['merchant_reference']) ? $response['merchant_reference'] : $attempt['two_order_reference'],
-            'two_order_state' => $final_state,
-            'two_order_status' => $final_status,
-            'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
-            'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
-            'two_invoice_url' => $invoice_url,
-            'two_invoice_id' => $invoice_id,
-            // The only setTwoOrderPaymentData() caller that carries these two
-            // keys, and that is the design: they are presence-conditional there,
-            // so every later status/webhook write leaves the stored value alone
-            // instead of blanking it.
-            'two_company_name' => $company_snapshot['two_company_name'],
-            'two_organization_number' => $company_snapshot['two_organization_number'],
-        );
-        // The rates the pre-order re-check just declared for this cart; an update falls back to them (TWO-26085).
-        // With the prepaid amount Two holds for the order, which its later edits and refunds declare (TWO-26326).
-        $declared_rates = $this->module->getTwoDeclaredChargeRates($response);
-        if ($declared_rates !== null) {
-            $payment_data['two_declared_rates'] = $declared_rates;
-        }
-        $this->module->setTwoOrderPaymentData($order->id, $payment_data);
-
-        // Best effort: replace provisional merchant_order_id with real PrestaShop id_order in Two.
-        $sync_ok = $this->syncTwoMerchantOrderId($order, $payment_data, $response);
-        if ($sync_ok) {
-            $this->module->setTwoCheckoutAttemptMerchantOrderId($attempt_token, (string)$order->id);
-        }
-
-        $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CONFIRMED', array(
-            'id_order' => (int)$order->id,
-            'two_order_state' => $payment_data['two_order_state'],
-            'two_order_status' => $payment_data['two_order_status'],
-            'two_day_on_invoice' => $payment_data['two_day_on_invoice'],
-            'two_payment_term_type' => $payment_data['two_payment_term_type'],
-            'two_invoice_url' => $payment_data['two_invoice_url'],
-            'two_invoice_id' => $payment_data['two_invoice_id'],
-        ));
-
-        $latest_attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
-        if (is_array($latest_attempt)) {
-            $attempt = $latest_attempt;
-            if ($this->abortConfirmationIfAttemptCancelled($attempt_token, $attempt)) {
-                return;
-            }
-        }
-
-        $this->module->changeOrderStatus($order->id, $this->getVerifiedStatus());
-        // This order consumed the verdict; nothing after it may be
-        // priced against an approval the buyer got for a cart now placed.
-        $this->module->clearTwoOrderIntentSession();
-        $this->module->clearTwoCartRecords((int) $cart->id);
-        $this->redirectToOrderConfirmation($order, $customer);
+        $this->errors[] = $result['message'] !== ''
+            ? $result['message']
+            : $this->module->l('Unable to create local order for this payment attempt.');
+        $this->redirectWithNotifications('index.php?controller=order');
     }
 
     /**
-     * Best effort sync of merchant_order_id in Two to the real PrestaShop order ID.
-     * Never blocks customer confirmation if provider update fails.
+     * Another check holds this attempt and did not finish within the wait. A placed order goes to
+     * its confirmation page, a cancelled one says so, and anything else asks the buyer to reload:
+     * the buyer is never shown a success page for an order that is not placed.
      *
-     * @param Order $order
-     * @param array $payment_data
-     * @param array|null $two_order the order as Two's GET returned it earlier in this callback, for the
-     *   order postprocessing hook's order_lines (TWO-26282); null when this callback did not read it
+     * @param string $attempt_token
+     * @return void
      */
-    private function syncTwoMerchantOrderId($order, $payment_data, $two_order = null)
+    private function redirectAfterBusyCheck($attempt_token)
     {
-        if (!Validate::isLoadedObject($order) || !is_array($payment_data) || empty($payment_data['two_order_id'])) {
-            return false;
-        }
-
-        try {
-            // Also records the hash that lets later unchanged saves skip their PUT (TWO-26085).
-            $update_payload = null;
-            $update_response = $this->module->putTwoOrderUpdate($order, $payment_data, $update_payload, 'merchant_order_id', $two_order);
-            if ($update_response === null) {
-                // A repeated callback: Two already holds exactly this order, merchant_order_id included.
-                return true;
+        $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        $status = is_array($attempt) && isset($attempt['status']) ? strtoupper((string) $attempt['status']) : '';
+        $id_order = is_array($attempt) && isset($attempt['id_order']) ? (int) $attempt['id_order'] : 0;
+        if ($status === 'CONFIRMED' && $id_order > 0) {
+            $order = new Order($id_order);
+            if (Validate::isLoadedObject($order)) {
+                $this->redirectToOrderConfirmation($order, new Customer((int) $order->id_customer));
             }
-
-            $http_status = isset($update_response['http_status']) ? (int)$update_response['http_status'] : 0;
-            if ($http_status === Twopayment::HTTP_STATUS_OK) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Synced merchant_order_id=' . $order->id . ' to Two order ' . $payment_data['two_order_id'],
-                    1,
-                    null,
-                    'Order',
-                    $order->id
-                );
-                return true;
-            }
-
-            $sync_error = $this->module->getTwoApiErrorDetail($update_response);
-            PrestaShopLogger::addLog(
-                'TwoPayment: Failed to sync merchant_order_id for order ' . $order->id .
-                ', Two order ' . $payment_data['two_order_id'] .
-                ', ' . $sync_error,
-                2,
-                null,
-                'Order',
-                $order->id
-            );
-            $this->module->recordTwoOrderSync((int) $order->id, $sync_error);
-        } catch (Exception $e) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Exception syncing merchant_order_id for order ' . $order->id .
-                ' - ' . $e->getMessage(),
-                2,
-                null,
-                'Order',
-                $order->id
-            );
-            $this->module->recordTwoOrderSync((int) $order->id, $e->getMessage());
         }
-
-        return false;
+        $this->errors[] = $status === 'CANCELLED'
+            ? $this->module->l('Your order is cancelled.')
+            : $this->module->l('Your payment is still being processed. Please reload this page in a moment.');
+        $this->redirectWithNotifications('index.php?controller=order');
     }
 
     /**
-     * Validate callback authorization against stored attempt secure key.
-     */
-    /**
-     * Two's reason for a failed order lookup, for the merchant (TWO-26611). A
-     * refusal (400 and above) is an error line; an answer below 400 whose body
-     * still carries an error is a warning. No answer at all is already logged
-     * as a connection error.
+     * Two's reason for a failed order lookup, for the merchant (TWO-26611).
      *
      * @param string $reference
      * @param mixed $response
@@ -549,19 +108,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
      */
     private function logTwoOrderLookupFailure($reference, $response, $id_cart)
     {
-        if ($this->module->logTwoApiRefusal('the order lookup', $reference, $response, $id_cart)) {
-            return;
-        }
-        $status = is_array($response) && isset($response['http_status']) ? (int) $response['http_status'] : 0;
-        if ($status > 0) {
-            PrestaShopLogger::addLog(
-                'TwoPayment: Two answered the order lookup with an error for ' . $reference . ' - ' . $this->module->getTwoApiErrorDetail($response),
-                2,
-                null,
-                (int) $id_cart > 0 ? 'Cart' : null,
-                (int) $id_cart > 0 ? (int) $id_cart : null
-            );
-        }
+        $this->module->getTwoPendingRecovery()->logTwoOrderLookupFailure($reference, $response, $id_cart);
     }
 
     private function isAuthorizedAttemptCallback($attempt)
@@ -576,48 +123,6 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $context_customer_id,
             $context_customer_secure_key
         );
-    }
-
-    /**
-     * Rebuild snapshot hash using current cart and expected callback URL format.
-     *
-     * @param string $attempt_token
-     * @param array $attempt
-     * @param Cart $cart
-     * @param bool $include_secure_key
-     * @param bool $sync_surcharge_cart_line default FALSE: computing a
-     *        comparison hash must not mutate the cart as a side effect. The
-     *        two self-healing call sites (initial check, final pre-order
-     *        re-check) opt in explicitly - with sync enabled the underlying
-     *        payload build also ENFORCES cart-vs-payload fee parity and
-     *        throws on divergence.
-     */
-    private function buildAttemptSnapshotHash($attempt_token, $attempt, $cart, $include_secure_key, $sync_surcharge_cart_line = false)
-    {
-        $confirm_params = array('attempt_token' => $attempt_token);
-        $cancel_params = array('attempt_token' => $attempt_token);
-        if ($include_secure_key && !Tools::isEmpty($attempt['customer_secure_key'])) {
-            $confirm_params['key'] = $attempt['customer_secure_key'];
-            $cancel_params['key'] = $attempt['customer_secure_key'];
-        }
-
-        $comparison_urls = array(
-            'merchant_confirmation_url' => $this->context->link->getModuleLink($this->module->name, 'confirmation', $confirm_params, true),
-            'merchant_cancel_order_url' => $this->context->link->getModuleLink($this->module->name, 'cancel', $cancel_params, true),
-            'merchant_edit_order_url' => '',
-            'merchant_order_verification_failed_url' => '',
-            'merchant_invoice_url' => '',
-            'merchant_shipping_document_url' => '',
-        );
-        $comparison_payload = $this->module->getTwoNewOrderData(
-            $attempt['merchant_order_id'],
-            $cart,
-            $comparison_urls,
-            (bool) $sync_surcharge_cart_line,
-            'snapshot_hash'
-        );
-
-        return $this->module->calculateTwoCheckoutSnapshotHash($cart, $comparison_payload);
     }
 
     private function handleLegacyOrderConfirmation($id_order)
@@ -725,28 +230,9 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         );
     }
 
-    private function getInitialAwaitingStatus()
-    {
-        $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
-        if (!$initial_status) {
-            $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP');
-            if (!$initial_status) {
-                $initial_status = Configuration::get('PS_OS_PREPARATION');
-            }
-        }
-        return (int)$initial_status;
-    }
-
     private function getVerifiedStatus()
     {
-        $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
-        if (!$verified_status) {
-            $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
-            if (!$verified_status) {
-                $verified_status = Configuration::get('PS_OS_PREPARATION');
-            }
-        }
-        return (int)$verified_status;
+        return (int) $this->module->getTwoVerifiedStatusIdForConfirmation();
     }
 
     /**
@@ -758,30 +244,8 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
      */
     private function abortConfirmationIfAttemptCancelled($attempt_token, $attempt)
     {
-        $attempt_status = isset($attempt['status']) ? (string)$attempt['status'] : '';
-        if (!$this->module->shouldBlockTwoAttemptConfirmationByStatus($attempt_status)) {
+        if (!$this->module->getTwoPendingRecovery()->abortIfCancelled($attempt_token, $attempt)) {
             return false;
-        }
-
-        // Cancel at Two first, then mirror it locally. Only a cancellation Two confirmed (the cancel succeeded, or
-        // Two's order reads CANCELLED) is recorded on the order, so the status hook sends no second cancel. Otherwise
-        // the order keeps Two's last known state and the status hook sends the cancel itself.
-        $cancelled_at_two = false;
-        $two_order_id = isset($attempt['two_order_id']) ? trim((string)$attempt['two_order_id']) : '';
-        if ($two_order_id !== '') {
-            $cancelled_at_two = $this->module->cancelTwoOrderBestEffort($two_order_id, 'confirmation_after_cancelled_attempt');
-            if (!$cancelled_at_two) {
-                $two_order = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
-                $cancelled_at_two = $this->module->isTwoOrderCancelledResponse($two_order);
-            }
-        }
-
-        $resolved_order_id = (int)$this->module->resolveTwoAttemptOrderIdForCancellation($attempt);
-        if ($resolved_order_id > 0) {
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', array(
-                'id_order' => $resolved_order_id,
-            ));
-            $this->module->syncLocalOrderStatusFromTwoState($resolved_order_id, 'CANCELLED', $cancelled_at_two);
         }
 
         $message = $this->module->l('Your order is cancelled.');

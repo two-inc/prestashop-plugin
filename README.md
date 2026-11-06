@@ -233,7 +233,7 @@ The cache is replaced only by a successful refresh, and only from one of these:
 
 - the first read on a shop where no fetch has ever succeeded (a fresh install), retried at most every 5 minutes until one does;
 - a save of the API key or the environment;
-- the scheduled refresh (below);
+- the scheduled refresh (below), once the record is over a day old;
 - **Refresh merchant profile**, in **Module Configuration → Diagnostics**.
 
 A save of the API key or the environment runs the same refresh as **Refresh merchant profile**. Both also expire the stored tax code lookup, including a failure and its 5-minute retry wait, so the "Tax codes for 0% lines" section looks the merchant up again on the next page load (keeping the last profile if that lookup fails). A successful **Refresh merchant profile** reloads the page onto the Diagnostics tab with its confirmation.
@@ -246,20 +246,22 @@ The record never decides whether Two appears at checkout. Only the API key check
 
 #### Scheduled refresh
 
-PrestaShop schedules nothing on a module's behalf, so the scheduled refresh is a URL your server's crontab calls. Copy it from **Scheduled refresh URL** in **Module Configuration → Diagnostics** and add one line to the crontab of the user that owns the shop:
+PrestaShop schedules nothing on a module's behalf, so the scheduled refresh is a URL your server's crontab calls. Copy it from **Scheduled refresh URL** in **Module Configuration → Diagnostics** and add one line to the crontab of the user that owns the shop, running it **every 15 minutes**:
 
 ```
-0 3 * * * curl -fsS -o /dev/null 'https://your-shop.example/module/twopayment/cron?token=YOUR_TOKEN'
+*/15 * * * * curl -fsS -o /dev/null 'https://your-shop.example/module/twopayment/cron?token=YOUR_TOKEN'
 ```
+
+Each accepted call first checks the payments still waiting for the buyer (see [Payments the buyer verified but never returned from](#4-payments-the-buyer-verified-but-never-returned-from)), then refreshes the merchant record if it is over a day old. A call that finds the record fresh and nothing waiting does no outbound work and writes no log line. A shop that still runs the URL once a day keeps its record fresh but recovers a stranded payment only at that daily call, and Diagnostics warns about it.
 
 The token is the only thing guarding the endpoint — treat it as a credential. A request without it, or with the wrong one, gets a 404 that says nothing about why; rejections are logged at most once an hour, so a scanner cannot flood the shop log.
 
-Accepted calls are floored at **one refresh per 15 minutes**: anything sooner gets a 429 and does no work, so holding the token cannot drive one blocking outbound request per call. A once-a-day cron never reaches the floor.
+A stale record whose refresh keeps failing is retried at most once every 10 minutes: a call sooner gets a 429 after its pending check, so holding the token cannot drive one blocking merchant fetch per call. A 15-minute cron never reaches the floor.
 
 To keep the token out of process listings and proxy access logs, send it as a header or a POST field instead of in the query string:
 
 ```
-0 3 * * * curl -fsS -o /dev/null -H 'X-Two-Cron-Token: YOUR_TOKEN' 'https://your-shop.example/module/twopayment/cron'
+*/15 * * * * curl -fsS -o /dev/null -H 'X-Two-Cron-Token: YOUR_TOKEN' 'https://your-shop.example/module/twopayment/cron'
 ```
 
 **Multistore:** the cached record and the token both belong to one shop, so schedule **one line per shop**, each copied from that shop's own Diagnostics tab. The URL and the token are shown only while the admin is scoped to a single shop; in the all-shops or a group context the row says so instead.
@@ -354,6 +356,28 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - If Two rejects, checkout stops and no PrestaShop order is created
 - If Two verifies, module creates PrestaShop order from callback and saves payment data
 - Customer is redirected to native PrestaShop order confirmation page
+
+#### 4. Payments the buyer verified but never returned from
+
+PrestaShop creates no order until the buyer comes back from Two to the confirmation URL. A buyer who verifies with Two and then closes the tab leaves only the module's checkout attempt, redirected to Two, and no order in the shop (TWO-26300). The module checks such payments with Two itself, through the same code the buyer's return runs:
+
+- **The scheduled check.** Every call to the scheduled refresh URL checks this shop's waiting payments that are 30 minutes to 7 days old and were not checked in the last 15 minutes, 50 per call, oldest check first, and starts no new check after 20 seconds.
+- **Check status with Two.** **Module Configuration → Diagnostics → Pending Two payments** lists the waiting payments of the shop in scope, newest first, with when each was last checked and what was found, and a button that checks one at once, at any age. An order that is still in the awaiting-verification status it was created in (one placed before checkout attempts existed, or left there by a confirmation that stopped part way) has the same button on its Two tab.
+
+The buyer's return, the scheduled check and the button take one lock per cart and re-read the payment after taking it, so whichever comes second finds the work done. What Two reports decides what happens:
+
+| Two reports | What the module does |
+| --- | --- |
+| VERIFIED | Confirms the order with Two, then creates the PrestaShop order from the stored cart exactly as the buyer's return would, order confirmation email included, and moves it to the verified status. The order gets a private note naming the scheduled check or the employee. |
+| CONFIRMED, FULFILLING, FULFILLED, DELIVERED, FULFILMENT_NEEDS_MANUAL_RESOLUTION | The same, without confirming again. |
+| CANCELLED (Two cancels an unverified order itself, after 2 days by default), or a REJECTED or DECLINED status | Leaves the payment unplaced and marks it cancelled. Nothing is sent back to Two, and a buyer who returns later is told the order is cancelled. |
+| UNVERIFIED | Nothing; the payment keeps waiting. |
+| REFUNDED, or a state the module does not know | Nothing. A warning is logged once per state. |
+| No answer, or an error | Nothing; the next call retries. A failing scheduled check is logged at most once a day per payment. Two's own "order not found" counts only when it repeats on checks at least 15 minutes apart, and then marks the payment cancelled. |
+
+Two cases are left to the merchant rather than settled unattended. If the cart no longer builds the order the buyer verified (the buyer changed it afterwards), the scheduled check places nothing and sends Two nothing, and the payment shows "The cart changed" in the list. If the cart already has an order from another checkout (the buyer came back and paid again), the payment is never placed: its Two order is cancelled at Two unless Two already holds it cancelled, and the other order is left as it is.
+
+A buyer who returns while Two still reports UNVERIFIED gets the same refusal as before and keeps the cart; the payment stays in the list so a later verification is still picked up.
 
 ### Order Management
 
@@ -776,7 +800,7 @@ sent: a subscriber must never block a confirm or a cancel.
 | Key | Type | Meaning |
 | --- | --- | --- |
 | `request_type` | string | `order_intent`, `order_create`, `order_update`, `order_confirm`, `capture`, `refund` or `cancel` |
-| `trigger` | string | What caused the request, for diagnosis: `precheck`, `strict_intent`, `checkout`, `snapshot_hash`, `admin_edit`, `tracking_number`, `merchant_order_id`, `confirmation`, `payment_return`, `status_change`, `credit_slip`, `refund_remainder`, `buyer_cancel`, and others |
+| `trigger` | string | What caused the request, for diagnosis: `precheck`, `strict_intent`, `checkout`, `snapshot_hash`, `admin_edit`, `tracking_number`, `merchant_order_id`, `confirmation`, `scheduled_check`, `admin_check`, `payment_return`, `status_change`, `credit_slip`, `refund_remainder`, `buyer_cancel`, and others |
 | `endpoint` | string | The API path the request goes to, e.g. `/v1/order/{id}/refund` with the real id |
 | `cart` | `Cart` or null | The cart the order was or will be placed from |
 | `order` | `Order` or null | The PrestaShop order; null before it exists |

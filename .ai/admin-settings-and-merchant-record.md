@@ -104,8 +104,9 @@ beside the save confirmation instead.
 The cached record — offerable terms, default term, buyer surcharge, platform
 minimum, buyer countries, invoice-upload flag — has no expiry and is never evicted, on
 any failure path. Only a successful refresh replaces it, and only from an event: the
-API-key/environment save, `controllers/front/cron.php`, the Diagnostics button, or a
-read standing in for a schedule that has stopped.
+API-key/environment save, `controllers/front/cron.php` (called every 15 minutes for the
+pending-payment check, TWO-26300, and refreshing the record only once it is a day old), the
+Diagnostics button, or a read standing in for a schedule that has stopped.
 
 - **Nothing but the API-key verdict may withhold Two from the buyer, and only its
   DEFINITIVE rejections do** — `isDefinitiveFailureStatus()`: `invalid_key` and

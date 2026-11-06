@@ -19,6 +19,34 @@
 
 ---
 
+## [2026-11-06] Payments The Buyer Verified But Never Returned From Are Checked With Two (TWO-26300)
+
+**Context**: PrestaShop creates no order until the buyer returns to the confirmation URL, so a
+buyer who verified with Two and closed the tab left a checkout attempt and no order. Nothing
+re-checked it; Two eventually cancelled it or held it verified with no shop order.
+**Decision**: `classes/TwoPendingRecovery.php` is the one resolver for the buyer's return, the
+scheduled check the cron URL runs on every accepted call, and the Diagnostics "Check status with
+Two" button. It takes one lock per cart, re-reads the attempt, and creates the order from the
+stored cart outside the buyer's session. A Two-cancelled or declined payment is left unplaced and
+CANCELLED with no cancel sent back; Two's ORDER_NOT_FOUND counts only when it repeats 15 minutes
+apart; a cart that changed is left for the merchant; a cart another checkout ordered is never
+placed and its Two order is cancelled at Two. The cron URL refreshes the merchant record only once
+it is a day old, so merchants schedule it every 15 minutes. The check's columns on the attempt
+table are added lazily, like the module's other tables, and written stamp-only.
+**Alternatives Considered**: `ps_cronjobs` (not on every shop, hourly at best, still needs a
+crontab); a trigger on back-office page loads (would run `validateOrder`, mail and other modules'
+hooks inside an unrelated admin request); creating the order at redirect time as the other
+platforms do (reverses the attempt design).
+**Rationale**: This is a pull by the plugin, not an inbound path: the 2026-09-11 entry below still
+holds for everything that happens after an order is placed. Reusing the confirmation's own code
+keeps every check it makes (snapshot, rebinding, duplicate recovery) in force on all three
+triggers.
+**Consequences**: Recovery depends on the merchant's crontab; Diagnostics warns when payments wait
+and the URL has been silent for an hour. A buyer back on UNVERIFIED now leaves the attempt open
+(it used to be FAILED), so the schedule still picks up a later verification.
+
+---
+
 ## [2026-11-05] No Portal Links, So No Portal Override (TWO-27107)
 
 **Context**: This plugin alone linked to Two's merchant and buyer portals, from the admin order
