@@ -7,7 +7,9 @@
  */
 
 /**
- * Scheduled merchant-record refresh, called by the shop's own crontab - see README.
+ * The scheduled check, called by the shop's own crontab every 15 minutes - see README. Each accepted
+ * call checks payments still waiting for the buyer (TWO-26300) and refreshes the merchant record
+ * once it is a day old.
  *
  * A shop in maintenance mode needs the calling IP in PS_MAINTENANCE_IP, or FrontController::init()
  * serves the maintenance page before this runs.
@@ -28,19 +30,28 @@ class TwopaymentCronModuleFrontController extends ModuleFrontController
             return;
         }
 
+        // First, so a slow merchant fetch never delays a payment the buyer verified.
+        $pending = $this->module->runTwoScheduledPendingCheck();
         $status = $this->module->runTwoScheduledRefresh();
         if ($status === Twopayment::CRON_STATUS_THROTTLED) {
-            // 429, not 200: a correct daily cron never trips the floor, so this is worth surfacing.
-            $this->respond(429, array('success' => false, 'status' => $status));
+            // 429, not 200: a correct 15-minute cron never trips the floor, so this is worth surfacing.
+            $this->respond(429, array('success' => false, 'status' => $status, 'pending' => $pending));
 
             return;
         }
 
         $failed = $status === Twopayment::CRON_STATUS_FAILED;
-        PrestaShopLogger::addLog('TwoPayment: Scheduled refresh ran - merchant record ' . $status, $failed ? 2 : 1);
+        // A quiet 15-minute call (fresh record, nothing waiting) leaves no line, or the log fills up.
+        if ($status !== Twopayment::CRON_STATUS_FRESH || !empty($pending['checked']) || !empty($pending['error'])) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Scheduled refresh ran - merchant record ' . $status
+                    . ($pending === null ? '' : ', pending check ' . json_encode($pending)),
+                $failed ? 2 : 1
+            );
+        }
 
         // A shop with no key yet is not an error; a fetch that failed is, and a crontab only sees the exit code.
-        $this->respond($failed ? 503 : 200, array('success' => !$failed, 'status' => $status));
+        $this->respond($failed ? 503 : 200, array('success' => !$failed, 'status' => $status, 'pending' => $pending));
     }
 
     /**
