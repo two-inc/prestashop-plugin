@@ -12901,10 +12901,12 @@ class Twopayment extends PaymentModule
     /**
      * Discount lines traced to the lines each cart rule discounts (TWO-27129), one per rule per tax rate among them.
      *
-     * A rule's gross is taken, in core's order, by the shipping it waives, its free gift, then its reduction: spread
-     * over the product lines core discounts for it, by value. What the rule's shape does not explain, and the whole of
-     * a rule that cannot be traced, goes over the lines the rule already discounted, else over every product line by
-     * value: a whole-order amount. Each part carries the rate of the line it sits on and never another line's.
+     * Every rule first takes the shipping it waives and its free gift, as core's value takes the gifts out of a
+     * whole-order percentage's base whatever the rules' order. Then, rule by rule, its reduction is spread over the
+     * product lines core discounts for it, by what is left of each and never past it; what those lines cannot hold
+     * goes over the other product lines by what is left of them. What the rule's shape does not explain stays on the
+     * lines the rule already discounted, and a rule that cannot be traced is a whole-order amount over the product
+     * lines. Each part carries the rate of the line it sits on and never another line's.
      * A line's net is its gross at that rate, or the discounted lines' own net where it cancels them whole.
      *
      * @param array $rules each {rule: cart rule fields, gross: float, descriptor: {name, description}}
@@ -12918,10 +12920,7 @@ class Twopayment extends PaymentModule
         $left = array();
         $shipping = array();
         foreach ($items as $i => $item) {
-            $left[$i] = array(
-                'gross' => $this->convertAmountToCents($item['gross_amount']),
-                'net' => $this->convertAmountToCents($item['net_amount']),
-            );
+            $left[$i] = $this->convertAmountToCents($item['gross_amount']);
             if (isset($item['type']) && $item['type'] === 'SHIPPING_FEE') {
                 $shipping[] = $i;
             }
@@ -12933,44 +12932,45 @@ class Twopayment extends PaymentModule
             }
         }
 
-        $lines = array();
-        foreach ($rules as $entry) {
+        $parts = array();
+        $rest = array();
+        foreach ($rules as $k => $entry) {
             $rule = $entry['rule'];
-            $untraced = !empty($rule['untraced']);
-            $rest = $this->convertAmountToCents($entry['gross']);
-            $parts = array();
+            $parts[$k] = array();
+            $rest[$k] = $this->convertAmountToCents($entry['gross']);
             if (!empty($rule['free_shipping'])) {
-                $waived = 0;
-                foreach ($shipping as $i) {
-                    $waived += $left[$i]['gross'];
-                }
-                $rest -= $this->spreadTwoDiscountCents(min($rest, $waived), $shipping, $left, 'gross', $parts);
+                $rest[$k] = $this->spreadTwoDiscountCents($rest[$k], $shipping, $left, $parts[$k]);
             }
-            if (!$untraced && !empty($rule['gift_product']) && $rest > 0) {
+            if (empty($rule['untraced']) && !empty($rule['gift_product']) && $rest[$k] > 0) {
                 foreach ($productRefs as $ref) {
                     if ((int) $ref['id_product'] === (int) $rule['gift_product']
                         && (empty($rule['gift_product_attribute']) || (int) $ref['id_product_attribute'] === (int) $rule['gift_product_attribute'])) {
                         $i = $ref['indexes'][0];
-                        $unit = (int) round($this->convertAmountToCents($items[$i]['gross_amount']) / max(1, (int) $ref['quantity']));
-                        $rest -= $this->spreadTwoDiscountCents(min($rest, $unit), array($i), $left, 'gross', $parts);
+                        $unit = min($rest[$k], (int) round($this->convertAmountToCents($items[$i]['gross_amount']) / max(1, (int) $ref['quantity'])));
+                        $rest[$k] -= $unit - $this->spreadTwoDiscountCents($unit, array($i), $left, $parts[$k]);
                         break;
                     }
                 }
             }
-            if ($rest > 0) {
-                $targets = $untraced ? array() : $this->getTwoCartRuleTargetLines($rule, $productRefs, $items, $cart);
-                if ($targets === array()) {
-                    $targets = !$untraced && $parts !== array() ? array_keys($parts) : $products;
-                }
-                $this->spreadTwoDiscountCents($rest, $targets, $left, 'gross', $parts);
+        }
+
+        $lines = array();
+        foreach ($rules as $k => $entry) {
+            $rule = $entry['rule'];
+            $untraced = !empty($rule['untraced']);
+            $targets = $untraced || $rest[$k] <= 0 ? array() : $this->getTwoCartRuleTargetLines($rule, $productRefs, $items, $cart);
+            if ($rest[$k] <= 0) {
+                // Nothing left to spread.
+            } elseif ($targets === array() && !$untraced && $parts[$k] !== array()) {
+                $this->spreadTwoDiscountCents($rest[$k], array_keys($parts[$k]), $left, $parts[$k], false);
+            } else {
+                $targets = $targets !== array() ? $targets : $products;
+                $over = $this->spreadTwoDiscountCents($rest[$k], $targets, $left, $parts[$k]);
+                $over = $this->spreadTwoDiscountCents($over, $products, $left, $parts[$k]);
+                $this->spreadTwoDiscountCents($over, $targets, $left, $parts[$k], false);
             }
-            foreach ($this->buildTwoDiscountLinesByRate($parts, $items, $entry['descriptor']) as $line) {
+            foreach ($this->buildTwoDiscountLinesByRate($parts[$k], $items, $entry['descriptor']) as $line) {
                 $lines[] = $line;
-            }
-            foreach ($parts as $i => $cents) {
-                $rate = max(0.0, (float) $items[$i]['tax_rate']);
-                $left[$i]['gross'] -= $cents;
-                $left[$i]['net'] -= (int) round($cents / (1 + $rate));
             }
         }
 
@@ -12978,29 +12978,33 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Spread an amount over lines by what is left of each, largest remainder, adding each share to $parts.
+     * Spread an amount over lines by what is left of each, largest remainder, adding each share to $parts and taking
+     * it off $left. Capped, it spreads no more than the lines have left and returns the rest.
      *
      * @param int $cents
      * @param int[] $targets item indexes
-     * @param array $left each line's undiscounted {gross, net} in cents
-     * @param string $base 'gross' or 'net'
+     * @param array $left item index => undiscounted gross cents
      * @param array $parts item index => cents, added to
-     * @return int the cents spread
+     * @param bool $capped
+     * @return int the cents not spread
      */
-    private function spreadTwoDiscountCents($cents, array $targets, array $left, $base, array &$parts)
+    private function spreadTwoDiscountCents($cents, array $targets, array &$left, array &$parts, $capped = true)
     {
         if ($cents <= 0 || $targets === array()) {
-            return 0;
+            return max(0, (int) $cents);
         }
         $weights = array();
         foreach ($targets as $i) {
-            $weights[$i] = max(0, $left[$i][$base]);
+            $weights[$i] = max(0, $left[$i]);
         }
-        foreach ($this->allocateTwoAmountByWeights($cents / 100, $weights) as $i => $share) {
-            $parts[$i] = (isset($parts[$i]) ? $parts[$i] : 0) + $this->convertAmountToCents($share);
+        $take = $capped ? min($cents, array_sum($weights)) : $cents;
+        foreach ($this->allocateTwoAmountByWeights($take / 100, $weights) as $i => $share) {
+            $share = $this->convertAmountToCents($share);
+            $parts[$i] = (isset($parts[$i]) ? $parts[$i] : 0) + $share;
+            $left[$i] -= $share;
         }
 
-        return $cents;
+        return $cents - $take;
     }
 
     /**

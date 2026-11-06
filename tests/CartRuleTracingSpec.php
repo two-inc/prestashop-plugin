@@ -103,6 +103,11 @@ final class CartRuleTracingSpec
                 'ShipCent -10.01/-10.01/0.00@0', 'a cent the shape does not explain stays on the lines the rule discounts'],
             [$mixed, $mixedRefs, [self::rule('A', '121.00', ['reduction_amount' => 121, 'reduction_tax' => 1, 'reduction_product' => 1]), self::rule('B', '5.50', ['reduction_percent' => 10])],
                 'A -121.00/-100.00/-21.00@0.21; B -5.50/-5.00/-0.50@0.1', 'a later rule weighs what earlier rules left of each line'],
+            [[self::line('PHYSICAL', '121.00', '100.00', '0.21'), self::line('PHYSICAL', '11.00', '10.00', '0.1')], [self::ref(0, 1), self::ref(1, 2)],
+                [self::rule('Half', '60.50', ['reduction_percent' => 50]), self::rule('Gift', '11.00', ['gift_product' => 2])],
+                'Half -60.50/-50.00/-10.50@0.21; Gift -11.00/-10.00/-1.00@0.1', 'a percent ahead of a gift leaves the gift line to the gift'],
+            [$mixed, $mixedRefs, [self::rule('Big', '60.00', ['reduction_percent' => 10, 'reduction_product' => 2])],
+                'Big (VAT 10.00%) -55.00/-50.00/-5.00@0.1; Big (VAT 21.00%) -5.00/-4.13/-0.87@0.21', 'no line is discounted past its value: the overflow goes over the other products'],
         ];
 
         $module = new TwopaymentTestHarness();
