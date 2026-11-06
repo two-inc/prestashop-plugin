@@ -43,6 +43,32 @@ $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 /*
+ * BUYER FEE QUOTE (TWO-26300). The recovery spec's button case places a cart carrying the
+ * payment-terms fee line, and the module quotes that fee from Two before it builds the order.
+ * The answer is the configured share of the gross: percentage, plus any fixed amount, under any
+ * cap. It is not Two's pricing; it only has to answer the same way every time it is asked.
+ */
+if ($path === '/v1/pricing/order/fee' && $method === 'POST') {
+    $body = json_decode((string) file_get_contents('php://input'), true);
+    $share = isset($body['buyer_fee_share']) && is_array($body['buyer_fee_share']) ? $body['buyer_fee_share'] : array();
+    $gross = isset($body['gross_amount']) ? (float) $body['gross_amount'] : 0.0;
+    $fee = $gross * (isset($share['percentage']) ? (float) $share['percentage'] : 0.0) / 100;
+    if (isset($share['fixed'])) {
+        $fee += is_array($share['fixed']) ? (float) (isset($share['fixed']['amount']) ? $share['fixed']['amount'] : 0) : (float) $share['fixed'];
+    }
+    if (isset($share['cap'])) {
+        $cap = is_array($share['cap']) ? (float) (isset($share['cap']['amount']) ? $share['cap']['amount'] : 0) : (float) $share['cap'];
+        $fee = min($fee, $cap);
+    }
+    header('Content-Type: application/json');
+    echo json_encode(array(
+        'buyer_fee_share' => number_format($fee, 2, '.', ''),
+        'currency' => isset($body['currency']) ? $body['currency'] : 'EUR',
+    ));
+    return true;
+}
+
+/*
  * ORDERS (TWO-26300). The pending-payment recovery spec needs a Two order whose
  * state it controls, so the stub also keeps orders: POST /v1/order creates one
  * UNVERIFIED, GET and PUT /v1/order/{id} read and update it, and
