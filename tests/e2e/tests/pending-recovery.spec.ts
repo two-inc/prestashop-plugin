@@ -51,8 +51,13 @@ async function runCron(page: Page): Promise<{ status: string; pending: Record<st
   const response = await page.request.get(
     `${STORE_URL}/index.php?fc=module&module=twopayment&controller=cron&token=${encodeURIComponent(token)}`
   );
-  expect(response.status(), "the cron URL accepts the token").toBe(200);
-  return response.json();
+  const body = await response.text();
+  expect(response.status(), `the cron URL accepts the token: ${body.slice(0, 2000)}`).toBe(200);
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error(`the cron URL answered something other than JSON: ${body.slice(0, 2000)}`);
+  }
 }
 
 test.describe("Payments the buyer verified but never returned from", () => {
@@ -124,13 +129,14 @@ test.describe("Payments the buyer verified but never returned from", () => {
     await page.locator('a[href="#diagnostics-settings"]').click();
     const row = page.locator("#two-pending-payments tr", { hasText: seeded.two_order_id });
     await expect(row).toBeVisible();
-    await row.locator('button[name="two_pending_attempt"]').click();
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "load" }),
+      row.locator('button[name="two_pending_attempt"]').click()
+    ]);
 
     const state = helper<State>("state", seeded.token);
-    await expect(
-      page.locator(".alert-success, .module_confirmation"),
-      `the button reports the placed order: ${diagnose(state)}`
-    ).toContainText("It is now placed");
+    const alerts = (await page.locator(".alert").allInnerTexts()).join(" | ");
+    expect(alerts, `the button reports the placed order: ${diagnose(state)}`).toContain("It is now placed");
     expect(state.attempt.status).toBe("CONFIRMED");
     expect(state.current_state).toBe(state.verified_status);
     expect(requestsTo(seeded.two_order_id, "/confirm")).toHaveLength(1);
