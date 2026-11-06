@@ -1196,6 +1196,8 @@ class TwoPendingRecovery
                 'two_day_on_invoice' => $resolved_terms['two_day_on_invoice'],
                 'two_payment_term_type' => $resolved_terms['two_payment_term_type'],
                 'two_invoice_url' => isset($response['invoice_url']) ? $response['invoice_url'] : $payment_data['two_invoice_url'],
+                // setTwoOrderPaymentData() writes an absent key as NULL.
+                'two_invoice_id' => isset($response['invoice_details']['id']) ? $response['invoice_details']['id'] : (isset($payment_data['two_invoice_id']) ? $payment_data['two_invoice_id'] : null),
             ));
             $this->module->changeOrderStatus($id_order, $this->module->getTwoVerifiedStatusIdForConfirmation());
             $this->module->addTwoPendingRecoveryNote($id_order, $this->placedNote(self::TRIGGER_ADMIN, $confirmed_here));
