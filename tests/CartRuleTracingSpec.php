@@ -1,0 +1,138 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Discount lines traced to the lines each cart rule discounts (TWO-27129).
+ *
+ * Each case builds the positive lines of an order, applies its cart rules and compares the discount lines as
+ * "name gross/net/tax@rate" in order. A part always carries the rate of the line it discounts, so no case may show a
+ * rate that none of the rule's own lines has.
+ */
+final class CartRuleTracingSpec
+{
+    public static function runAll(): void
+    {
+        self::testTracesEachRuleShape();
+        self::testPlacedOrderReplayTracesTheStoredRule();
+    }
+
+    /** A positive payload line. */
+    private static function line(string $type, string $gross, string $net, string $rate): array
+    {
+        return ['type' => $type, 'gross_amount' => $gross, 'net_amount' => $net, 'tax_amount' => number_format((float) $gross - (float) $net, 2, '.', ''), 'tax_rate' => $rate];
+    }
+
+    /** A product reference as buildTwoLineItems() records it. */
+    private static function ref(int $index, int $idProduct, int $quantity = 1, bool $special = false, int $attribute = 0): array
+    {
+        return ['id_product' => $idProduct, 'id_product_attribute' => $attribute, 'reduction_applies' => $special, 'quantity' => $quantity, 'indexes' => [$index]];
+    }
+
+    /** A rule entry, its value already the share it carries. */
+    private static function rule(string $name, string $gross, array $shape = []): array
+    {
+        return ['rule' => ['name' => $name] + $shape, 'gross' => (float) $gross, 'descriptor' => ['name' => $name, 'description' => $name]];
+    }
+
+    private static function describe(array $lines): string
+    {
+        return implode('; ', array_map(function ($entry) {
+            $l = $entry['line'];
+            return $l['name'] . ' ' . $l['gross_amount'] . '/' . $l['net_amount'] . '/' . $l['tax_amount'] . '@' . $l['tax_rate'];
+        }, $lines));
+    }
+
+    private static function testTracesEachRuleShape(): void
+    {
+        // Two products at 21% and 10%, shipping at 0%.
+        $mixed = [
+            self::line('PHYSICAL', '121.00', '100.00', '0.21'),
+            self::line('PHYSICAL', '55.00', '50.00', '0.1'),
+            self::line('SHIPPING_FEE', '10.00', '10.00', '0'),
+        ];
+        $mixedRefs = [self::ref(0, 1), self::ref(1, 2, 5)];
+        // Three products at 21% (one of them on special) and shipping at 0%, the shape of the refused cart.
+        $three = [
+            self::line('PHYSICAL', '379.00', '313.22', '0.21'),
+            self::line('PHYSICAL', '125.26', '103.52', '0.21'),
+            self::line('PHYSICAL', '39.00', '32.23', '0.21'),
+            self::line('SHIPPING_FEE', '32.98', '32.98', '0'),
+        ];
+        $threeRefs = [self::ref(0, 11), self::ref(1, 12, 2, true), self::ref(2, 13, 3)];
+        $twoShipping = [
+            self::line('PHYSICAL', '121.00', '100.00', '0.21'),
+            self::line('SHIPPING_FEE', '12.10', '10.00', '0.21'),
+            self::line('SHIPPING_FEE', '5.50', '5.00', '0.1'),
+        ];
+        StubStore::$cartRuleRows[70] = ['selected' => ['2-0']];
+
+        $cases = [
+            [$mixed, $mixedRefs, [self::rule('Ship', '10.00', ['free_shipping' => 1])],
+                'Ship -10.00/-10.00/0.00@0', 'free shipping on a 0% shipping line stays at 0%'],
+            [$twoShipping, [self::ref(0, 1)], [self::rule('Ship', '17.60', ['free_shipping' => 1])],
+                'Ship (VAT 21.00%) -12.10/-10.00/-2.10@0.21; Ship (VAT 10.00%) -5.50/-5.00/-0.50@0.1', 'free shipping over two shipping rates cancels each line exactly'],
+            [$mixed, $mixedRefs, [self::rule('Gift', '11.00', ['gift_product' => 2])],
+                'Gift -11.00/-10.00/-1.00@0.1', 'free gift takes one unit of its product at that product\'s rate'],
+            [$mixed, $mixedRefs, [self::rule('One', '12.10', ['reduction_percent' => 10, 'reduction_product' => 1])],
+                'One -12.10/-10.00/-2.10@0.21', 'percent on one product'],
+            [$mixed, $mixedRefs, [self::rule('Cheap', '5.50', ['reduction_percent' => 50, 'reduction_product' => -1])],
+                'Cheap -5.50/-5.00/-0.50@0.1', 'percent on the cheapest unit'],
+            [$mixed, $mixedRefs, [self::rule('Sel', '5.50', ['reduction_percent' => 10, 'reduction_product' => -2, 'id_cart_rule' => 70])],
+                'Sel -5.50/-5.00/-0.50@0.1', 'percent on the selected products'],
+            [$mixed, $mixedRefs, [self::rule('Pct', '17.60', ['reduction_percent' => 10])],
+                'Pct (VAT 21.00%) -12.10/-10.00/-2.10@0.21; Pct (VAT 10.00%) -5.50/-5.00/-0.50@0.1', 'whole-order percent: each product loses it at its own rate, shipping none'],
+            [$mixed, $mixedRefs, [self::rule('Fix', '10.00', ['reduction_amount' => 10, 'reduction_tax' => 1])],
+                'Fix (VAT 21.00%) -6.88/-5.69/-1.19@0.21; Fix (VAT 10.00%) -3.12/-2.84/-0.28@0.1', 'whole-order amount tax incl: split by gross, parts sum to the rule exactly'],
+            [$mixed, $mixedRefs, [self::rule('FixEx', '10.00', ['reduction_amount' => 8, 'reduction_tax' => 0])],
+                'FixEx (VAT 21.00%) -6.67/-5.51/-1.16@0.21; FixEx (VAT 10.00%) -3.33/-3.03/-0.30@0.1', 'whole-order amount tax excl: split by net'],
+            [$three, $threeRefs, [self::rule('NoSpecial', '41.80', ['reduction_percent' => 10, 'reduction_exclude_special' => 1])],
+                'NoSpecial -41.80/-34.55/-7.25@0.21', 'percent excluding discounted products skips the special'],
+            [$three, $threeRefs, [self::rule('First', '29.99', ['reduction_amount' => 29.99, 'reduction_tax' => 1]), self::rule('Second', '2.99', ['reduction_amount' => 2.99, 'reduction_tax' => 1])],
+                'First -29.99/-24.79/-5.20@0.21; Second -2.99/-2.47/-0.52@0.21', 'refused cart: two whole-order amounts on 21% products give no 0% line'],
+            [$three, $threeRefs, [self::rule('Ship', '32.98', ['free_shipping' => 1])],
+                'Ship -32.98/-32.98/0.00@0', 'refused cart had it been free shipping: the 0% shipping line, honestly 0%'],
+            [$mixed, $mixedRefs, [self::rule('Lost', '17.60', ['untraced' => true])],
+                'Lost (VAT 21.00%) -12.10/-10.00/-2.10@0.21; Lost (VAT 10.00%) -5.50/-5.00/-0.50@0.1', 'untraceable rule: whole-order amount over the products, never shipping'],
+            [$mixed, $mixedRefs, [self::rule('Odd', '1.00', [])],
+                'Odd (VAT 21.00%) -0.69/-0.57/-0.12@0.21; Odd (VAT 10.00%) -0.31/-0.28/-0.03@0.1', 'a rule with no shape is a whole-order amount: largest remainder'],
+            [$mixed, $mixedRefs, [self::rule('ShipCent', '10.01', ['free_shipping' => 1])],
+                'ShipCent -10.01/-10.01/0.00@0', 'a cent the shape does not explain stays on the lines the rule discounts'],
+            [$mixed, $mixedRefs, [self::rule('A', '121.00', ['reduction_amount' => 121, 'reduction_tax' => 1, 'reduction_product' => 1]), self::rule('B', '5.50', ['reduction_percent' => 10])],
+                'A -121.00/-100.00/-21.00@0.21; B -5.50/-5.00/-0.50@0.1', 'a later rule weighs what earlier rules left of each line'],
+        ];
+
+        $module = new TwopaymentTestHarness();
+        $trace = new ReflectionMethod(Twopayment::class, 'buildTwoTracedDiscountLines');
+        foreach ($cases as [$items, $refs, $rules, $want, $description]) {
+            $got = $trace->invoke($module, $rules, $items, $refs, new Cart());
+            TinyAssert::same($want, self::describe($got), $description);
+        }
+    }
+
+    private static function testPlacedOrderReplayTracesTheStoredRule(): void
+    {
+        StubStore::reset();
+        $items = [
+            self::line('PHYSICAL', '121.00', '100.00', '0.21'),
+            self::line('PHYSICAL', '55.00', '50.00', '0.1'),
+            self::line('SHIPPING_FEE', '10.00', '10.00', '0'),
+        ];
+        $refs = [self::ref(0, 1), self::ref(1, 2, 5)];
+        StubStore::$cartRuleRows[81] = ['reduction_percent' => 10.0, 'reduction_product' => 2];
+
+        $cases = [
+            [[['id_cart_rule' => 81, 'name' => 'Kept', 'value' => '5.50', 'value_tax_excl' => '5.00', 'free_shipping' => '0']],
+                'Kept -5.50/-5.00/-0.50@0.1', 'the stored rule is loaded and traced to its product'],
+            [[['id_cart_rule' => 99, 'name' => 'Gone', 'value' => '27.60', 'value_tax_excl' => '25.00', 'free_shipping' => '1']],
+                'Gone (VAT 0.00%) -10.00/-10.00/0.00@0; Gone (VAT 21.00%) -12.10/-10.00/-2.10@0.21; Gone (VAT 10.00%) -5.50/-5.00/-0.50@0.1',
+                'a deleted rule waives the shipping its row records, the rest is a whole-order amount'],
+        ];
+
+        $module = new TwopaymentTestHarness();
+        $placed = new ReflectionMethod(Twopayment::class, 'buildTwoPlacedDiscountLines');
+        foreach ($cases as [$rows, $want, $description]) {
+            TinyAssert::same($want, self::describe($placed->invoke($module, $rows, $items, $refs, new Cart())), $description);
+        }
+    }
+}
