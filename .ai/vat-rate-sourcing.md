@@ -36,8 +36,38 @@ granularity** PrestaShop used for the amounts.
 | Ecotax line | resolver, `PS_ECOTAX_TAX_RULES_GROUP_ID` |
 | Shipping line | `resolveTwoCartShippingRateClasses()` — the tax-rules groups the **selected delivery option** spans, not whichever `$cart->id_carrier` happens to load. More than one group → one `SHIPPING_FEE` line per rate, weighted by the per-carrier nets. No resolvable carrier group → see below. |
 | Wrapping line | resolver, `PS_GIFT_WRAPPING_TAX_RULES_GROUP` |
-| Discount line(s) | `buildTwoCanonicalDiscountRateSegments` / `solveTwoRateDiscountSplitInCents`; raises when unsolvable |
-| Free-ship discount | mirrors the emitted rate of the shipping line it offsets, so the pair nets to zero |
+| Discount line(s) | traced, never solved (TWO-27129): each cart rule's value goes on the lines it discounts, at each line's own rate, one line per rule per rate. See "Cart rules" below. |
+
+## Cart rules
+
+A discount line relays the rate of the line it discounts; it is never solved from the
+discount's net and tax (TWO-27129). `buildTwoTracedDiscountLines()` takes each rule's
+value in the order core applies it, following `CartRule::getContextualValue()`, which is
+where `Cart::getCartRules()` gets `value_real` on 1.7.6, 8 and 9 alike:
+
+1. Free shipping: the shipping line(s), each cancelled at its own rate.
+2. Free gift: one unit of the gift product's line.
+3. The reduction: a product (`reduction_product` > 0), the cheapest unit (-1), the
+   selected products (-2, `checkProductRestrictionsFromCart()`), or every product line (0),
+   skipping products on special when `reduction_exclude_special` is set. A percentage is
+   spread by each line's gross; a whole-order amount by gross when `reduction_tax` is set
+   and by net otherwise, as core's cart-rule calculator weights it. A later rule weighs what
+   earlier rules left of each line.
+4. What the shape does not explain stays on the lines the rule already discounted. A rule
+   that cannot be traced (no value stated, deleted since placement) is a whole-order amount
+   over the product lines by gross.
+
+Parts are cents by largest remainder, so a rule's lines add up to its value exactly. On
+the cart the shares are of `getOrderTotal(true, ONLY_DISCOUNTS)`, by each rule's value, so
+the discount lines add up to what the cart charges. A line's net is its gross at its rate
+(the discounted lines' own net where it cancels them whole), so its net can be a cent off
+core's `value_tax_exc`; the whole-order check's tolerance covers that, and gross is kept
+exact. A discount line on lines of one tax rules group takes that group's tax code row.
+
+Core differences by version: 1.7.6's cart-rule calculator ignores
+`reduction_exclude_special` for a whole-order or cheapest-product percentage and values a
+free gift at its discounted unit price, while `getContextualValue()` honours it on every
+version; tracing follows `getContextualValue()`, which is where the value comes from.
 
 ## Order updates
 
@@ -53,7 +83,7 @@ is read across all of them.
 | Ecotax line | `order_detail.ecotax_tax_rate` |
 | Shipping line | each order's `carrier_tax_rate`, against the shipping that order's paid total charged (`total_paid` less products and wrapping, plus discounts; PrestaShop 9 stores the whole cart's shipping in `total_shipping` on every order of a multi-carrier split). An order whose rate does not agree with its amounts (including a taxed shipping charge with no carrier rate recorded) fails loud; no rate is resolved from today's carriers or the module default. |
 | Wrapping line | the `order_invoice_tax` rows of type `wrapping`, once the order is invoiced. No order column holds it before then, so until an invoice exists the configured `PS_GIFT_WRAPPING_TAX_RULES_GROUP` rate is used and must reconcile with the stored amounts. |
-| Discount line(s) | the orders' `order_cart_rule` rows, split over the product lines only, as core computes a cart rule on the products |
+| Discount line(s) | the orders' `order_cart_rule` rows (value, and whether the rule waived shipping), each traced through its cart rule as at checkout; a rule deleted since is traced as far as its row allows |
 
 `PS_ATCP_SHIPWRAP` is still read from config and splits shipping and wrapping over the
 stored product rates.
