@@ -288,10 +288,23 @@ class TwoPendingRecovery
             return $this->refuseDuplicate($attempt_token, $attempt, $cart, $duplicate_order_id, $trigger);
         }
 
-        $context = Context::getContext();
-        if (!$buyer && isset($context->shop->id) && (int) $cart->id_shop > 0 && (int) $cart->id_shop !== (int) $context->shop->id) {
-            // The API key and the URLs the snapshot is built from are the cart's shop's own.
-            return $this->result(self::OUTCOME_OTHER_SHOP);
+        // An order of this module on the cart that validateOrder() left part way is never adopted.
+        $cart_order_id = (int) $this->module->getTwoOrderIdByCart((int) $cart->id);
+        if ($cart_order_id > 0 && !$this->module->isTwoOrderCompletelyPlaced($cart_order_id)) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Order ' . $cart_order_id . ' for cart ' . (int) $cart->id . ' is incomplete, so attempt '
+                    . $attempt_token . ' does not use it. Check it by hand.',
+                3,
+                null,
+                'Order',
+                $cart_order_id
+            );
+            if (!$buyer) {
+                return $this->placeFailed($attempt_token, $attempt, $trigger);
+            }
+            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'FAILED');
+
+            return $this->result(self::OUTCOME_FAILED, $this->module->l('Unable to create local order for this payment attempt.'));
         }
 
         // Ensure checkout context matches the attempt before creating a local order.
