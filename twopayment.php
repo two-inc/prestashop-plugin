@@ -12923,10 +12923,15 @@ class Twopayment extends PaymentModule
         }
         $rules = array();
         foreach ($this->allocateTwoAmountByWeights($total, $weights) as $key => $gross) {
+            $rule = $cart_rules[$key];
             $rules[] = array(
-                'rule' => $cart_rules[$key],
+                'rule' => $rule,
                 'gross' => $gross,
-                'descriptor' => $this->buildTwoSingleDiscountDescriptor($cart_rules[$key]),
+                'descriptor' => $this->buildTwoSingleDiscountDescriptor($rule),
+                // PrestaShop's net for the rule, in proportion where the cart's total shares it differently.
+                'net' => isset($rule['value_tax_exc']) && is_numeric($rule['value_tax_exc'])
+                    ? round(abs((float) $rule['value_tax_exc']) * $gross / $weights[$key], 2)
+                    : null,
             );
         }
 
@@ -12967,6 +12972,7 @@ class Twopayment extends PaymentModule
                 'gross' => $gross,
                 'descriptor' => $this->buildTwoSingleDiscountDescriptor($row),
                 'id_order' => isset($row['id_order']) ? (int) $row['id_order'] : 0,
+                'net' => isset($row['value_tax_excl']) && is_numeric($row['value_tax_excl']) ? round((float) $row['value_tax_excl'], 2) : null,
             );
         }
 
@@ -12984,7 +12990,8 @@ class Twopayment extends PaymentModule
      * lines. Each part carries the rate of the line it sits on and never another line's.
      * A line's net is its gross at that rate, or the discounted lines' own net where it cancels them whole.
      *
-     * @param array $rules each {rule: cart rule fields, gross: float, descriptor: {name, description}, id_order?: int}
+     * @param array $rules each {rule: cart rule fields, gross: float, descriptor: {name, description}, id_order?: int,
+     *                     net?: float|null PrestaShop's net for the share}
      * @param array $items positive payload lines
      * @param array $productRefs each {id_product, id_product_attribute, reduction_applies, quantity, id_order, indexes}
      * @param Cart|null $cart
@@ -13054,7 +13061,8 @@ class Twopayment extends PaymentModule
                 $over = $this->spreadTwoDiscountCents($over, $products, $left, $parts[$k]);
                 $this->spreadTwoDiscountCents($over, $targets, $left, $parts[$k], false);
             }
-            foreach ($this->buildTwoDiscountLinesByRate($parts[$k], $items, $entry['descriptor']) as $line) {
+            $net = isset($entry['net']) ? $entry['net'] : null;
+            foreach ($this->buildTwoDiscountLinesByRate($parts[$k], $items, $entry['descriptor'], $net) as $line) {
                 $lines[] = $line;
             }
         }
@@ -13181,12 +13189,18 @@ class Twopayment extends PaymentModule
      * One discount line per tax rate among a rule's parts, named for the rule, with the rate added when there are two
      * or more. Its net is its gross at that rate, or the lines' own net where it cancels every one of them whole.
      *
+     * Where PrestaShop states the rule's net, the lines' net is then moved toward it a cent at a time, largest line
+     * first, at most one cent per line, keeping each line's gross and its tax within a cent or two of its net at its
+     * rate (TWO-27129). A 0% line and a line that cancels its lines whole keep their net. What one cent per line cannot
+     * cover is left as rounding.
+     *
      * @param array $parts item index => gross cents
      * @param array $items
      * @param array $descriptor {name, description}
+     * @param float|null $net PrestaShop's net for the rule's share; null when it states none
      * @return array each {line, sources}
      */
-    private function buildTwoDiscountLinesByRate(array $parts, array $items, array $descriptor)
+    private function buildTwoDiscountLinesByRate(array $parts, array $items, array $descriptor, $net = null)
     {
         $groups = array();
         foreach ($parts as $i => $cents) {
@@ -13203,11 +13217,16 @@ class Twopayment extends PaymentModule
             $groups[$key]['whole'] = $groups[$key]['whole'] && $cents === $this->convertAmountToCents($items[$i]['gross_amount']);
             $groups[$key]['sources'][] = $i;
         }
+        foreach ($groups as $key => $group) {
+            if (!$group['whole']) {
+                $groups[$key]['net'] = (int) round($group['gross'] / (1 + $group['rate']));
+            }
+        }
+        if ($net !== null) {
+            $this->reconcileTwoDiscountNet($groups, $this->convertAmountToCents($net));
+        }
         $lines = array();
         foreach ($groups as $group) {
-            if (!$group['whole']) {
-                $group['net'] = (int) round($group['gross'] / (1 + $group['rate']));
-            }
             $percent = $this->getTwoRoundAmount(round($group['rate'] * 100, 2));
             $gross = $group['gross'] / 100;
             $net = $group['net'] / 100;
@@ -13233,6 +13252,39 @@ class Twopayment extends PaymentModule
         }
 
         return $lines;
+    }
+
+    /**
+     * Move single cents between net and tax on a rule's discount lines until their net is PrestaShop's (TWO-27129).
+     *
+     * @param array $groups buildTwoDiscountLinesByRate()'s groups, net in cents, changed in place
+     * @param int $target PrestaShop's net for the rule, in cents
+     * @return void
+     */
+    private function reconcileTwoDiscountNet(array &$groups, $target)
+    {
+        $diff = $target - array_sum(array_column($groups, 'net'));
+        $order = array_keys($groups);
+        usort($order, function ($a, $b) use ($groups) {
+            return $groups[$b]['gross'] - $groups[$a]['gross'];
+        });
+        $tolerance = (int) round(self::TAX_FORMULA_TOLERANCE * 100);
+        foreach ($order as $key) {
+            if ($diff === 0) {
+                break;
+            }
+            $group = $groups[$key];
+            if ($group['whole'] || $group['rate'] <= 0) {
+                continue;
+            }
+            $net = $group['net'] + ($diff > 0 ? 1 : -1);
+            $tax = $group['gross'] - $net;
+            if ($net <= 0 || $tax < 0 || abs($tax - $net * $group['rate']) > $tolerance) {
+                continue;
+            }
+            $groups[$key]['net'] = $net;
+            $diff += $diff > 0 ? -1 : 1;
+        }
     }
 
     /**

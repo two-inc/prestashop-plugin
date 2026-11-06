@@ -77,9 +77,20 @@ final class CartRuleTracingSpec
     }
 
     /** A rule entry, its value already the share it carries. */
-    private static function rule(string $name, string $gross, array $shape = []): array
+    private static function rule(string $name, string $gross, array $shape = [], ?string $net = null): array
     {
-        return ['rule' => ['name' => $name] + $shape, 'gross' => (float) $gross, 'descriptor' => ['name' => $name, 'description' => $name]];
+        return ['rule' => ['name' => $name] + $shape, 'gross' => (float) $gross, 'descriptor' => ['name' => $name, 'description' => $name],
+            'net' => $net === null ? null : (float) $net];
+    }
+
+    /** Two's line tolerance: each discount line's tax within 0.02 of its net at its rate. */
+    private static function assertLineTolerance(array $lines, string $description): void
+    {
+        foreach ($lines as $entry) {
+            $l = $entry['line'];
+            $off = abs((float) $l['tax_amount'] - (float) $l['net_amount'] * (float) $l['tax_rate']);
+            TinyAssert::true($off <= 0.02 + 1e-9, $description . ': ' . $l['name'] . ' tax is ' . $off . ' off its net at its rate');
+        }
     }
 
     private static function describe(array $lines): string
@@ -112,6 +123,8 @@ final class CartRuleTracingSpec
             self::line('SHIPPING_FEE', '12.10', '10.00', '0.21'),
             self::line('SHIPPING_FEE', '5.50', '5.00', '0.1'),
         ];
+        $twoFour = [self::line('PHYSICAL', '605.00', '500.00', '0.21'), self::line('PHYSICAL', '520.00', '500.00', '0.04')];
+        $twoFourRefs = [self::ref(0, 1), self::ref(1, 2)];
         StubStore::$cartRuleRows[70] = ['selected' => ['2-0']];
 
         $cases = [
@@ -155,6 +168,14 @@ final class CartRuleTracingSpec
                 'Half -60.50/-50.00/-10.50@0.21; Gift -11.00/-10.00/-1.00@0.1', 'a percent ahead of a gift leaves the gift line to the gift'],
             [$mixed, $mixedRefs, [self::rule('Big', '60.00', ['reduction_percent' => 10, 'reduction_product' => 2])],
                 'Big (VAT 10.00%) -55.00/-50.00/-5.00@0.1; Big (VAT 21.00%) -5.00/-4.13/-0.87@0.21', 'no line is discounted past its value: the overflow goes over the other products'],
+            [$twoFour, $twoFourRefs, [self::rule('NetEx', '11.25', ['reduction_amount' => 10, 'reduction_tax' => 0], '10.00')],
+                'NetEx (VAT 21.00%) -6.05/-5.00/-1.05@0.21; NetEx (VAT 4.00%) -5.20/-5.00/-0.20@0.04', 'tax-excluded 10.00 over 21% and 4%: net exactly 10.00'],
+            [$mixed, $mixedRefs, [self::rule('NetIn', '10.00', ['reduction_amount' => 10, 'reduction_tax' => 1], '8.52')],
+                'NetIn (VAT 21.00%) -6.88/-5.68/-1.20@0.21; NetIn (VAT 10.00%) -3.12/-2.84/-0.28@0.1', 'tax-included: a cent moves to tax on the largest line to meet the rule\'s net'],
+            [$three, $threeRefs, [self::rule('First', '29.99', ['reduction_amount' => 29.99, 'reduction_tax' => 1], '24.79'), self::rule('Second', '2.99', ['reduction_amount' => 2.99, 'reduction_tax' => 1], '2.47')],
+                'First -29.99/-24.79/-5.20@0.21; Second -2.99/-2.47/-0.52@0.21', 'refused cart with core\'s nets: already equal, nothing moves'],
+            [$mixed, $mixedRefs, [self::rule('NetFar', '12.10', ['reduction_percent' => 10, 'reduction_product' => 1], '9.97')],
+                'NetFar -12.10/-9.99/-2.11@0.21', 'three cents off with one line: one cent moves, the rest is left as rounding'],
         ];
 
         $module = new TwopaymentTestHarness();
@@ -162,6 +183,7 @@ final class CartRuleTracingSpec
         foreach ($cases as [$items, $refs, $rules, $want, $description]) {
             $got = $trace->invoke($module, $rules, $items, $refs, new Cart());
             TinyAssert::same($want, self::describe($got), $description);
+            self::assertLineTolerance($got, $description);
         }
     }
 
@@ -189,7 +211,9 @@ final class CartRuleTracingSpec
         $module = new TwopaymentTestHarness();
         $placed = new ReflectionMethod(Twopayment::class, 'buildTwoPlacedDiscountLines');
         foreach ($cases as [$rows, $want, $description]) {
-            TinyAssert::same($want, self::describe($placed->invoke($module, $rows, $items, $refs, new Cart())), $description);
+            $got = $placed->invoke($module, $rows, $items, $refs, new Cart());
+            TinyAssert::same($want, self::describe($got), $description);
+            self::assertLineTolerance($got, $description);
         }
     }
 }

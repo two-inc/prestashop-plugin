@@ -62,9 +62,14 @@ takes step 3, as core takes gifts out of a percentage's base whatever the rules'
 Parts are cents by largest remainder, so a rule's lines add up to its value exactly. On
 the cart the shares are of `getOrderTotal(true, ONLY_DISCOUNTS)`, by each rule's value, so
 the discount lines add up to what the cart charges. A line's net is its gross at its rate
-(the discounted lines' own net where it cancels them whole), so its net can be a cent off
-core's `value_tax_exc`; the whole-order check's tolerance covers that, and gross is kept
-exact. A discount line on lines of one tax rules group takes that group's tax code row.
+(the discounted lines' own net where it cancels them whole). The rule's lines are then
+reconciled to PrestaShop's own net for the rule (`value_tax_exc` on the cart, in proportion
+to the share; `order_cart_rule.value_tax_excl` on replay): single cents move between net
+and tax, largest line first, at most one per line, never on a 0% line or one that cancels
+its lines whole, and only while the line's tax stays within 0.02 of its net at its rate.
+Gross never moves. A difference one cent per line cannot cover is left as rounding for the
+whole-order check's tolerance; nothing is refused for it. A rule with no stated net (the
+cart's untraced total) is not reconciled. A discount line on lines of one tax rules group takes that group's tax code row.
 
 Core differences by version: 1.7.6's cart-rule calculator ignores
 `reduction_exclude_special` for a whole-order or cheapest-product percentage and values a
