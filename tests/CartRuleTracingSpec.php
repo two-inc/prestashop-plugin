@@ -49,9 +49,9 @@ final class CartRuleTracingSpec
     }
 
     /** A product reference as buildTwoLineItems() records it. */
-    private static function ref(int $index, int $idProduct, int $quantity = 1, bool $special = false, int $attribute = 0): array
+    private static function ref(int $index, int $idProduct, int $quantity = 1, bool $special = false, int $attribute = 0, int $idOrder = 0): array
     {
-        return ['id_product' => $idProduct, 'id_product_attribute' => $attribute, 'reduction_applies' => $special, 'quantity' => $quantity, 'indexes' => [$index]];
+        return ['id_product' => $idProduct, 'id_product_attribute' => $attribute, 'reduction_applies' => $special, 'quantity' => $quantity, 'id_order' => $idOrder, 'indexes' => [$index]];
     }
 
     /** A rule entry, its value already the share it carries. */
@@ -151,7 +151,7 @@ final class CartRuleTracingSpec
             self::line('PHYSICAL', '55.00', '50.00', '0.1'),
             self::line('SHIPPING_FEE', '10.00', '10.00', '0'),
         ];
-        $refs = [self::ref(0, 1), self::ref(1, 2, 5)];
+        $refs = [self::ref(0, 1, 1, false, 0, 1), self::ref(1, 2, 5, false, 0, 2)];
         StubStore::$cartRuleRows[81] = ['reduction_percent' => 10.0, 'reduction_product' => 2];
 
         $cases = [
@@ -160,6 +160,8 @@ final class CartRuleTracingSpec
             [[['id_cart_rule' => 99, 'name' => 'Gone', 'value' => '27.60', 'value_tax_excl' => '25.00', 'free_shipping' => '1']],
                 'Gone (VAT 0.00%) -10.00/-10.00/0.00@0; Gone (VAT 21.00%) -12.10/-10.00/-2.10@0.21; Gone (VAT 10.00%) -5.50/-5.00/-0.50@0.1',
                 'a deleted rule waives the shipping its row records, the rest is a whole-order amount'],
+            [[['id_order' => 1, 'id_cart_rule' => 99, 'name' => 'OrderA', 'value' => '12.10', 'value_tax_excl' => '10.00', 'free_shipping' => '0']],
+                'OrderA -12.10/-10.00/-2.10@0.21', 'a multi-carrier split: the row discounts its own order\'s products only'],
         ];
 
         $module = new TwopaymentTestHarness();

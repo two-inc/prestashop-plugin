@@ -11224,6 +11224,7 @@ class Twopayment extends PaymentModule
                 $cover = Image::getCover((int) $row['product_id']);
                 $net = round((float) $row['total_price_tax_excl'], 2);
                 $products[] = array(
+                    'id_order' => $orderId,
                     'id_product' => (int) $row['product_id'],
                     'id_product_attribute' => isset($row['product_attribute_id']) ? (int) $row['product_attribute_id'] : 0,
                     // order_detail keeps the specific price's reduction, which is what core's "exclude discounted products" reads.
@@ -12063,6 +12064,8 @@ class Twopayment extends PaymentModule
                 'id_product_attribute' => isset($line_item['id_product_attribute']) ? (int) $line_item['id_product_attribute'] : 0,
                 'reduction_applies' => !empty($line_item['reduction_applies']),
                 'quantity' => $quantity,
+                // The order of a multi-carrier split the row belongs to, on the update path; 0 for a cart.
+                'id_order' => isset($line_item['id_order']) ? (int) $line_item['id_order'] : 0,
                 'indexes' => array(count($items) - 1),
             );
 
@@ -12894,7 +12897,12 @@ class Twopayment extends PaymentModule
             } else {
                 $rule['untraced'] = true;
             }
-            $rules[] = array('rule' => $rule, 'gross' => $gross, 'descriptor' => $this->buildTwoSingleDiscountDescriptor($row));
+            $rules[] = array(
+                'rule' => $rule,
+                'gross' => $gross,
+                'descriptor' => $this->buildTwoSingleDiscountDescriptor($row),
+                'id_order' => isset($row['id_order']) ? (int) $row['id_order'] : 0,
+            );
         }
 
         return $this->buildTwoTracedDiscountLines($rules, $items, $productRefs, $cart);
@@ -12911,9 +12919,9 @@ class Twopayment extends PaymentModule
      * lines. Each part carries the rate of the line it sits on and never another line's.
      * A line's net is its gross at that rate, or the discounted lines' own net where it cancels them whole.
      *
-     * @param array $rules each {rule: cart rule fields, gross: float, descriptor: {name, description}}
+     * @param array $rules each {rule: cart rule fields, gross: float, descriptor: {name, description}, id_order?: int}
      * @param array $items positive payload lines
-     * @param array $productRefs each {id_product, id_product_attribute, reduction_applies, quantity, indexes}
+     * @param array $productRefs each {id_product, id_product_attribute, reduction_applies, quantity, id_order, indexes}
      * @param Cart|null $cart
      * @return array each {line, sources}
      */
@@ -12927,10 +12935,17 @@ class Twopayment extends PaymentModule
                 $shipping[] = $i;
             }
         }
-        $products = array();
-        foreach ($productRefs as $ref) {
-            foreach ($ref['indexes'] as $i) {
-                $products[] = $i;
+        // A placed order's rule row discounts the products of its own order of a multi-carrier split.
+        $scopes = array();
+        foreach ($rules as $k => $entry) {
+            $scope = empty($entry['id_order']) ? array() : array_values(array_filter($productRefs, function ($ref) use ($entry) {
+                return isset($ref['id_order']) && (int) $ref['id_order'] === (int) $entry['id_order'];
+            }));
+            $scopes[$k] = array('refs' => $scope !== array() ? $scope : $productRefs, 'products' => array());
+            foreach ($scopes[$k]['refs'] as $ref) {
+                foreach ($ref['indexes'] as $i) {
+                    $scopes[$k]['products'][] = $i;
+                }
             }
         }
 
@@ -12938,6 +12953,7 @@ class Twopayment extends PaymentModule
         $rest = array();
         foreach ($rules as $k => $entry) {
             $rule = $entry['rule'];
+            $productRefs = $scopes[$k]['refs'];
             $parts[$k] = array();
             $rest[$k] = $this->convertAmountToCents($entry['gross']);
             if (!empty($rule['free_shipping'])) {
@@ -12959,6 +12975,8 @@ class Twopayment extends PaymentModule
         $lines = array();
         foreach ($rules as $k => $entry) {
             $rule = $entry['rule'];
+            $productRefs = $scopes[$k]['refs'];
+            $products = $scopes[$k]['products'];
             $untraced = !empty($rule['untraced']);
             $targets = $untraced || $rest[$k] <= 0 ? array() : $this->getTwoCartRuleTargetLines($rule, $productRefs, $items, $cart);
             if ($rest[$k] <= 0) {

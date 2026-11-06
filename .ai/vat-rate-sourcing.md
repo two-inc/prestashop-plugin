@@ -85,7 +85,7 @@ is read across all of them.
 | Ecotax line | `order_detail.ecotax_tax_rate` |
 | Shipping line | each order's `carrier_tax_rate`, against the shipping that order's paid total charged (`total_paid` less products and wrapping, plus discounts; PrestaShop 9 stores the whole cart's shipping in `total_shipping` on every order of a multi-carrier split). An order whose rate does not agree with its amounts (including a taxed shipping charge with no carrier rate recorded) fails loud; no rate is resolved from today's carriers or the module default. |
 | Wrapping line | the `order_invoice_tax` rows of type `wrapping`, once the order is invoiced. No order column holds it before then, so until an invoice exists the configured `PS_GIFT_WRAPPING_TAX_RULES_GROUP` rate is used and must reconcile with the stored amounts. |
-| Discount line(s) | the orders' `order_cart_rule` rows (value, and whether the rule waived shipping), each traced through its cart rule as at checkout; a rule deleted since is traced as far as its row allows |
+| Discount line(s) | the orders' `order_cart_rule` rows (value, and whether the rule waived shipping), each traced through its cart rule as at checkout, over its own order's products when a multi-carrier split made several orders; a rule deleted since is traced as far as its row allows |
 
 `PS_ATCP_SHIPWRAP` is still read from config and splits shipping and wrapping over the
 stored product rates.
