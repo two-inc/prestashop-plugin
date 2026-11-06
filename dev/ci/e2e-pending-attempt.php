@@ -149,7 +149,12 @@ if ($command === 'seed') {
         'merchant_invoice_url' => '',
         'merchant_shipping_document_url' => '',
     );
-    $payload = $module->getTwoNewOrderData($merchant_order_id, $cart, $urls, true, 'checkout');
+    try {
+        $payload = $module->getTwoNewOrderData($merchant_order_id, $cart, $urls, true, 'checkout');
+    } catch (Exception $e) {
+        fwrite(STDERR, 'payload build failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
+        exit(1);
+    }
     $created = stub_call($stub . '/v1/order', 'POST', $payload);
 
     $module->setTwoCheckoutAttempt($token, array(
