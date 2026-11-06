@@ -123,7 +123,7 @@ final class PendingRecoverySpec
             $rows = [
                 ['fee', 0, true, true, false, '', 'admin placement of a fee cart passes the hook'],
                 ['throw', 0, false, false, false, 'incomplete_order', 'a throw that leaves a half-built order: never recovered'],
-                ['throw', 0, true, true, false, '', 'a throw after the whole order was written: placed'],
+                ['throw', 0, true, true, true, '', 'a throw after the whole order was written: found, so checked against other checkouts'],
                 ['throw', self::OTHER_ORDER, true, true, true, '', 'the cart was already ordered: recovered as that order'],
             ];
             foreach ($rows as [$does, $before, $complete, $success, $recovered, $error, $description]) {
