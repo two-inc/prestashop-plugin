@@ -168,7 +168,7 @@ final class OrderTendersSpec
             $record = json_decode((string) $module->getTwoDeclaredChargeRates($response), true);
             TinyAssert::same($expected, is_array($record) ? ($record['prepaid'] ?? null) : null, $description);
         }
-        TinyAssert::true(strpos((string) file_get_contents(__DIR__ . '/../controllers/front/confirmation.php'), 'getTwoDeclaredChargeRates($response)') !== false, 'the confirmation writes the row from Two\'s response');
+        TinyAssert::true(strpos((string) file_get_contents(__DIR__ . '/../classes/TwoPendingRecovery.php'), 'getTwoDeclaredChargeRates($response)') !== false, 'the confirmation writes the row from Two\'s response');
     }
 
     /**
