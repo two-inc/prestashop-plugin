@@ -12958,13 +12958,11 @@ class Twopayment extends PaymentModule
                 }
             }
             if ($rest > 0) {
-                $base = 'gross';
-                $targets = $untraced ? array() : $this->getTwoCartRuleTargetLines($rule, $productRefs, $items, $cart, $base);
+                $targets = $untraced ? array() : $this->getTwoCartRuleTargetLines($rule, $productRefs, $items, $cart);
                 if ($targets === array()) {
-                    $base = 'gross';
                     $targets = !$untraced && $parts !== array() ? array_keys($parts) : $products;
                 }
-                $this->spreadTwoDiscountCents($rest, $targets, $left, $base, $parts);
+                $this->spreadTwoDiscountCents($rest, $targets, $left, 'gross', $parts);
             }
             foreach ($this->buildTwoDiscountLinesByRate($parts, $items, $entry['descriptor']) as $line) {
                 $lines[] = $line;
@@ -13006,17 +13004,16 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The lines a cart rule's reduction discounts, as core's CartRule::getContextualValue() finds them (TWO-27129), and
-     * the price base a whole-order amount is weighted by. Empty when the shape names no line.
+     * The lines a cart rule's reduction discounts, as core's CartRule::getContextualValue() finds them (TWO-27129).
+     * Empty when the shape names no line.
      *
      * @param array $rule cart rule fields
      * @param array $productRefs
      * @param array $items
      * @param Cart|null $cart
-     * @param string $base set to 'gross' or 'net'
      * @return int[] item indexes
      */
-    private function getTwoCartRuleTargetLines(array $rule, array $productRefs, array $items, $cart, &$base)
+    private function getTwoCartRuleTargetLines(array $rule, array $productRefs, array $items, $cart)
     {
         $product = isset($rule['reduction_product']) ? (int) $rule['reduction_product'] : 0;
         $eligible = array();
@@ -13026,7 +13023,6 @@ class Twopayment extends PaymentModule
             }
         }
         $refs = array();
-        $base = 'gross';
         if ((float) (isset($rule['reduction_percent']) ? $rule['reduction_percent'] : 0) > 0) {
             if ($product === 0) {
                 $refs = $eligible;
@@ -13051,8 +13047,8 @@ class Twopayment extends PaymentModule
                 });
             }
         } elseif ((float) (isset($rule['reduction_amount']) ? $rule['reduction_amount'] : 0) > 0 && $product >= 0) {
-            // Core weights a whole-order amount by the lines' price with the same tax treatment as the amount.
-            $base = !empty($rule['reduction_tax']) ? 'gross' : 'net';
+            // Core spreads a tax-excluded amount by net and grosses each part up at its row's rate, so either way each
+            // row's gross part follows the row's gross.
             $refs = array_filter($productRefs, function ($ref) use ($product) {
                 return $product === 0 || (int) $ref['id_product'] === $product;
             });

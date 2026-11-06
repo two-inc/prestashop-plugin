@@ -49,10 +49,10 @@ where `Cart::getCartRules()` gets `value_real` on 1.7.6, 8 and 9 alike:
 2. Free gift: one unit of the gift product's line.
 3. The reduction: a product (`reduction_product` > 0), the cheapest unit (-1), the
    selected products (-2, `checkProductRestrictionsFromCart()`), or every product line (0),
-   skipping products on special when `reduction_exclude_special` is set. A percentage is
-   spread by each line's gross; a whole-order amount by gross when `reduction_tax` is set
-   and by net otherwise, as core's cart-rule calculator weights it. A later rule weighs what
-   earlier rules left of each line.
+   skipping products on special when `reduction_exclude_special` is set. Every part is
+   spread by each line's gross. For a tax-excluded amount core spreads the net by net and
+   grosses each part up at its row's rate, so the gross parts follow the rows' gross too. A
+   later rule weighs what earlier rules left of each line.
 4. What the shape does not explain stays on the lines the rule already discounted. A rule
    that cannot be traced (no value stated, deleted since placement) is a whole-order amount
    over the product lines by gross.
