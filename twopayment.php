@@ -9433,7 +9433,8 @@ class Twopayment extends PaymentModule
      * 1. the buyer is in another EU country with a VAT number: the line's tax rules group's exempt row;
      * 2. the 0% tax rule core picks for the tax address: that rule's row;
      * 3. no rule of the group matches the tax address: the group's no-rule row;
-     * 4. a line with no tax rules group (a discount, shipping with no one group, wrapping under PS_ATCP_SHIPWRAP):
+     * 4. a line with no tax rules group (a discount over lines of more than one group, shipping with no one group,
+     *    wrapping under PS_ATCP_SHIPWRAP):
      *    the one code the order's lines coded by steps 1 to 3 share, none when they disagree.
      * A matched row on (none), or a line no step codes, gives no code: the plugin never picks a code itself, and Two's
      * API refuses a 0% line that needs one. Runs in the builder, so the postprocessing hook sees the codes and can
@@ -11288,7 +11289,12 @@ class Twopayment extends PaymentModule
                 $cover = Image::getCover((int) $row['product_id']);
                 $net = round((float) $row['total_price_tax_excl'], 2);
                 $products[] = array(
+                    'id_order' => $orderId,
                     'id_product' => (int) $row['product_id'],
+                    'id_product_attribute' => isset($row['product_attribute_id']) ? (int) $row['product_attribute_id'] : 0,
+                    // order_detail keeps the specific price's reduction, which is what core's "exclude discounted products" reads.
+                    'reduction_applies' => (isset($row['reduction_percent']) && (float) $row['reduction_percent'] > 0)
+                        || (isset($row['reduction_amount']) && (float) $row['reduction_amount'] > 0),
                     'name' => (string) $row['product_name'],
                     'description_short' => (string) $product->description_short,
                     'link_rewrite' => (string) $product->link_rewrite,
@@ -11942,6 +11948,8 @@ class Twopayment extends PaymentModule
             return $items; // Return empty array (caller should handle empty cart)
         }
         $surchargeProductIds = $this->getTwoSurchargeProductIds();
+        // Which lines each product row became, for tracing a cart rule to the lines it discounts (TWO-27129).
+        $product_refs = array();
 
         foreach ($line_items as $line_item) {
             // The hidden surcharge product is NOT merchandise: the Two payload
@@ -12116,6 +12124,15 @@ class Twopayment extends PaymentModule
 
             $items[] = $product;
             $this->tagTwoLineTaxKeys($items, 'product:' . (int) $line_item['id_product'], $declared_tax_rules_group_id);
+            $product_refs[] = array(
+                'id_product' => (int) $line_item['id_product'],
+                'id_product_attribute' => isset($line_item['id_product_attribute']) ? (int) $line_item['id_product_attribute'] : 0,
+                'reduction_applies' => !empty($line_item['reduction_applies']),
+                'quantity' => $quantity,
+                // The order of a multi-carrier split the row belongs to, on the update path; 0 for a cart.
+                'id_order' => isset($line_item['id_order']) ? (int) $line_item['id_order'] : 0,
+                'indexes' => array(count($items) - 1),
+            );
 
             if (!empty($ecotax_breakdown['enabled'])) {
                 $ecotax_rate = (float)$ecotax_breakdown['rate'];
@@ -12137,11 +12154,11 @@ class Twopayment extends PaymentModule
                     'type' => 'SERVICE',
                 ];
                 $items[] = $ecotax_service_line;
+                $product_refs[count($product_refs) - 1]['indexes'][] = count($items) - 1;
                 $this->tagTwoLineTaxKeys($items, 'ecotax:' . (int) $line_item['id_product'], (int) Configuration::get('PS_ECOTAX_TAX_RULES_GROUP_ID'));
             }
         }
 
-        $product_items = $items;
 
         // SHIPPING AMOUNT SOURCING (TWO-25161): the CART is the authority, not
         // the Carrier object. Cart::getOrderTotal(..., Cart::ONLY_SHIPPING) is
@@ -12366,18 +12383,16 @@ class Twopayment extends PaymentModule
             }
         }
 
-        // Add cart-level discounts as one or more lines split by tax context when applicable.
+        // Cart rules, each traced to the lines it discounts (TWO-27129).
         $discount_lines = $placed !== null
-            ? $this->buildTwoPlacedDiscountLines($placed['cart_rules'], $items, $product_items)
-            : $this->buildTwoDiscountLinesFromCartTotals($cart, $items);
+            ? $this->buildTwoPlacedDiscountLines($placed['cart_rules'], $items, $product_refs, $cart)
+            : $this->buildTwoDiscountLinesFromCartTotals($cart, $items, $product_refs);
         // PS_ATCP_SHIPWRAP taxes wrapping at the products' average, so no one group declared its rate.
         $this->tagTwoLineTaxKeys($items, 'wrapping', $this->isTwoAtcpShipWrapEnabled() ? 0 : (int) Configuration::get('PS_GIFT_WRAPPING_TAX_RULES_GROUP'));
-        if (!empty($discount_lines)) {
-            foreach ($discount_lines as $discount_line) {
-                $items[] = $discount_line;
-            }
+        foreach ($discount_lines as $discount_line) {
+            $items[] = $discount_line['line'];
+            $this->tagTwoDiscountLineTaxKey(count($items) - 1, $discount_line['sources']);
         }
-        $this->tagTwoLineTaxKeys($items, null, 0, true);
 
         return $items;
     }
@@ -12396,6 +12411,29 @@ class Twopayment extends PaymentModule
         for ($i = count($this->twoLineTaxKeys); $i < count($items); $i++) {
             $this->twoLineTaxKeys[$i] = array('key' => $key, 'group' => (int) $group, 'discount' => $discount);
         }
+    }
+
+    /**
+     * Describe a discount line (TWO-27129): when the lines it discounts are all taxed by one tax rules group, it takes
+     * that group, and the first of them's key, so a 0% part is coded as its lines are; otherwise it stays keyless, for
+     * step 4.
+     *
+     * @param int $index the discount line's index
+     * @param int[] $sources the indexes of the lines it discounts
+     * @return void
+     */
+    private function tagTwoDiscountLineTaxKey($index, array $sources)
+    {
+        $shared = null;
+        foreach ($sources as $i) {
+            $key = isset($this->twoLineTaxKeys[$i]) ? $this->twoLineTaxKeys[$i] : null;
+            if ($key === null || $key['group'] <= 0 || $key['discount'] || ($shared !== null && $shared['group'] !== $key['group'])) {
+                $shared = null;
+                break;
+            }
+            $shared = $shared !== null ? $shared : $key;
+        }
+        $this->twoLineTaxKeys[(int) $index] = $shared !== null ? $shared : array('key' => null, 'group' => 0, 'discount' => true);
     }
 
     /**
@@ -12832,257 +12870,200 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Build discount lines from PrestaShop cart totals.
-     * Splits discount across detected tax contexts to avoid blended synthetic rates.
+     * Discount lines for a cart at checkout (TWO-27129). The cart's discount total is shared over its cart rules by
+     * their values, and each rule's share is traced to the lines it discounts.
      *
      * @param Cart $cart
-     * @param array $existingItems Positive payload lines already built (products/shipping)
-     * @return array
+     * @param array $existingItems positive payload lines already built (products, shipping, wrapping)
+     * @param array $productRefs buildTwoLineItems()'s product references
+     * @return array each {line: payload line, sources: int[] the indexes of the lines it discounts}
      */
-    private function buildTwoDiscountLinesFromCartTotals($cart, $existingItems)
+    private function buildTwoDiscountLinesFromCartTotals($cart, $existingItems, array $productRefs)
     {
-        $discount_gross_total = round((float)$cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS), 2);
-        if ($discount_gross_total <= 0) {
-            return [];
+        $total = round((float) $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS), 2);
+        if ($total <= 0) {
+            return array();
         }
 
-        $discount_net_total = round((float)$cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS), 2);
-        $discount_tax_total = round($discount_gross_total - $discount_net_total, 2);
-        $lines = [];
-        $remaining_discount_gross = $discount_gross_total;
-        $remaining_discount_net = $discount_net_total;
-
-        // Prefer cart-rule monetary values when available to keep discount attribution
-        // aligned with PrestaShop invoice semantics. Fallback to context-based split.
-        $rule_scope_meta = [];
-        $rule_scoped_lines = $this->buildTwoDiscountLinesFromCartRules(
-            $cart,
-            $discount_net_total,
-            $discount_gross_total,
+        return $this->buildTwoTracedDiscountLines(
+            $this->buildTwoDiscountLinesFromCartRules($cart->getCartRules(), $total),
             $existingItems,
-            $remaining_discount_net,
-            $remaining_discount_gross,
-            $rule_scope_meta
+            $productRefs,
+            $cart
         );
-        if (!empty($rule_scoped_lines)) {
-            foreach ($rule_scoped_lines as $rule_scoped_line) {
-                $lines[] = $rule_scoped_line;
-            }
-            if ($remaining_discount_gross < 0) {
-                $remaining_discount_gross = 0.0;
-            }
-            if ($remaining_discount_net < 0) {
-                $remaining_discount_net = 0.0;
-            }
-            if ($remaining_discount_net > $remaining_discount_gross) {
-                $remaining_discount_net = $remaining_discount_gross;
-            }
-        }
-
-        $fallback_items = $existingItems;
-
-        // Edge-path hardening: if rule-level monetary metadata is incomplete, carve out unresolved
-        // free-shipping discount against the shipping context first to avoid blended attribution.
-        $should_attempt_free_shipping_fallback = empty($rule_scoped_lines);
-        $free_shipping_fallback_cap = null;
-        if (
-            !$should_attempt_free_shipping_fallback &&
-            $remaining_discount_gross > 0 &&
-            isset($rule_scope_meta['incomplete_free_shipping_gross']) &&
-            (float)$rule_scope_meta['incomplete_free_shipping_gross'] > 0
-        ) {
-            $should_attempt_free_shipping_fallback = true;
-            $free_shipping_fallback_cap = (float)$rule_scope_meta['incomplete_free_shipping_gross'];
-        }
-
-        if ($should_attempt_free_shipping_fallback) {
-            $fallback_free_shipping = $this->buildTwoFallbackFreeShippingDiscountLine(
-                $cart,
-                $fallback_items,
-                $remaining_discount_gross,
-                $remaining_discount_net,
-                $free_shipping_fallback_cap
-            );
-            if ($fallback_free_shipping !== null) {
-                $lines[] = $fallback_free_shipping['line'];
-                $remaining_discount_gross = round($remaining_discount_gross - $fallback_free_shipping['gross'], 2);
-                $remaining_discount_net = round($remaining_discount_net - $fallback_free_shipping['net'], 2);
-                if ($remaining_discount_gross < 0) {
-                    $remaining_discount_gross = 0.0;
-                }
-                if ($remaining_discount_net < 0) {
-                    $remaining_discount_net = 0.0;
-                }
-                $fallback_items = $this->filterTwoShippingFeeItems($fallback_items);
-            }
-        }
-
-        if ($remaining_discount_gross <= 0) {
-            return $lines;
-        }
-
-        return array_merge($lines, $this->buildTwoTaxContextDiscountLines(
-            $remaining_discount_gross,
-            $remaining_discount_net,
-            $fallback_items,
-            $this->buildTwoDiscountDescriptor($cart->getCartRules())
-        ));
     }
 
     /**
-     * Discount lines for a placed order, from its order_cart_rule rows (TWO-26085).
+     * The cart's rules with the share of the discount total each one carries. The total is what the cart charges, so
+     * the shares add up to it exactly; they are each rule's own value whenever the values add up to the total.
+     *
+     * @param array $cart_rules Cart::getCartRules()
+     * @param float $total the cart's discount total, tax included
+     * @return array each {rule, gross, descriptor}
+     */
+    private function buildTwoDiscountLinesFromCartRules($cart_rules, $total)
+    {
+        $cart_rules = is_array($cart_rules) ? $cart_rules : array();
+        $weights = array();
+        $free_shipping = false;
+        foreach ($cart_rules as $key => $rule) {
+            $free_shipping = $free_shipping || !empty($rule['free_shipping']);
+            $gross = $this->extractTwoDiscountRuleGrossAmount($rule);
+            if ($gross > 0) {
+                $weights[$key] = $gross;
+            }
+        }
+        if ($weights === array()) {
+            // No rule states its value: one untraced discount, which waives shipping first when a rule does.
+            return array(array(
+                'rule' => array('free_shipping' => $free_shipping, 'untraced' => true),
+                'gross' => $total,
+                'descriptor' => $this->buildTwoDiscountDescriptor($cart_rules),
+            ));
+        }
+        $rules = array();
+        foreach ($this->allocateTwoAmountByWeights($total, $weights) as $key => $gross) {
+            $rule = $cart_rules[$key];
+            $rules[] = array(
+                'rule' => $rule,
+                'gross' => $gross,
+                'descriptor' => $this->buildTwoSingleDiscountDescriptor($rule),
+                // PrestaShop's net for the rule, in proportion where the cart's total shares it differently.
+                'net' => isset($rule['value_tax_exc']) && is_numeric($rule['value_tax_exc'])
+                    ? round(abs((float) $rule['value_tax_exc']) * $gross / $weights[$key], 2)
+                    : null,
+            );
+        }
+
+        return $rules;
+    }
+
+    /**
+     * Discount lines for a placed order, from its order_cart_rule rows (TWO-26085, TWO-27129). Each row carries the
+     * rule's value and whether it waived shipping; the rule itself says what else it discounted. A rule deleted since
+     * is traced as far as its row allows, and the rest of its value treated as a whole-order amount.
      *
      * @param array $cart_rules order_cart_rule rows
      * @param array $items positive payload lines built so far
-     * @param array $product_items the product lines among them, which core's cart rules reduce
-     * @return array
+     * @param array $productRefs buildTwoLineItems()'s product references
+     * @param Cart|null $cart the order's cart, for a rule restricted to selected products
+     * @return array each {line, sources}
      */
-    private function buildTwoPlacedDiscountLines($cart_rules, $items, $product_items)
+    private function buildTwoPlacedDiscountLines($cart_rules, $items, array $productRefs, $cart)
     {
-        $lines = array();
-        $gross = 0.0;
-        $net = 0.0;
-        $free_shipping_rule = null;
-        foreach ($cart_rules as $rule) {
-            $gross += (float) $rule['value'];
-            $net += (float) $rule['value_tax_excl'];
-            if ($free_shipping_rule === null && !empty($rule['free_shipping'])) {
-                $free_shipping_rule = $rule;
+        $rules = array();
+        foreach ($cart_rules as $row) {
+            $gross = round((float) $row['value'], 2);
+            if ($gross <= 0) {
+                continue;
             }
-        }
-        $shipping_items = array_filter($items, function ($item) {
-            return isset($item['type']) && $item['type'] === 'SHIPPING_FEE';
-        });
-        if ($free_shipping_rule !== null && $shipping_items !== array()) {
-            // The rule's value includes the shipping it waived: cancel each shipping line at its own rate.
-            $descriptor = $this->buildTwoSingleDiscountDescriptor($free_shipping_rule);
-            foreach ($shipping_items as $item) {
-                $line = array_merge($item, array(
-                    'name' => $descriptor['name'],
-                    'description' => $descriptor['description'],
-                    'quantity_unit' => 'item',
-                    'type' => 'DIGITAL',
-                ));
-                foreach (array('gross_amount', 'net_amount', 'tax_amount', 'unit_price') as $field) {
-                    $line[$field] = (string) $this->getTwoRoundAmount(-(float) $item[$field]);
+            $rule = $row;
+            $cartRule = !empty($row['id_cart_rule']) ? new CartRule((int) $row['id_cart_rule']) : null;
+            if ($cartRule !== null && Validate::isLoadedObject($cartRule)) {
+                foreach (array('reduction_percent', 'reduction_amount', 'reduction_tax', 'reduction_product', 'reduction_exclude_special', 'gift_product', 'gift_product_attribute', 'product_restriction') as $field) {
+                    $rule[$field] = $cartRule->$field;
                 }
-                $lines[] = $line;
-                $gross -= (float) $item['gross_amount'];
-                $net -= (float) $item['net_amount'];
+                $rule['obj'] = $cartRule;
+            } else {
+                $rule['untraced'] = true;
             }
-        }
-        $gross = round($gross, 2);
-        if ($gross <= 0) {
-            return $lines;
+            $rules[] = array(
+                'rule' => $rule,
+                'gross' => $gross,
+                'descriptor' => $this->buildTwoSingleDiscountDescriptor($row),
+                'id_order' => isset($row['id_order']) ? (int) $row['id_order'] : 0,
+                'net' => isset($row['value_tax_excl']) && is_numeric($row['value_tax_excl']) ? round((float) $row['value_tax_excl'], 2) : null,
+            );
         }
 
-        // Core computes a cart rule's reduction on the products alone, so shipping and wrapping carry none of its tax.
-        return array_merge($lines, $this->buildTwoTaxContextDiscountLines($gross, max(0.0, round($net, 2)), $product_items, $this->buildTwoDiscountDescriptor($cart_rules)));
+        return $this->buildTwoTracedDiscountLines($rules, $items, $productRefs, $cart);
     }
 
     /**
-     * Split a discount across the tax contexts of the positive lines, at their declared rates.
+     * Discount lines traced to the lines each cart rule discounts (TWO-27129), one per rule per tax rate among them.
      *
-     * @param float $remaining_discount_gross
-     * @param float $remaining_discount_net
-     * @param array $fallback_items positive payload lines the discount applies to
-     * @param array $descriptor buildTwoDiscountDescriptor()
-     * @return array
+     * Every rule first takes the shipping it waives and its free gift, as core's value takes the gifts out of a
+     * whole-order percentage's base whatever the rules' order. Then, rule by rule, its reduction is spread over the
+     * product lines core discounts for it, by what is left of each and never past it; what those lines cannot hold
+     * goes over the other product lines by what is left of them. What the rule's shape does not explain stays on the
+     * lines the rule already discounted, and a rule that cannot be traced is a whole-order amount over the product
+     * lines. Each part carries the rate of the line it sits on and never another line's.
+     * A line's net is its gross at that rate, or the discounted lines' own net where it cancels them whole.
+     *
+     * @param array $rules each {rule: cart rule fields, gross: float, descriptor: {name, description}, id_order?: int,
+     *                     net?: float|null PrestaShop's net for the share}
+     * @param array $items positive payload lines
+     * @param array $productRefs each {id_product, id_product_attribute, reduction_applies, quantity, id_order, indexes}
+     * @param Cart|null $cart
+     * @return array each {line, sources}
      */
-    private function buildTwoTaxContextDiscountLines($remaining_discount_gross, $remaining_discount_net, $fallback_items, $descriptor)
+    private function buildTwoTracedDiscountLines(array $rules, array $items, array $productRefs, $cart)
     {
-        $lines = [];
-        if ($remaining_discount_net > $remaining_discount_gross) {
-            $remaining_discount_net = $remaining_discount_gross;
-        }
-        $remaining_discount_tax = round($remaining_discount_gross - $remaining_discount_net, 2);
-
-        $contexts = $this->collectDiscountTaxContextsFromItems($fallback_items);
-
-        if (empty($contexts)) {
-            $contexts = [
-                '0' => [
-                    'tax_rate' => 0.0,
-                    'net_weight' => 1.0,
-                    'tax_weight' => 1.0,
-                ],
-            ];
-        }
-
-        $net_weights = [];
-        $tax_weights = [];
-        $known_context_rates = [];
-        foreach ($contexts as $context_key => $context_data) {
-            $net_weights[$context_key] = (float)$context_data['net_weight'];
-            $tax_weights[$context_key] = (float)$context_data['tax_weight'];
-            $known_context_rates[] = (float)$context_data['tax_rate'];
-        }
-
-        $allocated_nets = $this->allocateTwoAmountByWeights($remaining_discount_net, $net_weights);
-        $tax_weight_source = array_sum($tax_weights) > 0 ? $tax_weights : $net_weights;
-        $allocated_taxes = $this->allocateTwoAmountByWeights(max(0, $remaining_discount_tax), $tax_weight_source);
-
-        $is_context_split = count($contexts) > 1;
-        foreach ($contexts as $context_key => $context_data) {
-            $line_net = isset($allocated_nets[$context_key]) ? (float)$allocated_nets[$context_key] : 0.0;
-            $line_tax = isset($allocated_taxes[$context_key]) ? (float)$allocated_taxes[$context_key] : 0.0;
-            $line_gross = round($line_net + $line_tax, 2);
-
-            if ($line_gross <= 0) {
-                continue;
+        $left = array();
+        $shipping = array();
+        foreach ($items as $i => $item) {
+            $left[$i] = $this->convertAmountToCents($item['gross_amount']);
+            if (isset($item['type']) && $item['type'] === 'SHIPPING_FEE') {
+                $shipping[] = $i;
             }
-
-            $segments = $this->buildTwoCanonicalDiscountRateSegments($line_net, $line_tax, $known_context_rates);
-            if (empty($segments)) {
-                // Declared-rate relay: a discount that cannot be attributed
-                // to the cart's declared rates (exactly or within rounding
-                // tolerance) is internally contradictory — fail loud, never
-                // emit a derived tax/net blend.
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Discount allocation does not reconcile with any declared cart tax rate. ' .
-                    'net=' . $this->getTwoRoundAmount($line_net) . ', tax=' . $this->getTwoRoundAmount($line_tax),
-                    3
-                );
-                throw new Exception('Discount amounts diverge from all declared cart tax rates');
+        }
+        // A placed order's rule row discounts the products of its own order of a multi-carrier split.
+        $scopes = array();
+        foreach ($rules as $k => $entry) {
+            $scope = empty($entry['id_order']) ? array() : array_values(array_filter($productRefs, function ($ref) use ($entry) {
+                return isset($ref['id_order']) && (int) $ref['id_order'] === (int) $entry['id_order'];
+            }));
+            $scopes[$k] = array('refs' => $scope !== array() ? $scope : $productRefs, 'products' => array());
+            foreach ($scopes[$k]['refs'] as $ref) {
+                foreach ($ref['indexes'] as $i) {
+                    $scopes[$k]['products'][] = $i;
+                }
             }
+        }
 
-            $is_segment_split = count($segments) > 1;
-            foreach ($segments as $segment) {
-                $segment_net = round((float)$segment['net'], 2);
-                $segment_tax = round((float)$segment['tax'], 2);
-                $segment_gross = round((float)$segment['gross'], 2);
-                if ($segment_gross <= 0) {
-                    continue;
+        $parts = array();
+        $rest = array();
+        foreach ($rules as $k => $entry) {
+            $rule = $entry['rule'];
+            $productRefs = $scopes[$k]['refs'];
+            $parts[$k] = array();
+            $rest[$k] = $this->convertAmountToCents($entry['gross']);
+            if (!empty($rule['free_shipping'])) {
+                $rest[$k] = $this->spreadTwoDiscountCents($rest[$k], $shipping, $left, $parts[$k]);
+            }
+            if (empty($rule['untraced']) && !empty($rule['gift_product']) && $rest[$k] > 0) {
+                foreach ($productRefs as $ref) {
+                    if ((int) $ref['id_product'] === (int) $rule['gift_product']
+                        && (empty($rule['gift_product_attribute']) || (int) $ref['id_product_attribute'] === (int) $rule['gift_product_attribute'])) {
+                        $i = $ref['indexes'][0];
+                        $unit = min($rest[$k], (int) round($this->convertAmountToCents($items[$i]['gross_amount']) / max(1, (int) $ref['quantity'])));
+                        $rest[$k] -= $unit - $this->spreadTwoDiscountCents($unit, array($i), $left, $parts[$k]);
+                        break;
+                    }
                 }
+            }
+        }
 
-                $segment_rate = max(0, (float)$segment['rate']);
-                $segment_rate_percent = round($segment_rate * 100, 2);
-                $line_name = $descriptor['name'];
-                if ($is_context_split || $is_segment_split) {
-                    $line_name .= ' (' . $this->l('VAT') . ' ' . $this->getTwoRoundAmount($segment_rate_percent) . '%)';
-                }
-
-                $line_rate_precision = isset($segment['precision']) ? (int)$segment['precision'] : null;
-                $line_rate_formatted = $line_rate_precision === null
-                    ? $this->formatTwoTaxRate($segment_rate)
-                    : $this->formatTwoTaxRate($segment_rate, $line_rate_precision);
-
-                $lines[] = [
-                    'name' => $line_name,
-                    'description' => $descriptor['description'],
-                    'gross_amount' => (string)$this->getTwoRoundAmount(-$segment_gross),
-                    'net_amount' => (string)$this->getTwoRoundAmount(-$segment_net),
-                    'discount_amount' => '0.00',
-                    'tax_amount' => (string)$this->getTwoRoundAmount(-$segment_tax),
-                    'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($segment_rate_percent) . '%',
-                    'tax_rate' => $line_rate_formatted,
-                    'unit_price' => (string)$this->getTwoRoundAmount(-$segment_net),
-                    'quantity' => 1,
-                    'quantity_unit' => 'item',
-                    'image_url' => '',
-                    'product_page_url' => '',
-                    'type' => 'DIGITAL',
-                ];
+        $lines = array();
+        foreach ($rules as $k => $entry) {
+            $rule = $entry['rule'];
+            $productRefs = $scopes[$k]['refs'];
+            $products = $scopes[$k]['products'];
+            $untraced = !empty($rule['untraced']);
+            $targets = $untraced || $rest[$k] <= 0 ? array() : $this->getTwoCartRuleTargetLines($rule, $productRefs, $items, $cart);
+            if ($rest[$k] <= 0) {
+                // Nothing left to spread.
+            } elseif ($targets === array() && !$untraced && $parts[$k] !== array()) {
+                $this->spreadTwoDiscountCents($rest[$k], array_keys($parts[$k]), $left, $parts[$k], false);
+            } else {
+                $targets = $targets !== array() ? $targets : $products;
+                $over = $this->spreadTwoDiscountCents($rest[$k], $targets, $left, $parts[$k]);
+                $over = $this->spreadTwoDiscountCents($over, $products, $left, $parts[$k]);
+                $this->spreadTwoDiscountCents($over, $targets, $left, $parts[$k], false);
+            }
+            $net = isset($entry['net']) ? $entry['net'] : null;
+            foreach ($this->buildTwoDiscountLinesByRate($parts[$k], $items, $entry['descriptor'], $net) as $line) {
+                $lines[] = $line;
             }
         }
 
@@ -13090,585 +13071,220 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Build a fallback free-shipping discount line when rule-level monetary metadata is incomplete.
-     * This keeps shipping discount attribution on shipping VAT context in fallback mode.
+     * Spread an amount over lines by what is left of each, largest remainder, adding each share to $parts and taking
+     * it off $left. Capped, it spreads no more than the lines have left and returns the rest.
      *
-     * @param Cart $cart
-     * @param array $existingItems
-     * @param float $discountGrossTotal
-     * @param float $discountNetTotal
-     * @param float|null $freeShippingGrossOverride Positive unresolved free-shipping gross cap
-     * @return array|null
+     * @param int $cents
+     * @param int[] $targets item indexes
+     * @param array $left item index => undiscounted gross cents
+     * @param array $parts item index => cents, added to
+     * @param bool $capped
+     * @return int the cents not spread
      */
-    private function buildTwoFallbackFreeShippingDiscountLine(
-        $cart,
-        $existingItems,
-        $discountGrossTotal,
-        $discountNetTotal,
-        $freeShippingGrossOverride = null
-    )
+    private function spreadTwoDiscountCents($cents, array $targets, array &$left, array &$parts, $capped = true)
     {
-        $shipping_line = null;
-        foreach ($existingItems as $item) {
-            $line_type = isset($item['type']) ? (string)$item['type'] : '';
-            $line_gross = isset($item['gross_amount']) ? round((float)$item['gross_amount'], 2) : 0.0;
-            if ($line_type === 'SHIPPING_FEE' && $line_gross > 0) {
-                $shipping_line = $item;
+        if ($cents <= 0 || $targets === array()) {
+            return max(0, (int) $cents);
+        }
+        $weights = array();
+        foreach ($targets as $i) {
+            $weights[$i] = max(0, $left[$i]);
+        }
+        $take = $capped ? min($cents, array_sum($weights)) : $cents;
+        foreach ($this->allocateTwoAmountByWeights($take / 100, $weights) as $i => $share) {
+            $share = $this->convertAmountToCents($share);
+            $parts[$i] = (isset($parts[$i]) ? $parts[$i] : 0) + $share;
+            $left[$i] -= $share;
+        }
+
+        return $cents - $take;
+    }
+
+    /**
+     * The lines a cart rule's reduction discounts, as core's CartRule::getContextualValue() finds them (TWO-27129).
+     * Empty when the shape names no line.
+     *
+     * @param array $rule cart rule fields
+     * @param array $productRefs
+     * @param array $items
+     * @param Cart|null $cart
+     * @return int[] item indexes
+     */
+    private function getTwoCartRuleTargetLines(array $rule, array $productRefs, array $items, $cart)
+    {
+        $product = isset($rule['reduction_product']) ? (int) $rule['reduction_product'] : 0;
+        $eligible = array();
+        foreach ($productRefs as $ref) {
+            if (empty($rule['reduction_exclude_special']) || empty($ref['reduction_applies'])) {
+                $eligible[] = $ref;
+            }
+        }
+        $refs = array();
+        if ((float) (isset($rule['reduction_percent']) ? $rule['reduction_percent'] : 0) > 0) {
+            if ($product === 0) {
+                $refs = $eligible;
+            } elseif ($product > 0) {
+                $refs = array_filter($eligible, function ($ref) use ($product) {
+                    return (int) $ref['id_product'] === $product;
+                });
+            } elseif ($product === -1) {
+                $cheapest = null;
+                foreach ($eligible as $ref) {
+                    $unit = (float) $items[$ref['indexes'][0]]['gross_amount'] / max(1, (int) $ref['quantity']);
+                    if ($unit > 0 && ($cheapest === null || $unit < $cheapest['unit'])) {
+                        $cheapest = array('unit' => $unit, 'ref' => $ref);
+                    }
+                }
+                $refs = $cheapest !== null ? array($cheapest['ref']) : array();
+            } elseif ($product === -2) {
+                $selected = $this->getTwoCartRuleSelectedProducts($rule, $cart);
+                $refs = array_filter($eligible, function ($ref) use ($selected) {
+                    return in_array((int) $ref['id_product'] . '-' . (int) $ref['id_product_attribute'], $selected, true)
+                        || in_array((int) $ref['id_product'] . '-0', $selected, true);
+                });
+            }
+        } elseif ((float) (isset($rule['reduction_amount']) ? $rule['reduction_amount'] : 0) > 0 && $product >= 0) {
+            // Core spreads a tax-excluded amount by net and grosses each part up at its row's rate, so either way each
+            // row's gross part follows the row's gross.
+            $refs = array_filter($productRefs, function ($ref) use ($product) {
+                return $product === 0 || (int) $ref['id_product'] === $product;
+            });
+        }
+        $targets = array();
+        foreach ($refs as $ref) {
+            foreach ($ref['indexes'] as $i) {
+                $targets[] = $i;
+            }
+        }
+
+        return $targets;
+    }
+
+    /**
+     * The products a rule restricted to a selection applies to, as core lists them ("<id_product>-<id_product_attribute>").
+     *
+     * @param array $rule
+     * @param Cart|null $cart
+     * @return string[]
+     */
+    private function getTwoCartRuleSelectedProducts(array $rule, $cart)
+    {
+        $cartRule = isset($rule['obj']) && is_object($rule['obj']) ? $rule['obj'] : null;
+        if ($cartRule === null && !empty($rule['id_cart_rule'])) {
+            $cartRule = new CartRule((int) $rule['id_cart_rule']);
+        }
+        if ($cartRule === null || $cart === null || !method_exists($cartRule, 'checkProductRestrictionsFromCart')) {
+            return array();
+        }
+        try {
+            $selected = $cartRule->checkProductRestrictionsFromCart($cart, true, false);
+        } catch (Throwable $e) {
+            return array();
+        }
+
+        return is_array($selected) ? array_map('strval', $selected) : array();
+    }
+
+    /**
+     * One discount line per tax rate among a rule's parts, named for the rule, with the rate added when there are two
+     * or more. Its net is its gross at that rate, or the lines' own net where it cancels every one of them whole.
+     *
+     * Where PrestaShop states the rule's net, the lines' net is then moved toward it a cent at a time, largest line
+     * first, at most one cent per line, keeping each line's gross and its tax within a cent or two of its net at its
+     * rate (TWO-27129). A 0% line and a line that cancels its lines whole keep their net. What one cent per line cannot
+     * cover is left as rounding.
+     *
+     * @param array $parts item index => gross cents
+     * @param array $items
+     * @param array $descriptor {name, description}
+     * @param float|null $net PrestaShop's net for the rule's share; null when it states none
+     * @return array each {line, sources}
+     */
+    private function buildTwoDiscountLinesByRate(array $parts, array $items, array $descriptor, $net = null)
+    {
+        $groups = array();
+        foreach ($parts as $i => $cents) {
+            if ($cents <= 0) {
+                continue;
+            }
+            $rate = max(0.0, (float) $items[$i]['tax_rate']);
+            $key = $this->formatTwoTaxRate($rate);
+            if (!isset($groups[$key])) {
+                $groups[$key] = array('rate' => $rate, 'tax_rate' => (string) $items[$i]['tax_rate'], 'gross' => 0, 'net' => 0, 'whole' => true, 'sources' => array());
+            }
+            $groups[$key]['gross'] += $cents;
+            $groups[$key]['net'] += $this->convertAmountToCents($items[$i]['net_amount']);
+            $groups[$key]['whole'] = $groups[$key]['whole'] && $cents === $this->convertAmountToCents($items[$i]['gross_amount']);
+            $groups[$key]['sources'][] = $i;
+        }
+        foreach ($groups as $key => $group) {
+            if (!$group['whole']) {
+                $groups[$key]['net'] = (int) round($group['gross'] / (1 + $group['rate']));
+            }
+        }
+        if ($net !== null) {
+            $this->reconcileTwoDiscountNet($groups, $this->convertAmountToCents($net));
+        }
+        $lines = array();
+        foreach ($groups as $group) {
+            $percent = $this->getTwoRoundAmount(round($group['rate'] * 100, 2));
+            $gross = $group['gross'] / 100;
+            $net = $group['net'] / 100;
+            $lines[] = array(
+                'line' => array(
+                    'name' => count($groups) > 1 ? $descriptor['name'] . ' (' . $this->l('VAT') . ' ' . $percent . '%)' : $descriptor['name'],
+                    'description' => $descriptor['description'],
+                    'gross_amount' => (string) $this->getTwoRoundAmount(-$gross),
+                    'net_amount' => (string) $this->getTwoRoundAmount(-$net),
+                    'discount_amount' => '0.00',
+                    'tax_amount' => (string) $this->getTwoRoundAmount(-($group['gross'] - $group['net']) / 100),
+                    'tax_class_name' => 'VAT ' . $percent . '%',
+                    'tax_rate' => $group['tax_rate'],
+                    'unit_price' => (string) $this->getTwoRoundAmount(-$net),
+                    'quantity' => 1,
+                    'quantity_unit' => 'item',
+                    'image_url' => '',
+                    'product_page_url' => '',
+                    'type' => 'DIGITAL',
+                ),
+                'sources' => $group['sources'],
+            );
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Move single cents between net and tax on a rule's discount lines until their net is PrestaShop's (TWO-27129).
+     *
+     * @param array $groups buildTwoDiscountLinesByRate()'s groups, net in cents, changed in place
+     * @param int $target PrestaShop's net for the rule, in cents
+     * @return void
+     */
+    private function reconcileTwoDiscountNet(array &$groups, $target)
+    {
+        $diff = $target - array_sum(array_column($groups, 'net'));
+        $order = array_keys($groups);
+        usort($order, function ($a, $b) use ($groups) {
+            return $groups[$b]['gross'] - $groups[$a]['gross'];
+        });
+        $tolerance = (int) round(self::TAX_FORMULA_TOLERANCE * 100);
+        foreach ($order as $key) {
+            if ($diff === 0) {
                 break;
             }
-        }
-        if ($shipping_line === null) {
-            return null;
-        }
-
-        $free_shipping_rules = [];
-        $free_shipping_gross = 0.0;
-        $cart_rules = $cart->getCartRules();
-        foreach ($cart_rules as $rule) {
-            if (empty($rule['free_shipping'])) {
+            $group = $groups[$key];
+            if ($group['whole'] || $group['rate'] <= 0) {
                 continue;
             }
-
-            $rule_gross = $this->extractTwoDiscountRuleGrossAmount($rule);
-            if ($rule_gross <= 0 && isset($rule['reduction_amount']) && is_numeric($rule['reduction_amount'])) {
-                $rule_gross = abs((float)$rule['reduction_amount']);
-            }
-            if ($rule_gross <= 0) {
+            $net = $group['net'] + ($diff > 0 ? 1 : -1);
+            $tax = $group['gross'] - $net;
+            if ($net <= 0 || $tax < 0 || abs($tax - $net * $group['rate']) > $tolerance) {
                 continue;
             }
-
-            $free_shipping_rules[] = $rule;
-            $free_shipping_gross = round($free_shipping_gross + $rule_gross, 2);
+            $groups[$key]['net'] = $net;
+            $diff += $diff > 0 ? -1 : 1;
         }
-
-        if ($freeShippingGrossOverride !== null) {
-            $free_shipping_gross = round(max(0, (float)$freeShippingGrossOverride), 2);
-        }
-
-        if ($free_shipping_gross <= 0) {
-            return null;
-        }
-
-        $shipping_gross = isset($shipping_line['gross_amount']) ? round((float)$shipping_line['gross_amount'], 2) : 0.0;
-        $shipping_net = isset($shipping_line['net_amount']) ? round((float)$shipping_line['net_amount'], 2) : 0.0;
-        $shipping_tax = round($shipping_gross - $shipping_net, 2);
-        if ($shipping_gross <= 0) {
-            return null;
-        }
-
-        $alloc_gross = min($free_shipping_gross, max(0, (float)$discountGrossTotal), $shipping_gross);
-        if ($alloc_gross <= 0) {
-            return null;
-        }
-
-        // DECLARED-RATE RELAY: the free-shipping discount line MIRRORS the
-        // emitted rate of the shipping line it offsets, so the pair nets to
-        // zero at one consistent rate. Never derived from tax/net.
-        $shipping_rate = isset($shipping_line['tax_rate']) ? max(0, (float) $shipping_line['tax_rate']) : 0.0;
-
-        $shipping_ratio = $shipping_gross > 0 ? ($shipping_net / $shipping_gross) : 1.0;
-        $alloc_net_uncapped = round($alloc_gross * $shipping_ratio, 2);
-        $alloc_net = min($alloc_net_uncapped, round(max(0, (float)$discountNetTotal), 2), $alloc_gross);
-        if ($alloc_net < $alloc_net_uncapped) {
-            // The cap bit (multi-discount cart): re-derive gross from the
-            // capped net at the mirrored rate so gross/net/tax stay
-            // rate-consistent — never clamp net independently of gross.
-            $alloc_tax = round($alloc_net * $shipping_rate, 2);
-            $alloc_gross = round($alloc_net + $alloc_tax, 2);
-        } else {
-            $alloc_tax = round($alloc_gross - $alloc_net, 2);
-        }
-
-        $shipping_rate_percent = round($shipping_rate * 100, 2);
-        $descriptor_rule = !empty($free_shipping_rules) ? reset($free_shipping_rules) : null;
-        $descriptor = $descriptor_rule !== null
-            ? $this->buildTwoSingleDiscountDescriptor($descriptor_rule)
-            : $this->buildTwoDiscountDescriptor($cart->getCartRules());
-
-        return [
-            'gross' => $alloc_gross,
-            'net' => $alloc_net,
-            'line' => [
-                'name' => $descriptor['name'],
-                'description' => $descriptor['description'],
-                'gross_amount' => (string)$this->getTwoRoundAmount(-$alloc_gross),
-                'net_amount' => (string)$this->getTwoRoundAmount(-$alloc_net),
-                'discount_amount' => '0.00',
-                'tax_amount' => (string)$this->getTwoRoundAmount(-$alloc_tax),
-                'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($shipping_rate_percent) . '%',
-                'tax_rate' => $this->formatTwoTaxRate($shipping_rate),
-                'unit_price' => (string)$this->getTwoRoundAmount(-$alloc_net),
-                'quantity' => 1,
-                'quantity_unit' => 'item',
-                'image_url' => '',
-                'product_page_url' => '',
-                'type' => 'DIGITAL',
-            ],
-        ];
-    }
-
-    /**
-     * Remove shipping fee line items from a line-item list.
-     *
-     * @param array $items
-     * @return array
-     */
-    private function filterTwoShippingFeeItems($items)
-    {
-        $filtered = [];
-        foreach ($items as $item) {
-            $line_type = isset($item['type']) ? (string)$item['type'] : '';
-            if ($line_type === 'SHIPPING_FEE') {
-                continue;
-            }
-            $filtered[] = $item;
-        }
-
-        return $filtered;
-    }
-
-    /**
-     * Build discount lines using cart-rule monetary values when available.
-     * This preserves PrestaShop rule-level semantics better than context weighting.
-     *
-     * @param Cart $cart
-     * @param float $discount_net_total
-     * @param float $discount_gross_total
-     * @return array
-     */
-    private function buildTwoDiscountLinesFromCartRules(
-        $cart,
-        $discount_net_total,
-        $discount_gross_total,
-        $existingItems,
-        &$remaining_discount_net = null,
-        &$remaining_discount_gross = null,
-        &$rule_scope_meta = null
-    )
-    {
-        $remaining_discount_net = round(max(0, (float)$discount_net_total), 2);
-        $remaining_discount_gross = round(max(0, (float)$discount_gross_total), 2);
-        $rule_scope_meta = [
-            'has_incomplete_rows' => false,
-            'has_incomplete_free_shipping' => false,
-            'incomplete_free_shipping_gross' => 0.0,
-        ];
-
-        $cart_rules = $cart->getCartRules();
-        if (empty($cart_rules)) {
-            return [];
-        }
-
-        $known_context_rates = [];
-        $contexts = $this->collectDiscountTaxContextsFromItems($existingItems);
-        foreach ($contexts as $context) {
-            if (isset($context['tax_rate'])) {
-                $known_context_rates[] = (float)$context['tax_rate'];
-            }
-        }
-
-        $rule_rows = [];
-        $complete_rule_rows = [];
-        foreach ($cart_rules as $idx => $rule) {
-            $gross_raw = $this->extractTwoDiscountRuleGrossAmount($rule);
-            if ($gross_raw <= 0) {
-                continue;
-            }
-
-            $net_raw = $this->extractTwoDiscountRuleNetAmount($rule, $gross_raw);
-            $gross_raw = max(0.0, (float)$gross_raw);
-            if ($net_raw !== null) {
-                $net_raw = max(0.0, (float)$net_raw);
-                if ($net_raw > $gross_raw) {
-                    $net_raw = $gross_raw;
-                }
-            } else {
-                $rule_scope_meta['has_incomplete_rows'] = true;
-                if (!empty($rule['free_shipping'])) {
-                    $rule_scope_meta['has_incomplete_free_shipping'] = true;
-                    $rule_scope_meta['incomplete_free_shipping_gross'] = round(
-                        $rule_scope_meta['incomplete_free_shipping_gross'] + $gross_raw,
-                        2
-                    );
-                }
-            }
-
-            $rule_key = (string)$idx;
-            $row = [
-                'rule' => $rule,
-                'gross_raw' => $gross_raw,
-                'net_raw' => $net_raw,
-            ];
-            $rule_rows[$rule_key] = $row;
-            if ($net_raw !== null) {
-                $complete_rule_rows[$rule_key] = $row;
-            }
-        }
-
-        if (empty($rule_rows)) {
-            return [];
-        }
-
-        if (empty($complete_rule_rows)) {
-            return [];
-        }
-
-        $gross_weights = [];
-        $net_weights = [];
-        $complete_raw_gross_total = 0.0;
-        $complete_raw_net_total = 0.0;
-        foreach ($complete_rule_rows as $rule_key => $row) {
-            $gross_weights[$rule_key] = (float)$row['gross_raw'];
-            $net_weights[$rule_key] = (float)$row['net_raw'];
-            $complete_raw_gross_total = round($complete_raw_gross_total + (float)$row['gross_raw'], 2);
-            $complete_raw_net_total = round($complete_raw_net_total + (float)$row['net_raw'], 2);
-        }
-
-        $complete_gross_target = round(min((float)$discount_gross_total, $complete_raw_gross_total), 2);
-        $complete_net_target = round(min((float)$discount_net_total, $complete_raw_net_total), 2);
-        if ($complete_net_target > $complete_gross_target) {
-            $complete_net_target = $complete_gross_target;
-        }
-
-        $allocated_gross = $this->allocateTwoAmountByWeights($complete_gross_target, $gross_weights);
-        $net_weight_source = array_sum($net_weights) > 0 ? $net_weights : $gross_weights;
-        $allocated_net = $this->allocateTwoAmountByWeights($complete_net_target, $net_weight_source);
-
-        $lines = [];
-        $allocated_complete_gross_total = 0.0;
-        $allocated_complete_net_total = 0.0;
-
-        foreach ($complete_rule_rows as $rule_key => $row) {
-            $line_gross = isset($allocated_gross[$rule_key]) ? (float)$allocated_gross[$rule_key] : 0.0;
-            $line_net = isset($allocated_net[$rule_key]) ? (float)$allocated_net[$rule_key] : 0.0;
-
-            if ($line_gross <= 0) {
-                continue;
-            }
-
-            if ($line_net < 0) {
-                $line_net = 0.0;
-            }
-            if ($line_net > $line_gross) {
-                $line_net = $line_gross;
-            }
-
-            $descriptor = $this->buildTwoSingleDiscountDescriptor($row['rule']);
-            $line_tax = round($line_gross - $line_net, 2);
-            $segments = $this->buildTwoCanonicalDiscountRateSegments($line_net, $line_tax, $known_context_rates);
-            if (empty($segments)) {
-                // Declared-rate relay: fail loud instead of emitting a
-                // derived tax/net blend for an unattributable rule discount.
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Cart-rule discount "' . $descriptor['name'] . '" does not reconcile with any ' .
-                    'declared cart tax rate. net=' . $this->getTwoRoundAmount($line_net) .
-                    ', tax=' . $this->getTwoRoundAmount($line_tax),
-                    3
-                );
-                throw new Exception('Discount amounts diverge from all declared cart tax rates');
-            }
-
-            $is_split = count($segments) > 1;
-            foreach ($segments as $segment) {
-                $segment_net = round((float)$segment['net'], 2);
-                $segment_tax = round((float)$segment['tax'], 2);
-                $segment_gross = round((float)$segment['gross'], 2);
-                if ($segment_gross <= 0) {
-                    continue;
-                }
-
-                $segment_rate = max(0, (float)$segment['rate']);
-                $segment_rate_percent = round($segment_rate * 100, 2);
-                $segment_name = $descriptor['name'];
-                if ($is_split) {
-                    $segment_name .= ' (' . $this->l('VAT') . ' ' . $this->getTwoRoundAmount($segment_rate_percent) . '%)';
-                }
-
-                $lines[] = [
-                    'name' => $segment_name,
-                    'description' => $descriptor['description'],
-                    'gross_amount' => (string)$this->getTwoRoundAmount(-$segment_gross),
-                    'net_amount' => (string)$this->getTwoRoundAmount(-$segment_net),
-                    'discount_amount' => '0.00',
-                    'tax_amount' => (string)$this->getTwoRoundAmount(-$segment_tax),
-                    'tax_class_name' => 'VAT ' . $this->getTwoRoundAmount($segment_rate_percent) . '%',
-                    'tax_rate' => $this->formatTwoTaxRate($segment_rate),
-                    'unit_price' => (string)$this->getTwoRoundAmount(-$segment_net),
-                    'quantity' => 1,
-                    'quantity_unit' => 'item',
-                    'image_url' => '',
-                    'product_page_url' => '',
-                    'type' => 'DIGITAL',
-                ];
-            }
-
-            $allocated_complete_gross_total = round($allocated_complete_gross_total + $line_gross, 2);
-            $allocated_complete_net_total = round($allocated_complete_net_total + $line_net, 2);
-        }
-
-        if (empty($lines)) {
-            return [];
-        }
-
-        $remaining_discount_gross = round(max(0, $remaining_discount_gross - $allocated_complete_gross_total), 2);
-        $remaining_discount_net = round(max(0, $remaining_discount_net - $allocated_complete_net_total), 2);
-        if ($remaining_discount_net > $remaining_discount_gross) {
-            $remaining_discount_net = $remaining_discount_gross;
-        }
-
-        return $lines;
-    }
-
-    /**
-     * Split a discount row into canonical tax-rate segments when possible.
-     * This avoids blended synthetic rates while preserving row net/tax totals.
-     *
-     * @param float $line_net Positive net amount
-     * @param float $line_tax Positive tax amount
-     * @param array $known_rates Decimal tax-rate contexts detected from positive items
-     * @return array<int,array{net:float,tax:float,gross:float,rate:float}>
-     */
-    private function buildTwoCanonicalDiscountRateSegments($line_net, $line_tax, $known_rates)
-    {
-        $net_cents = $this->convertAmountToCents($line_net);
-        $tax_cents = $this->convertAmountToCents($line_tax);
-        if ($net_cents <= 0 || $tax_cents < 0) {
-            return [];
-        }
-
-        // A zero-tax discount row is exactly representable at rate 0 —
-        // tax == rate * net holds identically. Not a derivation.
-        if ($tax_cents === 0) {
-            return [[
-                'net' => round($net_cents / 100, 2),
-                'tax' => 0.0,
-                'gross' => round($net_cents / 100, 2),
-                'rate' => 0.0,
-            ]];
-        }
-
-        $rates = [];
-        foreach ((array)$known_rates as $rate) {
-            $normalized_rate = $this->normalizeTwoTaxRateToPercentPrecision((float)$rate);
-            $key = $this->formatTwoTaxRate($normalized_rate, 4);
-            $rates[$key] = $normalized_rate;
-        }
-        if (empty($rates)) {
-            return [];
-        }
-
-        $rates = array_values($rates);
-        sort($rates, SORT_NUMERIC);
-
-        foreach ($rates as $rate) {
-            if ((int)round($net_cents * $rate, 0) === $tax_cents) {
-                return [[
-                    'net' => round($net_cents / 100, 2),
-                    'tax' => round($tax_cents / 100, 2),
-                    'gross' => round(($net_cents + $tax_cents) / 100, 2),
-                    'rate' => $rate,
-                ]];
-            }
-        }
-
-        if (count($rates) < 2) {
-            return $this->buildTwoToleranceSingleRateSegment($net_cents, $tax_cents, $rates);
-        }
-
-        $implied_rate = $net_cents > 0 ? ((float)$tax_cents / (float)$net_cents) : 0.0;
-        $pair_candidates = [];
-        for ($i = 0; $i < count($rates); $i++) {
-            for ($j = $i + 1; $j < count($rates); $j++) {
-                $low_rate = $rates[$i];
-                $high_rate = $rates[$j];
-                if ($high_rate <= $low_rate) {
-                    continue;
-                }
-
-                $outside_distance = 0.0;
-                if ($implied_rate < $low_rate) {
-                    $outside_distance = $low_rate - $implied_rate;
-                } elseif ($implied_rate > $high_rate) {
-                    $outside_distance = $implied_rate - $high_rate;
-                }
-
-                $pair_candidates[] = [
-                    'low' => $low_rate,
-                    'high' => $high_rate,
-                    'outside' => $outside_distance,
-                    'width' => $high_rate - $low_rate,
-                ];
-            }
-        }
-
-        usort($pair_candidates, function ($left, $right) {
-            if ($left['outside'] < $right['outside']) {
-                return -1;
-            }
-            if ($left['outside'] > $right['outside']) {
-                return 1;
-            }
-            if ($left['width'] < $right['width']) {
-                return -1;
-            }
-            if ($left['width'] > $right['width']) {
-                return 1;
-            }
-            return 0;
-        });
-
-        foreach ($pair_candidates as $pair) {
-            $split = $this->solveTwoRateDiscountSplitInCents(
-                $net_cents,
-                $tax_cents,
-                (float)$pair['low'],
-                (float)$pair['high']
-            );
-            if ($split === null) {
-                continue;
-            }
-
-            $segments = [];
-            if ($split['low_net_cents'] > 0 || $split['low_tax_cents'] > 0) {
-                $segments[] = [
-                    'net' => round($split['low_net_cents'] / 100, 2),
-                    'tax' => round($split['low_tax_cents'] / 100, 2),
-                    'gross' => round(($split['low_net_cents'] + $split['low_tax_cents']) / 100, 2),
-                    'rate' => (float)$pair['low'],
-                ];
-            }
-            if ($split['high_net_cents'] > 0 || $split['high_tax_cents'] > 0) {
-                $segments[] = [
-                    'net' => round($split['high_net_cents'] / 100, 2),
-                    'tax' => round($split['high_tax_cents'] / 100, 2),
-                    'gross' => round(($split['high_net_cents'] + $split['high_tax_cents']) / 100, 2),
-                    'rate' => (float)$pair['high'],
-                ];
-            }
-
-            if (!empty($segments)) {
-                return $segments;
-            }
-        }
-
-        return $this->buildTwoToleranceSingleRateSegment($net_cents, $tax_cents, $rates);
-    }
-
-    /**
-     * Last resort before failing loud: represent the row at ONE declared
-     * cart rate whose implied tax is within TAX_FORMULA_TOLERANCE of the
-     * actual tax (PrestaShop rounds discount buckets once; per-line rounding
-     * can legitimately differ by a cent or two). The amounts are preserved
-     * as-is — the rate is only accepted, never derived from the amounts.
-     *
-     * UNIQUE-FIT RULE: if MORE THAN ONE declared rate fits within the
-     * tolerance the row is ambiguous (this only happens on tiny nets where
-     * neighbouring rates are cents apart) — returns [] so the caller fails
-     * loud rather than risk relabeling a line to a neighbouring rate, the
-     * exact failure mode the deleted snap/fallback machinery had. Also
-     * returns [] when no declared rate reconciles at all.
-     *
-     * @param int $net_cents
-     * @param int $tax_cents
-     * @param array $rates Declared decimal rates present on the cart
-     * @return array<int,array{net:float,tax:float,gross:float,rate:float}>
-     */
-    private function buildTwoToleranceSingleRateSegment($net_cents, $tax_cents, $rates)
-    {
-        $tolerance_cents = (int) round(self::TAX_FORMULA_TOLERANCE * 100);
-        $fitting_rates = [];
-        foreach ((array) $rates as $rate) {
-            $rate = max(0, (float) $rate);
-            $diff = abs((int) round($net_cents * $rate, 0) - $tax_cents);
-            if ($diff <= $tolerance_cents) {
-                $fitting_rates[$this->formatTwoTaxRate($rate)] = $rate;
-            }
-        }
-
-        if (count($fitting_rates) !== 1) {
-            // 0 fits: genuine divergence. 2+ fits: ambiguous attribution.
-            // Both fail loud at the caller.
-            return [];
-        }
-        $best_rate = reset($fitting_rates);
-
-        return [[
-            'net' => round($net_cents / 100, 2),
-            'tax' => round($tax_cents / 100, 2),
-            'gross' => round(($net_cents + $tax_cents) / 100, 2),
-            'rate' => $best_rate,
-        ]];
-    }
-
-    /**
-     * Solve a two-rate split in cents where tax is computed as round(net * rate).
-     *
-     * @param int $net_cents
-     * @param int $tax_cents
-     * @param float $low_rate
-     * @param float $high_rate
-     * @return array|null
-     */
-    private function solveTwoRateDiscountSplitInCents($net_cents, $tax_cents, $low_rate, $high_rate)
-    {
-        if ($net_cents <= 0 || $high_rate <= $low_rate) {
-            return null;
-        }
-
-        $estimate_high_net = (int)round(
-            ((float)$tax_cents - ((float)$net_cents * $low_rate)) / ($high_rate - $low_rate),
-            0
-        );
-        $estimate_high_net = max(0, min($net_cents, $estimate_high_net));
-
-        $max_offset = min($net_cents, 5000);
-        for ($offset = 0; $offset <= $max_offset; $offset++) {
-            $candidates = [$estimate_high_net + $offset];
-            if ($offset > 0) {
-                $candidates[] = $estimate_high_net - $offset;
-            }
-
-            foreach ($candidates as $candidate_high_net) {
-                if ($candidate_high_net < 0 || $candidate_high_net > $net_cents) {
-                    continue;
-                }
-                $candidate_low_net = $net_cents - $candidate_high_net;
-                $candidate_low_tax = (int)round($candidate_low_net * $low_rate, 0);
-                $candidate_high_tax = (int)round($candidate_high_net * $high_rate, 0);
-                if (($candidate_low_tax + $candidate_high_tax) !== $tax_cents) {
-                    continue;
-                }
-
-                return [
-                    'low_net_cents' => $candidate_low_net,
-                    'low_tax_cents' => $candidate_low_tax,
-                    'high_net_cents' => $candidate_high_net,
-                    'high_tax_cents' => $candidate_high_tax,
-                ];
-            }
-        }
-
-        if ($net_cents > 50000) {
-            return null;
-        }
-
-        for ($candidate_high_net = 0; $candidate_high_net <= $net_cents; $candidate_high_net++) {
-            $candidate_low_net = $net_cents - $candidate_high_net;
-            $candidate_low_tax = (int)round($candidate_low_net * $low_rate, 0);
-            $candidate_high_tax = (int)round($candidate_high_net * $high_rate, 0);
-            if (($candidate_low_tax + $candidate_high_tax) !== $tax_cents) {
-                continue;
-            }
-
-            return [
-                'low_net_cents' => $candidate_low_net,
-                'low_tax_cents' => $candidate_low_tax,
-                'high_net_cents' => $candidate_high_net,
-                'high_tax_cents' => $candidate_high_tax,
-            ];
-        }
-
-        return null;
     }
 
     /**
@@ -13703,26 +13319,6 @@ class Twopayment extends PaymentModule
         }
 
         return 0.0;
-    }
-
-    /**
-     * Extract net discount amount from a cart rule.
-     *
-     * @param array $rule
-     * @param float $gross_amount
-     * @return float|null
-     */
-    private function extractTwoDiscountRuleNetAmount($rule, $gross_amount)
-    {
-        if (isset($rule['value_tax_exc']) && is_numeric($rule['value_tax_exc'])) {
-            return abs((float)$rule['value_tax_exc']);
-        }
-
-        if (isset($rule['reduction_tax']) && (int)$rule['reduction_tax'] === 0) {
-            return (float)$gross_amount;
-        }
-
-        return null;
     }
 
     /**
@@ -13804,43 +13400,6 @@ class Twopayment extends PaymentModule
             'description' => Tools::substr(strip_tags($discount_description), 0, 255),
         ];
     }
-
-    /**
-     * Collect tax contexts from positive existing payload lines.
-     *
-     * @param array $existingItems
-     * @return array
-     */
-    private function collectDiscountTaxContextsFromItems($existingItems)
-    {
-        $contexts = [];
-
-        foreach ($existingItems as $item) {
-            $line_gross = isset($item['gross_amount']) ? round((float)$item['gross_amount'], 2) : 0.0;
-            $line_net = isset($item['net_amount']) ? round((float)$item['net_amount'], 2) : 0.0;
-            if ($line_gross <= 0 || $line_net <= 0) {
-                continue;
-            }
-
-            $line_tax = round($line_gross - $line_net, 2);
-            $line_rate = isset($item['tax_rate']) ? round(max(0, (float)$item['tax_rate']), self::TAX_RATE_PRECISION) : 0.0;
-            $context_key = $this->formatTwoTaxRate($line_rate);
-
-            if (!isset($contexts[$context_key])) {
-                $contexts[$context_key] = [
-                    'tax_rate' => $line_rate,
-                    'net_weight' => 0.0,
-                    'tax_weight' => 0.0,
-                ];
-            }
-
-            $contexts[$context_key]['net_weight'] += $line_net;
-            $contexts[$context_key]['tax_weight'] += max(0, $line_tax);
-        }
-
-        return $contexts;
-    }
-
 
     /**
      * Resolve carrier tax-rule rate as decimal (e.g. 0.21 for 21%).
