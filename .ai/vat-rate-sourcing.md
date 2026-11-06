@@ -42,8 +42,9 @@ granularity** PrestaShop used for the amounts.
 
 A discount line relays the rate of the line it discounts; it is never solved from the
 discount's net and tax (TWO-27129). `buildTwoTracedDiscountLines()` takes each rule's
-value in the order core applies it, following `CartRule::getContextualValue()`, which is
-where `Cart::getCartRules()` gets `value_real` on 1.7.6, 8 and 9 alike:
+value following `CartRule::getContextualValue()`, which is where `Cart::getCartRules()`
+gets `value_real` on 1.7.6, 8 and 9 alike. Every rule takes steps 1 and 2 before any rule
+takes step 3, as core takes gifts out of a percentage's base whatever the rules' order:
 
 1. Free shipping: the shipping line(s), each cancelled at its own rate.
 2. Free gift: one unit of the gift product's line.
@@ -52,7 +53,8 @@ where `Cart::getCartRules()` gets `value_real` on 1.7.6, 8 and 9 alike:
    skipping products on special when `reduction_exclude_special` is set. Every part is
    spread by each line's gross. For a tax-excluded amount core spreads the net by net and
    grosses each part up at its row's rate, so the gross parts follow the rows' gross too. A
-   later rule weighs what earlier rules left of each line.
+   later rule weighs what earlier rules left of each line, and no line is discounted past
+   what is left of it: what the rule's lines cannot hold goes over the other product lines.
 4. What the shape does not explain stays on the lines the rule already discounted. A rule
    that cannot be traced (no value stated, deleted since placement) is a whole-order amount
    over the product lines by gross.
