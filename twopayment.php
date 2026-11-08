@@ -12935,7 +12935,7 @@ class Twopayment extends PaymentModule
             }
         }
         // Without every rule's net there is no fair share of the net total, so no rule is given one.
-        $nets = $netTotal !== null && count($netWeights) === count($weights)
+        $nets = $netTotal !== null && count($netWeights) === count($weights) && array_sum($netWeights) > 0
             ? $this->allocateTwoAmountByWeights($netTotal, $netWeights)
             : array();
         $rules = array();
