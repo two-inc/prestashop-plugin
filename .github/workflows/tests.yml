@@ -78,6 +78,7 @@ jobs:
           # Integration probes + their harness. They only run inside a
           # PrestaShop container (.github/workflows/integration.yml), so this
           # is where a syntax error in them gets caught cheaply.
+          php -l tests/integration/cart-rule-discounts.php
           php -l tests/integration/default-shipping-tax-code.php
           php -l tests/integration/line-item-image.php
           php -l tests/integration/multi-carrier-update.php
