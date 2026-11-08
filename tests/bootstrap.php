@@ -360,6 +360,8 @@ namespace {
         public static array $placedCarriers = [];
         /** @var array<int,array<int,array<string,mixed>>> order_cart_rule rows, by id_order */
         public static array $orderCartRules = [];
+        /** @var array<int,array<string,mixed>> cart_rule rows CartRule loads, by id_cart_rule; 'selected' is what checkProductRestrictionsFromCart() returns */
+        public static array $cartRuleRows = [];
         /** @var array<int,PlacedOrderStub> orders Order::getBrother() finds, by id_order */
         public static array $placedOrders = [];
         /** @var array<int,array<int,array<string,mixed>>> order_invoice_tax rows joined to their tax (type, id_tax, rate), by id_order */
@@ -494,6 +496,7 @@ namespace {
             self::$orderDetails = [];
             self::$placedCarriers = [];
             self::$orderCartRules = [];
+            self::$cartRuleRows = [];
             self::$placedOrders = [];
             self::$orderInvoiceTaxes = [];
             self::$orderStates = [];
@@ -2086,6 +2089,44 @@ namespace {
             }
 
             return sha1($uniqId);
+        }
+    }
+
+    /**
+     * Core's cart rule: the fields a rule's shape is read from (TWO-27129). A rule absent from the store is deleted.
+     */
+    class CartRule
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public bool $free_shipping = false;
+        public float $reduction_percent = 0.0;
+        public float $reduction_amount = 0.0;
+        public int $reduction_tax = 0;
+        public int $reduction_product = 0;
+        public int $reduction_exclude_special = 0;
+        public int $gift_product = 0;
+        public int $gift_product_attribute = 0;
+        public int $product_restriction = 0;
+
+        public function __construct($id = null)
+        {
+            $row = StubStore::$cartRuleRows[(int) $id] ?? null;
+            if ($row === null) {
+                return;
+            }
+            $this->loaded = true;
+            $this->id = (int) $id;
+            foreach ($row as $field => $value) {
+                if ($field !== 'selected') {
+                    $this->$field = $value;
+                }
+            }
+        }
+
+        public function checkProductRestrictionsFromCart($cart, $returnProducts = false, $displayError = true, $alreadyInCart = false)
+        {
+            return StubStore::$cartRuleRows[$this->id]['selected'] ?? [];
         }
     }
 
