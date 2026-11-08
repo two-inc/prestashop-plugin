@@ -15,8 +15,9 @@
  *   "rule:<id_tax_rule>"           one of the group's 0% tax rules, the one core picks for the tax address (step 2)
  *   "<id_tax_rules_group>|none"    no tax rule of the group matches the tax address (step 3)
  *
- * A line without a tax rules group (a discount, shipping with no one group, wrapping under PS_ATCP_SHIPWRAP) takes
- * the one code the order's coded 0% lines share, and none when they disagree or there are none (step 4).
+ * A line without a tax rules group (a discount over lines of more than one group, shipping with no one group, wrapping
+ * under PS_ATCP_SHIPWRAP) takes the one code the order's coded 0% lines share, and none when they disagree or there
+ * are none (step 4). A discount over lines of one group is looked up by that group, as they are.
  *
  * A matched row left on (none) gives no code: it never falls through to a later step.
  */

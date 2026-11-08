@@ -71,9 +71,7 @@ final class OrderBuilderSpec
         self::testGetTwoProductItemsRelaysNonCanonicalDeclaredRateInsteadOfSpanishFallback();
         self::testGetTwoProductItemsMultiJurisdictionCartRelaysPerLineDeclaredRates();
         self::testGetTwoProductItemsIgnoresCountryOnlyRateFieldAndRelaysAddressCorrectRate();
-        self::testToleranceSingleRateSegmentRejectsAmbiguousMultiRateFit();
         self::testGetTwoNewOrderDataSplitsAtcpShippingAcrossProductRateClasses();
-        self::testGetTwoNewOrderDataFreeShippingDiscountRederivesGrossWhenNetCapBites();
         self::testGetTwoProductItemsHighQuantityLineStaysWithinNetTolerance();
         self::testGetTwoNewOrderDataOmitsTopLevelTaxRate();
         self::testGetTwoNewOrderDataOmitsTaxSubtotalsWhenDisabled();
@@ -87,6 +85,7 @@ final class OrderBuilderSpec
         self::testGetTwoNewOrderDataIncludesShippingAndDiscountLineItemsWhenReconciled();
         self::testGetTwoNewOrderDataFallbackFreeShippingUsesShippingTaxContext();
         self::testGetTwoNewOrderDataUsesCartRuleMonetaryValuesForDiscountLines();
+        self::testCartRulesOnTaxedProductsNeverBorrowTheZeroRatedShippingRate();
         self::testGetTwoNewOrderDataHandlesMixedCartRuleMetadataWithPartialFallback();
         self::testGetTwoNewOrderDataMixedMetadataKeepsCompleteRuleValuesAndFreeShippingContext();
         self::testGetTwoNewOrderDataSpanishOddDecimalsKeepCanonicalTwentyOneDiscountRates();
@@ -1001,34 +1000,6 @@ final class OrderBuilderSpec
         TinyAssert::same('0.00', (string)$items[2]['tax_amount']);
     }
 
-    private static function testToleranceSingleRateSegmentRejectsAmbiguousMultiRateFit(): void
-    {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-
-        // UNIQUE-FIT RULE: when a tiny row's tax is within tolerance of TWO
-        // declared rates, attribution is ambiguous and must return [] (the
-        // caller fails loud) — accepting the nearest fit would be the exact
-        // relabel-to-neighbouring-rate failure mode the deleted Spanish
-        // fallback had. net=0.20, tax=0.03: 10% implies 0.02 (diff 1c, fits),
-        // 21% implies 0.04 (diff 1c, fits) -> ambiguous.
-        $method = new ReflectionMethod(Twopayment::class, 'buildTwoToleranceSingleRateSegment');
-        $method->setAccessible(true);
-        $ambiguous = $method->invoke($module, 20, 3, [0.10, 0.21]);
-        TinyAssert::same([], $ambiguous, 'Ambiguous multi-rate fit must be rejected, not nearest-matched');
-
-        // Exactly one fitting declared rate is accepted with amounts preserved.
-        $unique = $method->invoke($module, 20, 1, [0.10, 0.21]);
-        TinyAssert::count(1, $unique);
-        TinyAssert::same(0.10, $unique[0]['rate']);
-        TinyAssert::same(0.20, $unique[0]['net']);
-        TinyAssert::same(0.01, $unique[0]['tax']);
-
-        // No fitting rate at all: genuine divergence, also rejected.
-        $none = $method->invoke($module, 10000, 1500, [0.10, 0.21]);
-        TinyAssert::same([], $none, 'Non-reconciling tax must be rejected');
-    }
-
     private static function testGetTwoProductItemsIgnoresCountryOnlyRateFieldAndRelaysAddressCorrectRate(): void
     {
         self::reset();
@@ -1224,123 +1195,6 @@ final class OrderBuilderSpec
         TinyAssert::same('1.73', number_format($taxSum, 2, '.', ''), 'Split taxes must sum to the PrestaShop shipping tax');
         TinyAssert::same('187.73', (string)$payload['gross_amount']);
         TinyAssert::same('160.00', (string)$payload['net_amount']);
-    }
-
-    private static function testGetTwoNewOrderDataFreeShippingDiscountRederivesGrossWhenNetCapBites(): void
-    {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-
-        StubStore::$countries[34] = 'ES';
-        StubStore::$addresses[7701] = [
-            'id_country' => 34,
-            'company' => 'SPAIN',
-            'companyid' => 'E20468708',
-            'address1' => 'Calle Cuatro 4',
-            'city' => 'Madrid',
-            'postcode' => '28010',
-            'phone' => '666666677',
-            'loaded' => true,
-        ];
-        StubStore::$addresses[7702] = StubStore::$addresses[7701];
-
-        $cart = new Cart(18);
-        $cart->id_lang = 1;
-        $cart->id_carrier = 41;
-        $cart->id_address_invoice = 7701;
-        $cart->id_address_delivery = 7702;
-
-        StubStore::$cartProducts[18] = [[
-            'id_product' => 8841,
-            'link_rewrite' => 'cap-bite-product',
-            'name' => 'Cap Bite Product',
-            'description_short' => 'Product',
-            'manufacturer_name' => 'ACME',
-            'ean13' => '',
-            'upc' => '',
-            'total' => 100.00,
-            'total_wt' => 121.00,
-            'cart_quantity' => 1,
-            'rate' => 21.0,
-            'price' => 100.00,
-            'reduction' => 0,
-        ]];
-        StubStore::$productCategories[8841] = [['name' => 'General']];
-        StubStore::$images[8841] = ['id_image' => 8841];
-        self::declareProductRate($cart, 8841, 21.0);
-        StubStore::$carriers[41] = [
-            'name' => 'Cap Carrier',
-            'delay' => '',
-            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
-        ];
-        self::declareCarrierRate($cart, 41, 21.0);
-        StubStore::$cartShipping[18] = [true => 12.10, false => 10.00];
-        // No discounts yet: build the clean product + shipping items first.
-        StubStore::$cartTotals[18] = [
-            true => [Cart::ONLY_DISCOUNTS => 0.00],
-            false => [Cart::ONLY_DISCOUNTS => 0.00],
-            'average_products_tax_rate' => 21.0,
-        ];
-        // Free-shipping rule WITHOUT net metadata (no value_tax_exc): the
-        // discount builder can only take the shipping-context fallback path.
-        StubStore::$cartRules[18] = [[
-            'name' => 'free-ship-cap',
-            'code' => 'free-ship-cap',
-            'value' => -12.10,
-            'value_real' => 12.10,
-            'free_shipping' => 1,
-        ]];
-
-        $items = $module->getTwoProductItems($cart);
-
-        // CAP PATH (TWO-24880 regression): the shipping-ratio-derived net
-        // for a 12.10 gross allocation is 10.00; a cart-level discount NET
-        // total of 9.40 is lower, so the min() cap bites. The old code kept
-        // the 12.10 gross with the clamped 9.40 net (tax 2.70 vs
-        // rate-implied 1.97 - a rate-inconsistent line); the new code
-        // re-derives gross from the capped net at the mirrored shipping
-        // rate. The branch is private and cannot return through the public
-        // builder (see below), so it is invoked directly.
-        $method = new ReflectionMethod(Twopayment::class, 'buildTwoFallbackFreeShippingDiscountLine');
-        $method->setAccessible(true);
-        $fallback = $method->invoke($module, $cart, $items, 12.10, 9.40, null);
-
-        TinyAssert::true(is_array($fallback), 'Expected a fallback free-shipping discount line');
-        TinyAssert::same('9.40', number_format((float)$fallback['net'], 2, '.', ''));
-        TinyAssert::same('11.37', number_format((float)$fallback['gross'], 2, '.', ''), 'Gross must be re-derived from the capped net, not clamped at 12.10');
-
-        $line = $fallback['line'];
-        TinyAssert::same('-9.40', (string)$line['net_amount']);
-        TinyAssert::same('-1.97', (string)$line['tax_amount']); // round(9.40 * 0.21, 2)
-        TinyAssert::same('-11.37', (string)$line['gross_amount']);
-        TinyAssert::same('0.21', (string)$line['tax_rate']);
-        $lineNet = (float)$line['net_amount'];
-        $lineTax = (float)$line['tax_amount'];
-        $lineGross = (float)$line['gross_amount'];
-        TinyAssert::same(
-            number_format($lineNet + $lineTax, 2, '.', ''),
-            number_format($lineGross, 2, '.', ''),
-            'Free-shipping discount line gross must equal net + tax exactly'
-        );
-        TinyAssert::true(
-            abs($lineTax - (float)$line['tax_rate'] * $lineNet) <= 0.02,
-            'Free-shipping discount line must satisfy |tax - rate*net| <= 0.02'
-        );
-
-        // Through the PUBLIC builder the same cart data must fail loud: the
-        // re-derived (smaller) gross leaves a 0.73 gross residue with zero
-        // net remaining, which is attributable to no declared rate - the
-        // cart's own discount totals (12.10 gross on 9.40 net = 28.7%)
-        // contradict the declared 21%. The old code silently absorbed that
-        // contradiction into a rate-inconsistent line.
-        StubStore::$cartTotals[18][true][Cart::ONLY_DISCOUNTS] = 12.10;
-        StubStore::$cartTotals[18][false][Cart::ONLY_DISCOUNTS] = 9.40;
-        TinyAssert::throws(
-            static function () use ($module, $cart): void {
-                $module->getTwoProductItems($cart);
-            },
-            'Discount amounts diverge from all declared cart tax rates'
-        );
     }
 
     private static function testGetTwoProductItemsHighQuantityLineStaysWithinNetTolerance(): void
@@ -2596,6 +2450,51 @@ final class OrderBuilderSpec
         $lineRate = (float)$discountLine['tax_rate'];
         $diff = abs($lineTax - ($lineNet * $lineRate));
         TinyAssert::true($diff <= 0.02, 'Expected discount line tax formula to remain within tolerance, diff=' . $diff);
+    }
+
+    /**
+     * TWO-27129: three products at 21%, shipping at 0% (a module that zeroes shipping tax), and two whole-order
+     * amounts tax included. Core values them at 21%; the second rule's net is a cent off 21% of it, which the old
+     * rate solver explained by moving three cents onto the 0% shipping rate. Traced, each stays on its products.
+     */
+    private static function testCartRulesOnTaxedProductsNeverBorrowTheZeroRatedShippingRate(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        $cart = new Cart(27129);
+        $cart->id_carrier = 271;
+        StubStore::$carriers[271] = ['name' => 'Courier', 'delay' => '', 'shipping_method' => Carrier::SHIPPING_METHOD_WEIGHT, 'tax_rules_group_id' => 272];
+        StubStore::$taxRuleRates[272] = 0.0;
+        $rows = [[2711, '379.00', '313.22', 1], [2712, '125.26', '103.52', 2], [2713, '39.00', '32.23', 1]];
+        StubStore::$cartProducts[27129] = [];
+        foreach ($rows as [$id, $gross, $net, $qty]) {
+            StubStore::$cartProducts[27129][] = [
+                'id_product' => $id, 'link_rewrite' => 'p' . $id, 'name' => 'Product ' . $id, 'description_short' => '',
+                'manufacturer_name' => '', 'ean13' => '', 'upc' => '', 'total' => (float) $net, 'total_wt' => (float) $gross,
+                'cart_quantity' => $qty, 'price' => round((float) $net / $qty, 6), 'reduction' => 0,
+            ];
+            self::declareProductRate($cart, $id, 21.0);
+        }
+        StubStore::$cartTotals[27129] = [
+            true => [Cart::ONLY_SHIPPING => 32.98, Cart::ONLY_DISCOUNTS => 32.98, Cart::BOTH => 543.26],
+            false => [Cart::ONLY_SHIPPING => 32.98, Cart::ONLY_DISCOUNTS => 27.26, Cart::BOTH => 454.69],
+        ];
+        StubStore::$cartRules[27129] = [
+            ['name' => 'Voucher A', 'value_real' => 29.99, 'value_tax_exc' => 24.79, 'reduction_amount' => 29.99, 'reduction_tax' => 1, 'reduction_product' => 0],
+            ['name' => 'Voucher B', 'value_real' => 2.99, 'value_tax_exc' => 2.47, 'reduction_amount' => 2.99, 'reduction_tax' => 1, 'reduction_product' => 0],
+        ];
+
+        $discounts = [];
+        foreach ($module->getTwoProductItems($cart) as $line) {
+            if ((float) $line['gross_amount'] < 0) {
+                $discounts[] = $line['name'] . ' ' . $line['gross_amount'] . '/' . $line['net_amount'] . '/' . $line['tax_amount'] . '@' . $line['tax_rate'];
+            }
+        }
+        TinyAssert::same(
+            'Voucher A -29.99/-24.79/-5.20@0.21; Voucher B -2.99/-2.47/-0.52@0.21',
+            implode('; ', $discounts),
+            'no 0% discount line unless a rule discounts a 0% line'
+        );
     }
 
     private static function testGetTwoNewOrderDataUsesCartRuleMonetaryValuesForDiscountLines(): void
@@ -5896,6 +5795,7 @@ require __DIR__ . '/TwoInvoiceRetrievalSpec.php';
 require __DIR__ . '/TrackingNumberSpec.php';
 require __DIR__ . '/OrderEditRefusalSpec.php';
 require __DIR__ . '/PlacedOrderUpdateSpec.php';
+require __DIR__ . '/CartRuleTracingSpec.php';
 require __DIR__ . '/RefundSpec.php';
 require __DIR__ . '/IdempotencyKeySpec.php';
 require __DIR__ . '/SurchargeSpec.php';
@@ -5991,6 +5891,7 @@ $tests = [
     'TrackingNumberSpec::runAll' => [TrackingNumberSpec::class, 'runAll'],
     'OrderEditRefusalSpec::runAll' => [OrderEditRefusalSpec::class, 'runAll'],
     'PlacedOrderUpdateSpec::runAll' => [PlacedOrderUpdateSpec::class, 'runAll'],
+    'CartRuleTracingSpec::runAll' => [CartRuleTracingSpec::class, 'runAll'],
     'RefundSpec::runAll' => [RefundSpec::class, 'runAll'],
     'IdempotencyKeySpec::runAll' => [IdempotencyKeySpec::class, 'runAll'],
     'SurchargeSpec::runAll' => [SurchargeSpec::class, 'runAll'],
