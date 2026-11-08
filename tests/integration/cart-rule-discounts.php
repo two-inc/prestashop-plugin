@@ -427,6 +427,10 @@ function crdRunCase($name)
         }
     }
 
+    if ($failures === array() && !is_array($payload)) {
+        $failures[] = 'checkout built no order request';
+    }
+
     if (is_array($payload)) {
         $discount_net = 0;
         $discount_gross = 0;
