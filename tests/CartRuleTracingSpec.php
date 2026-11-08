@@ -22,20 +22,28 @@ final class CartRuleTracingSpec
     private static function testCartDiscountTotalIsSharedByRuleValue(): void
     {
         $two = [['name' => 'A', 'value_real' => 6.00], ['name' => 'B', 'value_real' => 4.00]];
+        // 150.00 and 120.00 tax included over 121.00 at 21%, 110.00 at 10% and 104.00 at 4%: core's net per rule
+        // divides by the average rate rounded to 0.117, the cart's net total by each line's own rate.
+        $voucher = ['name' => 'V', 'value_real' => 150.00, 'value_tax_exc' => 134.29];
+        $second = ['name' => 'W', 'value_real' => 120.00, 'value_tax_exc' => 107.43];
         $cases = [
-            [$two, 10.00, 'A 6.00; B 4.00', 'values that add up to the total are kept exactly'],
-            [$two, 9.00, 'A 5.40; B 3.60', 'a total below the values is shared by value'],
-            [$two, 11.00, 'A 6.60; B 4.40', 'a total above the values is shared by value'],
-            [[['name' => 'Ship', 'free_shipping' => 1], ['name' => 'Other']], 10.00, 'Ship (+1 more) 10.00 untraced free_shipping',
+            [$two, 10.00, null, 'A 6.00; B 4.00', 'values that add up to the total are kept exactly'],
+            [$two, 9.00, null, 'A 5.40; B 3.60', 'a total below the values is shared by value'],
+            [$two, 11.00, null, 'A 6.60; B 4.40', 'a total above the values is shared by value'],
+            [[['name' => 'Ship', 'free_shipping' => 1], ['name' => 'Other']], 10.00, null, 'Ship (+1 more) 10.00 untraced free_shipping',
                 'no rule states a value: one untraced discount that waives shipping first'],
+            [[$voucher], 150.00, 134.33, 'V 150.00 net 134.33', 'one rule: its net is the cart\'s net total, not its rounded-average net'],
+            [[$voucher, $second], 270.00, 241.79, 'V 150.00 net 134.33; W 120.00 net 107.46', 'two rules share the cart\'s net total by their nets'],
+            [[$voucher, ['name' => 'X', 'value_real' => 10.00]], 160.00, 143.26, 'V 150.00; X 10.00', 'a rule without a net: no rule is given one'],
         ];
         $module = new TwopaymentTestHarness();
         $share = new ReflectionMethod(Twopayment::class, 'buildTwoDiscountLinesFromCartRules');
-        foreach ($cases as [$rules, $total, $want, $description]) {
+        foreach ($cases as [$rules, $total, $netTotal, $want, $description]) {
             $got = implode('; ', array_map(function ($entry) {
                 return trim($entry['descriptor']['name'] . ' ' . number_format($entry['gross'], 2, '.', '')
+                    . (isset($entry['net']) ? ' net ' . number_format($entry['net'], 2, '.', '') : '')
                     . (empty($entry['rule']['untraced']) ? '' : ' untraced') . (empty($entry['rule']['free_shipping']) ? '' : ' free_shipping'));
-            }, $share->invoke($module, $rules, $total)));
+            }, $share->invoke($module, $rules, $total, $netTotal)));
             TinyAssert::same($want, $got, $description);
         }
     }
@@ -171,7 +179,7 @@ final class CartRuleTracingSpec
             [$twoFour, $twoFourRefs, [self::rule('NetEx', '11.25', ['reduction_amount' => 10, 'reduction_tax' => 0], '10.00')],
                 'NetEx (VAT 21.00%) -6.05/-5.00/-1.05@0.21; NetEx (VAT 4.00%) -5.20/-5.00/-0.20@0.04', 'tax-excluded 10.00 over 21% and 4%: net exactly 10.00'],
             [$mixed, $mixedRefs, [self::rule('NetIn', '10.00', ['reduction_amount' => 10, 'reduction_tax' => 1], '8.52')],
-                'NetIn (VAT 21.00%) -6.88/-5.68/-1.20@0.21; NetIn (VAT 10.00%) -3.12/-2.84/-0.28@0.1', 'tax-included: a cent moves to tax on the largest line to meet the rule\'s net'],
+                'NetIn (VAT 21.00%) -6.88/-5.68/-1.20@0.21; NetIn (VAT 10.00%) -3.12/-2.84/-0.28@0.1', 'tax-included: a cent moves to tax on the largest line to meet the cart\'s net share 8.52'],
             [$three, $threeRefs, [self::rule('First', '29.99', ['reduction_amount' => 29.99, 'reduction_tax' => 1], '24.79'), self::rule('Second', '2.99', ['reduction_amount' => 2.99, 'reduction_tax' => 1], '2.47')],
                 'First -29.99/-24.79/-5.20@0.21; Second -2.99/-2.47/-0.52@0.21', 'refused cart with core\'s nets: already equal, nothing moves'],
             [$mixed, $mixedRefs, [self::rule('NetFar', '12.10', ['reduction_percent' => 10, 'reduction_product' => 1], '9.97')],

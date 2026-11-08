@@ -12886,7 +12886,11 @@ class Twopayment extends PaymentModule
         }
 
         return $this->buildTwoTracedDiscountLines(
-            $this->buildTwoDiscountLinesFromCartRules($cart->getCartRules(), $total),
+            $this->buildTwoDiscountLinesFromCartRules(
+                $cart->getCartRules(),
+                $total,
+                round((float) $cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS), 2)
+            ),
             $existingItems,
             $productRefs,
             $cart
@@ -12895,13 +12899,16 @@ class Twopayment extends PaymentModule
 
     /**
      * The cart's rules with the share of the discount total each one carries. The total is what the cart charges, so
-     * the shares add up to it exactly; they are each rule's own value whenever the values add up to the total.
+     * the shares add up to it exactly; they are each rule's own value whenever the values add up to the total. The
+     * cart's net discount total is shared the same way by the rules' nets, as each rule's net comes from an average
+     * tax rate that core rounds, while the total is worked out at each line's own rate.
      *
      * @param array $cart_rules Cart::getCartRules()
      * @param float $total the cart's discount total, tax included
-     * @return array each {rule, gross, descriptor}
+     * @param float|null $netTotal the cart's discount total, tax excluded
+     * @return array each {rule, gross, descriptor, net}
      */
-    private function buildTwoDiscountLinesFromCartRules($cart_rules, $total)
+    private function buildTwoDiscountLinesFromCartRules($cart_rules, $total, $netTotal = null)
     {
         $cart_rules = is_array($cart_rules) ? $cart_rules : array();
         $weights = array();
@@ -12921,6 +12928,16 @@ class Twopayment extends PaymentModule
                 'descriptor' => $this->buildTwoDiscountDescriptor($cart_rules),
             ));
         }
+        $netWeights = array();
+        foreach (array_keys($weights) as $key) {
+            if (isset($cart_rules[$key]['value_tax_exc']) && is_numeric($cart_rules[$key]['value_tax_exc'])) {
+                $netWeights[$key] = (float) $cart_rules[$key]['value_tax_exc'];
+            }
+        }
+        // Without every rule's net there is no fair share of the net total, so no rule is given one.
+        $nets = $netTotal !== null && count($netWeights) === count($weights)
+            ? $this->allocateTwoAmountByWeights($netTotal, $netWeights)
+            : array();
         $rules = array();
         foreach ($this->allocateTwoAmountByWeights($total, $weights) as $key => $gross) {
             $rule = $cart_rules[$key];
@@ -12928,10 +12945,7 @@ class Twopayment extends PaymentModule
                 'rule' => $rule,
                 'gross' => $gross,
                 'descriptor' => $this->buildTwoSingleDiscountDescriptor($rule),
-                // PrestaShop's net for the rule, in proportion where the cart's total shares it differently.
-                'net' => isset($rule['value_tax_exc']) && is_numeric($rule['value_tax_exc'])
-                    ? round(abs((float) $rule['value_tax_exc']) * $gross / $weights[$key], 2)
-                    : null,
+                'net' => isset($nets[$key]) ? $nets[$key] : null,
             );
         }
 
