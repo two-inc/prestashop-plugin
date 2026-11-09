@@ -417,9 +417,10 @@ final class SurchargeSpec
     }
 
     /**
-     * TWO-27185: Two's fee quote refuses a percentage above 100, so one stored
-     * before the save refused it (TWO-27162) is quoted as 100. Values from 0
-     * to 100 pass through untouched.
+     * TWO-27185: Two's fee quote refuses a percentage outside 0 to 100, so one
+     * stored before the save refused it (TWO-27162, TWO-27107) is quoted at
+     * the nearer bound and left as stored. Values from 0 to 100 pass through
+     * untouched.
      */
     private static function testBuildTwoBuyerFeeShareQuotesAStoredPercentageAboveMaxAsMax(): void
     {
@@ -427,8 +428,11 @@ final class SurchargeSpec
         $cases = [
             ['percentage', '150', 100.0, 'a stored 150 is quoted as 100'],
             ['fixed_and_percentage', '150', 100.0, 'a fixed fee and percentage quotes 150 as 100 too'],
+            ['percentage', '100.5', 100.0, 'a stored 100.5 is quoted as 100'],
             ['percentage', '100', 100.0, 'a stored 100 is quoted as 100'],
             ['percentage', '99.5', 99.5, 'a stored 99.5 is quoted untouched'],
+            ['percentage', '0', 0.0, 'a stored 0 is quoted as 0'],
+            ['percentage', '-5', 0.0, 'a stored -5 is quoted as 0'],
         ];
 
         foreach ($cases as [$method, $stored, $quoted, $description]) {
@@ -437,6 +441,7 @@ final class SurchargeSpec
             Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $stored);
             $share = (new TwopaymentTestHarness())->buildTwoBuyerFeeShare(30);
             TinyAssert::same($quoted, $share['percentage'], $description);
+            TinyAssert::same($stored, Configuration::get('PS_TWO_SURCHARGE_PCT_30'), $description . ' (stored value kept)');
         }
     }
 

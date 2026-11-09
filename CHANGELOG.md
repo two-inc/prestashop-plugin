@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **A surcharge percentage above 100 is refused on save** (TWO-27162), naming the term. The percentage is the share of Two's fee passed to the buyer, so it runs from 0 to 100; Two refuses to quote a fee above 100, which withheld Two at checkout for that term. Only a percentage in use is checked: the term is ticked and valid for the term type, and the method uses a percentage, so a hidden cell never blocks the save.
-- **A surcharge percentage stored above 100 is quoted as 100** (TWO-27185), so Two stays offered at checkout for that term. The stored value is not rewritten, and values from 0 to 100 are quoted as stored.
+- **A surcharge percentage stored outside 0 to 100 is quoted at the nearer bound** (TWO-27185): above 100 as 100, below 0 as 0, so Two stays offered at checkout for that term. The stored value is not rewritten, and values from 0 to 100 are quoted as stored.
 - **Surcharge grid cells are checked whatever the surcharge method** (TWO-27107). A non-numeric or negative value typed while the method is none was stored, and became a live fee when the method was switched on.
 - **A second custom header row with a name already used is refused** (TWO-27107), matched case-insensitively; on read the first row of a name wins.
 - **The vendor name is checked on save** (TWO-27107): printable ASCII, at most 255 characters, since it is sent as a header. A refused name keeps the saved one and the other settings still save; it is checked again where it is sent.
