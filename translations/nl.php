@@ -537,6 +537,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_c3d38f77a364bef3afec146aece7a3b3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] = 'verborgen voor winkelwagens in %s';
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'de standaardvaluta van de winkel heeft geen ISO-code.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s voor de termijn van %2$d dagen moet een niet-negatief getal zijn, maar bevat "%3$s".';
+$_MODULE['<{twopayment}prestashop>twopayment_94b1e21aea613a7bcf99c5d8a5514b6f'] = '%1$s voor de termijn van %2$d dagen moet tussen 0 en 100 liggen: het is het deel van de vergoeding dat aan de koper wordt doorberekend.';
 $_MODULE['<{twopayment}prestashop>twopayment_c155e5a355e32ad3ceeda1f8e71a93b9'] = 'Er is geen betaaltermijn beschikbaar om een toeslag over te berekenen. De lijst Betaaltermijnen hierboven en het type betaaltermijn bepalen welke termijnen hier verschijnen.';
 $_MODULE['<{twopayment}prestashop>twopayment_c9a4942151f3f04aca175871bc85f862'] = 'Koop nu, ontvang je goederen, betaal je factuur later.';
 $_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] = 'Bericht tonen op productpagina’s';

@@ -21639,13 +21639,24 @@ class Twopayment extends PaymentModule
                     continue;
                 }
                 $normalized = $this->normalizeTwoSurchargeNumber($raw);
-                if ($normalized === null || (float) $normalized < 0) {
-                    $cell_error = sprintf(
-                        $this->l('%1$s for the %2$d-day term must be a non-negative number, but reads "%3$s".'),
-                        $this->getTwoSurchargeFieldLabel($suffix),
-                        $days,
-                        htmlspecialchars(is_scalar($raw) ? trim((string) $raw) : gettype($raw), ENT_QUOTES, 'UTF-8')
-                    );
+                // The percentage is checked on the normalised value, the one
+                // the save stores, so a comma decimal cannot slip past it.
+                $over_max = $normalized !== null
+                    && $suffix === 'PCT'
+                    && (float) $normalized > TwoSurchargeCalculator::MAX_PERCENTAGE;
+                if ($normalized === null || (float) $normalized < 0 || $over_max) {
+                    $cell_error = $over_max
+                        ? sprintf(
+                            $this->l('%1$s for the %2$d-day term must be between 0 and 100: it is the share of the fee passed to the buyer.'),
+                            $this->getTwoSurchargeFieldLabel($suffix),
+                            $days
+                        )
+                        : sprintf(
+                            $this->l('%1$s for the %2$d-day term must be a non-negative number, but reads "%3$s".'),
+                            $this->getTwoSurchargeFieldLabel($suffix),
+                            $days,
+                            htmlspecialchars(is_scalar($raw) ? trim((string) $raw) : gettype($raw), ENT_QUOTES, 'UTF-8')
+                        );
                     // The grid is hidden while the method is none, so say how
                     // to reach the cell (TWO-27107): the admin JS shows it as
                     // soon as another method is chosen, before any save.

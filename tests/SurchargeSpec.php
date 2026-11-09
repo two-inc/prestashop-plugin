@@ -1982,6 +1982,10 @@ final class SurchargeSpec
             ['', '-1', '', ['Fixed fee for the 30-day term'], null, 'a negative is refused by column and term'],
             ['', '', '0,0', ['Surcharge cap for the 30-day term cannot be 0'], null, 'a comma zero cap is normalised before the zero-cap rule'],
             ['abc', 'abc', '', ['Percentage for the 30-day term', 'Fixed fee for the 30-day term'], null, 'each bad cell is reported, not just the first'],
+            ['100', '', '', [], ['100', '', ''], 'a percentage of 100 saves: it passes the whole fee on (TWO-27162)'],
+            ['100.01', '', '', ['Percentage for the 30-day term must be between 0 and 100'], null, 'a percentage above 100 is refused: Two\'s fee quote refuses it'],
+            ['100,01', '', '', ['Percentage for the 30-day term must be between 0 and 100'], null, 'a comma percentage above 100 is refused on its normalised value'],
+            ['', '150', '150', [], ['', '150', '150'], 'the 100 ceiling is the percentage\'s alone, not the fixed fee\'s or the cap\'s'],
         ];
 
         foreach ($cases as [$pct, $fixed, $cap, $expectedErrors, $expectedStored, $description]) {
