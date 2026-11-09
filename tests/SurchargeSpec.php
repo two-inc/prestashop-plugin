@@ -2085,7 +2085,7 @@ final class SurchargeSpec
     {
         // [method, stored percentages by term, ticked terms, expected fragment ('' = no notice), description]
         $cases = [
-            ['percentage', [30 => '150'], [30], ': 30 days. Set each from 0 to 100', 'an offered term above 100 is named'],
+            ['percentage', [30 => '150'], [30], 'set from 0 to 100: 30 days.', 'an offered term above 100 is named'],
             ['percentage', [30 => '150', 60 => '100.5'], [30, 60], ': 30 days, 60 days.', 'every offered term above 100 is named'],
             ['fixed_and_percentage', [30 => '150'], [30], ': 30 days.', 'a fixed fee and percentage uses the percentage'],
             ['percentage', [30 => '100'], [30], '', '100 is within range'],
