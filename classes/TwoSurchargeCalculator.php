@@ -38,7 +38,9 @@ class TwoSurchargeCalculator
     /**
      * The percentage is the share of Two's fee passed to the buyer, so it runs
      * from 0 to 100. The pricing API refuses anything above 100, which would
-     * withhold Two at checkout for that term (TWO-27162).
+     * withhold Two at checkout for that term: the save refuses one
+     * (TWO-27162) and the quote sends a stored one as 100, and a stored
+     * negative one (TWO-27107) as 0 (TWO-27185).
      */
     const MAX_PERCENTAGE = 100;
 
@@ -121,8 +123,12 @@ class TwoSurchargeCalculator
         $days = (int) $days;
         $row = isset($grid[$days]) && is_array($grid[$days]) ? $grid[$days] : array();
 
+        // A percentage stored outside 0 to 100 before the save refused it is
+        // quoted at the nearer bound (TWO-27185).
         $buyer_fee_share = array(
-            'percentage' => $hasPercentage && isset($row['percentage']) ? (float) $row['percentage'] : 0.0,
+            'percentage' => $hasPercentage && isset($row['percentage'])
+                ? max(0.0, min((float) $row['percentage'], (float) self::MAX_PERCENTAGE))
+                : 0.0,
             'surcharge_basis' => 'buyer_pays',
         );
 
