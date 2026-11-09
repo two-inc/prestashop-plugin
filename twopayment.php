@@ -1392,6 +1392,13 @@ class Twopayment extends PaymentModule
             $this->output .= $this->displayError($neverTaxedNotice);
         }
 
+        // A stored surcharge percentage above 100 on an offered term
+        // (TWO-27162): Two is withheld at checkout for that term.
+        $overMaxNotice = $this->getTwoSurchargePercentageOverMaxNotice();
+        if ($overMaxNotice !== '') {
+            $this->output .= $this->displayWarning($overMaxNotice);
+        }
+
         // Stored key that does not currently verify (TWO-25326). displayError,
         // not displayWarning: while this shows, Two is not offered at checkout
         // at all. Rendered from the cached verdict, so opening this page costs
@@ -19069,6 +19076,43 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * Warning text naming each term offered at checkout whose STORED surcharge
+     * percentage is above 100, or '' when there is none (TWO-27162).
+     *
+     * Two refuses to quote such a fee, so the checkout withholds Two for that
+     * term, and nothing else tells the merchant why. The value is not
+     * rewritten: clamping it would change the buyer's fee unannounced. Read
+     * through Configuration::get in the page's own shop context, the same
+     * read the grid renders its cells from.
+     *
+     * @return string
+     */
+    public function getTwoSurchargePercentageOverMaxNotice()
+    {
+        $type = TwoSurchargeCalculator::normalizeType(Configuration::get('PS_TWO_SURCHARGE_TYPE'));
+        if (!in_array($type, array('percentage', 'fixed_and_percentage'), true)) {
+            return '';
+        }
+        $terms = array();
+        foreach ($this->getAvailablePaymentTerms() as $days) {
+            $normalized = $this->normalizeTwoSurchargeNumber(Configuration::get('PS_TWO_SURCHARGE_PCT_' . (int) $days));
+            if ($normalized !== null && (float) $normalized > TwoSurchargeCalculator::MAX_PERCENTAGE) {
+                $terms[] = sprintf($this->l('%d days'), (int) $days);
+            }
+        }
+        if (empty($terms)) {
+            return '';
+        }
+
+        return sprintf(
+            $this->l('%1$s is not offered at checkout on these payment terms, because their surcharge percentage is above %2$d: %3$s. Set each from 0 to %2$d in the surcharge grid.'),
+            $this->getTwoBrandConfig('product_name'),
+            TwoSurchargeCalculator::MAX_PERCENTAGE,
+            implode(', ', $terms)
+        );
+    }
+
+    /**
      * Fail-loud error text for a shop whose STORED surcharge tax treatment is
      * a never-taxed one, or '' when there is nothing to report (TWO-25279).
      *
@@ -21600,7 +21644,8 @@ class Twopayment extends PaymentModule
 
     /**
      * Refuse a non-numeric or negative surcharge grid cell, naming the field
-     * and the term, and a zero cap while the cap column is visible. Runs for
+     * and the term, a zero cap while the cap column is visible, and a
+     * percentage above 100 on a term whose percentage is in use. Runs for
      * every surcharge method, none included. Appends to $this->errors.
      *
      * @param string $type the posted surcharge method, already mapped
@@ -21625,10 +21670,25 @@ class Twopayment extends PaymentModule
         // is skipped, and a legacy zero resurfaces when the column comes back
         // into view, which is where they can act on it.
         $cap_column_visible = in_array($type, array('percentage', 'fixed_and_percentage'), true);
+        // The term type THIS submission saves, else the stored one (an absent
+        // selector leaves it untouched, as saveTwoPaymentTermsFormValues does).
+        $posted_term_type = Tools::getValue('PS_TWO_PAYMENT_TERM_TYPE');
+        $term_type = ($posted_term_type === 'STANDARD' || $posted_term_type === 'EOM')
+            ? $posted_term_type
+            : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE');
 
         $rendered_terms = array_map('intval', $this->getOfferableTermSource());
         foreach ($rendered_terms as $days) {
             $days = (int) $days;
+            // The percentage is in use where its column shows and the term
+            // is offered in THIS submission: ticked, and valid for the term
+            // type, the gates the grid's row visibility applies. Only then is
+            // a percentage above 100 refused (TWO-27162). An unused hidden
+            // value still posts and is harmless, and refusing it would block
+            // the whole save over a cell the merchant cannot see.
+            $percentage_in_use = $cap_column_visible
+                && Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $days)
+                && ($term_type !== 'EOM' || in_array($days, self::EOM_PAYMENT_TERMS_OPTIONS, true));
             foreach (array('PCT', 'FIXED', 'CAP') as $suffix) {
                 $raw = Tools::getValue('PS_TWO_SURCHARGE_' . $suffix . '_' . $days);
                 // An UNSUBMITTED cell is nothing to validate. `false` is what
@@ -21639,24 +21699,13 @@ class Twopayment extends PaymentModule
                     continue;
                 }
                 $normalized = $this->normalizeTwoSurchargeNumber($raw);
-                // The percentage is checked on the normalised value, the one
-                // the save stores, so a comma decimal cannot slip past it.
-                $over_max = $normalized !== null
-                    && $suffix === 'PCT'
-                    && (float) $normalized > TwoSurchargeCalculator::MAX_PERCENTAGE;
-                if ($normalized === null || (float) $normalized < 0 || $over_max) {
-                    $cell_error = $over_max
-                        ? sprintf(
-                            $this->l('%1$s for the %2$d-day term must be between 0 and 100: it is the share of the fee passed to the buyer.'),
-                            $this->getTwoSurchargeFieldLabel($suffix),
-                            $days
-                        )
-                        : sprintf(
-                            $this->l('%1$s for the %2$d-day term must be a non-negative number, but reads "%3$s".'),
-                            $this->getTwoSurchargeFieldLabel($suffix),
-                            $days,
-                            htmlspecialchars(is_scalar($raw) ? trim((string) $raw) : gettype($raw), ENT_QUOTES, 'UTF-8')
-                        );
+                if ($normalized === null || (float) $normalized < 0) {
+                    $cell_error = sprintf(
+                        $this->l('%1$s for the %2$d-day term must be a non-negative number, but reads "%3$s".'),
+                        $this->getTwoSurchargeFieldLabel($suffix),
+                        $days,
+                        htmlspecialchars(is_scalar($raw) ? trim((string) $raw) : gettype($raw), ENT_QUOTES, 'UTF-8')
+                    );
                     // The grid is hidden while the method is none, so say how
                     // to reach the cell (TWO-27107): the admin JS shows it as
                     // soon as another method is chosen, before any save.
@@ -21671,6 +21720,19 @@ class Twopayment extends PaymentModule
                     continue;
                 }
                 $raw = $normalized;
+                // Checked on the normalised value, the one the save stores, so
+                // a comma decimal cannot slip past it.
+                if ($suffix === 'PCT'
+                    && $percentage_in_use
+                    && (float) $raw > TwoSurchargeCalculator::MAX_PERCENTAGE
+                ) {
+                    $this->errors[] = sprintf(
+                        $this->l('%1$s for the %2$d-day term must be between 0 and %3$d: it is the share of the fee passed to the buyer.'),
+                        $this->getTwoSurchargeFieldLabel($suffix),
+                        $days,
+                        TwoSurchargeCalculator::MAX_PERCENTAGE
+                    );
+                }
                 // A cap of exactly 0 is refused (TWO-25289). It is never what
                 // a merchant means by it: the cap bounds the WHOLE fee - the
                 // percentage and the fixed fee together, not the percentage

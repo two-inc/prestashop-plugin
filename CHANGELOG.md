@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The switch that skipped the order-intent token check** (TWO-27107). The check always runs; upgrade 2.7.22 deletes `PS_TWO_SKIP_CONFIRM_TOKEN_CHECK`.
 
 ### Fixed
-- **A surcharge percentage above 100 is refused on save** (TWO-27162), naming the term. The percentage is the share of Two's fee passed to the buyer, so it runs from 0 to 100; Two refuses to quote a fee above 100, which withheld Two at checkout for that term. A value already stored above 100 is not rewritten: the next save of the grid asks for it to be corrected.
+- **A surcharge percentage above 100 is refused on save** (TWO-27162), naming the term. The percentage is the share of Two's fee passed to the buyer, so it runs from 0 to 100; Two refuses to quote a fee above 100, which withheld Two at checkout for that term. Only a percentage in use is checked: the term is ticked and valid for the term type, and the method uses a percentage, so a hidden cell never blocks the save. A value already stored above 100 is not rewritten; while an offered term carries one, the configuration page warns that Two is withheld for it.
 - **Surcharge grid cells are checked whatever the surcharge method** (TWO-27107). A non-numeric or negative value typed while the method is none was stored, and became a live fee when the method was switched on.
 - **A second custom header row with a name already used is refused** (TWO-27107), matched case-insensitively; on read the first row of a name wins.
 - **The vendor name is checked on save** (TWO-27107): printable ASCII, at most 255 characters, since it is sent as a header. A refused name keeps the saved one and the other settings still save; it is checked again where it is sent.

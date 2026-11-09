@@ -517,7 +517,8 @@ $_MODULE['<{twopayment}prestashop>twopayment_d74f5295cfbc83c79a5737ed01bc13d3'] 
 $_MODULE['<{twopayment}prestashop>twopayment_d798878a0be2e5e69e818bd8164c1172'] = 'No se ha podido actualizar el estado a cancelado; consúltalo con el administrador de %1$s para el id %2$s';
 $_MODULE['<{twopayment}prestashop>twopayment_da26aecbab950874dc37e7b30d82b40d'] = 'El valor mínimo del pedido es %1$s%2$s %3$s impuestos.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s para el plazo de %2$d días debe ser un número no negativo, pero indica "%3$s".';
-$_MODULE['<{twopayment}prestashop>twopayment_94b1e21aea613a7bcf99c5d8a5514b6f'] = '%1$s para el plazo de %2$d días debe estar entre 0 y 100: es la parte de la comisión que se repercute al comprador.';
+$_MODULE['<{twopayment}prestashop>twopayment_6ba6befa84b91de3d91c7df55db2ef3f'] = '%1$s para el plazo de %2$d días debe estar entre 0 y %3$d: es la parte de la comisión que se repercute al comprador.';
+$_MODULE['<{twopayment}prestashop>twopayment_9de49d7fb7abfeacb0c40ddc51d01b1b'] = '%1$s no se ofrece en el proceso de pago para estos plazos de pago, porque su porcentaje de recargo es superior a %2$d: %3$s. Establece cada uno entre 0 y %2$d en la tabla de recargos.';
 $_MODULE['<{twopayment}prestashop>twopayment_db5339c11ff939031a0d03b4025af52e'] = 'Versión del plugin:';
 $_MODULE['<{twopayment}prestashop>twopayment_dc7d3d42b2b2b79bf2711799b38f2543'] = 'Comisión fija';
 $_MODULE['<{twopayment}prestashop>twopayment_ddbb2c51fdb8d9c867287e4815a4bc07'] = 'Consejos para la resolución de problemas';
