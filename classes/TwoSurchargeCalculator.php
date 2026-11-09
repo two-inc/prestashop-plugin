@@ -40,7 +40,7 @@ class TwoSurchargeCalculator
      * from 0 to 100. The pricing API refuses anything above 100, which would
      * withhold Two at checkout for that term: the save refuses one
      * (TWO-27162) and the quote sends a stored one as 100, and a stored
-     * negative one as 0 (TWO-27185).
+     * negative one (TWO-27107) as 0 (TWO-27185).
      */
     const MAX_PERCENTAGE = 100;
 

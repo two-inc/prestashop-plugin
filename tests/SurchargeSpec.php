@@ -34,7 +34,7 @@ final class SurchargeSpec
         self::testUnrecognisedSurchargeMethodWithholdsTwoOnly();
         self::testGetSurchargeSettingsReadsConfigGrid();
         self::testBuildTwoBuyerFeeShareWiresConfigAndDefaultTerm();
-        self::testBuildTwoBuyerFeeShareQuotesAStoredPercentageAboveMaxAsMax();
+        self::testBuildTwoBuyerFeeShareQuotesAStoredPercentageOutsideRangeAtTheNearerBound();
         self::testRoundingStepOptionsAreBrandDrivenSortedAndFormatted();
         self::testSurchargeLineLabelTemplateBrandAndDefault();
         self::testSurchargeLineLabelIsEmptyWithNoOfferedTerm();
@@ -422,7 +422,7 @@ final class SurchargeSpec
      * the nearer bound and left as stored. Values from 0 to 100 pass through
      * untouched.
      */
-    private static function testBuildTwoBuyerFeeShareQuotesAStoredPercentageAboveMaxAsMax(): void
+    private static function testBuildTwoBuyerFeeShareQuotesAStoredPercentageOutsideRangeAtTheNearerBound(): void
     {
         // [method, stored percentage, quoted percentage, description]
         $cases = [
