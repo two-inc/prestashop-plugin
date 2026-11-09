@@ -34,6 +34,7 @@ final class SurchargeSpec
         self::testUnrecognisedSurchargeMethodWithholdsTwoOnly();
         self::testGetSurchargeSettingsReadsConfigGrid();
         self::testBuildTwoBuyerFeeShareWiresConfigAndDefaultTerm();
+        self::testBuildTwoBuyerFeeShareQuotesAStoredPercentageAboveMaxAsMax();
         self::testRoundingStepOptionsAreBrandDrivenSortedAndFormatted();
         self::testSurchargeLineLabelTemplateBrandAndDefault();
         self::testSurchargeLineLabelIsEmptyWithNoOfferedTerm();
@@ -71,7 +72,6 @@ final class SurchargeSpec
         self::testOrderPageShowsAnUpdateTwoNeverReceivedUntilOneLands();
         self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
         self::testSurchargePercentageCeilingAppliesWhereThePercentageIsInUse();
-        self::testSurchargePercentageOverMaxNoticeNamesOfferedTerms();
         self::testSurchargeGridEmptyStateReplacesTheHeadings();
         self::testSurchargeGridNamesTheShopDefaultCurrency();
         self::testSurchargeGridCellsAreCheckedWhateverTheMethod();
@@ -414,6 +414,30 @@ final class SurchargeSpec
         TinyAssert::same(['step' => 0.5, 'basis' => 'STANDARD'], $share['rounding']);
         // Only term 30 is offered, so the differential reference term is 30.
         TinyAssert::same(['type' => 'NET_TERMS', 'duration_days' => 30], $share['reference_terms']);
+    }
+
+    /**
+     * TWO-27185: Two's fee quote refuses a percentage above 100, so one stored
+     * before the save refused it (TWO-27162) is quoted as 100. Values from 0
+     * to 100 pass through untouched.
+     */
+    private static function testBuildTwoBuyerFeeShareQuotesAStoredPercentageAboveMaxAsMax(): void
+    {
+        // [method, stored percentage, quoted percentage, description]
+        $cases = [
+            ['percentage', '150', 100.0, 'a stored 150 is quoted as 100'],
+            ['fixed_and_percentage', '150', 100.0, 'a fixed fee and percentage quotes 150 as 100 too'],
+            ['percentage', '100', 100.0, 'a stored 100 is quoted as 100'],
+            ['percentage', '99.5', 99.5, 'a stored 99.5 is quoted untouched'],
+        ];
+
+        foreach ($cases as [$method, $stored, $quoted, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $method);
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $stored);
+            $share = (new TwopaymentTestHarness())->buildTwoBuyerFeeShare(30);
+            TinyAssert::same($quoted, $share['percentage'], $description);
+        }
     }
 
     private static function testRoundingStepOptionsAreBrandDrivenSortedAndFormatted(): void
@@ -2074,45 +2098,6 @@ final class SurchargeSpec
             }
         }
         Tools::resetTestValues();
-    }
-
-    /**
-     * TWO-27162: a percentage stored above 100 before the save refused it
-     * withholds Two for that term until someone saves, so the configuration
-     * page names each offered term carrying one.
-     */
-    private static function testSurchargePercentageOverMaxNoticeNamesOfferedTerms(): void
-    {
-        // [method, stored percentages by term, ticked terms, expected fragment ('' = no notice), description]
-        $cases = [
-            ['percentage', [30 => '150'], [30], 'set from 0 to 100: 30 days.', 'an offered term above 100 is named'],
-            ['percentage', [30 => '150', 60 => '100.5'], [30, 60], ': 30 days, 60 days.', 'every offered term above 100 is named'],
-            ['fixed_and_percentage', [30 => '150'], [30], ': 30 days.', 'a fixed fee and percentage uses the percentage'],
-            ['percentage', [30 => '100'], [30], '', '100 is within range'],
-            ['percentage', [30 => '2', 60 => '150'], [30], '', 'a term not offered is not named'],
-            ['fixed', [30 => '150'], [30], '', 'a fixed-only method sends no percentage'],
-            ['none', [30 => '150'], [30], '', 'no surcharge sends no percentage'],
-        ];
-
-        foreach ($cases as [$method, $stored, $ticked, $expected, $description]) {
-            self::reset();
-            Tools::resetTestValues();
-            $module = self::makeConfigHarness();
-            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $method);
-            foreach ($stored as $days => $pct) {
-                Configuration::updateValue('PS_TWO_SURCHARGE_PCT_' . $days, $pct);
-            }
-            foreach ($ticked as $days) {
-                Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $days, 1);
-            }
-
-            $notice = $module->getTwoSurchargePercentageOverMaxNotice();
-            if ($expected === '') {
-                TinyAssert::same('', $notice, $description);
-            } else {
-                TinyAssert::true(strpos($notice, $expected) !== false, $description . ' (got "' . $notice . '")');
-            }
-        }
     }
 
     /**

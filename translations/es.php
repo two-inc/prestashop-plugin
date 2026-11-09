@@ -518,7 +518,6 @@ $_MODULE['<{twopayment}prestashop>twopayment_d798878a0be2e5e69e818bd8164c1172'] 
 $_MODULE['<{twopayment}prestashop>twopayment_da26aecbab950874dc37e7b30d82b40d'] = 'El valor mínimo del pedido es %1$s%2$s %3$s impuestos.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s para el plazo de %2$d días debe ser un número no negativo, pero indica "%3$s".';
 $_MODULE['<{twopayment}prestashop>twopayment_6ba6befa84b91de3d91c7df55db2ef3f'] = '%1$s para el plazo de %2$d días debe estar entre 0 y %3$d: es la parte de la comisión que se repercute al comprador.';
-$_MODULE['<{twopayment}prestashop>twopayment_3af94549109b1d84bdde74965d1fe241'] = '%1$s no se ofrece en el proceso de pago para cada plazo de pago indicado aquí hasta que su porcentaje de recargo se establezca entre 0 y %2$d: %3$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_db5339c11ff939031a0d03b4025af52e'] = 'Versión del plugin:';
 $_MODULE['<{twopayment}prestashop>twopayment_dc7d3d42b2b2b79bf2711799b38f2543'] = 'Comisión fija';
 $_MODULE['<{twopayment}prestashop>twopayment_ddbb2c51fdb8d9c867287e4815a4bc07'] = 'Consejos para la resolución de problemas';
