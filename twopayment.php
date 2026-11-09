@@ -1392,13 +1392,6 @@ class Twopayment extends PaymentModule
             $this->output .= $this->displayError($neverTaxedNotice);
         }
 
-        // A stored surcharge percentage above 100 on an offered term
-        // (TWO-27162): Two is withheld at checkout for that term.
-        $overMaxNotice = $this->getTwoSurchargePercentageOverMaxNotice();
-        if ($overMaxNotice !== '') {
-            $this->output .= $this->displayWarning($overMaxNotice);
-        }
-
         // Stored key that does not currently verify (TWO-25326). displayError,
         // not displayWarning: while this shows, Two is not offered at checkout
         // at all. Rendered from the cached verdict, so opening this page costs
@@ -19076,43 +19069,6 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Warning text naming each term offered at checkout whose STORED surcharge
-     * percentage is above 100, or '' when there is none (TWO-27162).
-     *
-     * Two refuses to quote such a fee, so the checkout withholds Two for that
-     * term, and nothing else tells the merchant why. The value is not
-     * rewritten: clamping it would change the buyer's fee unannounced. Read
-     * through Configuration::get in the page's own shop context, the same
-     * read the grid renders its cells from.
-     *
-     * @return string
-     */
-    public function getTwoSurchargePercentageOverMaxNotice()
-    {
-        $type = TwoSurchargeCalculator::normalizeType(Configuration::get('PS_TWO_SURCHARGE_TYPE'));
-        if (!in_array($type, array('percentage', 'fixed_and_percentage'), true)) {
-            return '';
-        }
-        $terms = array();
-        foreach ($this->getAvailablePaymentTerms() as $days) {
-            $normalized = $this->normalizeTwoSurchargeNumber(Configuration::get('PS_TWO_SURCHARGE_PCT_' . (int) $days));
-            if ($normalized !== null && (float) $normalized > TwoSurchargeCalculator::MAX_PERCENTAGE) {
-                $terms[] = sprintf($this->l('%d days'), (int) $days);
-            }
-        }
-        if (empty($terms)) {
-            return '';
-        }
-
-        return sprintf(
-            $this->l('%1$s is withheld at checkout for each payment term listed here until its surcharge percentage is set from 0 to %2$d: %3$s.'),
-            $this->getTwoBrandConfig('product_name'),
-            TwoSurchargeCalculator::MAX_PERCENTAGE,
-            implode(', ', $terms)
-        );
-    }
-
-    /**
      * Fail-loud error text for a shop whose STORED surcharge tax treatment is
      * a never-taxed one, or '' when there is nothing to report (TWO-25279).
      *
@@ -21688,8 +21644,8 @@ class Twopayment extends PaymentModule
             // the whole save over a cell the merchant cannot see.
             // The deprecated custom term is offered at checkout with no tick
             // of its own, so a stored percentage above 100 on it passes here
-            // and foldInTwoLegacyCustomTerm() then ticks it. The configuration
-            // page's over-100 notice still names it after the save.
+            // and foldInTwoLegacyCustomTerm() then ticks it. The fee quote
+            // sends it as 100 (TWO-27185).
             $percentage_in_use = $cap_column_visible
                 && Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $days)
                 && ($term_type !== 'EOM' || in_array($days, self::EOM_PAYMENT_TERMS_OPTIONS, true));
