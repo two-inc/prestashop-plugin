@@ -19105,7 +19105,7 @@ class Twopayment extends PaymentModule
         }
 
         return sprintf(
-            $this->l('%1$s is not offered at checkout on these payment terms, because their surcharge percentage is above %2$d: %3$s. Set each from 0 to %2$d in the surcharge grid.'),
+            $this->l('%1$s is withheld at checkout for each payment term listed here until its surcharge percentage is set from 0 to %2$d: %3$s.'),
             $this->getTwoBrandConfig('product_name'),
             TwoSurchargeCalculator::MAX_PERCENTAGE,
             implode(', ', $terms)
@@ -21686,6 +21686,10 @@ class Twopayment extends PaymentModule
             // a percentage above 100 refused (TWO-27162). An unused hidden
             // value still posts and is harmless, and refusing it would block
             // the whole save over a cell the merchant cannot see.
+            // The deprecated custom term is offered at checkout with no tick
+            // of its own, so a stored percentage above 100 on it passes here
+            // and foldInTwoLegacyCustomTerm() then ticks it. The configuration
+            // page's over-100 notice still names it after the save.
             $percentage_in_use = $cap_column_visible
                 && Tools::getValue('PS_TWO_PAYMENT_TERMS_' . $days)
                 && ($term_type !== 'EOM' || in_array($days, self::EOM_PAYMENT_TERMS_OPTIONS, true));

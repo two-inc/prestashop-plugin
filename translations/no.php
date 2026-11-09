@@ -538,7 +538,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_1581211a61e3398149aed5e21c20bc7a'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b8d4d17c0152bbc430bbb0a6b80c2acf'] = 'butikkens standardvaluta har ingen ISO-kode.';
 $_MODULE['<{twopayment}prestashop>twopayment_db451f268c5c0c1ab6eed9c483f3a68d'] = '%1$s for betingelsen på %2$d dager må være et ikke-negativt tall, men inneholder "%3$s".';
 $_MODULE['<{twopayment}prestashop>twopayment_6ba6befa84b91de3d91c7df55db2ef3f'] = '%1$s for betingelsen på %2$d dager må være mellom 0 og %3$d: det er andelen av gebyret som videreføres til kjøperen.';
-$_MODULE['<{twopayment}prestashop>twopayment_9de49d7fb7abfeacb0c40ddc51d01b1b'] = '%1$s tilbys ikke i kassen for disse betalingsvilkårene, fordi tilleggsprosenten deres er over %2$d: %3$s. Sett hver av dem til mellom 0 og %2$d i tilleggstabellen.';
+$_MODULE['<{twopayment}prestashop>twopayment_3af94549109b1d84bdde74965d1fe241'] = '%1$s tilbys ikke i kassen for hvert betalingsvilkår som er oppført her, før tilleggsprosenten for det er satt til mellom 0 og %2$d: %3$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_c155e5a355e32ad3ceeda1f8e71a93b9'] = 'Ingen betalingsbetingelse er tilgjengelig for tillegg. Listen Betalingsbetingelser over og typen betalingsbetingelse bestemmer hvilke betingelser som vises her.';
 $_MODULE['<{twopayment}prestashop>twopayment_c9a4942151f3f04aca175871bc85f862'] = 'Kjøp nå, motta varene dine, betal fakturaen senere.';
 $_MODULE['<{twopayment}prestashop>twopayment_a8eeec5bcf1b15f6ac890233331fd0ca'] = 'Vis melding på produktsider';
