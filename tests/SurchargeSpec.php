@@ -70,6 +70,8 @@ final class SurchargeSpec
         self::testAdminOrderHooksWarnInsteadOfThrowingAFailedUpdate();
         self::testOrderPageShowsAnUpdateTwoNeverReceivedUntilOneLands();
         self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
+        self::testSurchargePercentageCeilingAppliesWhereThePercentageIsInUse();
+        self::testSurchargePercentageOverMaxNoticeNamesOfferedTerms();
         self::testSurchargeGridEmptyStateReplacesTheHeadings();
         self::testSurchargeGridNamesTheShopDefaultCurrency();
         self::testSurchargeGridCellsAreCheckedWhateverTheMethod();
@@ -1985,6 +1987,7 @@ final class SurchargeSpec
             ['100', '', '', [], ['100', '', ''], 'a percentage of 100 saves: it passes the whole fee on (TWO-27162)'],
             ['100.01', '', '', ['Percentage for the 30-day term must be between 0 and 100'], null, 'a percentage above 100 is refused: Two\'s fee quote refuses it'],
             ['100,01', '', '', ['Percentage for the 30-day term must be between 0 and 100'], null, 'a comma percentage above 100 is refused on its normalised value'],
+            ['1e3', '', '', ['Percentage for the 30-day term must be between 0 and 100'], null, 'an exponent percentage is refused on its value, 1000'],
             ['', '150', '150', [], ['', '150', '150'], 'the 100 ceiling is the percentage\'s alone, not the fixed fee\'s or the cap\'s'],
         ];
 
@@ -1996,6 +1999,7 @@ final class SurchargeSpec
 
             Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
             Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            Tools::setTestValue('PS_TWO_PAYMENT_TERMS_30', '1');
             Tools::setTestValue('PS_TWO_SURCHARGE_PCT_30', $pct);
             Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_30', $fixed);
             Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', $cap);
@@ -2016,6 +2020,98 @@ final class SurchargeSpec
             TinyAssert::same($expectedStored[0], (string) Configuration::get('PS_TWO_SURCHARGE_PCT_30'), $description);
             TinyAssert::same($expectedStored[1], (string) Configuration::get('PS_TWO_SURCHARGE_FIXED_30'), $description);
             TinyAssert::same($expectedStored[2], (string) Configuration::get('PS_TWO_SURCHARGE_CAP_30'), $description);
+        }
+    }
+
+    /**
+     * TWO-27162: a percentage above 100 is refused only where the percentage
+     * is in use, the term offered in this submission and the method using a
+     * percentage. A hidden cell still posts, and refusing it would block the
+     * whole save over a value the merchant cannot see.
+     */
+    private static function testSurchargePercentageCeilingAppliesWhereThePercentageIsInUse(): void
+    {
+        // [method, term ticked in this post, posted term type (null: absent, stored EOM), term, refused, description]
+        $cases = [
+            ['percentage', true, 'STANDARD', 30, true, 'an offered percentage term at 150 is refused'],
+            ['fixed_and_percentage', true, 'STANDARD', 30, true, 'a fixed fee and percentage uses the percentage too'],
+            ['percentage', false, 'STANDARD', 30, false, 'an unticked term is hidden: its stored 150 saves untouched'],
+            ['fixed', true, 'STANDARD', 30, false, 'a fixed-only method hides the percentage: a stored 150 saves'],
+            ['none', true, 'STANDARD', 30, false, 'no method uses no percentage: 150 saves and no grid hint is due'],
+            ['percentage', true, 'EOM', 90, false, 'a term the end-of-month type does not offer is hidden: 150 saves'],
+            ['percentage', true, 'EOM', 30, true, 'an end-of-month term under that type is offered: refused'],
+            ['percentage', true, null, 90, false, 'an absent term type selector falls back to the stored type'],
+        ];
+
+        foreach ($cases as [$method, $ticked, $termType, $days, $refused, $description]) {
+            self::reset();
+            Tools::resetTestValues();
+            StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+            $module = self::makeConfigHarness();
+
+            Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', $method);
+            Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            if ($termType === null) {
+                Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'EOM');
+            } else {
+                Tools::setTestValue('PS_TWO_PAYMENT_TERM_TYPE', $termType);
+            }
+            if ($ticked) {
+                Tools::setTestValue('PS_TWO_PAYMENT_TERMS_' . $days, '1');
+            }
+            Tools::setTestValue('PS_TWO_SURCHARGE_PCT_' . $days, '150');
+
+            $errors = $module->validateSurchargeFormForTest();
+            TinyAssert::count($refused ? 1 : 0, $errors, $description);
+            if ($refused) {
+                TinyAssert::true(
+                    strpos($errors[0], 'Percentage for the ' . $days . '-day term must be between 0 and 100') !== false,
+                    $description . ' (got "' . $errors[0] . '")'
+                );
+            } elseif ($days === 30) {
+                $module->saveSurchargeFormForTest();
+                TinyAssert::same('150', (string) Configuration::get('PS_TWO_SURCHARGE_PCT_30'), $description);
+            }
+        }
+        Tools::resetTestValues();
+    }
+
+    /**
+     * TWO-27162: a percentage stored above 100 before the save refused it
+     * withholds Two for that term until someone saves, so the configuration
+     * page names each offered term carrying one.
+     */
+    private static function testSurchargePercentageOverMaxNoticeNamesOfferedTerms(): void
+    {
+        // [method, stored percentages by term, ticked terms, expected fragment ('' = no notice), description]
+        $cases = [
+            ['percentage', [30 => '150'], [30], ': 30 days. Set each from 0 to 100', 'an offered term above 100 is named'],
+            ['percentage', [30 => '150', 60 => '100.5'], [30, 60], ': 30 days, 60 days.', 'every offered term above 100 is named'],
+            ['fixed_and_percentage', [30 => '150'], [30], ': 30 days.', 'a fixed fee and percentage uses the percentage'],
+            ['percentage', [30 => '100'], [30], '', '100 is within range'],
+            ['percentage', [30 => '2', 60 => '150'], [30], '', 'a term not offered is not named'],
+            ['fixed', [30 => '150'], [30], '', 'a fixed-only method sends no percentage'],
+            ['none', [30 => '150'], [30], '', 'no surcharge sends no percentage'],
+        ];
+
+        foreach ($cases as [$method, $stored, $ticked, $expected, $description]) {
+            self::reset();
+            Tools::resetTestValues();
+            $module = self::makeConfigHarness();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $method);
+            foreach ($stored as $days => $pct) {
+                Configuration::updateValue('PS_TWO_SURCHARGE_PCT_' . $days, $pct);
+            }
+            foreach ($ticked as $days) {
+                Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $days, 1);
+            }
+
+            $notice = $module->getTwoSurchargePercentageOverMaxNotice();
+            if ($expected === '') {
+                TinyAssert::same('', $notice, $description);
+            } else {
+                TinyAssert::true(strpos($notice, $expected) !== false, $description . ' (got "' . $notice . '")');
+            }
         }
     }
 
