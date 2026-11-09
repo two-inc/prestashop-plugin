@@ -36,6 +36,13 @@ class TwoSurchargeCalculator
     const MONEY_DECIMALS = 2;
 
     /**
+     * The percentage is the share of Two's fee passed to the buyer, so it runs
+     * from 0 to 100. The pricing API refuses anything above 100, which would
+     * withhold Two at checkout for that term (TWO-27162).
+     */
+    const MAX_PERCENTAGE = 100;
+
+    /**
      * ADMIN form only: a stored junk value must still render a correctable page.
      *
      * @param mixed $type
