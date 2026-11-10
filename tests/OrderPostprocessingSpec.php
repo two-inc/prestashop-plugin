@@ -188,6 +188,20 @@ final class OrderPostprocessingSpec
             public array $sent = [];
             /** @var array<int,string[]> the request headers each send would carry, in $sent's order */
             public array $sentHeaders = [];
+            /** @var array<int,string[]> the request headers each GET in $gets would carry */
+            public array $getHeaders = [];
+            /** @var array<int,int[]>|null [id_order, id_order_state] per status change, recorded instead of made when set */
+            public ?array $statusChanges = null;
+
+            public function changeOrderStatus($id_order, $id_order_status)
+            {
+                if ($this->statusChanges === null) {
+                    return parent::changeOrderStatus($id_order, $id_order_status);
+                }
+                $this->statusChanges[] = [(int) $id_order, (int) $id_order_status];
+
+                return true;
+            }
             public string $twoState = 'CONFIRMED';
             /** @var array|null the answer to every PUT, when set */
             public ?array $putAnswer = null;
@@ -226,6 +240,7 @@ final class OrderPostprocessingSpec
                 }
                 if ($method === 'GET') {
                     $this->gets[] = $endpoint;
+                    $this->getHeaders[] = $this->getTwoRequestHeaders($endpoint, $additional_headers);
                 }
                 $lines = $method === 'GET' && $this->twoLines !== null ? ['line_items' => $this->twoLines] : [];
                 if ($method === 'GET' && $this->twoRefunds !== null) {
@@ -1679,22 +1694,38 @@ final class OrderPostprocessingSpec
                 $m->twoState = 'FULFILLED';
                 $m->hookActionOrderSlipAdd(['order' => $placed(), 'order_slip' => $slip]);
             }, '/refund', 'a credit slip'],
+            [static function ($m) {
+                $m->twoState = 'CANCELLED';
+                $m->statusChanges = [];
+                Context::getContext()->smarty->assigned = [];
+                $m->hookDisplayAdminOrderTabContent(['id_order' => self::ORDER]);
+                $shown = Context::getContext()->smarty->assigned;
+                TinyAssert::same(['/v1/order/' . self::TWO_ORDER], $m->gets, 'the order panel: reads the order from Two');
+                TinyAssert::same([[self::ORDER, 13]], $m->statusChanges, 'the order panel: moves the status by the order shop\'s cancelled map');
+                TinyAssert::true($shown['use_own_invoices'], 'the order panel: the order shop\'s own-invoices setting');
+                TinyAssert::true($shown['two_pending_check_url'] !== '', 'the order panel: the order shop\'s awaiting-verification status');
+            }, null, 'the order panel\'s refresh from Two'],
         ];
         try {
             foreach ($cases as [$driver, $endpoint, $description]) {
                 self::seed(true);
                 StubStore::$orders[self::ORDER]['id_shop'] = 10;
+                StubStore::$orders[self::ORDER]['current_state'] = 15;
                 StubStore::$multistore = true;
                 StubStore::$shops = [1 => 1, 10 => 1];
                 StubStore::$configuration['PS_TWO_OS_FULFILLED_MAP'] = json_encode([4]);
                 StubStore::$configuration['PS_TWO_OS_CANCELLED_MAP'] = 6;
                 StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
                 StubStore::$configuration['PS_TWO_MERCHANT_API_KEY'] = 'all-shops-key';
+                StubStore::$configuration['PS_TWO_OS_AWAITING_VERIFICATION'] = 16;
+                StubStore::$configuration[Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED] = 0;
                 StubStore::$configurationShop[10] = [
                     'PS_TWO_OS_FULFILLED_MAP' => json_encode([12]),
                     'PS_TWO_OS_CANCELLED_MAP' => 13,
                     'PS_TWO_OS_REFUNDED_MAP' => 14,
                     'PS_TWO_MERCHANT_API_KEY' => 'shop-10-key',
+                    'PS_TWO_OS_AWAITING_VERIFICATION' => 15,
+                    Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED => 1,
                 ];
                 Shop::setContext(Shop::CONTEXT_ALL);
                 $backOfficeShop = Context::getContext()->shop;
@@ -1715,7 +1746,7 @@ final class OrderPostprocessingSpec
                     TinyAssert::same($endpoint, substr($sent[0]['endpoint'], -strlen($endpoint)), $description . ': endpoint');
                     TinyAssert::same($calls[0]['payload_out'], $sent[0]['payload'], $description . ': sends what the subscriber left');
                 }
-                foreach ($module->sentHeaders as $headers) {
+                foreach (array_merge($module->sentHeaders, $module->getHeaders) as $headers) {
                     TinyAssert::same(['X-API-Key:shop-10-key'], array_values(preg_grep('/^X-API-Key:/', $headers)), $description . ': the order shop\'s API key');
                 }
                 TinyAssert::same([Shop::CONTEXT_ALL, null], [Shop::getContext(), Shop::getContextShopID()], $description . ': the back office\'s shop context is handed back');

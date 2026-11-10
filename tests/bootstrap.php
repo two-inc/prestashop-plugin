@@ -1252,6 +1252,11 @@ namespace {
             return 'token';
         }
 
+        public static function getAdminTokenLite($tab, $context = null): string
+        {
+            return 'admin-token';
+        }
+
         public static function redirect($url): void
         {
             throw new StubRedirect((string) $url);
@@ -3077,6 +3082,7 @@ namespace {
         public $total_paid = 0.0;
         /** Core's is null until the order loads. */
         public $id_shop = null;
+        public $current_state = 0;
         public bool $loaded = false;
 
         public function __construct($id = 0)
@@ -3087,6 +3093,7 @@ namespace {
                 $this->id = $id;
                 $this->loaded = true;
                 $this->id_shop = (int) ($row['id_shop'] ?? 1);
+                $this->current_state = (int) ($row['current_state'] ?? 0);
                 $this->module = (string) ($row['module'] ?? '');
                 $this->id_cart = (int) ($row['id_cart'] ?? 0);
                 $this->id_customer = (int) ($row['id_customer'] ?? 0);
