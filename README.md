@@ -846,7 +846,11 @@ the changed subtotals against the order's lines at Two, as it itemises its own: 
 amount the subscriber moved from one rate to another is credited to lines of the kind
 it came from, so refunded shipping moved to another rate goes to the shipping line at
 that rate. The subtotals of a rate refunding nothing are then dropped, as with the
-module's own lines. A subscriber that sets `line_items` itself keeps them. When the
+module's own lines. A re-rate must keep the refund's gross (the subtotals' taxable plus
+tax, within a cent of the module's split) and name each rate once, merging into an
+existing entry rather than adding a second one for the same rate: the module itemises
+only then, and otherwise sends the refund as the subscriber left it, without lines,
+with its own reason logged. A subscriber that sets `line_items` itself keeps them. When the
 changed subtotals cannot be itemised either (one rate asks for more than the lines at
 that rate have left, say), the refund goes without lines as before, and the module
 logs why, naming the changed subtotals. A subscriber that re-rates should therefore

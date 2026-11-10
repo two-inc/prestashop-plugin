@@ -262,15 +262,15 @@ final class RefundSpec
         $money = static function (float $amount): string {
             return number_format($amount, 2, '.', '');
         };
-        // Moves $gross of the refund from rate $from to rate $to, split at $to.
-        $move = static function (string $gross, string $from = '0', string $to = '0.21') use ($sub, $money): callable {
-            return static function (array &$p) use ($gross, $from, $to, $sub, $money): void {
+        // Moves $gross of the refund from rate $from to rate $to, split at $to; with $append, as a new entry for $to.
+        $move = static function (string $gross, string $from = '0', string $to = '0.21', bool $append = false) use ($sub, $money): callable {
+            return static function (array &$p) use ($gross, $from, $to, $append, $sub, $money): void {
                 $net = round((float) $gross / (1 + (float) $to), 2);
                 $into = null;
                 foreach ($p['tax_subtotals'] as $i => $t) {
                     if (abs((float) $t['tax_rate'] - (float) $from) < 0.000001) {
                         $p['tax_subtotals'][$i]['taxable_amount'] = $money((float) $t['taxable_amount'] - (float) $gross);
-                    } elseif (abs((float) $t['tax_rate'] - (float) $to) < 0.000001) {
+                    } elseif (!$append && abs((float) $t['tax_rate'] - (float) $to) < 0.000001) {
                         $into = $i;
                     }
                 }
@@ -315,6 +315,10 @@ final class RefundSpec
         $remainderLines = [self::twoLine('p1', 'PHYSICAL', '0.25', '100.00'), self::twoLine('s1', 'SHIPPING_FEE', '0.25', '18.40')];
         $leave = static function (array &$p): void {
         };
+        // Re-rates the 0% shipping keeping its net, so the refund's gross grows by the tax.
+        $keepNet = static function (array &$p) use ($sub): void {
+            $p['tax_subtotals'] = [$sub('0.21', '12.10', '2.54')];
+        };
         $cases = [
             [$slip(0.0, 12.10), [$p1, $s1], [], $move('12.10'), [['s1', '10.00', '2.10', '12.10']], null, 'a shipping-only slip re-rated: itemised to the shipping line'],
             [$slip(60.50, 12.10), [$p1, $s1], [], $move('12.10'), [['p1', '50.00', '10.50', '60.50'], ['s1', '10.00', '2.10', '12.10']], null, 'products and re-rated shipping: each to its own kind'],
@@ -323,6 +327,8 @@ final class RefundSpec
             [$slip(0.0, 12.10), [$s1], [self::twoRefund('-6.05', ['s1' => '-6.05'])], $move('12.10'), null, 'rate 0.21 have 6.05 left to refund, less than 12.1', 'a re-rated over-refund: unitemised with the warning on the rate it was moved to'],
             [$slip(0.0, 12.10), [$p1, $s1], [], $move('6.05'), null, 'rate 0.000000 have 0 left to refund, less than 6.05', 'part of the shipping left at 0%: unitemised with the warning on what is left'],
             [$slip(0.0, 12.10), [$p1, $s1], [], $own, [['own', '10.00', '2.10', '12.10']], null, 'a subscriber that sets its own lines: left alone'],
+            [$slip(60.50, 12.10), [$p1, $s1], [], $move('12.10', '0', '0.21', true), null, 'rate 0.000000 have 0 left to refund, less than 12.1', 'a rate named twice (0.21 beside 0.210000): sent as left, unitemised with the module\'s warning'],
+            [$slip(0.0, 12.10), [$p1, $s1], [], $keepNet, null, 'rate 0.000000 have 0 left to refund, less than 12.1', 'a re-rate that keeps the net, so changes the gross: sent as left, unitemised with the module\'s warning'],
             [$remainder, $remainderLines, [self::twoRefund('-50.00', ['p1' => '-50.00'])], $move('23.00', '0', '0.25'), [['p1', '60.00', '15.00', '75.00'], ['s1', '18.40', '4.60', '23.00']], null, 'the remainder re-rated: itemised by what each line has left'],
         ];
         foreach ($cases as [$refund, $lines, $refunds, $edit, $expected, $warning, $desc]) {

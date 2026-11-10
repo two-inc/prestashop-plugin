@@ -7132,6 +7132,8 @@ class Twopayment extends PaymentModule
      * without lines (TWO-27204): itemised from the changed subtotals with buildTwoRefundLineItems(), each moved amount
      * credited to lines of the kind it came from (getTwoReratedRefundKinds()). A subscriber re-rates a line at order
      * creation, so Two holds it at a rate the shop's own refund figures do not carry, and re-rates the refund to match.
+     * Only changed subtotals that name each rate once and keep the refund's gross (within a cent) are itemised; any
+     * others are sent as the subscriber left them, without lines and with the module's own reason logged.
      * When the changed subtotals cannot be itemised either (more than the lines at a rate have left, say), the refund
      * goes without lines as before, and $unitemised is set to the reason the changed subtotals give.
      *
@@ -7150,12 +7152,25 @@ class Twopayment extends PaymentModule
             || TwoOrderPostprocessing::canonical($edited) === TwoOrderPostprocessing::canonical($tax_subtotals)) {
             return $payload;
         }
+        $rates = array();
+        $gross = 0.0;
         foreach ($edited as $subtotal) {
             foreach (array('tax_rate', 'taxable_amount', 'tax_amount') as $field) {
                 if (!is_array($subtotal) || !isset($subtotal[$field]) || !is_numeric($subtotal[$field])) {
                     return $payload;
                 }
             }
+            $rates[] = number_format((float)$subtotal['tax_rate'], 6, '.', '');
+            $gross += (float)$subtotal['taxable_amount'] + (float)$subtotal['tax_amount'];
+        }
+        $split = 0.0;
+        foreach ($tax_subtotals as $subtotal) {
+            $split += (float)$subtotal['taxable_amount'] + (float)$subtotal['tax_amount'];
+        }
+        // Itemised only as one entry per rate that keeps the refund's gross: lines for a rate named twice would credit
+        // its kinds twice, and lines for another gross would not sum to the amount. Otherwise sent as the subscriber left it.
+        if (count(array_unique($rates)) !== count($rates) || abs(round($gross - $split, 2)) > 0.01) {
+            return $payload;
         }
         $lines = $this->buildTwoRefundLineItems($edited, $two_order, $this->getTwoReratedRefundKinds($tax_subtotals, $edited, $kind_gross), $label, $reason);
         if ($lines === null) {
