@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.7.23] - Unreleased
 
 ### Fixed
-- **Back-office actions on an order run in the order's shop** (TWO-27200). On a multistore install, an order edit, a tracking number, a status change (fulfil, cancel, refund), a credit slip and the invoice download ran in the shop picked in the back office's shop selector. With "All shops" or another shop selected, an `actionTwoOrderPostprocessing` subscriber hooked only in the order's shop was skipped, and the status mappings and API key were that shop's rather than the order's. Each of these now switches to the order's shop for the duration and switches back afterwards.
+- **Back-office actions on an order run in the order's shop** (TWO-27200). On a multistore install, an order edit, a tracking number, a status change (fulfil, cancel, refund), a credit slip, the invoice download and the order panels' refresh from Two ran in the shop picked in the back office's shop selector. With "All shops" or another shop selected, an `actionTwoOrderPostprocessing` subscriber hooked only in the order's shop was skipped, and the status mappings and API key were that shop's rather than the order's. Each of these now switches to the order's shop for the duration and switches back afterwards, and the API key is read from the shop in context on every request rather than once per page.
 
 ## [2.7.22] - Unreleased
 
