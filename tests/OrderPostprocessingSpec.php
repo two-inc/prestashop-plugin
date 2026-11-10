@@ -1703,6 +1703,7 @@ final class OrderPostprocessingSpec
                 TinyAssert::same(['/v1/order/' . self::TWO_ORDER], $m->gets, 'the order panel: reads the order from Two');
                 TinyAssert::same([[self::ORDER, 13]], $m->statusChanges, 'the order panel: moves the status by the order shop\'s cancelled map');
                 TinyAssert::true($shown['use_own_invoices'], 'the order panel: the order shop\'s own-invoices setting');
+                // The stub records the status change without applying it, so the order is still awaiting verification here.
                 TinyAssert::true($shown['two_pending_check_url'] !== '', 'the order panel: the order shop\'s awaiting-verification status');
             }, null, 'the order panel\'s refresh from Two'],
         ];
