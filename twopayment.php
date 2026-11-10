@@ -5790,6 +5790,9 @@ class Twopayment extends PaymentModule
     public function hookActionOrderStatusUpdate($params)
     {
         $order = new Order((int) $params['id_order']);
+        if ($order->module != $this->name) {
+            return;
+        }
         // The status maps and the subscribers are the order's shop's, not the back office's (TWO-27200).
         return TwoOrderShopContext::run($order, function () use ($params, $order) {
             return $this->processTwoOrderStatusUpdate($params, $order);
