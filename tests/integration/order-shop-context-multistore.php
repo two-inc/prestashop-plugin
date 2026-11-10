@@ -124,18 +124,14 @@ if ($phase === 'check') {
     $shopB->id_category = (int) $shopA->id_category;
     $shopB->theme_name = $shopA->theme_name;
     $shopB->active = 0;
-    $added = $source > 0 && $shopB->add();
-    $check($added, 'shop B is added');
-    $idShopB = (int) $shopB->id;
-    $copy = $added ? (new Order($source))->duplicateObject() : false;
-    $idOrder = is_object($copy) ? (int) $copy->id : 0;
-    $check($idOrder > 0, 'the order is copied');
-    register_shutdown_function(static function () use ($shopB, $idShopB, $idOrder, $saved) {
+    $idOrder = 0;
+    // Registered first, so a throw while adding the shop or copying the order still puts everything back.
+    register_shutdown_function(static function () use ($shopB, &$idOrder, $saved) {
         if ($idOrder > 0) {
             Db::getInstance()->delete('orders', '`id_order` = ' . (int) $idOrder);
         }
-        Db::getInstance()->delete('configuration', '`id_shop` = ' . (int) $idShopB);
-        if ($idShopB > 0) {
+        if ((int) $shopB->id > 0) {
+            Db::getInstance()->delete('configuration', '`id_shop` = ' . (int) $shopB->id);
             $shopB->delete();
         }
         foreach ($saved as $key => $was) {
@@ -147,6 +143,12 @@ if ($phase === 'check') {
             }
         }
     });
+    $added = $source > 0 && $shopB->add();
+    $check($added, 'shop B is added');
+    $idShopB = (int) $shopB->id;
+    $copy = $added ? (new Order($source))->duplicateObject() : false;
+    $idOrder = is_object($copy) ? (int) $copy->id : 0;
+    $check($idOrder > 0, 'the order is copied');
     if ($idOrder > 0) {
         Db::getInstance()->update('orders', array('id_shop' => $idShopB, 'module' => 'twopayment'), '`id_order` = ' . $idOrder);
         Configuration::updateGlobalValue('PS_MULTISHOP_FEATURE_ACTIVE', 1);
