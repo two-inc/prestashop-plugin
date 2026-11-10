@@ -6248,23 +6248,6 @@ class Twopayment extends PaymentModule
      */
     public function hookActionOrderSlipAdd($params)
     {
-        // The back office may be on another shop than the order's (TWO-27200).
-        $order = is_array($params) && isset($params['order']) && is_object($params['order']) ? $params['order'] : null;
-        $passed = is_array($params) ? $this->getTwoPassedOrderSlip($params) : null;
-        if ($order === null) {
-            $order = $passed !== null && !empty($passed->id_order) ? (int) $passed->id_order : 0;
-        }
-        TwoOrderShopContext::run($order, function () use ($params) {
-            $this->processTwoOrderSlipAdd($params);
-        });
-    }
-
-    /**
-     * @param array $params actionOrderSlipAdd's
-     * @return void
-     */
-    private function processTwoOrderSlipAdd($params)
-    {
         try {
             if (!is_array($params)) {
                 return;
@@ -6277,6 +6260,23 @@ class Twopayment extends PaymentModule
             if (!$order || !Validate::isLoadedObject($order) || $order->module != $this->name) {
                 return;
             }
+            // The back office may be on another shop than the order's (TWO-27200).
+            TwoOrderShopContext::run($order, function () use ($params, $order) {
+                $this->processTwoOrderSlipAdd($params, $order);
+            });
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog('TwoPayment: Exception during partial refund. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+        }
+    }
+
+    /**
+     * @param array $params actionOrderSlipAdd's
+     * @param Order $order a Two order, in its own shop
+     * @return void
+     */
+    private function processTwoOrderSlipAdd($params, $order)
+    {
+        try {
             $id_order = (int)$order->id;
 
             $orderpaymentdata = $this->getTwoOrderPaymentData($id_order);
@@ -7765,26 +7765,26 @@ class Twopayment extends PaymentModule
         if (!isset($history->id_order) || !isset($history->id_order_state) || (int)$history->id_order <= 0) {
             return;
         }
+        $order = new Order((int)$history->id_order);
+        if (!Validate::isLoadedObject($order) || !isset($order->module) || $order->module !== $this->name) {
+            return;
+        }
         // The status maps are the order's shop's, not the back office's (TWO-27200).
-        TwoOrderShopContext::run((int)$history->id_order, function () use ($history) {
-            $this->processTwoOrderHistoryAddBefore($history);
+        TwoOrderShopContext::run($order, function () use ($history, $order) {
+            $this->processTwoOrderHistoryAddBefore($history, $order);
         });
     }
 
     /**
-     * @param OrderHistory $history the pending history row, of an existing order
+     * @param OrderHistory $history the pending history row
+     * @param Order $order its order, a Two order, in its own shop
      * @return void
      */
-    private function processTwoOrderHistoryAddBefore($history)
+    private function processTwoOrderHistoryAddBefore($history, $order)
     {
         $id_order = (int)$history->id_order;
         $target_status = (int)$history->id_order_state;
         if ($id_order <= 0 || !$this->shouldBlockTwoStatusTransitionByCancelledState($target_status)) {
-            return;
-        }
-
-        $order = new Order($id_order);
-        if (!Validate::isLoadedObject($order) || !isset($order->module) || $order->module !== $this->name) {
             return;
         }
 
