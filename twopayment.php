@@ -7132,7 +7132,7 @@ class Twopayment extends PaymentModule
      * without lines (TWO-27204): itemised from the changed subtotals with buildTwoRefundLineItems(), each moved amount
      * credited to lines of the kind it came from (getTwoReratedRefundKinds()). A subscriber re-rates a line at order
      * creation, so Two holds it at a rate the shop's own refund figures do not carry, and re-rates the refund to match.
-     * Only changed subtotals that name each rate once and keep the refund's gross (within a cent) are itemised; any
+     * Only changed subtotals that name each rate once and keep the refund's gross to the cent are itemised; any
      * others are sent as the subscriber left them, without lines and with the module's own reason logged.
      * When the changed subtotals cannot be itemised either (more than the lines at a rate have left, say), the refund
      * goes without lines as before, and $unitemised is set to the reason the changed subtotals give.
