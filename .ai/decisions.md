@@ -74,6 +74,33 @@ link. The 2026-08-14 entry below describes three overrides; two remain.
 
 ---
 
+## [2026-11-10] A Refund Whose Subtotals A Subscriber Re-Rated Is Itemised (TWO-27204)
+
+**Context**: An order postprocessing subscriber can re-rate a line at order creation, so Two holds
+it at a rate the shop does not. A later credit slip is split from the shop's figures, so the
+re-rated line's share sits at the shop's rate, where Two has no line with anything left. The module
+could not itemise that rate and sent the whole refund without lines, product lines included.
+
+**Decision**: The subscriber re-rates the refund's `tax_subtotals` to match what it sent at
+creation and leaves `line_items` empty. When the module could not itemise a refund and the hook
+returns it with changed `tax_subtotals` and no `line_items`, the module itemises the changed
+subtotals with the same allocator, before sending. Each rate that lost amount keeps the same share
+of each kind (products, shipping) and of each named slip product; what the rates lost is shared by
+kind over the rates that gained, so moved shipping goes to the shipping line at its new rate. The
+Refunded remainder has no kinds and is spread by what each line has left. If the changed subtotals
+cannot be itemised either, the refund goes without lines and the unitemised log gives the changed
+subtotals' reason. Lines a subscriber sets itself are never touched.
+
+**Alternatives Considered**: Reading the rates Two holds and splitting the slip at them in the
+module. That moves a shop-match decision (which shop amount is which Two line) into the module,
+when the subscriber that made the re-rating is the one that knows it.
+
+**Consequences**: The subscriber owns the amounts and must move no more than the re-rated lines
+have left (`order_lines` less `order_refunds`); an over-move still goes unitemised with the
+warning. The rule needs `tax_subtotals` in the payload, so "Validate tax subtotals" on.
+
+---
+
 ## [2026-10-01] Partial Refunds Are Itemised Onto The Two Order's Own Lines (TWO-26143)
 
 **Context**: Credit slips and the Refunded remainder were sent as an amount and per-rate tax

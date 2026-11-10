@@ -6429,7 +6429,8 @@ class Twopayment extends PaymentModule
             return $this->l('its refunded amount could not be split across the order\'s tax rates');
         }
 
-        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $current_two_order, $kind_gross, 'Credit slip ' . $slip_id . ' on order ' . $id_order, $unitemised);
+        $label = 'Credit slip ' . $slip_id . ' on order ' . $id_order;
+        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $current_two_order, $kind_gross, $label, $unitemised);
         $payload = $this->buildTwoPartialRefundPayload($slip_amount, $currency, $tax_subtotals, $line_items);
         if ($refund_prepaid !== null) {
             $payload['amount'] = number_format($refund_amount, 2, '.', '');
@@ -6457,7 +6458,10 @@ class Twopayment extends PaymentModule
             },
         )));
         try {
-            $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['Idempotency-Key: ' . $idempotency_key], $sent_payload, $checks, $current_two_order);
+            $itemise = function (array $sent) use ($tax_subtotals, $current_two_order, $kind_gross, $label, &$unitemised) {
+                return $this->itemiseTwoReratedRefund($sent, $tax_subtotals, $current_two_order, $kind_gross, $label, $unitemised);
+            };
+            $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'credit_slip', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['Idempotency-Key: ' . $idempotency_key], $sent_payload, $checks, $current_two_order, $itemise);
         } catch (TwoCheckoutAmountException $e) {
             PrestaShopLogger::addLog('TwoPayment: Partial refund skipped - could not build tax subtotals from the credit slip. Two order ID: ' . $two_order_id . ', Order ID: ' . $id_order . ', Slip ID: ' . $slip_id, 3);
             return $this->l('its refunded amount could not be split across the order\'s tax rates');
@@ -6818,7 +6822,8 @@ class Twopayment extends PaymentModule
             return;
         }
 
-        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $two_order, array(), 'Refund remainder on order ' . $id_order, $unitemised);
+        $label = 'Refund remainder on order ' . $id_order;
+        $line_items = $this->buildTwoRefundLineItems($tax_subtotals, $two_order, array(), $label, $unitemised);
         $payload = $this->buildTwoPartialRefundPayload($remainder_lines, $currency, $tax_subtotals, $line_items);
         if ($remainder_prepaid !== null) {
             $payload['amount'] = number_format($remainder, 2, '.', '');
@@ -6830,7 +6835,10 @@ class Twopayment extends PaymentModule
         // Same remainder after the same refunds: same key, so a repeated status change cannot refund it twice.
         $idempotency_key = self::buildTwoRefundRemainderIdempotencyKey($two_order_id, implode(',', $slip_ids) . '|' . $payload['amount']);
         $sent_payload = null;
-        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $two_order);
+        $itemise = function (array $sent) use ($tax_subtotals, $two_order, $label, &$unitemised) {
+            return $this->itemiseTwoReratedRefund($sent, $tax_subtotals, $two_order, array(), $label, $unitemised);
+        };
+        $response = $this->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_REFUND, 'status_change', '/v1/order/' . $two_order_id . '/refund', $payload, 'POST', null, $order, ['Idempotency-Key: ' . $idempotency_key], $sent_payload, null, $two_order, $itemise);
         $http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
         $accepted = $http_status === self::HTTP_STATUS_CREATED && isset($response['id']) && $response['id'];
         $this->logTwoRefundSentUnitemised($sent_payload, $unitemised);
@@ -7095,10 +7103,7 @@ class Twopayment extends PaymentModule
         );
         if (!empty($line_items)) {
             $payload['line_items'] = $line_items;
-            // A rate refunding nothing has no line, and Two matches the lines' rates against the subtotals' (TWO-26143).
-            $tax_subtotals = array_values(array_filter($tax_subtotals, function ($subtotal) {
-                return round((float)$subtotal['taxable_amount'] + (float)$subtotal['tax_amount'], 2) != 0.0;
-            }));
+            $tax_subtotals = self::withoutTwoEmptyRates($tax_subtotals);
         }
         // Validate tax subtotals governs refunds as it does order intents, creates and updates (TWO-26340).
         if ($this->shouldIncludeTaxSubtotals()) {
@@ -7106,6 +7111,129 @@ class Twopayment extends PaymentModule
         }
 
         return $payload;
+    }
+
+    /**
+     * A refund's tax subtotals less any rate refunding nothing, for a refund sent with lines: such a rate has no line,
+     * and Two matches the lines' rates against the subtotals' (TWO-26143).
+     *
+     * @param array $tax_subtotals
+     * @return array
+     */
+    private static function withoutTwoEmptyRates(array $tax_subtotals)
+    {
+        return array_values(array_filter($tax_subtotals, function ($subtotal) {
+            return round((float)$subtotal['taxable_amount'] + (float)$subtotal['tax_amount'], 2) != 0.0;
+        }));
+    }
+
+    /**
+     * A refund the module could not itemise, whose tax subtotals an order postprocessing subscriber changed and left
+     * without lines (TWO-27204): itemised from the changed subtotals with buildTwoRefundLineItems(), each moved amount
+     * credited to lines of the kind it came from (getTwoReratedRefundKinds()). A subscriber re-rates a line at order
+     * creation, so Two holds it at a rate the shop's own refund figures do not carry, and re-rates the refund to match.
+     * When the changed subtotals cannot be itemised either (more than the lines at a rate have left, say), the refund
+     * goes without lines as before, and $unitemised is set to the reason the changed subtotals give.
+     *
+     * @param array $payload the refund as the subscribers returned it
+     * @param array $tax_subtotals the module's split of the refund
+     * @param array $two_order the Two order as just read
+     * @param array $kind_gross the module's split per line kind, see buildTwoRefundLineItems()
+     * @param string $label what the log names
+     * @param string|null $unitemised buildTwoRefundLineItems()'s reason for the module's split, null when it itemised it
+     * @return array the payload to send
+     */
+    protected function itemiseTwoReratedRefund(array $payload, array $tax_subtotals, $two_order, array $kind_gross, $label, &$unitemised)
+    {
+        $edited = isset($payload['tax_subtotals']) && is_array($payload['tax_subtotals']) ? array_values($payload['tax_subtotals']) : null;
+        if ($unitemised === null || !empty($payload['line_items']) || $edited === null || $edited === array()
+            || TwoOrderPostprocessing::canonical($edited) === TwoOrderPostprocessing::canonical($tax_subtotals)) {
+            return $payload;
+        }
+        foreach ($edited as $subtotal) {
+            foreach (array('tax_rate', 'taxable_amount', 'tax_amount') as $field) {
+                if (!is_array($subtotal) || !isset($subtotal[$field]) || !is_numeric($subtotal[$field])) {
+                    return $payload;
+                }
+            }
+        }
+        $lines = $this->buildTwoRefundLineItems($edited, $two_order, $this->getTwoReratedRefundKinds($tax_subtotals, $edited, $kind_gross), $label, $reason);
+        if ($lines === null) {
+            $unitemised = $reason !== null ? $reason : $unitemised;
+
+            return $payload;
+        }
+        $unitemised = null;
+        $payload['line_items'] = $lines;
+        $payload['tax_subtotals'] = self::withoutTwoEmptyRates($edited);
+        PrestaShopLogger::addLog('TwoPayment: ' . $label . ' - itemised the tax subtotals the order postprocessing hook changed', 1);
+
+        return $payload;
+    }
+
+    /**
+     * The line kinds of a refund's subtotals after a subscriber changed them (TWO-27204), keyed as the changed
+     * subtotals name their rates, for buildTwoRefundLineItems(). A rate that lost part of its amount keeps the same
+     * share of each kind and of each product it names; what the rates lost, by kind, is shared over the rates that
+     * gained in proportion to their gains, so shipping moved to another rate goes to that rate's shipping lines. A
+     * refund split with no kinds (the Refunded remainder) gets none, and is weighted by what each line has left.
+     *
+     * @param array $before the module's subtotals
+     * @param array $after the subscriber's
+     * @param array $kind_gross the module's split per kind, keyed by its subtotals' rates
+     * @return array
+     */
+    private function getTwoReratedRefundKinds(array $before, array $after, array $kind_gross)
+    {
+        $key = function ($rate) {
+            return number_format((float)$rate, 6, '.', '');
+        };
+        $gross = function (array $subtotals) use ($key) {
+            $by_rate = array();
+            foreach ($subtotals as $subtotal) {
+                $rate = $key($subtotal['tax_rate']);
+                $by_rate[$rate] = (isset($by_rate[$rate]) ? $by_rate[$rate] : 0.0) + (float)$subtotal['taxable_amount'] + (float)$subtotal['tax_amount'];
+            }
+
+            return $by_rate;
+        };
+        $old = $gross($before);
+        $new = $gross($after);
+        $kinds = array();
+        $moved = array();
+        foreach ($before as $subtotal) {
+            $rate = $key($subtotal['tax_rate']);
+            $was = isset($kind_gross[$subtotal['tax_rate']]) ? $kind_gross[$subtotal['tax_rate']] : array();
+            $kept = $old[$rate] > 0 ? min(1.0, max(0.0, (isset($new[$rate]) ? $new[$rate] : 0.0) / $old[$rate])) : 1.0;
+            foreach (array('products', 'shipping') as $kind) {
+                if (isset($was[$kind])) {
+                    $moved[$kind] = (isset($moved[$kind]) ? $moved[$kind] : 0.0) + (float)$was[$kind] * (1 - $kept);
+                    $was[$kind] = (float)$was[$kind] * $kept;
+                }
+            }
+            foreach (isset($was['slip_products']) ? array_keys($was['slip_products']) : array() as $i) {
+                $was['slip_products'][$i]['gross'] = (float)$was['slip_products'][$i]['gross'] * $kept;
+            }
+            $kinds[$rate] = $was;
+        }
+        $total = array_sum($moved);
+        foreach ($new as $rate => $amount) {
+            $gain = $amount - (isset($old[$rate]) ? $old[$rate] : 0.0);
+            if ($total <= 0 || $gain <= 0.005) {
+                continue;
+            }
+            foreach ($moved as $kind => $amount_moved) {
+                $kinds[$rate][$kind] = (isset($kinds[$rate][$kind]) ? $kinds[$rate][$kind] : 0.0) + $gain * $amount_moved / $total;
+            }
+        }
+        $by_rate = array();
+        foreach ($after as $subtotal) {
+            if (!empty($kinds[$key($subtotal['tax_rate'])])) {
+                $by_rate[$subtotal['tax_rate']] = $kinds[$key($subtotal['tax_rate'])];
+            }
+        }
+
+        return $by_rate;
     }
 
     /**
@@ -10439,10 +10567,12 @@ class Twopayment extends PaymentModule
      *   for confirm and cancel); null when refused
      * @param array|null $checks the request's shop-match checks, see postprocessOrderRequest()
      * @param array|null $twoOrder the order as Two's GET returned it, for the context's order_lines
+     * @param callable|null $finish applied to the payload the subscribers returned, before it is sent: a refund's
+     *   itemisation of subtotals a subscriber re-rated (itemiseTwoReratedRefund())
      * @return array the API response; a refusal returns http_status 0 and the code, unsent
      * @throws Exception when a shop-match check refuses
      */
-    public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null, $twoOrder = null)
+    public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null, $twoOrder = null, $finish = null)
     {
         $sentPayload = null;
         try {
@@ -10462,6 +10592,9 @@ class Twopayment extends PaymentModule
             );
         }
 
+        if ($finish !== null) {
+            $payload = $finish($payload);
+        }
         $sentPayload = $payload;
         $key = self::findTwoIdempotencyKey($headers) === null ? self::getTwoOrderRequestIdempotencyKey($requestType, $endpoint) : null;
         if ($key !== null) {
