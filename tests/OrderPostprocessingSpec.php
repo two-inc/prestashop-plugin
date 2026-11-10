@@ -64,6 +64,7 @@ final class OrderPostprocessingSpec
         self::testHookRowIsCreatedOnceAndTheModuleRegistersItsDefaultHandler();
         self::testReadmeExampleIsTheFixturesOwnCode();
         self::testEveryOrderSendGoesThroughTheChoke();
+        self::testBackOfficeActsInTheOrdersShop();
     }
 
     /* ---- fixtures ---- */
@@ -1628,6 +1629,92 @@ final class OrderPostprocessingSpec
             });
             TinyAssert::count($posts, $cancels, $description . ': cancel POSTs');
             TinyAssert::same([], $module->warnings, $description . ': no notice');
+        }
+    }
+
+    /**
+     * TWO-27200: on a multistore install the back office acts on an order in the order's own shop, whichever shop
+     * the employee selected: a subscriber hooked only in the order's shop runs, and that shop's status maps apply.
+     * The back office is on "All shops" and the order is in shop 10, whose maps differ from the all-shops values.
+     */
+    private static function testBackOfficeActsInTheOrdersShop(): void
+    {
+        $placed = static function () {
+            $order = self::order();
+            $order->id_shop = 10;
+
+            return $order;
+        };
+        $status = static function ($m, int $id): void {
+            $state = new OrderState($id);
+            $state->name = 'Status ' . $id;
+            $m->hookActionOrderStatusUpdate(['id_order' => self::ORDER, 'newOrderStatus' => $state]);
+        };
+        $slip = (object) ['id' => 77, 'id_order' => self::ORDER, 'total_products_tax_incl' => 30.0, 'total_shipping_tax_incl' => 0.0];
+        // [driver, end of the endpoint sent (null: nothing sent), description]
+        $cases = [
+            [static function ($m) use ($placed) {
+                $m->hookActionOrderEdited(['order' => $placed()]);
+            }, '/v1/order/' . self::TWO_ORDER, 'an admin edit'],
+            [static function ($m) use ($placed) {
+                $m->hookActionAdminOrdersTrackingNumberUpdate(['order' => $placed()]);
+            }, '/v1/order/' . self::TWO_ORDER, 'a tracking number'],
+            [static function ($m) use ($status) {
+                $status($m, 12);
+            }, '/fulfillments', 'the order shop\'s fulfilment status'],
+            [static function ($m) use ($status) {
+                $status($m, 4);
+            }, null, 'the all-shops fulfilment status, which the order\'s shop does not use'],
+            [static function ($m) use ($status) {
+                $status($m, 13);
+            }, '/cancel', 'the order shop\'s cancel status'],
+            [static function ($m) use ($status) {
+                $m->twoState = 'FULFILLED';
+                $status($m, 14);
+            }, '/refund', 'the order shop\'s refunded status'],
+            [static function ($m) use ($placed, $slip) {
+                $m->twoState = 'FULFILLED';
+                $m->hookActionOrderSlipAdd(['order' => $placed(), 'order_slip' => $slip]);
+            }, '/refund', 'a credit slip'],
+        ];
+        try {
+            foreach ($cases as [$driver, $endpoint, $description]) {
+                self::seed(true);
+                StubStore::$orders[self::ORDER]['id_shop'] = 10;
+                StubStore::$multistore = true;
+                StubStore::$shops = [1 => 1, 10 => 1];
+                StubStore::$configuration['PS_TWO_OS_FULFILLED_MAP'] = json_encode([4]);
+                StubStore::$configuration['PS_TWO_OS_CANCELLED_MAP'] = 6;
+                StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+                StubStore::$configurationShop[10] = [
+                    'PS_TWO_OS_FULFILLED_MAP' => json_encode([12]),
+                    'PS_TWO_OS_CANCELLED_MAP' => 13,
+                    'PS_TWO_OS_REFUNDED_MAP' => 14,
+                ];
+                Shop::setContext(Shop::CONTEXT_ALL);
+                $backOfficeShop = Context::getContext()->shop;
+                $module = self::module();
+                self::harnessAsInstance($module);
+                $calls = [];
+                self::subscribe('tag', $calls);
+                Hook::$subscriberShops[TwoOrderPostprocessing::HOOK]['twoorderpostprocessingtest'] = [10];
+
+                $driver($module);
+
+                $sent = array_values(array_filter($module->sent, static function ($r) {
+                    return strpos($r['endpoint'], '/v1/order') === 0;
+                }));
+                TinyAssert::count($endpoint === null ? 0 : 1, $sent, $description . ': sends');
+                TinyAssert::count($endpoint === null ? 0 : 1, $calls, $description . ': the order shop\'s subscriber runs');
+                if ($endpoint !== null) {
+                    TinyAssert::same($endpoint, substr($sent[0]['endpoint'], -strlen($endpoint)), $description . ': endpoint');
+                    TinyAssert::same($calls[0]['payload_out'], $sent[0]['payload'], $description . ': sends what the subscriber left');
+                }
+                TinyAssert::same([Shop::CONTEXT_ALL, null], [Shop::getContext(), Shop::getContextShopID()], $description . ': the back office\'s shop context is handed back');
+                TinyAssert::true($backOfficeShop === Context::getContext()->shop, $description . ': the back office\'s shop is handed back');
+            }
+        } finally {
+            StubStore::reset();
         }
     }
 

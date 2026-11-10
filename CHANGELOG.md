@@ -5,6 +5,11 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.23] - Unreleased
+
+### Fixed
+- **Back-office actions on an order run in the order's shop** (TWO-27200). On a multistore install, an order edit, a tracking number, a status change (fulfil, cancel, refund), a credit slip and the invoice download ran in the shop picked in the back office's shop selector. With "All shops" or another shop selected, an `actionTwoOrderPostprocessing` subscriber hooked only in the order's shop was skipped, and the status mappings and API key were that shop's rather than the order's. Each of these now switches to the order's shop for the duration and switches back afterwards.
+
 ## [2.7.22] - Unreleased
 
 ### Added
