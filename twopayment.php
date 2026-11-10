@@ -28,6 +28,7 @@ require_once dirname(__FILE__) . '/classes/TwoOrderTenders.php';
 require_once dirname(__FILE__) . '/classes/TwoShopTaxCode.php';
 require_once dirname(__FILE__) . '/classes/TwoTaxCodeSection.php';
 require_once dirname(__FILE__) . '/classes/TwoPendingRecovery.php';
+require_once dirname(__FILE__) . '/classes/TwoOrderShopContext.php';
 
 class Twopayment extends PaymentModule
 {
@@ -5288,6 +5289,17 @@ class Twopayment extends PaymentModule
         if ($order->module != $this->name) {
             return;
         }
+        // The back office may be on another shop than the order's (TWO-27200).
+        TwoOrderShopContext::run($order, function () use ($order) {
+            $this->processTwoOrderEdited($order);
+        });
+    }
+
+    /**
+     * @param Order $order a Two order, in its own shop
+     */
+    private function processTwoOrderEdited($order)
+    {
         $this->syncTwoOrderPaymentAmount($order);
 
         // The order holding the Two row, which another order of a multi-carrier split is not.
@@ -5519,7 +5531,17 @@ class Twopayment extends PaymentModule
         if (!$order || !Validate::isLoadedObject($order) || $order->module != $this->name) {
             return;
         }
+        // The back office may be on another shop than the order's (TWO-27200).
+        TwoOrderShopContext::run($order, function () use ($order) {
+            $this->processTwoTrackingNumberUpdate($order);
+        });
+    }
 
+    /**
+     * @param Order $order a Two order, in its own shop
+     */
+    private function processTwoTrackingNumberUpdate($order)
+    {
         $syncId = (int) $order->id;
         try {
             $placement = $this->getTwoOrderGroupPaymentData($order);
@@ -5767,8 +5789,20 @@ class Twopayment extends PaymentModule
 
     public function hookActionOrderStatusUpdate($params)
     {
+        $order = new Order((int) $params['id_order']);
+        // The status maps and the subscribers are the order's shop's, not the back office's (TWO-27200).
+        return TwoOrderShopContext::run($order, function () use ($params, $order) {
+            return $this->processTwoOrderStatusUpdate($params, $order);
+        });
+    }
+
+    /**
+     * @param array $params actionOrderStatusUpdate's
+     * @param Order $order the order it names, in its own shop
+     */
+    private function processTwoOrderStatusUpdate($params, $order)
+    {
         $id_order = $params['id_order'];
-        $order = new Order((int) $id_order);
         $new_order_status = $params['newOrderStatus'];
         if ($order->module == $this->name) {
             $orderpaymentdata = $this->getTwoOrderPaymentData($id_order);
@@ -6210,6 +6244,23 @@ class Twopayment extends PaymentModule
      * @return void
      */
     public function hookActionOrderSlipAdd($params)
+    {
+        // The back office may be on another shop than the order's (TWO-27200).
+        $order = is_array($params) && isset($params['order']) && is_object($params['order']) ? $params['order'] : null;
+        $passed = is_array($params) ? $this->getTwoPassedOrderSlip($params) : null;
+        if ($order === null) {
+            $order = $passed !== null && !empty($passed->id_order) ? (int) $passed->id_order : 0;
+        }
+        TwoOrderShopContext::run($order, function () use ($params) {
+            $this->processTwoOrderSlipAdd($params);
+        });
+    }
+
+    /**
+     * @param array $params actionOrderSlipAdd's
+     * @return void
+     */
+    private function processTwoOrderSlipAdd($params)
     {
         try {
             if (!is_array($params)) {
@@ -7708,10 +7759,21 @@ class Twopayment extends PaymentModule
         }
 
         $history = $params['object'];
-        if (!isset($history->id_order) || !isset($history->id_order_state)) {
+        if (!isset($history->id_order) || !isset($history->id_order_state) || (int)$history->id_order <= 0) {
             return;
         }
+        // The status maps are the order's shop's, not the back office's (TWO-27200).
+        TwoOrderShopContext::run((int)$history->id_order, function () use ($history) {
+            $this->processTwoOrderHistoryAddBefore($history);
+        });
+    }
 
+    /**
+     * @param OrderHistory $history the pending history row, of an existing order
+     * @return void
+     */
+    private function processTwoOrderHistoryAddBefore($history)
+    {
         $id_order = (int)$history->id_order;
         $target_status = (int)$history->id_order_state;
         if ($id_order <= 0 || !$this->shouldBlockTwoStatusTransitionByCancelledState($target_status)) {

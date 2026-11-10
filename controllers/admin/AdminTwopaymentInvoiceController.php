@@ -24,6 +24,18 @@ class AdminTwopaymentInvoiceController extends ModuleAdminController
     public function postProcess()
     {
         $id_order = (int)Tools::getValue('id_order');
+        // The API key is the order's shop's, not the back office's (TWO-27200).
+        TwoOrderShopContext::run($id_order, function () use ($id_order) {
+            $this->downloadInvoice($id_order);
+        });
+    }
+
+    /**
+     * @param int $id_order
+     * @return void
+     */
+    private function downloadInvoice($id_order)
+    {
         $twopaymentdata = $id_order > 0 ? $this->module->getTwoOrderPaymentData($id_order) : false;
 
         if (!$twopaymentdata) {
