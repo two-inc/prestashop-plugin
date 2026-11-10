@@ -26070,13 +26070,29 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /**
+     * The order's payment data refreshed from Two for the admin order panels, in the order's shop: the refresh may
+     * move the order's status by that shop's status maps (TWO-27200).
+     *
+     * @param int $id_order
+     * @param array $twopaymentdata
+     * @return array
+     */
+    private function syncTwoAdminOrderPanelData($id_order, $twopaymentdata)
+    {
+        return TwoOrderShopContext::run($id_order, function () use ($id_order, $twopaymentdata) {
+            $synced = $this->syncTwoAdminOrderPaymentDataFromProvider($id_order, $twopaymentdata);
+
+            return $this->enrichTwoAdminOrderPaymentData($id_order, $synced);
+        });
+    }
+
     public function hookDisplayAdminOrderLeft($params)
     {
         $id_order = $params['id_order'];
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
-            $twopaymentdata = $this->syncTwoAdminOrderPaymentDataFromProvider((int)$id_order, $twopaymentdata);
-            $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
+            $twopaymentdata = $this->syncTwoAdminOrderPanelData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
             // Route the invoice download through the module admin controller so the
@@ -26122,8 +26138,7 @@ class Twopayment extends PaymentModule
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
 
         if ($twopaymentdata) {
-            $twopaymentdata = $this->syncTwoAdminOrderPaymentDataFromProvider((int)$id_order, $twopaymentdata);
-            $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
+            $twopaymentdata = $this->syncTwoAdminOrderPanelData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
             // Route the invoice download through the module admin controller so the
