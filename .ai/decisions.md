@@ -89,7 +89,9 @@ of each kind (products, shipping) and of each named slip product; what the rates
 kind over the rates that gained, so moved shipping goes to the shipping line at its new rate. The
 Refunded remainder has no kinds and is spread by what each line has left. If the changed subtotals
 cannot be itemised either, the refund goes without lines and the unitemised log gives the changed
-subtotals' reason. Lines a subscriber sets itself are never touched.
+subtotals' reason. Lines a subscriber sets itself are never touched. Changed subtotals are
+itemised only if they keep the module's gross within a cent and name each rate once; otherwise
+the refund goes as the subscriber left it, without lines, with the module's own reason logged.
 
 **Alternatives Considered**: Reading the rates Two holds and splitting the slip at them in the
 module. That moves a shop-match decision (which shop amount is which Two line) into the module,
