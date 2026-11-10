@@ -35,6 +35,7 @@ final class RefundSpec
         self::testSlipShippingCheckIsTheDefaultHandlers();
         self::testUnitemisedLogFollowsWhatIsSent();
         self::testTaxSubtotalsSwitchGovernsRefunds();
+        self::testReratedRefundIsItemised();
     }
 
     /**
@@ -241,6 +242,122 @@ final class RefundSpec
             }, $refunds[0]['payload']['tax_subtotals']);
             TinyAssert::same($expected, $got, $desc . ': got ' . json_encode($got));
             TinyAssert::true(self::logged('The refund request (credit_slip, order 5100) has an order postprocessing hook handler (refundspecsubscriber): the shop-match checks are delegated to it'), $desc . ': the delegation log line');
+        }
+        Hook::$subscribers = [];
+    }
+
+    /**
+     * TWO-27204: a refund the module could not itemise, whose tax subtotals a subscriber changes and leaves without
+     * lines, is itemised from the changed subtotals, each moved amount to lines of the kind it came from; the
+     * unitemised log is written only if it still goes without lines. The Two order holds shipping at 21% that the
+     * shop refunds at 0%. Columns: the refund (a credit slip of products and shipping, or the Refunded remainder),
+     * the Two order's lines and refunds, the subscriber (null: none), expected [id, net, tax, gross] lines (null:
+     * sent without lines), the unitemised warning expected (null: none), description.
+     */
+    private static function testReratedRefundIsItemised(): void
+    {
+        $sub = static function (string $rate, string $taxable, string $tax): array {
+            return ['taxable_amount' => $taxable, 'tax_amount' => $tax, 'tax_rate' => $rate];
+        };
+        $money = static function (float $amount): string {
+            return number_format($amount, 2, '.', '');
+        };
+        // Moves $gross of the refund from rate $from to rate $to, split at $to.
+        $move = static function (string $gross, string $from = '0', string $to = '0.21') use ($sub, $money): callable {
+            return static function (array &$p) use ($gross, $from, $to, $sub, $money): void {
+                $net = round((float) $gross / (1 + (float) $to), 2);
+                $into = null;
+                foreach ($p['tax_subtotals'] as $i => $t) {
+                    if (abs((float) $t['tax_rate'] - (float) $from) < 0.000001) {
+                        $p['tax_subtotals'][$i]['taxable_amount'] = $money((float) $t['taxable_amount'] - (float) $gross);
+                    } elseif (abs((float) $t['tax_rate'] - (float) $to) < 0.000001) {
+                        $into = $i;
+                    }
+                }
+                if ($into === null) {
+                    $p['tax_subtotals'][] = $sub($to, '0.00', '0.00');
+                    $into = count($p['tax_subtotals']) - 1;
+                }
+                $p['tax_subtotals'][$into]['taxable_amount'] = $money((float) $p['tax_subtotals'][$into]['taxable_amount'] + $net);
+                $p['tax_subtotals'][$into]['tax_amount'] = $money((float) $p['tax_subtotals'][$into]['tax_amount'] + (float) $gross - $net);
+            };
+        };
+        $own = static function (array &$p) use ($move): void {
+            $move('12.10')($p);
+            $p['line_items'] = [['id' => 'own', 'quantity' => 1, 'unit_price' => '10.00', 'discount_amount' => '0.00', 'net_amount' => '10.00', 'tax_amount' => '2.10', 'gross_amount' => '12.10']];
+        };
+        $p1 = self::twoLine('p1', 'PHYSICAL', '0.21', '100.00');
+        $s1 = self::twoLine('s1', 'SHIPPING_FEE', '0.21', '10.00');
+        $slip = static function (float $products, float $shipping): callable {
+            return static function (array $twoOrder) use ($products, $shipping): object {
+                StubStore::$dbExecuteSResponses = [$products > 0 ? [self::line(round($products / 1.21, 2), $products, '21.000')] : []];
+                $module = self::makeModule($twoOrder);
+                $module->readSlipLinesFromDb = true;
+                $order = self::makeOrder();
+                $order->carrier_tax_rate = 0.0;
+                $module->hookActionOrderSlipAdd(['order' => $order, 'order_slip' => self::makeSlip(931, $products, $shipping)]);
+                return $module;
+            };
+        };
+        $remainder = static function (array $twoOrder) use ($sub): object {
+            StubStore::$orders[5100] = ['module' => 'twopayment'];
+            StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+            $twoOrder['state'] = 'REFUNDED';
+            $module = self::makeModule($twoOrder);
+            $module->placedSubtotals = [$sub('0.250000', '100.00', '25.00'), $sub('0.000000', '23.00', '0.00')];
+            $module->refundRows[1] = ['id_order_slip' => 1, 'status' => 'SENT', 'amount' => '50.00', 'tax_subtotals' => [$sub('0.250000', '40.00', '10.00')]];
+            $status = new OrderState();
+            $status->id = 7;
+            $status->name = 'Refunded';
+            $module->hookActionOrderStatusUpdate(['id_order' => 5100, 'newOrderStatus' => $status]);
+            return $module;
+        };
+        $remainderLines = [self::twoLine('p1', 'PHYSICAL', '0.25', '100.00'), self::twoLine('s1', 'SHIPPING_FEE', '0.25', '18.40')];
+        $leave = static function (array &$p): void {
+        };
+        $cases = [
+            [$slip(0.0, 12.10), [$p1, $s1], [], $move('12.10'), [['s1', '10.00', '2.10', '12.10']], null, 'a shipping-only slip re-rated: itemised to the shipping line'],
+            [$slip(60.50, 12.10), [$p1, $s1], [], $move('12.10'), [['p1', '50.00', '10.50', '60.50'], ['s1', '10.00', '2.10', '12.10']], null, 'products and re-rated shipping: each to its own kind'],
+            [$slip(0.0, 12.10), [$p1, $s1], [], null, null, 'rate 0.000000 have 0 left to refund, less than 12.1', 'no subscriber: unitemised, as before'],
+            [$slip(0.0, 12.10), [$p1, $s1], [], $leave, null, 'rate 0.000000 have 0 left to refund, less than 12.1', 'a subscriber that leaves the subtotals alone: unitemised, as before'],
+            [$slip(0.0, 12.10), [$s1], [self::twoRefund('-6.05', ['s1' => '-6.05'])], $move('12.10'), null, 'rate 0.21 have 6.05 left to refund, less than 12.1', 'a re-rated over-refund: unitemised with the warning on the rate it was moved to'],
+            [$slip(0.0, 12.10), [$p1, $s1], [], $move('6.05'), null, 'rate 0.000000 have 0 left to refund, less than 6.05', 'part of the shipping left at 0%: unitemised with the warning on what is left'],
+            [$slip(0.0, 12.10), [$p1, $s1], [], $own, [['own', '10.00', '2.10', '12.10']], null, 'a subscriber that sets its own lines: left alone'],
+            [$remainder, $remainderLines, [self::twoRefund('-50.00', ['p1' => '-50.00'])], $move('23.00', '0', '0.25'), [['p1', '60.00', '15.00', '75.00'], ['s1', '18.40', '4.60', '23.00']], null, 'the remainder re-rated: itemised by what each line has left'],
+        ];
+        foreach ($cases as [$refund, $lines, $refunds, $edit, $expected, $warning, $desc]) {
+            StubStore::reset();
+            PrestaShopLogger::$logs = [];
+            Hook::$subscribers = [];
+            if ($edit !== null) {
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK]['refundspecsubscriber'] = static function (array $params) use ($edit): void {
+                    if ($params['context']['request_type'] === TwoOrderPostprocessing::REQUEST_REFUND) {
+                        $edit($params['payload']);
+                    }
+                };
+            }
+            $twoOrder = self::fulfilledOrder($refund === $remainder ? 148.00 : 1000.00, $refunds, 'EUR');
+            $twoOrder['line_items'] = $lines;
+
+            $module = $refund($twoOrder);
+
+            $calls = $module->refundCalls();
+            TinyAssert::count(1, $calls, $desc . ': sent');
+            $payload = $calls[0]['payload'];
+            $got = self::sentLines($payload, $lines);
+            TinyAssert::same($expected, $got, $desc . ': got ' . json_encode($got) . ', subtotals ' . json_encode($payload['tax_subtotals'] ?? null));
+            $unitemised = array_values(array_filter(PrestaShopLogger::$logs, static function ($l) {
+                return strpos($l['message'], '; sending the refund without line items') !== false;
+            }));
+            TinyAssert::same($warning === null ? [] : [3], array_column($unitemised, 'severity'), $desc . ': the unitemised warning, ' . json_encode(array_column($unitemised, 'message')));
+            TinyAssert::true($warning === null || strpos($unitemised[0]['message'], $warning) !== false, $desc . ': the warning names ' . $warning . ', got ' . $unitemised[0]['message']);
+            if ($got !== null) {
+                TinyAssert::same($payload['amount'], number_format(array_sum(array_column($got, 3)), 2, '.', ''), $desc . ': lines sum to the amount');
+                foreach ($edit === $own ? [] : $payload['tax_subtotals'] as $t) {
+                    TinyAssert::true((float) $t['taxable_amount'] + (float) $t['tax_amount'] != 0.0, $desc . ': no subtotal for a rate with no line');
+                }
+            }
+            TinyAssert::same($expected !== null && $edit !== $own, self::logged('itemised the tax subtotals the order postprocessing hook changed'), $desc . ': the itemisation is logged');
         }
         Hook::$subscribers = [];
     }

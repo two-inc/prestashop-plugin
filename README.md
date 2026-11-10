@@ -837,6 +837,23 @@ Once per outbound order request, immediately before it is sent:
 | `refund` | The refunded status (a full refund with no body; after credit slips, what is left, as `{amount, currency, line_items, tax_subtotals}`) and a credit slip (a partial refund, `{amount, currency, line_items, tax_subtotals}`), `tax_subtotals` only while the "Validate tax subtotals" setting is on. Each line is `{id, quantity, unit_price, discount_amount, net_amount, tax_amount, gross_amount}`, where `id` is the Two order line it refunds; `line_items` is absent when the refund could not be matched to the order's lines |
 | `cancel` | The cancelled status, a buyer cancel, and the module's own clean-up cancels. Sent with no body |
 
+**A refund a subscriber re-rates.** A subscriber that re-rates a line at order
+creation leaves Two holding it at a rate the shop's refund figures do not carry, so
+the module cannot match that part of a later refund to the order's lines, and the
+refund goes without `line_items`. When a refund the module could not itemise leaves
+the hook with changed `tax_subtotals` and still no `line_items`, the module itemises
+the changed subtotals against the order's lines at Two, as it itemises its own: each
+amount the subscriber moved from one rate to another is credited to lines of the kind
+it came from, so refunded shipping moved to another rate goes to the shipping line at
+that rate. The subtotals of a rate refunding nothing are then dropped, as with the
+module's own lines. A subscriber that sets `line_items` itself keeps them. When the
+changed subtotals cannot be itemised either (one rate asks for more than the lines at
+that rate have left, say), the refund goes without lines as before, and the module
+logs why, naming the changed subtotals. A subscriber that re-rates should therefore
+move no more than the re-rated lines have left, from `order_lines` less what
+`order_refunds` credited them. This needs `tax_subtotals` in the payload, so the
+"Validate tax subtotals" setting on.
+
 The hook also runs on every order-intent pre-check during checkout, so keep
 subscribers cheap.
 
