@@ -575,7 +575,7 @@ final class PendingRecoverySpec
                 return $this->get;
             }
 
-            public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null, $twoOrder = null)
+            public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null, $twoOrder = null, $finish = null)
             {
                 if (substr((string) $endpoint, -8) === '/confirm') {
                     $this->confirms[] = (string) $trigger;
