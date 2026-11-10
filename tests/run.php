@@ -3617,6 +3617,7 @@ final class OrderBuilderSpec
     private static function testGetTwoRequestHeadersSkipApiKeyForOrderIntent(): void
     {
         self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
         $module = new TwopaymentTestHarness();
 
         $orderIntentHeaders = $module->getTwoRequestHeaders('/v1/order_intent');
@@ -5765,6 +5766,7 @@ final class OrderBuilderSpec
     private static function testGetTwoRequestHeadersSkipAuthForOrderIntent(): void
     {
         self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
         $module = new TwopaymentTestHarness();
 
         $orderIntentHeaders = $module->getTwoRequestHeaders(
@@ -5871,6 +5873,7 @@ require __DIR__ . '/PaymentTileAboutControlSpec.php';
 require __DIR__ . '/PaymentOptionLogoSpec.php';
 require __DIR__ . '/ReconciliationDriftMessageSpec.php';
 require __DIR__ . '/OrderPostprocessingSpec.php';
+require __DIR__ . '/OrderShopContextSpec.php';
 require __DIR__ . '/OrderPostprocessingTraceSpec.php';
 require __DIR__ . '/DroppedRequestKeysSpec.php';
 require __DIR__ . '/ShippingRateControlSpec.php';
@@ -5969,6 +5972,7 @@ $tests = [
     'CheckoutWithholdReasonSpec::runAll' => [CheckoutWithholdReasonSpec::class, 'runAll'],
     'ReconciliationDriftMessageSpec::runAll' => [ReconciliationDriftMessageSpec::class, 'runAll'],
     'OrderPostprocessingSpec::runAll' => [OrderPostprocessingSpec::class, 'runAll'],
+    'OrderShopContextSpec::runAll' => [OrderShopContextSpec::class, 'runAll'],
     'OrderPostprocessingTraceSpec::runAll' => [OrderPostprocessingTraceSpec::class, 'runAll'],
     'DroppedRequestKeysSpec::runAll' => [DroppedRequestKeysSpec::class, 'runAll'],
     'ShippingRateControlSpec::runAll' => [ShippingRateControlSpec::class, 'runAll'],

@@ -28,6 +28,7 @@ require_once dirname(__FILE__) . '/classes/TwoOrderTenders.php';
 require_once dirname(__FILE__) . '/classes/TwoShopTaxCode.php';
 require_once dirname(__FILE__) . '/classes/TwoTaxCodeSection.php';
 require_once dirname(__FILE__) . '/classes/TwoPendingRecovery.php';
+require_once dirname(__FILE__) . '/classes/TwoOrderShopContext.php';
 
 class Twopayment extends PaymentModule
 {
@@ -535,7 +536,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.22';
+        $this->version = '2.7.23';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -1786,10 +1787,10 @@ class Twopayment extends PaymentModule
             : (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKeyToSave);
-        // The request headers and the checkout guard read the copies taken at
-        // construction, and getContent() renders every tab in this request:
-        // without this, its calls for the new merchant carry the old key and
-        // Two answers 404 (TWO-26304).
+        // The checkout guard reads the copies taken at construction, and
+        // getContent() renders every tab in this request, so they follow the
+        // save (TWO-26304). The request headers read the stored key itself
+        // (TWO-27200).
         $this->merchant_short_name = $shortNameToSave;
         $this->api_key = $apiKeyToSave;
         if (!$this->vendorNameRefused) {
@@ -5288,6 +5289,17 @@ class Twopayment extends PaymentModule
         if ($order->module != $this->name) {
             return;
         }
+        // The back office may be on another shop than the order's (TWO-27200).
+        TwoOrderShopContext::run($order, function () use ($order) {
+            $this->processTwoOrderEdited($order);
+        });
+    }
+
+    /**
+     * @param Order $order a Two order, in its own shop
+     */
+    private function processTwoOrderEdited($order)
+    {
         $this->syncTwoOrderPaymentAmount($order);
 
         // The order holding the Two row, which another order of a multi-carrier split is not.
@@ -5519,7 +5531,17 @@ class Twopayment extends PaymentModule
         if (!$order || !Validate::isLoadedObject($order) || $order->module != $this->name) {
             return;
         }
+        // The back office may be on another shop than the order's (TWO-27200).
+        TwoOrderShopContext::run($order, function () use ($order) {
+            $this->processTwoTrackingNumberUpdate($order);
+        });
+    }
 
+    /**
+     * @param Order $order a Two order, in its own shop
+     */
+    private function processTwoTrackingNumberUpdate($order)
+    {
         $syncId = (int) $order->id;
         try {
             $placement = $this->getTwoOrderGroupPaymentData($order);
@@ -5767,8 +5789,23 @@ class Twopayment extends PaymentModule
 
     public function hookActionOrderStatusUpdate($params)
     {
+        $order = new Order((int) $params['id_order']);
+        if ($order->module != $this->name) {
+            return;
+        }
+        // The status maps and the subscribers are the order's shop's, not the back office's (TWO-27200).
+        return TwoOrderShopContext::run($order, function () use ($params, $order) {
+            return $this->processTwoOrderStatusUpdate($params, $order);
+        });
+    }
+
+    /**
+     * @param array $params actionOrderStatusUpdate's
+     * @param Order $order the order it names, in its own shop
+     */
+    private function processTwoOrderStatusUpdate($params, $order)
+    {
         $id_order = $params['id_order'];
-        $order = new Order((int) $id_order);
         $new_order_status = $params['newOrderStatus'];
         if ($order->module == $this->name) {
             $orderpaymentdata = $this->getTwoOrderPaymentData($id_order);
@@ -6223,6 +6260,23 @@ class Twopayment extends PaymentModule
             if (!$order || !Validate::isLoadedObject($order) || $order->module != $this->name) {
                 return;
             }
+            // The back office may be on another shop than the order's (TWO-27200).
+            TwoOrderShopContext::run($order, function () use ($params, $order) {
+                $this->processTwoOrderSlipAdd($params, $order);
+            });
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog('TwoPayment: Exception during partial refund. Exception: ' . $e->getMessage() . ', Trace: ' . $e->getTraceAsString(), 3);
+        }
+    }
+
+    /**
+     * @param array $params actionOrderSlipAdd's
+     * @param Order $order a Two order, in its own shop
+     * @return void
+     */
+    private function processTwoOrderSlipAdd($params, $order)
+    {
+        try {
             $id_order = (int)$order->id;
 
             $orderpaymentdata = $this->getTwoOrderPaymentData($id_order);
@@ -7708,18 +7762,29 @@ class Twopayment extends PaymentModule
         }
 
         $history = $params['object'];
-        if (!isset($history->id_order) || !isset($history->id_order_state)) {
+        if (!isset($history->id_order) || !isset($history->id_order_state) || (int)$history->id_order <= 0) {
             return;
         }
+        $order = new Order((int)$history->id_order);
+        if (!Validate::isLoadedObject($order) || !isset($order->module) || $order->module !== $this->name) {
+            return;
+        }
+        // The status maps are the order's shop's, not the back office's (TWO-27200).
+        TwoOrderShopContext::run($order, function () use ($history, $order) {
+            $this->processTwoOrderHistoryAddBefore($history, $order);
+        });
+    }
 
+    /**
+     * @param OrderHistory $history the pending history row
+     * @param Order $order its order, a Two order, in its own shop
+     * @return void
+     */
+    private function processTwoOrderHistoryAddBefore($history, $order)
+    {
         $id_order = (int)$history->id_order;
         $target_status = (int)$history->id_order_state;
         if ($id_order <= 0 || !$this->shouldBlockTwoStatusTransitionByCancelledState($target_status)) {
-            return;
-        }
-
-        $order = new Order($id_order);
-        if (!Validate::isLoadedObject($order) || !isset($order->module) || $order->module !== $this->name) {
             return;
         }
 
@@ -22986,8 +23051,11 @@ class Twopayment extends PaymentModule
         ];
 
         $includeApiKey = $this->shouldAttachTwoApiKey($endpoint);
-        if ($includeApiKey && !Tools::isEmpty($this->api_key)) {
-            $headers[] = 'X-API-Key:' . $this->api_key;
+        // Read per request, not the copy taken at construction: the back office acts on an order in the order's
+        // shop, whose key may differ from the selected shop's (TWO-27200).
+        $apiKey = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        if ($includeApiKey && !Tools::isEmpty($apiKey)) {
+            $headers[] = 'X-API-Key:' . $apiKey;
         }
 
         // Not gated on $includeApiKey: the unauthenticated order-intent path
@@ -26002,13 +26070,35 @@ class Twopayment extends PaymentModule
         }
     }
 
+    /**
+     * What the admin order panels show from the order's shop (TWO-27200): the payment data refreshed from Two, a
+     * refresh that may move the order's status by that shop's status maps, and the two flags read from that shop's
+     * settings.
+     *
+     * @param int $id_order
+     * @param array $twopaymentdata
+     * @return array{0:array,1:bool,2:bool} the payment data, whether the merchant distributes its own invoices, and
+     *   whether the order is still awaiting verification
+     */
+    private function syncTwoAdminOrderPanelData($id_order, $twopaymentdata)
+    {
+        return TwoOrderShopContext::run($id_order, function () use ($id_order, $twopaymentdata) {
+            $synced = $this->syncTwoAdminOrderPaymentDataFromProvider($id_order, $twopaymentdata);
+
+            return array(
+                $this->enrichTwoAdminOrderPaymentData($id_order, $synced),
+                $this->isMerchantInvoiceDistributed(),
+                $this->isTwoLegacyOrderAwaitingVerification($id_order),
+            );
+        });
+    }
+
     public function hookDisplayAdminOrderLeft($params)
     {
         $id_order = $params['id_order'];
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
-            $twopaymentdata = $this->syncTwoAdminOrderPaymentDataFromProvider((int)$id_order, $twopaymentdata);
-            $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
+            list($twopaymentdata) = $this->syncTwoAdminOrderPanelData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
             // Route the invoice download through the module admin controller so the
@@ -26054,8 +26144,7 @@ class Twopayment extends PaymentModule
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
 
         if ($twopaymentdata) {
-            $twopaymentdata = $this->syncTwoAdminOrderPaymentDataFromProvider((int)$id_order, $twopaymentdata);
-            $twopaymentdata = $this->enrichTwoAdminOrderPaymentData((int)$id_order, $twopaymentdata);
+            list($twopaymentdata, $invoice_distributed, $awaiting_verification) = $this->syncTwoAdminOrderPanelData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
             // Route the invoice download through the module admin controller so the
@@ -26078,14 +26167,14 @@ class Twopayment extends PaymentModule
                 // has the feature OR this order already carries upload history
                 // (an order uploaded under a past entitlement must keep showing
                 // what happened to it even if the flag is later revoked).
-                'use_own_invoices' => $this->isMerchantInvoiceDistributed()
+                'use_own_invoices' => $invoice_distributed
                     || !empty($twopaymentdata['two_invoice_upload_status']),
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
                 // TWO-26300: a legacy order still awaiting verification can be checked with Two from here.
                 'two_pending_notice' => $this->getTwoPendingNoticeFromRequest(),
-                'two_pending_check_url' => $this->isTwoLegacyOrderAwaitingVerification((int) $id_order) ? $this->getTwoConfigureUrl() : '',
+                'two_pending_check_url' => $awaiting_verification ? $this->getTwoConfigureUrl() : '',
                 'two_pending_order_id' => (int) $id_order,
                 'two_pending_check_label' => sprintf($this->l('Check status with %s'), $this->getTwoBrandConfig('product_name')),
                 'two_pending_check_help' => sprintf($this->l('This order is still awaiting verification. Check it with %s: a verified order is confirmed and moved on, a cancelled one is cancelled here.'), $this->getTwoBrandConfig('product_name')),
