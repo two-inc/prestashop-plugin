@@ -335,7 +335,7 @@ final class ApiRefusalLogSpec
                 $this->attempt = $attempt;
             }
 
-            public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null, $twoOrder = null)
+            public function sendTwoOrderRequest($requestType, $trigger, $endpoint, array $payload, $method, $cart = null, $order = null, array $headers = array(), &$sentPayload = null, $checks = null, $twoOrder = null, $finish = null)
             {
                 return substr((string) $endpoint, -7) === '/cancel' ? $this->cancel : $this->confirm;
             }
