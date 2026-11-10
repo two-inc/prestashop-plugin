@@ -1787,10 +1787,10 @@ class Twopayment extends PaymentModule
             : (string) Configuration::get('PS_TWO_MERCHANT_SHORT_NAME');
         Configuration::updateValue('PS_TWO_MERCHANT_SHORT_NAME', $shortNameToSave);
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', $apiKeyToSave);
-        // The request headers and the checkout guard read the copies taken at
-        // construction, and getContent() renders every tab in this request:
-        // without this, its calls for the new merchant carry the old key and
-        // Two answers 404 (TWO-26304).
+        // The checkout guard reads the copies taken at construction, and
+        // getContent() renders every tab in this request, so they follow the
+        // save (TWO-26304). The request headers read the stored key itself
+        // (TWO-27200).
         $this->merchant_short_name = $shortNameToSave;
         $this->api_key = $apiKeyToSave;
         if (!$this->vendorNameRefused) {
@@ -23051,8 +23051,11 @@ class Twopayment extends PaymentModule
         ];
 
         $includeApiKey = $this->shouldAttachTwoApiKey($endpoint);
-        if ($includeApiKey && !Tools::isEmpty($this->api_key)) {
-            $headers[] = 'X-API-Key:' . $this->api_key;
+        // Read per request, not the copy taken at construction: the back office acts on an order in the order's
+        // shop, whose key may differ from the selected shop's (TWO-27200).
+        $apiKey = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
+        if ($includeApiKey && !Tools::isEmpty($apiKey)) {
+            $headers[] = 'X-API-Key:' . $apiKey;
         }
 
         // Not gated on $includeApiKey: the unauthenticated order-intent path

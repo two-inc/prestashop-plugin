@@ -186,6 +186,8 @@ final class OrderPostprocessingSpec
         return new class extends TwopaymentTestHarness {
             /** @var array<int,array{endpoint:string,payload:mixed,method:string}> */
             public array $sent = [];
+            /** @var array<int,string[]> the request headers each send would carry, in $sent's order */
+            public array $sentHeaders = [];
             public string $twoState = 'CONFIRMED';
             /** @var array|null the answer to every PUT, when set */
             public ?array $putAnswer = null;
@@ -208,6 +210,7 @@ final class OrderPostprocessingSpec
                 }
                 if ($method !== 'GET') {
                     $this->sent[] = ['endpoint' => $endpoint, 'payload' => $payload, 'method' => $method];
+                    $this->sentHeaders[] = $this->getTwoRequestHeaders($endpoint, $additional_headers);
                 }
                 if ($method === 'PUT' && $this->putAnswer !== null) {
                     return $this->putAnswer;
@@ -1686,10 +1689,12 @@ final class OrderPostprocessingSpec
                 StubStore::$configuration['PS_TWO_OS_FULFILLED_MAP'] = json_encode([4]);
                 StubStore::$configuration['PS_TWO_OS_CANCELLED_MAP'] = 6;
                 StubStore::$configuration['PS_TWO_OS_REFUNDED_MAP'] = 7;
+                StubStore::$configuration['PS_TWO_MERCHANT_API_KEY'] = 'all-shops-key';
                 StubStore::$configurationShop[10] = [
                     'PS_TWO_OS_FULFILLED_MAP' => json_encode([12]),
                     'PS_TWO_OS_CANCELLED_MAP' => 13,
                     'PS_TWO_OS_REFUNDED_MAP' => 14,
+                    'PS_TWO_MERCHANT_API_KEY' => 'shop-10-key',
                 ];
                 Shop::setContext(Shop::CONTEXT_ALL);
                 $backOfficeShop = Context::getContext()->shop;
@@ -1709,6 +1714,9 @@ final class OrderPostprocessingSpec
                 if ($endpoint !== null) {
                     TinyAssert::same($endpoint, substr($sent[0]['endpoint'], -strlen($endpoint)), $description . ': endpoint');
                     TinyAssert::same($calls[0]['payload_out'], $sent[0]['payload'], $description . ': sends what the subscriber left');
+                }
+                foreach ($module->sentHeaders as $headers) {
+                    TinyAssert::same(['X-API-Key:shop-10-key'], array_values(preg_grep('/^X-API-Key:/', $headers)), $description . ': the order shop\'s API key');
                 }
                 TinyAssert::same([Shop::CONTEXT_ALL, null], [Shop::getContext(), Shop::getContextShopID()], $description . ': the back office\'s shop context is handed back');
                 TinyAssert::true($backOfficeShop === Context::getContext()->shop, $description . ': the back office\'s shop is handed back');

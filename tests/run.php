@@ -3617,6 +3617,7 @@ final class OrderBuilderSpec
     private static function testGetTwoRequestHeadersSkipApiKeyForOrderIntent(): void
     {
         self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
         $module = new TwopaymentTestHarness();
 
         $orderIntentHeaders = $module->getTwoRequestHeaders('/v1/order_intent');
@@ -5765,6 +5766,7 @@ final class OrderBuilderSpec
     private static function testGetTwoRequestHeadersSkipAuthForOrderIntent(): void
     {
         self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
         $module = new TwopaymentTestHarness();
 
         $orderIntentHeaders = $module->getTwoRequestHeaders(
