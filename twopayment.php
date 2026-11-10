@@ -26071,19 +26071,25 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The order's payment data refreshed from Two for the admin order panels, in the order's shop: the refresh may
-     * move the order's status by that shop's status maps (TWO-27200).
+     * What the admin order panels show from the order's shop (TWO-27200): the payment data refreshed from Two, a
+     * refresh that may move the order's status by that shop's status maps, and the two flags read from that shop's
+     * settings.
      *
      * @param int $id_order
      * @param array $twopaymentdata
-     * @return array
+     * @return array{0:array,1:bool,2:bool} the payment data, whether the merchant distributes its own invoices, and
+     *   whether the order is still awaiting verification
      */
     private function syncTwoAdminOrderPanelData($id_order, $twopaymentdata)
     {
         return TwoOrderShopContext::run($id_order, function () use ($id_order, $twopaymentdata) {
             $synced = $this->syncTwoAdminOrderPaymentDataFromProvider($id_order, $twopaymentdata);
 
-            return $this->enrichTwoAdminOrderPaymentData($id_order, $synced);
+            return array(
+                $this->enrichTwoAdminOrderPaymentData($id_order, $synced),
+                $this->isMerchantInvoiceDistributed(),
+                $this->isTwoLegacyOrderAwaitingVerification($id_order),
+            );
         });
     }
 
@@ -26092,7 +26098,7 @@ class Twopayment extends PaymentModule
         $id_order = $params['id_order'];
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
         if ($twopaymentdata) {
-            $twopaymentdata = $this->syncTwoAdminOrderPanelData((int)$id_order, $twopaymentdata);
+            list($twopaymentdata) = $this->syncTwoAdminOrderPanelData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
             // Route the invoice download through the module admin controller so the
@@ -26138,7 +26144,7 @@ class Twopayment extends PaymentModule
         $twopaymentdata = $this->getTwoOrderPaymentData($id_order);
 
         if ($twopaymentdata) {
-            $twopaymentdata = $this->syncTwoAdminOrderPanelData((int)$id_order, $twopaymentdata);
+            list($twopaymentdata, $invoice_distributed, $awaiting_verification) = $this->syncTwoAdminOrderPanelData((int)$id_order, $twopaymentdata);
             $invoice_actions_available = $this->shouldExposeTwoInvoiceActions($twopaymentdata);
 
             // Route the invoice download through the module admin controller so the
@@ -26161,14 +26167,14 @@ class Twopayment extends PaymentModule
                 // has the feature OR this order already carries upload history
                 // (an order uploaded under a past entitlement must keep showing
                 // what happened to it even if the flag is later revoked).
-                'use_own_invoices' => $this->isMerchantInvoiceDistributed()
+                'use_own_invoices' => $invoice_distributed
                     || !empty($twopaymentdata['two_invoice_upload_status']),
                 'two_invoice_actions_available' => $invoice_actions_available,
                 'two_invoice_notice' => $this->getTwoInvoiceNoticeFromRequest(),
                 'two_product_name' => $this->getTwoBrandConfig('product_name'),
                 // TWO-26300: a legacy order still awaiting verification can be checked with Two from here.
                 'two_pending_notice' => $this->getTwoPendingNoticeFromRequest(),
-                'two_pending_check_url' => $this->isTwoLegacyOrderAwaitingVerification((int) $id_order) ? $this->getTwoConfigureUrl() : '',
+                'two_pending_check_url' => $awaiting_verification ? $this->getTwoConfigureUrl() : '',
                 'two_pending_order_id' => (int) $id_order,
                 'two_pending_check_label' => sprintf($this->l('Check status with %s'), $this->getTwoBrandConfig('product_name')),
                 'two_pending_check_help' => sprintf($this->l('This order is still awaiting verification. Check it with %s: a verified order is confirmed and moved on, a cancelled one is cancelled here.'), $this->getTwoBrandConfig('product_name')),
