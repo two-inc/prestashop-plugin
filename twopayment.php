@@ -7169,7 +7169,7 @@ class Twopayment extends PaymentModule
         }
         // Itemised only as one entry per rate that keeps the refund's gross: lines for a rate named twice would credit
         // its kinds twice, and lines for another gross would not sum to the amount. Otherwise sent as the subscriber left it.
-        if (count(array_unique($rates)) !== count($rates) || abs(round($gross - $split, 2)) > 0.01) {
+        if (count(array_unique($rates)) !== count($rates) || abs(round($gross - $split, 2)) > 0.005) {
             return $payload;
         }
         $lines = $this->buildTwoRefundLineItems($edited, $two_order, $this->getTwoReratedRefundKinds($tax_subtotals, $edited, $kind_gross), $label, $reason);
