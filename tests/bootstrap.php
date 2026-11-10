@@ -413,6 +413,7 @@ namespace {
         public static function reset(): void
         {
             Hook::$subscribers = [];
+            Hook::$subscriberShops = [];
             Hook::$ids = [];
             self::$configurationGroup = [];
             self::$configurationShop = [];
@@ -1043,6 +1044,11 @@ namespace {
 
         /** @var array<string,array<string,callable>> subscriber callbacks per hook, keyed by module name */
         public static array $subscribers = [];
+        /**
+         * @var array<string,array<string,int[]>> the shops a subscriber is hooked in, per hook and module; unlisted is
+         * every shop. Core's list reads `hm.id_shop = Context::getContext()->shop->id` (TWO-27200).
+         */
+        public static array $subscriberShops = [];
         /** @var array<string,int> hook rows by name, as Hook::getIdByName() finds them */
         public static array $ids = [];
 
@@ -1058,9 +1064,14 @@ namespace {
                 return self::$execLists[$hookName];
             }
             if (!empty(self::$subscribers[$hookName])) {
-                return array_map(static function ($module) {
+                $idShop = (int) Context::getContext()->shop->id;
+                $modules = array_filter(array_keys(self::$subscribers[$hookName]), static function ($module) use ($hookName, $idShop) {
+                    return !isset(self::$subscriberShops[$hookName][$module]) || in_array($idShop, self::$subscriberShops[$hookName][$module], true);
+                });
+
+                return $modules === [] ? false : array_map(static function ($module) {
                     return ['module' => $module];
-                }, array_keys(self::$subscribers[$hookName]));
+                }, array_values($modules));
             }
 
             return false;
@@ -1239,6 +1250,11 @@ namespace {
         public static function getToken($page = false): string
         {
             return 'token';
+        }
+
+        public static function getAdminTokenLite($tab, $context = null): string
+        {
+            return 'admin-token';
         }
 
         public static function redirect($url): void
@@ -2483,6 +2499,16 @@ namespace {
 
         /** Core's per-shop id; 1 is the default single-shop install. */
         public int $id = 1;
+        public bool $loaded = true;
+
+        /** Core loads the row; here a shop loads when it is in StubStore::$shops. */
+        public function __construct($id = null)
+        {
+            if ($id !== null) {
+                $this->id = (int) $id;
+                $this->loaded = isset(StubStore::$shops[(int) $id]);
+            }
+        }
 
         public static function isFeatureActive(): bool
         {
@@ -3054,6 +3080,9 @@ namespace {
         public $id_lang = 1;
         public $module = '';
         public $total_paid = 0.0;
+        /** Core's is null until the order loads. */
+        public $id_shop = null;
+        public $current_state = 0;
         public bool $loaded = false;
 
         public function __construct($id = 0)
@@ -3063,6 +3092,8 @@ namespace {
                 $row = StubStore::$orders[$id];
                 $this->id = $id;
                 $this->loaded = true;
+                $this->id_shop = (int) ($row['id_shop'] ?? 1);
+                $this->current_state = (int) ($row['current_state'] ?? 0);
                 $this->module = (string) ($row['module'] ?? '');
                 $this->id_cart = (int) ($row['id_cart'] ?? 0);
                 $this->id_customer = (int) ($row['id_customer'] ?? 0);

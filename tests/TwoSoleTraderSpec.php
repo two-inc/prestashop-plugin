@@ -327,7 +327,7 @@ final class TwoSoleTraderSpec
      */
     private static function testTokenMintRequestCarriesClientParamsAndVendorHeader(): void
     {
-        $module = self::harness(['PS_TWO_VENDOR_NAME' => 'Shop A'], []);
+        $module = self::harness(['PS_TWO_VENDOR_NAME' => 'Shop A', 'PS_TWO_MERCHANT_API_KEY' => 'test-api-key'], []);
 
         $method = new ReflectionMethod('TwoSoleTrader', 'buildTokenMintUrl');
         $method->setAccessible(true);
