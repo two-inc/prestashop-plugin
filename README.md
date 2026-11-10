@@ -856,7 +856,9 @@ that rate have left, say), the refund goes without lines as before, and the modu
 logs why, naming the changed subtotals. A subscriber that re-rates should therefore
 move no more than the re-rated lines have left, from `order_lines` less what
 `order_refunds` credited them. This needs `tax_subtotals` in the payload, so the
-"Validate tax subtotals" setting on.
+"Validate tax subtotals" setting on. The hook's trace and the debug diff record the
+payload as the subscriber returned it; the stored refund record and the unitemised log
+follow the payload sent, after the module itemised it.
 
 The hook also runs on every order-intent pre-check during checkout, so keep
 subscribers cheap.

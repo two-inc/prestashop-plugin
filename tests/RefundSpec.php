@@ -356,7 +356,7 @@ final class RefundSpec
                 return strpos($l['message'], '; sending the refund without line items') !== false;
             }));
             TinyAssert::same($warning === null ? [] : [3], array_column($unitemised, 'severity'), $desc . ': the unitemised warning, ' . json_encode(array_column($unitemised, 'message')));
-            TinyAssert::true($warning === null || strpos($unitemised[0]['message'], $warning) !== false, $desc . ': the warning names ' . $warning . ', got ' . $unitemised[0]['message']);
+            TinyAssert::true($warning === null || strpos($unitemised[0]['message'], $warning) !== false, $desc . ': the warning names ' . $warning . ', got ' . ($unitemised[0]['message'] ?? 'none'));
             if ($got !== null) {
                 TinyAssert::same($payload['amount'], number_format(array_sum(array_column($got, 3)), 2, '.', ''), $desc . ': lines sum to the amount');
                 foreach ($edit === $own ? [] : $payload['tax_subtotals'] as $t) {
