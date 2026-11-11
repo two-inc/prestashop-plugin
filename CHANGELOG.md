@@ -5,6 +5,11 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.25] - Unreleased
+
+### Changed
+- **The order intent check carries the API key** (TWO-27236). The module sent every call to Two with the merchant's `X-API-Key` except `/v1/order_intent`, which went out without it, and without the `X-Vendor-Name` header, so Two could not authenticate it. It now carries both, like every other call. The request is still made from the shop's server to a fixed endpoint, and its payload is still built from the session cart, never from what the browser posts.
+
 ## [2.7.24] - Unreleased
 
 ### Fixed

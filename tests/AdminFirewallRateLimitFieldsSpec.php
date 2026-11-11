@@ -28,7 +28,7 @@ final class AdminFirewallRateLimitFieldsSpec
 
         self::testEveryConfiguredHeaderIsAttached();
         self::testNoHeadersConfiguredAttachesNothing();
-        self::testHeadersAttachedOnUnauthenticatedRequest();
+        self::testHeadersAttachedWithoutApiKey();
         self::testUnsendableRowsAreDropped();
         self::testOnlyBrowserFlaggedRowsReachTheBrowser();
 
@@ -195,11 +195,10 @@ final class AdminFirewallRateLimitFieldsSpec
         );
     }
 
-    private static function testHeadersAttachedOnUnauthenticatedRequest(): void
+    private static function testHeadersAttachedWithoutApiKey(): void
     {
-        // Unlike X-Vendor-Name and X-API-Key, these are not gated on the API
-        // key: the unauthenticated order-intent path still has to clear the
-        // merchant's firewall.
+        // Unlike X-API-Key, these are not gated on a key being stored: a shop
+        // with none still has to clear the merchant's firewall.
         self::reset();
         self::storeHeaders(array(
             array('name' => 'X-WAF-TOKEN', 'value' => 'waf-token-1', 'send_from_browser' => false),
@@ -207,7 +206,7 @@ final class AdminFirewallRateLimitFieldsSpec
 
         TinyAssert::true(
             in_array('X-WAF-TOKEN:waf-token-1', self::headersFor(new TwopaymentTestHarness(), '/v1/order_intent'), true),
-            'a configured header must travel on the unauthenticated order-intent path too'
+            'a configured header must travel with no API key stored too'
         );
     }
 
