@@ -5836,6 +5836,7 @@ require __DIR__ . '/DebugApiLoggingSpec.php';
 require __DIR__ . '/ErrorLogAccessSpec.php';
 require __DIR__ . '/ApiRefusalLogSpec.php';
 require __DIR__ . '/OrderTermWireSpec.php';
+require __DIR__ . '/CompanyLookupIdSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -5932,6 +5933,7 @@ $tests = [
     'ErrorLogAccessSpec::runAll' => [ErrorLogAccessSpec::class, 'runAll'],
     'ApiRefusalLogSpec::runAll' => [ApiRefusalLogSpec::class, 'runAll'],
     'OrderTermWireSpec::runAll' => [OrderTermWireSpec::class, 'runAll'],
+    'CompanyLookupIdSpec::runAll' => [CompanyLookupIdSpec::class, 'runAll'],
 ];
 
 $failed = 0;
