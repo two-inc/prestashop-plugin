@@ -8,6 +8,13 @@ name: Integration (real PrestaShop engine)
 #
 # Still hermetic, like every other job in this repo: no secrets, no live Two
 # API, no browser. Reuses the same dev/ci/*.sh harness as smoke.yml and e2e.yml.
+#
+# Legs (TWO-27173): the probes run on the same discovered PrestaShop x PHP
+# matrix as e2e.yml (see its header and dev/support-matrix.sh). The
+# carrier-less shipping matrix runs on the smoke legs: the newest release of
+# each PrestaShop minor on the newest PHP it declares. It reports cart shapes
+# that PrestaShop core computes, which vary by PrestaShop release and not by
+# PHP minor, and the probes already run every PHP minor.
 
 on:
   pull_request:
@@ -22,24 +29,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # e2e.yml annotates the skipped and non-blocking combinations; this run
+  # only writes its step summary, so each gets one warning, not two.
+  discover:
+    name: Discover
+    uses: ./.github/workflows/support-matrix.yml
+    with:
+      scope: all
+      table: e2e
+      annotate: false
+
   integration:
-    name: Integration probes (PS ${{ matrix.ps-version }})
+    name: Integration probes (PrestaShop ${{ matrix.combo.ps }}, PHP ${{ matrix.combo.php }})
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    continue-on-error: ${{ matrix.combo.provisional }}
     strategy:
       fail-fast: false
       matrix:
-        # Same matrix as e2e.yml (see its header for the 1.7.6 leg).
-        include:
-          - ps-version: "1.7.6"
-            ps-tag: "1.7.6.5-7.2"
-          - ps-version: "8"
-            ps-tag: "8"
-          - ps-version: "9"
-            ps-tag: "9"
+        combo: ${{ fromJSON(needs.discover.outputs.matrix).e2e }}
     env:
-      SFX: integration-${{ matrix.ps-version }}-${{ github.run_id }}
-      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-tag }}-apache
+      SFX: integration-${{ matrix.combo.ps }}-${{ matrix.combo.php }}-${{ github.run_id }}
+      PS_IMAGE: ${{ matrix.combo.image }}
       # The probes never call Two — but the module primes checkout media on
       # some paths, so point that at a port nothing listens on so it fails
       # fast instead of reaching Two's real sandbox from public CI.
@@ -49,6 +61,12 @@ jobs:
 
       - name: Boot PrestaShop
         run: dev/ci/boot-prestashop.sh
+
+      # Behind php.net's newest patch: a warning, never a failure.
+      - name: PHP is the latest patch
+        run: |
+          running=$(docker exec "ps-$SFX" php -r 'echo PHP_VERSION;')
+          dev/ci/check-php-patch.sh "$PS_IMAGE" "$running"
 
       - name: Stage HEAD module source
         run: |
@@ -90,15 +108,16 @@ jobs:
           docker network rm "psnet-$SFX" 2>/dev/null || true
 
   carrierless-matrix:
-    name: Carrier-less shipping matrix (PS ${{ matrix.ps-version }})
+    name: Carrier-less shipping matrix (PrestaShop ${{ matrix.combo.ps }}, PHP ${{ matrix.combo.php }})
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        ps-version: ["8", "9"]
+        combo: ${{ fromJSON(needs.discover.outputs.matrix).smoke }}
     env:
-      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-version }}-apache
+      PS_IMAGE: ${{ matrix.combo.image }}
     steps:
       - uses: actions/checkout@v4
 

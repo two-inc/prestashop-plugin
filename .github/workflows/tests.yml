@@ -6,13 +6,54 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The PHP minors every job below runs on, from php.net on every run and the
+  # module's declared floor (dev/support-matrix.sh, TWO-27173). setup-php's
+  # minor-only pin resolves the newest patch of each, so no patch is pinned
+  # here. Reads only php.net and this checkout, so a GitHub or Docker Hub
+  # outage cannot block these jobs.
+  discover:
+    name: Discover
+    uses: ./.github/workflows/support-matrix.yml
+    with:
+      scope: php
+      table: php
+
+  # Every module file on every PHP minor from the declared floor (7.2) to the
+  # newest php.net supports: what a merchant's shop parses.
+  lint:
+    name: Lint (PHP ${{ matrix.php-version }})
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ${{ fromJSON(needs.discover.outputs.matrix).php }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+
+      - name: Lint the module
+        run: dev/ci/lint-module.sh
+
+  # The offline suite needs PHP 8.1 syntax (TESTS_PHP_FLOOR in
+  # dev/support-matrix.sh), so it runs from 8.1 up; the lint job covers the
+  # minors below that.
   test:
     name: PHP ${{ matrix.php-version }}
+    needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        php-version: ["8.2", "8.3"]
+        php-version: ${{ fromJSON(needs.discover.outputs.matrix).php_test }}
 
     steps:
       - name: Checkout
@@ -103,8 +144,11 @@ jobs:
 
   # Separate from the offline suite so a catalogue that has drifted from the
   # source reports as an i18n failure rather than one red line among sixty.
+  # A tool run, not a version check: one leg, on the newest PHP php.net
+  # supports, so it never sits on a minor that has gone end of life.
   i18n-audit:
     name: i18n audit
+    needs: discover
     runs-on: ubuntu-latest
 
     steps:
@@ -114,15 +158,22 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.2"
+          php-version: ${{ fromJSON(needs.discover.outputs.matrix).php_newest }}
           coverage: none
 
       - name: Catalogues agree with the source
         run: dev/i18n-audit.sh
 
+  # phpstan.neon sets no phpVersion, so PHPStan judges the module against the
+  # PHP it runs on: every minor from 7.4 (PHPStan 2.x's own floor) up.
   phpstan:
-    name: phpstan
+    name: phpstan (PHP ${{ matrix.php-version }})
+    needs: discover
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ${{ fromJSON(needs.discover.outputs.matrix).phpstan }}
 
     steps:
       - name: Checkout
@@ -131,7 +182,7 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.2"
+          php-version: ${{ matrix.php-version }}
           coverage: none
 
       - name: Download phpstan (pinned + checksum-verified)
