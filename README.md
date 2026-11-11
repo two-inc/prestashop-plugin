@@ -668,9 +668,9 @@ source; run it with no arguments for a readable report).
   7.4, its own floor.
 - **PrestaShop**: the newest release of every minor PrestaShop still supports
   under its [release and support cycle](https://www.prestashop-project.org/project-organization/release-cycle/),
-  which today means the newest minor of the two newest majors (8.2 and 9.2),
-  plus PrestaShop 1.7.6.5 on PHP 7.2 as a named exception for merchants on
-  the module's floor.
+  that is the newest minor of each of the two newest majors, plus PrestaShop
+  1.7.6.5 on PHP 7.2 as a named exception for merchants on the module's
+  floor. A run's step summary lists the versions it resolved to.
 - **E2E and integration**: every PrestaShop release above times every PHP
   minor it declares (`install-dev/install_version.php`) that has a
   `prestashop/prestashop` image. A combination with no image is listed as
