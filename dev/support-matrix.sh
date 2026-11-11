@@ -159,6 +159,10 @@ php_all=$(jq -r '.[].version' <<<"$php_json" \
         if ver_le "$php_floor" "$m" && ver_le "$m" "$php_newest"; then echo "$m"; fi
     done)
 [ -n "$php_all" ] || die "no PHP minors between the floor $php_floor and $php_newest"
+# The declared floor must head the list: a change to php.net's listing must
+# not silently drop the oldest minors the module still declares.
+[ "$(head -1 <<<"$php_all")" = "$php_floor" ] \
+    || die "php.net's listing no longer yields the declared PHP floor $php_floor (got $(tr '\n' ' ' <<<"$php_all"))"
 php_test=$(while read -r m; do if ver_le "$TESTS_PHP_FLOOR" "$m"; then echo "$m"; fi; done <<<"$php_all")
 php_stan=$(while read -r m; do if ver_le "$PHPSTAN_PHP_FLOOR" "$m"; then echo "$m"; fi; done <<<"$php_all")
 php_skips=$(while read -r m; do
