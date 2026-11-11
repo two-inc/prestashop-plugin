@@ -37,6 +37,7 @@ final class CompanyLookupIdSpec
             ['GB:12345678', true, 'a prefixed registry id is looked up'],
             [' 987654321 ', true, 'a trimmed numeric id is looked up'],
             ['a..b', true, 'dots inside the id are looked up'],
+            ['bEB0d286R0I6MTIz-_x', true, 'a registry lookup id is looked up'],
         ];
         foreach ($cases as [$lookupId, $lookedUp, $description]) {
             [$requests, $emitted] = self::lookUp($lookupId);
