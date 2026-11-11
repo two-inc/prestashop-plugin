@@ -97,12 +97,15 @@ jobs:
       - name: Boot PrestaShop
         run: dev/ci/boot-prestashop.sh
 
-      # The PHP inside the shop against php.net's newest patch of its minor.
-      # Behind, however long: a warning, never a failure.
-      - name: PHP is the latest patch
+      # The PHP inside the shop must be this leg's minor (a failure if not),
+      # and is checked against php.net's newest patch of it (behind, however
+      # long: a warning, never a failure).
+      - name: PHP is this leg's minor, latest patch
+        env:
+          LEG_PHP: ${{ matrix.combo.php }}
         run: |
           running=$(docker exec "ps-$SFX" php -r 'echo PHP_VERSION;')
-          dev/ci/check-php-patch.sh "$PS_IMAGE" "$running"
+          bash dev/ci/check-php-patch.sh "$PS_IMAGE" "$running" "$LEG_PHP"
 
       - name: Stage HEAD module source
         run: |

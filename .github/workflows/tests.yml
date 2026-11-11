@@ -41,7 +41,7 @@ jobs:
           coverage: none
 
       - name: Lint the module
-        run: dev/ci/lint-module.sh
+        run: bash dev/ci/lint-module.sh
 
   # The offline suite needs PHP 8.1 syntax (TESTS_PHP_FLOOR in
   # dev/support-matrix.sh), so it runs from 8.1 up; the lint job covers the
