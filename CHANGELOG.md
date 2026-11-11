@@ -5,12 +5,10 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.7.25] - Unreleased
+## [2.7.24] - Unreleased
 
 ### Changed
 - **The order intent check carries the API key** (TWO-27236). The module sent every call to Two with the merchant's `X-API-Key` except `/v1/order_intent`, which went out without it, and without the `X-Vendor-Name` header, so Two could not authenticate it. It now carries both, like every other call. The request is still made from the shop's server to a fixed endpoint, and its payload is still built from the session cart, never from what the browser posts.
-
-## [2.7.24] - Unreleased
 
 ### Fixed
 - **A refund whose tax subtotals a postprocessing subscriber re-rated is itemised** (TWO-27204). A subscriber on `actionTwoOrderPostprocessing` that re-rates a line at order creation (shipping the shop holds at 0% sent to Two at 21%, say) left a later credit slip's share of that line at the shop's rate, where Two has no line, so the whole refund went to Two without line items. When the module could not itemise a refund and a subscriber changes its `tax_subtotals` and leaves it without `line_items`, the module now itemises the changed subtotals against Two's lines, each moved amount to lines of the kind it came from, so moved shipping goes to Two's shipping line. The Refunded remainder is itemised the same way. A refund still sent without lines logs why, as before, naming the changed subtotals; an amount moved beyond what Two's lines have left still goes without lines with the warning. Lines a subscriber sets itself are left alone, and changed subtotals that alter the refund's gross or name a rate twice are sent as the subscriber left them, without lines. See README "A refund a subscriber re-rates".
