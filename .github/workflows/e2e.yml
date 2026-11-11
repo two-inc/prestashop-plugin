@@ -1,11 +1,17 @@
 name: E2E (Playwright checkout flow)
 
-# PS version matrix (TWO-25110, TWO-26083): the module's declared floor
-# (ps_versions_compliancy min in twopayment.php) is 1.7.6.0, and the 1.7.6
-# leg pins prestashop/prestashop:1.7.6.5-7.2-apache, which ships PHP 7.2,
-# the module's declared PHP floor. 1.7 is past PrestaShop's own support
-# window, but merchants still run it, so it stays covered. The 8 and 9 legs
-# follow the moving major tags.
+# PrestaShop x PHP matrix (TWO-27173), discovered from upstream on every run
+# by dev/support-matrix.sh, whose header states the window and the sources:
+# the newest release of every PrestaShop minor upstream still supports (today
+# the newest minor of the two newest majors), times every PHP minor from the
+# module's declared floor (7.2) to the newest php.net supports that the release
+# declares and prestashop/prestashop publishes an image for. A PHP minor above
+# the release's declared ceiling runs non-blocking when an image exists. Plus
+# one named exception (TWO-26083): PrestaShop 1.7.6.5 on PHP 7.2, the module's
+# declared floors, which a live merchant runs although it is past PrestaShop's
+# own support window. Every leg checks the PHP inside its shop against
+# php.net's newest patch for that minor: a warning when behind, never a
+# failure.
 #
 # Scope (see tests/e2e/pages/checkout.ts and the spec file for the full
 # reasoning): this suite drives a real guest checkout — cart, address,
@@ -37,32 +43,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Skipped and non-blocking combinations get their ::warning:: here, once;
+  # integration.yml runs the same combinations and only writes its summary.
+  discover:
+    name: Discover
+    uses: ./.github/workflows/support-matrix.yml
+    with:
+      scope: all
+      table: e2e
+
   e2e:
-    name: E2E checkout flow (PS ${{ matrix.ps-version }})
+    name: E2E (PrestaShop ${{ matrix.combo.ps }}, PHP ${{ matrix.combo.php }})
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # A PHP minor above the release's declared ceiling is exercised but
+    # cannot block (see dev/support-matrix.sh).
+    continue-on-error: ${{ matrix.combo.provisional }}
     strategy:
       fail-fast: false
+      # No max-parallel: these legs talk only to the in-container Two API stub
+      # (company search is relayed through the module's own controller, which
+      # follows TWO_API_BASE_URL), never to Two staging or sandbox.
+      #
+      # Each combination carries its own host port (not a shared literal):
+      # keeps the collision-avoidance invariant every other resource in this
+      # harness follows (container/network names are namespaced by $SFX for
+      # the same reason) in case this workflow ever moves off isolated
+      # per-matrix-leg GitHub-hosted VMs.
       matrix:
-        # Explicit per-leg host-port (not a shared literal): keeps the
-        # collision-avoidance invariant every other resource in this
-        # harness follows (container/network names are namespaced by
-        # $SFX for the same reason) in case this workflow ever moves off
-        # isolated per-matrix-leg GitHub-hosted VMs.
-        include:
-          - ps-version: "1.7.6"
-            ps-tag: "1.7.6.5-7.2"
-            host-port: "18170"
-          - ps-version: "8"
-            ps-tag: "8"
-            host-port: "18180"
-          - ps-version: "9"
-            ps-tag: "9"
-            host-port: "18190"
+        combo: ${{ fromJSON(needs.discover.outputs.matrix).e2e }}
     env:
-      SFX: e2e-${{ matrix.ps-version }}-${{ github.run_id }}
-      PS_IMAGE: prestashop/prestashop:${{ matrix.ps-tag }}-apache
-      PS_HOST_PORT: ${{ matrix.host-port }}
+      SFX: e2e-${{ matrix.combo.ps }}-${{ matrix.combo.php }}-${{ github.run_id }}
+      PS_IMAGE: ${{ matrix.combo.image }}
+      PS_HOST_PORT: ${{ matrix.combo.port }}
       # Points the module at an in-container stub (dev/ci/two-api-stub.php,
       # started below) rather than at Two's real sandbox: this repo is public
       # and its CI holds no merchant key. The stub answers
@@ -82,6 +96,13 @@ jobs:
 
       - name: Boot PrestaShop
         run: dev/ci/boot-prestashop.sh
+
+      # The PHP inside the shop against php.net's newest patch of its minor.
+      # Behind, however long: a warning, never a failure.
+      - name: PHP is the latest patch
+        run: |
+          running=$(docker exec "ps-$SFX" php -r 'echo PHP_VERSION;')
+          dev/ci/check-php-patch.sh "$PS_IMAGE" "$running"
 
       - name: Stage HEAD module source
         run: |
@@ -146,7 +167,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-ps${{ matrix.ps-version }}
+          name: playwright-report-ps${{ matrix.combo.ps }}-php${{ matrix.combo.php }}
           path: tests/e2e/test-results/
           retention-days: 7
 

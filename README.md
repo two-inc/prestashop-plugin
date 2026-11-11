@@ -39,7 +39,7 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 
 ## Requirements
 
-- **PrestaShop**: 1.7.6+ (tested up to 9.x)
+- **PrestaShop**: 1.7.6+ (see [CI support matrix](#ci-support-matrix) for the versions CI tests)
 - **PHP**: 7.2+
 - **Theme**: Classic theme or 1.7-compatible themes
 - **B2B Support**: Store must support B2B (business account type at address step)
@@ -655,6 +655,29 @@ make test-js    # the Jest gate CI runs (views/js; host Node 20+, see tests/js/R
 make phpstan    # the static-analysis gate CI runs
 make test-integration  # real-engine probes (see tests/integration/README.md)
 ```
+
+### CI support matrix
+
+CI works out which versions to test on every run, from upstream, rather than
+from a hand-kept list: `dev/support-matrix.sh` (its header names every
+source; run it with no arguments for a readable report).
+
+- **PHP**: lint on every minor from the module's floor (7.2) to the newest
+  [php.net](https://www.php.net/supported-versions.php) supports. The offline
+  suite runs from 8.1, the oldest PHP its own code parses on, and PHPStan from
+  7.4, its own floor.
+- **PrestaShop**: the newest release of every minor PrestaShop still supports
+  under its [release and support cycle](https://www.prestashop-project.org/project-organization/release-cycle/),
+  which today means the newest minor of the two newest majors (8.2 and 9.2),
+  plus PrestaShop 1.7.6.5 on PHP 7.2 as a named exception for merchants on
+  the module's floor.
+- **E2E and integration**: every PrestaShop release above times every PHP
+  minor it declares (`install-dev/install_version.php`) that has a
+  `prestashop/prestashop` image. A combination with no image is listed as
+  skipped in the run's summary, with a warning. Each leg warns when its image
+  runs an older PHP patch than php.net's newest.
+- **Smoke and carrier-less**: the newest release of each PrestaShop minor on
+  the newest PHP it declares.
 
 #### Service URL overrides
 
