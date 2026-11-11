@@ -15776,8 +15776,8 @@ class Twopayment extends PaymentModule
      * Warranted means "a captured company can still be used for something",
      * which only a definitively rejected key rules out - Two is withheld from
      * checkout in exactly that state and nowhere else. It does NOT
-     * mean "the search would work": that endpoint is called unauthenticated and
-     * works regardless of the key.
+     * mean "the search would work": the search sends the key like every other
+     * call, and Two decides whether it works.
      *
      * 'verifying' (nothing known yet) counts as warranted for the same reason a
      * transient failure does, and the caller that most needs this - the
@@ -23198,8 +23198,8 @@ class Twopayment extends PaymentModule
             'Content-Type: application/json; charset=utf-8',
         ];
 
-        // Every call carries the key, order intent included (TWO-27236): each one is made from this server with a
-        // fixed endpoint, and the order intent's payload is built from the session cart, never the browser's.
+        // Every call carries the key, order intent included (TWO-27236): each one is made from this server, never the
+        // browser, and the order intent's payload is built from the session cart, never from what the browser posts.
         // Read per request, not the copy taken at construction: the back office acts on an order in the order's
         // shop, whose key may differ from the selected shop's (TWO-27200).
         $apiKey = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');

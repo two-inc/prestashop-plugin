@@ -11,9 +11,8 @@ declare(strict_types=1);
  * properties are load-bearing and easy to lose:
  *
  *   - every configured row is sent from the server on EVERY call, including
- *     the unauthenticated order-intent path, because the firewall the rows
- *     exist to clear does not care whether Two would have authenticated the
- *     request;
+ *     from a shop with no key stored, because the firewall the rows exist to
+ *     clear does not care whether Two would have authenticated the request;
  *   - only rows ticked "also send from browser" reach the browser at all,
  *     since anything published there is readable by the buyer.
  */
