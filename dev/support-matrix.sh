@@ -67,9 +67,9 @@
 #   outside  below the release's declared PHP floor: not a combination
 #            PrestaShop supports, listed in the step summary only
 #   run, provisional: above the release's declared PHP ceiling, with an image.
-#            New PHP minors are tested from their first GA release (Doug, 9
-#            Nov 2026, Q299), so these run non-blocking (continue-on-error)
-#            with a warning
+#            New PHP minors are tested from their first GA release
+#            (TWO-27173), so these run non-blocking (continue-on-error) with
+#            a warning
 #   skip     no image to run it on (above the ceiling or not)
 #   run      otherwise, blocking
 #
@@ -96,9 +96,8 @@ IMAGE_REPO=prestashop/prestashop
 # "<release> <php minor>  <reason>".
 # 1.7.6.5 on PHP 7.2 (TWO-26083): a live merchant runs PrestaShop 1.7.6, which
 # is also the module's declared floor (ps_versions_compliancy min 1.7.6.0 in
-# twopayment.php). Doug, 9 Nov 2026: 1.7.6 is "needed as an explicit
-# exception". PHP 7.2 is the module's declared PHP floor and the newest PHP
-# PrestaShop 1.7.6 supports.
+# twopayment.php), so it stays covered as an explicit exception. PHP 7.2 is
+# the module's declared PHP floor and the newest PHP PrestaShop 1.7.6 supports.
 PS_EXCEPTIONS=(
     "1.7.6.5 7.2 TWO-26083: a live merchant runs PrestaShop 1.7.6, the module's declared floor"
 )
