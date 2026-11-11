@@ -30,9 +30,18 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      # A tool run, not a version check: the newest PHP php.net supports
+      # (dev/support-matrix.sh, TWO-27173), so it never sits on a minor that
+      # has gone end of life.
+      - name: Newest supported PHP
+        id: php
+        run: |
+          set -euo pipefail
+          newest=$(bash dev/support-matrix.sh --php | jq -r .php_newest)
+          echo "newest=$newest" >> "$GITHUB_OUTPUT"
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.3"
+          php-version: ${{ steps.php.outputs.newest }}
           coverage: none
           tools: none
       - env:

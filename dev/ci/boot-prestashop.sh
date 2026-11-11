@@ -9,8 +9,10 @@
 # Required env:
 #   SFX       — namespacing suffix so concurrent runs on a shared runner
 #               can't collide on container/network names.
+#   PS_IMAGE: the PrestaShop image. CI passes the image dev/support-matrix.sh
+#               discovered for the leg (TWO-27173); no default, so a leg that
+#               lost its image fails rather than testing some other version.
 # Optional env:
-#   PS_IMAGE     — PrestaShop image (default mirrors docker-compose.yml).
 #   PULL         — 0 to reuse a locally cached image instead of pulling.
 #   PS_DEV_MODE  — 1 (default) for debug-mode strictness (extra hook/method
 #                  validation, verbose fatals) when installing HEAD; 0 for
@@ -21,7 +23,7 @@
 set -euo pipefail
 
 : "${SFX:?SFX (namespacing suffix) must be set}"
-PS_IMAGE="${PS_IMAGE:-prestashop/prestashop:8-apache}"
+: "${PS_IMAGE:?PS_IMAGE (the PrestaShop image to boot) must be set}"
 PS_DEV_MODE="${PS_DEV_MODE:-1}"
 DB_IMAGE="mariadb:10.11"
 # Optional (TWO-25110): publish the storefront to a host port so a

@@ -194,8 +194,9 @@ carrierless-shop:
 # Configs 4/5 (merchant override) run only with MERCHANT_OVERRIDE_PATH,
 # MERCHANT_SHIM_PATH and MERCHANT_RATE_CONFIG_KEY set; see tests/integration/README.md.
 ## Cross carrier-less shipping modes with Default shipping tax code configs on a throwaway shop; prints a results table
+# The image defaults as docker-compose.yml does; CI passes a discovered one.
 carrierless-matrix:
-	dev/ci/run-carrierless-matrix.sh
+	PS_IMAGE="$${PS_IMAGE:-$${PRESTASHOP_IMAGE:-prestashop/prestashop:8-apache}}" dev/ci/run-carrierless-matrix.sh
 
 ## Run the tests/integration probes against the running local shop (run make carrierless-shop first)
 test-integration:
