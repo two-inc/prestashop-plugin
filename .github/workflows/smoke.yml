@@ -13,6 +13,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which PrestaShop images the smoke legs boot (TWO-27173): the newest
+  # release of each PrestaShop minor upstream supports, on the newest PHP it
+  # declares (dev/support-matrix.sh). Not the full PrestaShop x PHP matrix:
+  # e2e.yml and integration.yml install HEAD fresh on every combination, which
+  # covers the install path on every PHP minor, and what only this workflow
+  # adds, running upgrade/upgrade-*.php against real core, varies with the
+  # PrestaShop release (TWO-25265: the class index moved in 8.1 and went in
+  # 9), not with the PHP minor. The 1.7.6 exception is not a smoke leg, as
+  # before.
+  discover:
+    name: Discover
+    uses: ./.github/workflows/support-matrix.yml
+    with:
+      scope: all
+      table: smoke
+
   # The version comparison that decides whether the upgrade leg exercises a
   # version-gated migration or skips it. Unit-tested in its own job (no docker,
   # a second) and gating the leg that uses it, the way version-bump.yml gates its
@@ -31,11 +47,17 @@ jobs:
   # payment method registers (paymentOptions hook). Shares its harness
   # (dev/ci/*.sh) with the upgrade-smoke job below.
   install-smoke:
-    name: Install smoke (fresh HEAD install)
+    name: Install smoke (fresh HEAD install, PrestaShop ${{ matrix.combo.ps }}, PHP ${{ matrix.combo.php }})
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        combo: ${{ fromJSON(needs.discover.outputs.matrix).smoke }}
     env:
-      SFX: install-${{ github.run_id }}
+      SFX: install-${{ github.run_id }}-ps${{ matrix.combo.ps }}
+      PS_IMAGE: ${{ matrix.combo.image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -83,8 +105,8 @@ jobs:
   # in 8.1 and 9 deleted it, so the migration deleted a stale override and then
   # died before writing it back, leaving the shop running none at all.
   upgrade-smoke:
-    name: Upgrade smoke (latest release → HEAD, PS ${{ matrix.ps }})
-    needs: self-test
+    name: Upgrade smoke (latest release → HEAD, PrestaShop ${{ matrix.combo.ps }}, PHP ${{ matrix.combo.php }})
+    needs: [self-test, discover]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -92,14 +114,10 @@ jobs:
       # result, which is the whole reason for testing more than one.
       fail-fast: false
       matrix:
-        include:
-          - ps: "8"
-            image: prestashop/prestashop:8-apache
-          - ps: "9"
-            image: prestashop/prestashop:9-apache
+        combo: ${{ fromJSON(needs.discover.outputs.matrix).smoke }}
     env:
-      # Per-leg, or the two legs collide on container and network names.
-      SFX: upgrade-${{ github.run_id }}-ps${{ matrix.ps }}
+      # Per-leg, or the legs collide on container and network names.
+      SFX: upgrade-${{ github.run_id }}-ps${{ matrix.combo.ps }}
     steps:
       - uses: actions/checkout@v4
 
@@ -131,7 +149,9 @@ jobs:
         # merchant runs them. Debug-mode-only strictness (e.g. hook-method
         # validation) reds on old released tags we cannot change — the
         # install-smoke job keeps that strictness for HEAD instead.
-        run: PS_IMAGE='${{ matrix.image }}' PS_DEV_MODE=0 dev/ci/boot-prestashop.sh
+        env:
+          PS_IMAGE: ${{ matrix.combo.image }}
+        run: PS_DEV_MODE=0 dev/ci/boot-prestashop.sh
 
       - name: Install latest release + seed config
         env:

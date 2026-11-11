@@ -1,0 +1,109 @@
+name: Support matrix
+
+# Reusable (TWO-27173): which PHP minors and PrestaShop x PHP combinations the
+# calling workflow runs on, read from upstream on every run by
+# dev/support-matrix.sh, whose header states the window and the sources. Every
+# workflow that runs PHP or PrestaShop takes its legs from here rather than
+# keeping its own list.
+#
+# Honest CI (TWO-24998): the run or skip decision is made here. A combination
+# that cannot run never becomes a green leg: it is listed in this job's step
+# summary and, where the caller asks for annotations, gets one ::warning::
+# with its reason. A transport or parse failure fails discovery rather than
+# emitting an empty matrix.
+
+on:
+  workflow_call:
+    inputs:
+      scope:
+        description: "php: php.net and this checkout only. all: also PrestaShop releases and images."
+        type: string
+        required: true
+      table:
+        description: "Which step-summary table to write: php, e2e or smoke."
+        type: string
+        required: true
+      annotate:
+        description: "One ::warning:: per skipped or non-blocking combination. Off where another workflow already annotates the same combinations."
+        type: boolean
+        default: true
+    outputs:
+      matrix:
+        description: "dev/support-matrix.sh's JSON (see its header for the keys)."
+        value: ${{ jobs.discover.outputs.matrix }}
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Discover the support matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Classify every combination in the support window
+        id: gen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCOPE: ${{ inputs.scope }}
+          TABLE: ${{ inputs.table }}
+          ANNOTATE: ${{ inputs.annotate }}
+        run: |
+          set -euo pipefail
+          all=$(bash dev/support-matrix.sh "--$SCOPE")
+          echo "matrix=$all" >> "$GITHUB_OUTPUT"
+          jq . <<<"$all"
+          case $TABLE in
+            php)
+              {
+                echo "## PHP coverage"
+                echo ""
+                echo "php.net's newest supported minor: $(jq -r .php_newest <<<"$all")"
+                echo ""
+                echo "| Job | PHP | Status | Reason |"
+                echo "|---|---|---|---|"
+                jq -r '.php[] | "| Lint | \(.) | ✅ tested | |"' <<<"$all"
+                jq -r '.php_test[] | "| Offline suite | \(.) | ✅ tested | |"' <<<"$all"
+                jq -r '.phpstan[] | "| PHPStan | \(.) | ✅ tested | |"' <<<"$all"
+                jq -r '.php_skips[] | "| \(.job) | \(.php) | 🚫 NOT run | \(.reason) |"' <<<"$all"
+              } >> "$GITHUB_STEP_SUMMARY"
+              if [ "$ANNOTATE" = true ]; then
+                jq -r '.php_skips[] | "::warning title=PHP minor NOT tested::\(.job) / PHP \(.php): \(.reason)"' <<<"$all"
+              fi
+              ;;
+            e2e)
+              {
+                echo "## PrestaShop x PHP coverage"
+                echo ""
+                echo "| PrestaShop | PHP | Image | Status | Reason |"
+                echo "|---|---|---|---|---|"
+                jq -r '.e2e[] | select(.provisional | not) | "| \(.ps) | \(.php) | `\(.image)` | ✅ tested\(if .exception then " (named exception)" else "" end) | |"' <<<"$all"
+                jq -r '.e2e[] | select(.provisional) | "| \(.ps) | \(.php) | `\(.image)` | ⚠️ tested, non-blocking | \(.provisional_reason) |"' <<<"$all"
+                jq -r '.skips[] | "| \(.ps) | \(.php) | | 🚫 NOT run | \(.reason) |"' <<<"$all"
+                jq -r '.outside[] | "| \(.ps) | \(.php) | | n/a | \(.reason) |"' <<<"$all"
+              } >> "$GITHUB_STEP_SUMMARY"
+              if [ "$ANNOTATE" = true ]; then
+                jq -r '.e2e[] | select(.provisional) | "::warning title=Combination tested non-blocking::PrestaShop \(.ps) / PHP \(.php): \(.provisional_reason)"' <<<"$all"
+                jq -r '.skips[] | "::warning title=Combination NOT tested::PrestaShop \(.ps) / PHP \(.php): \(.reason)"' <<<"$all"
+              fi
+              ;;
+            smoke)
+              {
+                echo "## Smoke legs"
+                echo ""
+                echo "The newest release of each PrestaShop minor in the window, on the newest PHP it declares. The full PrestaShop x PHP matrix runs in the E2E and Integration workflows."
+                echo ""
+                echo "| PrestaShop | PHP | Image |"
+                echo "|---|---|---|"
+                jq -r '.smoke[] | "| \(.ps) | \(.php) | `\(.image)` |"' <<<"$all"
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "::error::support-matrix: unknown table '$TABLE'"
+              exit 1
+              ;;
+          esac

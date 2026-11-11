@@ -3,9 +3,11 @@
 # tests/integration/README.md. Boots its own PrestaShop per config group and removes
 # it on exit, so it never touches an existing shop.
 #
-# Optional env: PS_IMAGE (see boot-prestashop.sh); MERCHANT_OVERRIDE_PATH,
-# MERCHANT_SHIM_PATH and MERCHANT_RATE_CONFIG_KEY together add configs 4/5.
+# Required env: PS_IMAGE (see boot-prestashop.sh). Optional env:
+# MERCHANT_OVERRIDE_PATH, MERCHANT_SHIM_PATH and MERCHANT_RATE_CONFIG_KEY
+# together add configs 4/5.
 set -euo pipefail
+: "${PS_IMAGE:?PS_IMAGE (the PrestaShop image to boot) must be set}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # The UID keeps one user's sweep off another's runs on a shared Docker daemon.
