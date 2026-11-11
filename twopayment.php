@@ -23198,29 +23198,27 @@ class Twopayment extends PaymentModule
             'Content-Type: application/json; charset=utf-8',
         ];
 
-        $includeApiKey = $this->shouldAttachTwoApiKey($endpoint);
+        // Every call carries the key, order intent included (TWO-27236): each one is made from this server with a
+        // fixed endpoint, and the order intent's payload is built from the session cart, never the browser's.
         // Read per request, not the copy taken at construction: the back office acts on an order in the order's
         // shop, whose key may differ from the selected shop's (TWO-27200).
         $apiKey = (string) Configuration::get('PS_TWO_MERCHANT_API_KEY');
-        if ($includeApiKey && !Tools::isEmpty($apiKey)) {
+        if (!Tools::isEmpty($apiKey)) {
             $headers[] = 'X-API-Key:' . $apiKey;
         }
 
-        // Not gated on $includeApiKey: the unauthenticated order-intent path
-        // still reaches Two, so it still has to clear the firewall (TWO-25386).
+        // Not gated on the API key: a shop with none stored still has to clear the firewall (TWO-25386).
         $headers = array_merge($headers, self::getTwoCustomHeaderLines());
 
         // Multi-site vendor/site name (TWO-25386). Sent as a header
         // rather than in every payload body - PS's request builder has one
         // shared header assembly point but many separate payload builders, so
         // a header keeps this a one-line addition instead of touching each
-        // endpoint's payload shape. Only ever sent alongside the API key -
-        // never useful, and never sent, on the unauthenticated order-intent
-        // preview path.
+        // endpoint's payload shape.
         // Re-checked where it is sent: a stored value that no save validated
         // (an import, a hand-edited row) never reaches the wire unsendable.
         $vendorName = trim((string) Configuration::get('PS_TWO_VENDOR_NAME'));
-        if ($includeApiKey && $vendorName !== '' && self::isSendableTwoVendorName($vendorName)) {
+        if ($vendorName !== '' && self::isSendableTwoVendorName($vendorName)) {
             $headers[] = 'X-Vendor-Name:' . $vendorName;
         }
 
@@ -23230,53 +23228,11 @@ class Twopayment extends PaymentModule
                     continue;
                 }
 
-                // Hard block accidental auth header leakage on order-intent path.
-                if (!$includeApiKey) {
-                    $normalizedHeader = strtolower(trim($header));
-                    if (
-                        strpos($normalizedHeader, 'x-api-key:') === 0 ||
-                        strpos($normalizedHeader, 'authorization:') === 0 ||
-                        strpos($normalizedHeader, 'proxy-authorization:') === 0
-                    ) {
-                        continue;
-                    }
-                }
-
                 $headers[] = $header;
             }
         }
 
         return $headers;
-    }
-
-    /**
-     * @param string $endpoint
-     * @return bool
-     */
-    private function shouldAttachTwoApiKey($endpoint)
-    {
-        $normalized = strtolower(trim((string)$endpoint));
-        if (Tools::isEmpty($normalized)) {
-            return true;
-        }
-
-        if (strpos($normalized, 'http://') === 0 || strpos($normalized, 'https://') === 0) {
-            $path = parse_url($normalized, PHP_URL_PATH);
-            if (is_string($path)) {
-                $normalized = strtolower($path);
-            }
-        } else {
-            $query_pos = strpos($normalized, '?');
-            if ($query_pos !== false) {
-                $normalized = substr($normalized, 0, $query_pos);
-            }
-        }
-
-        if ($normalized === '/v1/order_intent' || strpos($normalized, '/v1/order_intent/') === 0) {
-            return false;
-        }
-
-        return true;
     }
 
     /**
