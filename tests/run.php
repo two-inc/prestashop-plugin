@@ -95,7 +95,7 @@ final class OrderBuilderSpec
         self::testMerchantCase1BuildsExpectedOrderPayload();
         self::testMerchantCase2BlocksOnInconsistentOrderTotals();
         self::testMerchantCase3BuildsSimpleOrderPayload();
-        self::testGetTwoRequestHeadersSkipApiKeyForOrderIntent();
+        self::testGetTwoRequestHeadersSendApiKeyOnEveryEndpoint();
         self::testCheckTwoOrderIntentApprovalAtPaymentDeclinesEvenWhenFrontendCookieSaysApproved();
         self::testCheckTwoOrderIntentApprovalAtPaymentAllowsApprovedResponse();
         self::testCheckTwoOrderIntentApprovalAtPaymentHandlesProviderNetworkFailure();
@@ -163,7 +163,6 @@ final class OrderBuilderSpec
         self::testGetTwoProductItemsToleratesUnitPriceRoundingDrift();
         self::testExtractOrgNumberFromAddressNeverUsesVatNumber();
         self::testExtractOrgNumberFromAddressUsesInMemoryCompanyid();
-        self::testGetTwoRequestHeadersSkipAuthForOrderIntent();
         self::testGetAvailablePaymentTermsIntersectsBackendWithAdminSubset();
         self::testGetAvailablePaymentTermsWithdrawnBackendTermDrops();
         self::testGetAvailablePaymentTermsIsEmptyWhenBackendUnresolved();
@@ -3614,50 +3613,29 @@ final class OrderBuilderSpec
         TinyAssert::true($hasShipping, 'Expected shipping line');
     }
 
-    private static function testGetTwoRequestHeadersSkipApiKeyForOrderIntent(): void
+    private static function testGetTwoRequestHeadersSendApiKeyOnEveryEndpoint(): void
     {
         self::reset();
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
         $module = new TwopaymentTestHarness();
 
-        $orderIntentHeaders = $module->getTwoRequestHeaders('/v1/order_intent');
-        $orderIntentHeadersWithExtras = $module->getTwoRequestHeaders(
-            '/v1/order_intent',
-            ['Authorization: Bearer should-not-leak', 'X-API-Key: should-not-leak']
-        );
-        $createOrderHeaders = $module->getTwoRequestHeaders('/v1/order');
-
-        $orderIntentHasApiKey = false;
-        foreach ($orderIntentHeaders as $header) {
-            if (strpos($header, 'X-API-Key:') === 0) {
-                $orderIntentHasApiKey = true;
-                break;
-            }
+        // Order intent carries the key like every other call (TWO-27236).
+        $cases = [
+            ['/v1/order_intent', 'an order intent'],
+            ['/v1/order_intent?client=ps', 'an order intent with a query string'],
+            ['/v1/order', 'an order create'],
+            ['/v1/order/abc-123', 'an order read'],
+            ['/companies/v2/company?q=acme&country=NO', 'a company search'],
+            ['/companies/v2/company/NO123', 'a company lookup'],
+            ['/companies/v2/supported-countries', 'the company search country list'],
+        ];
+        foreach ($cases as [$endpoint, $description]) {
+            TinyAssert::same(
+                ['X-API-Key:test-api-key'],
+                array_values(preg_grep('/^X-API-Key:/i', $module->getTwoRequestHeaders($endpoint))),
+                $description . ': the API key, once'
+            );
         }
-
-        $orderIntentHasAuthHeaders = false;
-        foreach ($orderIntentHeadersWithExtras as $header) {
-            if (
-                strpos($header, 'X-API-Key:') === 0 ||
-                strpos($header, 'Authorization:') === 0 ||
-                strpos($header, 'Proxy-Authorization:') === 0
-            ) {
-                $orderIntentHasAuthHeaders = true;
-                break;
-            }
-        }
-
-        $createOrderHasApiKey = false;
-        foreach ($createOrderHeaders as $header) {
-            if (strpos($header, 'X-API-Key:') === 0) {
-                $createOrderHasApiKey = true;
-                break;
-            }
-        }
-
-        TinyAssert::false($orderIntentHasApiKey, 'Order intent headers must not include X-API-Key');
-        TinyAssert::false($orderIntentHasAuthHeaders, 'Order intent headers must not include auth headers');
-        TinyAssert::true($createOrderHasApiKey, 'Create order headers must include X-API-Key');
     }
 
     private static function testCheckTwoOrderIntentApprovalAtPaymentDeclinesEvenWhenFrontendCookieSaysApproved(): void
@@ -5761,34 +5739,6 @@ final class OrderBuilderSpec
         $address->companyid = '  912345678  ';
 
         TinyAssert::same('912345678', $module->extractOrgNumberFromAddress($address, 'GB'));
-    }
-
-    private static function testGetTwoRequestHeadersSkipAuthForOrderIntent(): void
-    {
-        self::reset();
-        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
-        $module = new TwopaymentTestHarness();
-
-        $orderIntentHeaders = $module->getTwoRequestHeaders(
-            '/v1/order_intent',
-            ['Authorization: Bearer should-not-leak', 'X-API-Key: should-not-leak']
-        );
-        $createOrderHeaders = $module->getTwoRequestHeaders('/v1/order');
-
-        foreach ($orderIntentHeaders as $header) {
-            TinyAssert::false(strpos($header, 'X-API-Key:') === 0);
-            TinyAssert::false(strpos($header, 'Authorization:') === 0);
-            TinyAssert::false(strpos($header, 'Proxy-Authorization:') === 0);
-        }
-
-        $createOrderHasApiKey = false;
-        foreach ($createOrderHeaders as $header) {
-            if (strpos($header, 'X-API-Key:') === 0) {
-                $createOrderHasApiKey = true;
-                break;
-            }
-        }
-        TinyAssert::true($createOrderHasApiKey);
     }
 }
 
