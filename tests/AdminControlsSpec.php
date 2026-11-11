@@ -58,7 +58,7 @@ final class AdminControlsSpec
         self::testVendorNameHeaderIncludedWhenConfigured();
         self::testVendorNameHeaderSentOnlyWhenSendable();
         self::testVendorNameHeaderOmittedWhenBlank();
-        self::testVendorNameHeaderOmittedFromUnauthenticatedRequest();
+        self::testVendorNameHeaderSentOnOrderIntent();
 
         self::testCheckoutSortOrderValidationAcceptsEmptyAndIntegers();
         self::testCheckoutSortOrderValidationRejectsNonInteger();
@@ -511,18 +511,17 @@ final class AdminControlsSpec
         TinyAssert::false(self::hasVendorHeader($headers));
     }
 
-    private static function testVendorNameHeaderOmittedFromUnauthenticatedRequest(): void
+    private static function testVendorNameHeaderSentOnOrderIntent(): void
     {
         self::reset();
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
         Configuration::updateValue('PS_TWO_VENDOR_NAME', 'Shop A');
         $module = new TwopaymentTestHarness();
 
-        // The unauthenticated order-intent preview endpoint never attaches
-        // the API key, and must never leak the vendor identity either.
-        $headers = self::headersFor($module, '/v1/order_intent/preview');
+        // Order intent carries the API key, and the vendor name with it (TWO-27236).
+        $headers = self::headersFor($module, '/v1/order_intent');
 
-        TinyAssert::false(self::hasVendorHeader($headers));
+        TinyAssert::true(in_array('X-Vendor-Name:Shop A', $headers, true));
     }
 
     // ---- checkout sort order -----------------------------------------------
