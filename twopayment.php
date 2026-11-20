@@ -24822,17 +24822,18 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The status a Two order is created in, before it moves to the verified status.
+     * The status a Two order is created in, before it moves to the verified status: the
+     * merchant's mapping, then the branded state, then core's Processing in progress (TWO-27329).
      *
      * @return int
      */
     public function getTwoInitialAwaitingStatusId()
     {
-        $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
-        if (!$initial_status) {
-            $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP');
-            if (!$initial_status) {
-                $initial_status = Configuration::get('PS_OS_PREPARATION');
+        $initial_status = (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP');
+        if ($initial_status <= 0) {
+            $initial_status = (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
+            if ($initial_status <= 0) {
+                $initial_status = (int) Configuration::get('PS_OS_PREPARATION');
             }
         }
 
@@ -24840,26 +24841,23 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The status the confirmation moves a verified order to.
+     * The status the confirmation moves a verified order to: the one every other path treats
+     * as verified (TWO-27329).
      *
      * @return int
      */
     public function getTwoVerifiedStatusIdForConfirmation()
     {
-        $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
-        if (!$verified_status) {
-            $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
-            if (!$verified_status) {
-                $verified_status = Configuration::get('PS_OS_PREPARATION');
-            }
-        }
-
-        return (int) $verified_status;
+        return $this->getTwoVerifiedPendingFulfillmentStatusId();
     }
 
     /**
      * A Two order still in the awaiting-verification status it was created in: placed before
      * checkout attempts existed, or left there by a confirmation that stopped part way.
+     *
+     * The mapped status and the branded state both count, so an order created before the
+     * merchant changed the mapping is still found. A status that is also the verified one
+     * cannot tell the two apart, so it does not count.
      *
      * @param int $id_order
      * @return bool
@@ -24870,8 +24868,13 @@ class Twopayment extends PaymentModule
         if (!Validate::isLoadedObject($order) || (string) $order->module !== $this->name) {
             return false;
         }
-        $awaiting = $this->getTwoInitialAwaitingStatusId();
-        if ($awaiting <= 0 || (int) $order->current_state !== $awaiting) {
+        $current = (int) $order->current_state;
+        $awaiting = array(
+            $this->getTwoInitialAwaitingStatusId(),
+            (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION'),
+        );
+        if ($current <= 0 || !in_array($current, $awaiting, true)
+            || $current === $this->getTwoVerifiedPendingFulfillmentStatusId()) {
             return false;
         }
         $payment_data = $this->getTwoOrderPaymentData((int) $id_order);

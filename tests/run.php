@@ -118,6 +118,8 @@ final class OrderBuilderSpec
         self::testIsTwoAttemptStatusTerminalMatchesCancelledGuard();
         self::testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain();
         self::testGetTwoVerifiedPendingFulfillmentStatusIdUsesConfiguredFallbackChain();
+        self::testGetTwoInitialAwaitingStatusIdUsesConfiguredFallbackChain();
+        self::testLegacyOrderAwaitingVerificationMatchesMappedAndBrandedStates();
         self::testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId();
         self::testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled();
         self::testIsTwoOrderCancelledResponseRequires2xxAndCancelledState();
@@ -4203,7 +4205,58 @@ final class OrderBuilderSpec
             Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $map);
             Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $branded);
             Configuration::updateValue('PS_OS_PREPARATION', $core);
-            TinyAssert::same($expected, (new TwopaymentTestHarness())->getTwoVerifiedPendingFulfillmentStatusId(), 'verified: ' . $description);
+            $module = new TwopaymentTestHarness();
+            TinyAssert::same($expected, $module->getTwoVerifiedPendingFulfillmentStatusId(), 'verified: ' . $description);
+            // TWO-27329: confirmation moves the order to that same status.
+            TinyAssert::same($expected, $module->getTwoVerifiedStatusIdForConfirmation(), 'confirmation: ' . $description);
+        }
+    }
+
+    private static function testGetTwoInitialAwaitingStatusIdUsesConfiguredFallbackChain(): void
+    {
+        // TWO-27329: a Two order is created in the merchant's Awaiting mapping.
+        // [PS_TWO_OS_AWAITING_VERIFICATION_MAP, PS_TWO_OS_AWAITING_VERIFICATION, PS_OS_PREPARATION, expected, description]
+        $cases = [
+            [902, 901, 903, 902, 'mapping wins over the branded state'],
+            [0, 901, 903, 901, 'no mapping falls back to the branded state'],
+            [0, 0, 903, 903, 'neither falls back to core Processing in progress'],
+        ];
+        foreach ($cases as [$map, $branded, $core, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION', $branded);
+            Configuration::updateValue('PS_OS_PREPARATION', $core);
+            TinyAssert::same($expected, (new TwopaymentTestHarness())->getTwoInitialAwaitingStatusId(), 'awaiting: ' . $description);
+        }
+    }
+
+    private static function testLegacyOrderAwaitingVerificationMatchesMappedAndBrandedStates(): void
+    {
+        // TWO-27329: an order in the mapped Awaiting status or the branded one is still awaiting,
+        // unless that status is also the Verified one.
+        // [awaiting map, verified map, order's current_state, expected, description]
+        $cases = [
+            [902, 911, 902, true, 'the mapped Awaiting status'],
+            [902, 911, 901, true, 'the branded state, from before the mapping changed'],
+            [902, 911, 911, false, 'the Verified status'],
+            [911, 911, 911, false, 'a mapping shared with Verified cannot tell the two apart'],
+            [911, 911, 901, true, 'the branded state while the mapping is shared with Verified'],
+            [902, 911, 950, false, 'an unrelated status'],
+        ];
+        foreach ($cases as [$awaiting_map, $verified_map, $current, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', $awaiting_map);
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION', 901);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $verified_map);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', 910);
+            StubStore::$orders[77] = ['module' => 'twopayment', 'current_state' => $current];
+            $module = new class () extends TwopaymentTestHarness {
+                public function getTwoOrderPaymentData($id_order)
+                {
+                    return ['two_order_id' => 'two-order-77'];
+                }
+            };
+            TinyAssert::same($expected, $module->isTwoLegacyOrderAwaitingVerification(77), 'legacy awaiting: ' . $description);
         }
     }
 
