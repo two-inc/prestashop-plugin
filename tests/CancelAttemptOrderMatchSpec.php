@@ -146,7 +146,7 @@ final class CancelAttemptOrderMatchSpec
     {
         $unlinked = self::attempt(0, 'CREATED');
         $linked = self::attempt(self::ORDER_ID, 'CONFIRMED');
-        $busy = 'Your payment is still being processed. Please reload this page in a moment.';
+        $busy = 'This payment is still being processed, so it was not cancelled. Check your order history in a moment.';
         $cancelled = 'Your order is cancelled.';
 
         $cases = [

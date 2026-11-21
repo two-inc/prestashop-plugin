@@ -675,6 +675,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_afa348051b3db9dbea37e9bd21a6daad'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8e9eb5c4e3764729576c07956a396a7b'] = 'No se pudo comprobar el pago; consulte el registro del módulo.';
 $_MODULE['<{twopayment}prestashop>twopayment_1a19223c0bd8f600162289cad47218f1'] = '%s indica que este pedido está cancelado. Se ha cancelado aquí también.';
 $_MODULE['<{twopayment}prestashop>twopayment_02ac6e209bba0511312c37874e6e0711'] = 'Su pago todavía se está procesando. Vuelva a cargar esta página en un momento.';
+$_MODULE['<{twopayment}prestashop>twopayment_8f4154374099bb5a9f26cfd61a665d30'] = 'Este pago todavía se está procesando, por lo que no se ha cancelado. Consulte su historial de pedidos en un momento.';
 $_MODULE['<{twopayment}prestashop>twopayment_07b965e3dc0d35491751e9db54ed2bd9'] = 'Pagos de %s pendientes';
 $_MODULE['<{twopayment}prestashop>twopayment_720cfb7ea5cbe4695b5681fa51aff7db'] = 'Los pagos pendientes se muestran por tienda. Cambie a una sola tienda para verlos.';
 $_MODULE['<{twopayment}prestashop>twopayment_50e9c6e990542a1da4eecbc0b4ea5a33'] = 'Pagos enviados a %s cuyo comprador no ha vuelto a la tienda. PrestaShop no crea ningún pedido hasta que el comprador vuelve, o hasta que una comprobación encuentra el pago verificado y lo registra. La URL de actualización programada los comprueba cada 15 minutos; use el botón para comprobar uno ahora.';

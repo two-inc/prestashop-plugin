@@ -675,6 +675,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_afa348051b3db9dbea37e9bd21a6daad'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8e9eb5c4e3764729576c07956a396a7b'] = 'Betalingen kunne ikke sjekkes; se modulloggen.';
 $_MODULE['<{twopayment}prestashop>twopayment_1a19223c0bd8f600162289cad47218f1'] = '%s rapporterer denne bestillingen som kansellert. Kansellert her også.';
 $_MODULE['<{twopayment}prestashop>twopayment_02ac6e209bba0511312c37874e6e0711'] = 'Betalingen din behandles fortsatt. Last inn denne siden på nytt om litt.';
+$_MODULE['<{twopayment}prestashop>twopayment_8f4154374099bb5a9f26cfd61a665d30'] = 'Denne betalingen behandles fortsatt, så den ble ikke kansellert. Sjekk ordrehistorikken din om litt.';
 $_MODULE['<{twopayment}prestashop>twopayment_07b965e3dc0d35491751e9db54ed2bd9'] = 'Ventende %s-betalinger';
 $_MODULE['<{twopayment}prestashop>twopayment_720cfb7ea5cbe4695b5681fa51aff7db'] = 'Ventende betalinger vises per butikk. Bytt til én butikk for å se dem.';
 $_MODULE['<{twopayment}prestashop>twopayment_50e9c6e990542a1da4eecbc0b4ea5a33'] = 'Betalinger sendt til %s der kjøperen ikke har kommet tilbake til butikken. PrestaShop oppretter ingen bestilling før kjøperen kommer tilbake, eller før en kontroll finner betalingen verifisert og registrerer den. Den planlagte oppdaterings-URL-en sjekker dem hvert 15. minutt; bruk knappen for å sjekke en nå.';

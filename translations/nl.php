@@ -675,6 +675,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_afa348051b3db9dbea37e9bd21a6daad'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8e9eb5c4e3764729576c07956a396a7b'] = 'De betaling kon niet worden gecontroleerd; zie het modulelogboek.';
 $_MODULE['<{twopayment}prestashop>twopayment_1a19223c0bd8f600162289cad47218f1'] = '%s meldt deze bestelling als geannuleerd. Hier ook geannuleerd.';
 $_MODULE['<{twopayment}prestashop>twopayment_02ac6e209bba0511312c37874e6e0711'] = 'Je betaling wordt nog verwerkt. Laad deze pagina zo opnieuw.';
+$_MODULE['<{twopayment}prestashop>twopayment_8f4154374099bb5a9f26cfd61a665d30'] = 'Deze betaling wordt nog verwerkt en is daarom niet geannuleerd. Bekijk je bestelgeschiedenis zo meteen.';
 $_MODULE['<{twopayment}prestashop>twopayment_07b965e3dc0d35491751e9db54ed2bd9'] = 'Openstaande %s-betalingen';
 $_MODULE['<{twopayment}prestashop>twopayment_720cfb7ea5cbe4695b5681fa51aff7db'] = 'Openstaande betalingen worden per winkel getoond. Schakel over naar één winkel om ze te zien.';
 $_MODULE['<{twopayment}prestashop>twopayment_50e9c6e990542a1da4eecbc0b4ea5a33'] = 'Betalingen die naar %s zijn gestuurd en waarvan de koper niet naar de winkel is teruggekeerd. PrestaShop maakt geen bestelling aan totdat de koper terugkomt, of totdat een controle de betaling geverifieerd vindt en hem plaatst. De geplande vernieuwings-URL controleert ze elke 15 minuten; gebruik de knop om er nu een te controleren.';
