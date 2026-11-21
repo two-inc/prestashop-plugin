@@ -90,9 +90,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_c352b4e66293dc015043d84f10a54c37'] 
 $_MODULE['<{twopayment}prestashop>twopayment_38a6e828dd4bebef688a29f62bae8ceb'] = 'Pedido cancelado → Cancelado';
 $_MODULE['<{twopayment}prestashop>twopayment_da26328af93752b0b89478bfd90627ce'] = 'Pedido reembolsado → Reembolsado';
 $_MODULE['<{twopayment}prestashop>twopayment_95d7ff07a9e7788850b2b2ff1ab7fd1a'] = '%s: En espera de verificación del comprador';
-$_MODULE['<{twopayment}prestashop>twopayment_b14d1186a9a5e9343663a48c7940c328'] = 'Cuando el comprador debe completar la verificación del pedido con %s antes de que pueda iniciarse el procesamiento del pago. Predeterminado: Preparación en curso';
+$_MODULE['<{twopayment}prestashop>twopayment_49d88f99b49bfcb1348e14bb71cb9c8f'] = 'Cuando el comprador debe completar la verificación del pedido con %s antes de que pueda iniciarse el procesamiento del pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_cddb055b1f1dd15d5b6df428e01c6893'] = '%s: Verificado - Listo para el cumplimiento';
-$_MODULE['<{twopayment}prestashop>twopayment_e61238e23786a68590e375f7f52fa879'] = 'El pago ha sido verificado y el pedido está listo para que el comerciante lo gestione. Ahora el comerciante puede procesar y enviar el pedido. Predeterminado: Preparación en curso';
+$_MODULE['<{twopayment}prestashop>twopayment_e21549e9eefc12a5408fc641109190aa'] = 'El pago ha sido verificado y el pedido está listo para que el comerciante lo gestione. Ahora el comerciante puede procesar y enviar el pedido.';
 $_MODULE['<{twopayment}prestashop>twopayment_cae14097b07527de61893e3f4c058f80'] = '%s: Pedido cumplido – Estados que activan el proceso';
 $_MODULE['<{twopayment}prestashop>twopayment_b534a3105100197bc84b8caa00926340'] = '%s: Error en el procesamiento del pago';
 $_MODULE['<{twopayment}prestashop>twopayment_8de156561c33cb1a23becce55fdd5c9d'] = 'El procesamiento del pago ha fallado. El comerciante debe investigar y, si es necesario, ponerse en contacto con el soporte de %s. Predeterminado: Error de pago';
