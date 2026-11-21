@@ -16124,7 +16124,7 @@ class Twopayment extends PaymentModule
     public function getTwoPdfUrl($two_order_id, $lang = null, $generate = false, $version = null)
     {
         $pdf_url = $this->getTwoCheckoutHostUrl() . '/v1/invoice/' . urlencode($two_order_id) . '/pdf';
-
+        
         $params = array();
         if ($generate) {
             $params['generate'] = 'true';
