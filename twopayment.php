@@ -567,6 +567,7 @@ class Twopayment extends PaymentModule
         $this->ensureCustomStatesExist();
         $this->ensureRequiredHooksRegistered();
         $this->ensureTwoInvoiceAdminTabRegistered();
+        $this->ensureTwoErrorLogAdminTabRegistered();
     }
 
     /**
@@ -668,6 +669,26 @@ class Twopayment extends PaymentModule
         }
 
         $this->installTwoInvoiceAdminTab();
+    }
+
+    /**
+     * Register the invisible admin tab backing the error log controller on
+     * existing installations (TWO-27355). Only install() created it, so a shop
+     * upgraded from an earlier version had no tab and "View error log" and the
+     * snapshot and trace downloads landed on controller-not-found.
+     * Protected (not private) so the test suite can exercise the self-heal path.
+     */
+    protected function ensureTwoErrorLogAdminTabRegistered()
+    {
+        if ((int)$this->id <= 0 || !Module::isInstalled($this->name)) {
+            return;
+        }
+
+        if ((int)Tab::getIdFromClassName('AdminTwoErrorLog') > 0) {
+            return;
+        }
+
+        $this->installTwoErrorLogAdminTab();
     }
 
     /**
