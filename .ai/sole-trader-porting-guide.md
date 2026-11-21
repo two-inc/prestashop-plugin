@@ -1485,7 +1485,8 @@ dropdown alongside the orphan, and clicks land on the wrong one (or are swallowe
 Every call the plugin's *browser* code makes straight to Two — company search, company
 detail, order intent, token mint, and any sole-trader buyer lookup the platform still
 has — must carry the same `client` /
-`client_v` pair the server-side calls have always attached (PrestaShop `cbcf933`).
+`client_v` pair the server-side calls have always attached (PrestaShop `cbcf933`),
+plus `merchant`, the stored merchant short name, whenever one is stored (TWO-27352).
 Without it a shop's traffic arrives partly unattributed and version-adoption figures
 count only the half that left the server. Details worth copying:
 
