@@ -1206,6 +1206,21 @@ for any country's answer through `soleTraderAvailability` by design. Recorded he
 a trade-off precisely so it is not "fixed" back into an invoice-address tier later:
 reintroducing that tier is the stale-value bug this item removed.
 
+**Superseded in the browser by TWO-27354; the server resolver above is unchanged.** The
+browser can tell which address the one select belongs to, which the server cannot: core
+marks the editable form with `saveAddress` and states whether the addresses are shared
+(the `use_same_address` checkbox core renders on every delivery form, or, where there is
+none, an invoice block). `TwoSoleTrader.billingCountry()` now reads the select only when
+that form saves the invoice address (the invoice form, or the delivery form while the
+addresses are shared); markup with no `saveAddress` marker keeps the page's first select,
+as before. Otherwise it posts the published cart invoice country, then, when
+the cart has no invoice address yet (a guest, or a first address), the delivery form's
+select, and only then the shop's country. A live invoice-address select still beats the
+saved value, so the stale-value bug stays removed; the delivery select stops standing in
+for the billing country once the buyer has said the two differ, except where nothing
+better exists. There it is the same stand-in the server resolver and
+`getCheckoutSearchCountryIso()` use, and the shop's country would be the wrong answer.
+
 ---
 
 ## #13 — two distinct modes: ENABLED writes, DISABLED reads
@@ -2067,7 +2082,8 @@ paths.
 
 **The payment tile — verified, and needs no new resolver.**
 `TwoSoleTrader.billingCountry()` reads the address form's country select when there is
-one and falls back to `config.billingCountry`, i.e. that same published value. On the
+one and it saves the invoice address (TWO-27354), and falls back to `config.billingCountry`,
+i.e. that same published value. On the
 payment step PrestaShop renders no address form and therefore no select at all, so the
 fallback is what the tile actually uses — which is the billing/invoice address,
 explicitly, exactly as R2 requires. Pinned by a spec; no resolver added.

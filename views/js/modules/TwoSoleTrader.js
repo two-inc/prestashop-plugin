@@ -77,6 +77,9 @@ class TwoSoleTrader {
     /** The Sole trader chip, on whichever capture popover renders it. */
     static _CHIP_SELECTOR = '.two-company-sole-trader-entry';
 
+    /** An address form's country select, under either name core and themes give it. */
+    static COUNTRY_SELECT = "select[name='id_country'], select[name='country']";
+
     /** @param {?Element} el focused without the return watch reading it as the buyer (TWO-25658) */
     static focusQuietly(el) {
         if (!el || typeof el.focus !== 'function') {
@@ -296,10 +299,13 @@ class TwoSoleTrader {
         const self = this;
         // The payment box and the billing country can both re-render across
         // checkout step transitions; re-evaluate availability on each change.
+        // `use_same_address` decides whether the delivery form's select is the
+        // billing country at all (billingCountrySelect()), so toggling it is a
+        // billing-country change too (TWO-27354).
         // Kept on the instance so destroy() can detach it; stopObserving()
         // deliberately does NOT - see both methods.
         this._countryChangeHandler = function (event) {
-            if (event.target && event.target.matches("select[name='id_country'], select[name='country']")) {
+            if (event.target && event.target.matches("select[name='id_country'], select[name='country'], input[name='use_same_address']")) {
                 self.refreshAvailability();
             }
         };
@@ -457,8 +463,135 @@ class TwoSoleTrader {
         return url + (url.indexOf('?') === -1 ? '?' : '&') + query;
     }
 
+    /**
+     * The country select that describes the address this order is BILLED to,
+     * or null when the page shows none (TWO-27354).
+     *
+     * Core's checkout renders one editable address form at a time and marks it
+     * with a hidden `saveAddress` input naming the address it saves. Only two
+     * of its forms describe the invoice address: the invoice form itself, and
+     * the delivery form while the buyer has not said the invoice address
+     * differs (the two are then one address). Editing the delivery address of
+     * a buyer whose invoice address is separate yields null here; billingCountry()
+     * then prefers the server-resolved invoice country and reads that delivery
+     * form only through deliveryStandInCountrySelect(). The select is read from
+     * the marked form, never the first one on the page.
+     *
+     * Markup with no `saveAddress` marker (a theme or checkout module that
+     * builds its own form) carries no statement of which address it edits, so
+     * it keeps the page's first country select.
+     *
+     * @returns {?HTMLSelectElement}
+     */
+    billingCountrySelect() {
+        const form = TwoSoleTrader.markedAddressForm();
+        if (!form) {
+            return document.querySelector(TwoSoleTrader.COUNTRY_SELECT);
+        }
+        const savesInvoice = form.type === 'invoice'
+            || (form.type === 'delivery' && !TwoSoleTrader.buyerStatesInvoiceAddressDiffers());
+
+        return savesInvoice ? form.select : null;
+    }
+
+    /**
+     * The delivery form's country select while the buyer has said the invoice
+     * address differs, or null otherwise (TWO-27354). It is NOT the billing
+     * country, and billingCountry() reads it only when the cart has no invoice
+     * address yet (a guest, or a buyer's first address): it is a country the
+     * buyer supplied, which the shop's own country is not, and it is the same
+     * stand-in the server's sole-trader resolver and getCheckoutSearchCountryIso()
+     * fall back to.
+     *
+     * @returns {?HTMLSelectElement}
+     */
+    deliveryStandInCountrySelect() {
+        const form = TwoSoleTrader.markedAddressForm();
+
+        return form && form.type === 'delivery' && TwoSoleTrader.buyerStatesInvoiceAddressDiffers()
+            ? form.select
+            : null;
+    }
+
+    /**
+     * The editable address form core marks with a hidden `saveAddress` input:
+     * which address it saves, and its own country select. Null when the page
+     * carries no marker. The form is found from the marker's nearest address
+     * block first, as TwoCompanySearch.visibleAddressFormRoot() does, and only
+     * then from the marker's owning `<form>`, which a nested form can leave
+     * pointing at the step's outer form.
+     *
+     * @returns {?{type: string, select: ?HTMLSelectElement}}
+     */
+    static markedAddressForm() {
+        const marker = document.querySelector("input[name='saveAddress']");
+        if (!marker) {
+            return null;
+        }
+        const block = typeof marker.closest === 'function'
+            ? marker.closest('#invoice-address, #delivery-address, .js-invoice-address, .js-address-form')
+            : null;
+        const scope = block || marker.form;
+
+        return {
+            type: String(marker.value || '').trim().toLowerCase(),
+            select: scope ? scope.querySelector(TwoSoleTrader.COUNTRY_SELECT) : null
+        };
+    }
+
+    /**
+     * Whether the buyer has said their invoice address is not their delivery
+     * address. Same reading as TwoCompanySearch.buyerStatesInvoiceAddressDiffers():
+     * core's `use_same_address` checkbox, rendered on the delivery form, means
+     * the SAME address when checked. Where there is no checkbox (core is editing
+     * another form, or a theme dropped it), core renders an invoice block only
+     * when the addresses differ.
+     *
+     * @returns {boolean}
+     */
+    static buyerStatesInvoiceAddressDiffers() {
+        const sharedAddressControl = document.querySelector("input[name='use_same_address']");
+        if (sharedAddressControl) {
+            return !sharedAddressControl.checked;
+        }
+
+        return !!document.querySelector('#invoice-address, #invoice-addresses, .js-invoice-address');
+    }
+
     billingCountry() {
-        const field = document.querySelector("select[name='id_country'], select[name='country']");
+        const live = TwoSoleTrader.countryIsoFromSelect(this.billingCountrySelect());
+        if (live) {
+            return live;
+        }
+        // The cart's billing country BEFORE the shop's own country (TWO-25326).
+        // PrestaShop only renders the address FORM - and therefore the select
+        // read above - while the buyer is editing an address; on the payment
+        // step there is no select at all, so this fallback is what that step
+        // uses, as does a buyer editing a delivery address that is not their
+        // invoice address (TWO-27354).
+        const saved = String(this.config.billingCountry || '').toUpperCase();
+        if (saved) {
+            return saved;
+        }
+        // No invoice address on the cart yet (a guest, or a first address) while
+        // the buyer edits a delivery address they have said is not the invoice
+        // one: the delivery select is the country they supplied, and the same
+        // stand-in the server falls back to (TWO-27354). `shopCountry` is the
+        // wrong answer here (visitor/shop country, not the country the order
+        // will be billed to) and stays only as a last resort for a payload that
+        // predates `billingCountry`.
+        return TwoSoleTrader.countryIsoFromSelect(this.deliveryStandInCountrySelect())
+            || String(this.config.shopCountry || '').toUpperCase();
+    }
+
+    /**
+     * Uppercase ISO code of a country select's selected option, or '' when
+     * there is no select or no code can be read from it.
+     *
+     * @param {?HTMLSelectElement} field
+     * @returns {string}
+     */
+    static countryIsoFromSelect(field) {
         if (field && field.selectedOptions && field.selectedOptions.length) {
             const option = field.selectedOptions[0];
             // Same attribute-name fallback chain as TwoOrderIntent.js/
@@ -493,14 +626,8 @@ class TwoSoleTrader {
                 return fromText;
             }
         }
-        // The cart's billing country BEFORE the shop's own country (TWO-25326).
-        // PrestaShop only renders the address FORM - and therefore the select
-        // read above - while the buyer is editing an address; on the payment
-        // step there is no select at all, so this fallback is what that step
-        // uses. `shopCountry` is the wrong answer there (visitor/shop country,
-        // not the country the order will be billed to) and stays only as a last
-        // resort for a payload that predates this key.
-        return (this.config.billingCountry || this.config.shopCountry || '').toUpperCase();
+
+        return '';
     }
 
     /**
