@@ -72,8 +72,8 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
 
     /**
      * Another request holds the cart lock and did not finish within the wait. Nothing is sent to
-     * Two and nothing is written: the buyer is told the outcome if it is already known, and
-     * otherwise asked to reload, which retries the cancel.
+     * Two and nothing is written: the buyer is told the attempt is cancelled if it already is,
+     * and otherwise that it was not cancelled and to check their order history shortly.
      *
      * @param string $attempt_token
      * @return void
@@ -84,7 +84,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         $status = is_array($attempt) && isset($attempt['status']) ? strtoupper((string)$attempt['status']) : '';
         $this->errors[] = $status === 'CANCELLED'
             ? $this->module->l('Your order is cancelled.')
-            : $this->module->l('Your payment is still being processed. Please reload this page in a moment.');
+            : $this->module->l('This payment is still being processed, so it was not cancelled. Check your order history in a moment.');
         $this->redirectWithNotifications('index.php?controller=order');
     }
 
