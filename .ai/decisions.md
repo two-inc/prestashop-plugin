@@ -1212,7 +1212,8 @@ marks the editable form with `saveAddress` and states whether the addresses are 
 (the `use_same_address` checkbox core renders on every delivery form, or, where there is
 none, an invoice block). `TwoSoleTrader.billingCountry()` now reads the select only when
 that form saves the invoice address (the invoice form, or the delivery form while the
-addresses are shared). Otherwise it posts the published cart invoice country, then, when
+addresses are shared); markup with no `saveAddress` marker keeps the page's first select,
+as before. Otherwise it posts the published cart invoice country, then, when
 the cart has no invoice address yet (a guest, or a first address), the delivery form's
 select, and only then the shop's country. A live invoice-address select still beats the
 saved value, so the stale-value bug stays removed; the delivery select stops standing in
