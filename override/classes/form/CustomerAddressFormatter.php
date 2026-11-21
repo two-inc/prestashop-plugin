@@ -7,14 +7,9 @@
 
 class CustomerAddressFormatter extends CustomerAddressFormatterCore
 {
-    private $translator;
-    private $definition;
-
     public function __construct(Country $country, $translator, array $availableCountries)
     {
         parent::__construct($country, $translator, $availableCountries);
-        $this->translator = $translator;
-        $this->definition = Address::$definition['fields'];
     }
 
     public function setCountry(Country $country)
@@ -40,59 +35,32 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
 
         // B2B checkout: the company field is always present (the buyer
         // types or searches their company). There is no account-type
-        // selector here - sole traders enrol through the payment-step
-        // Business / Sole trader toggle (TWO-24755), which autofills this
-        // field from their Two registration once enrolled; matches the
-        // Magento and WooCommerce plugins (the third-account_type-option
-        // approach previously here has been dropped, see TWO-24755).
-        if (isset($format['company']) && $format['company'] instanceof FormField) {
-            $format['company']->addAvailableValue('placeholder', $this->translator->trans('Search your company name', [], 'Shop.Forms.Labels'));
-        }
+        // selector here - sole traders enrol from an entry point folded
+        // into the company search control itself (TWO-40; formerly a
+        // separate payment-step Business / Sole trader toggle, TWO-24755),
+        // which autofills this field from their Two registration once
+        // enrolled; matches the Magento and WooCommerce plugins (the
+        // third-account_type-option approach previously here has been
+        // dropped, see TWO-24755).
 
         if (isset($format['phone']) && $format['phone'] instanceof FormField) {
             $format['phone']->setType('tel');
             $format['phone']->setRequired(true);
         }
 
-        if ((int) Configuration::get('PS_TWO_ENABLE_DEPARTMENT') === 1 && !isset($format['department'])) {
-            $departmentField = (new FormField())
-                ->setName('department')
-                ->setType('text')
-                ->setLabel($this->getFieldLabel('department'));
-            $this->applyFieldDefinitionMetadata($departmentField, 'department');
-            $format = $this->insertFieldAfter($format, 'company', 'department', $departmentField);
-        }
-
-        if ((int) Configuration::get('PS_TWO_ENABLE_PROJECT') === 1 && !isset($format['project'])) {
-            $projectField = (new FormField())
-                ->setName('project')
-                ->setType('text')
-                ->setLabel($this->getFieldLabel('project'));
-            $this->applyFieldDefinitionMetadata($projectField, 'project');
-            $format = $this->insertFieldAfter($format, 'department', 'project', $projectField);
-        }
+        // Department and project are deliberately NOT injected here any more.
+        // They now render inside the Two payment tile at the payment
+        // step, gated by the same PS_TWO_ENABLE_DEPARTMENT /
+        // PS_TWO_ENABLE_PROJECT switches, alongside the new purchase-order-
+        // number and invoice-email fields. Two reasons, both fatal to the old
+        // placement: PrestaShop collects the SHIPPING address first and only
+        // reveals the billing block when the buyer ticks "Billing address
+        // differs from shipping address", so most buyers never saw either
+        // field; and nothing persisted the values anyway, because the address
+        // table has no such columns, so the order payload sent them empty
+        // regardless. Do not re-add them here.
 
         return $format;
-    }
-
-    private function insertFieldAfter(array $format, $afterKey, $newKey, FormField $field)
-    {
-        $result = array();
-        $inserted = false;
-
-        foreach ($format as $key => $value) {
-            $result[$key] = $value;
-            if ($key === $afterKey) {
-                $result[$newKey] = $field;
-                $inserted = true;
-            }
-        }
-
-        if (!$inserted) {
-            $result[$newKey] = $field;
-        }
-
-        return $result;
     }
 
     private function moveFieldBefore(array $format, $fieldKey, $beforeKey)
@@ -120,90 +88,5 @@ class CustomerAddressFormatter extends CustomerAddressFormatterCore
         }
 
         return $result;
-    }
-
-    private function applyFieldDefinitionMetadata(FormField $field, $fieldName)
-    {
-        if (!empty($this->definition[$fieldName]['validate'])) {
-            $field->addConstraint($this->definition[$fieldName]['validate']);
-        }
-
-        if (!empty($this->definition[$fieldName]['size'])) {
-            $field->setMaxLength($this->definition[$fieldName]['size']);
-        }
-    }
-
-    private function addConstraints(array $format)
-    {
-        foreach ($format as $field) {
-            if (!empty($this->definition[$field->getName()]['validate'])) {
-                $field->addConstraint(
-                    $this->definition[$field->getName()]['validate']
-                );
-            }
-        }
-
-        return $format;
-    }
-
-    private function addMaxLength(array $format)
-    {
-        foreach ($format as $field) {
-            if (!empty($this->definition[$field->getName()]['size'])) {
-                $field->setMaxLength(
-                    $this->definition[$field->getName()]['size']
-                );
-            }
-        }
-
-        return $format;
-    }
-
-    private function getFieldLabel($field)
-    {
-        // Country:name => Country, Country:iso_code => Country,
-        // same label regardless of which field is used for mapping.
-        $field = explode(':', $field)[0];
-
-        switch ($field) {
-            case 'alias':
-                return $this->translator->trans('Alias', [], 'Shop.Forms.Labels');
-            case 'firstname':
-                return $this->translator->trans('First name', [], 'Shop.Forms.Labels');
-            case 'lastname':
-                return $this->translator->trans('Last name', [], 'Shop.Forms.Labels');
-            case 'address1':
-                return $this->translator->trans('Address', [], 'Shop.Forms.Labels');
-            case 'address2':
-                return $this->translator->trans('Address Complement', [], 'Shop.Forms.Labels');
-            case 'postcode':
-                return $this->translator->trans('Zip/Postal Code', [], 'Shop.Forms.Labels');
-            case 'city':
-                return $this->translator->trans('City', [], 'Shop.Forms.Labels');
-            case 'Country':
-                return $this->translator->trans('Country', [], 'Shop.Forms.Labels');
-            case 'State':
-                return $this->translator->trans('State', [], 'Shop.Forms.Labels');
-            case 'phone':
-                return $this->translator->trans('Phone', [], 'Shop.Forms.Labels');
-            case 'phone_mobile':
-                return $this->translator->trans('Mobile phone', [], 'Shop.Forms.Labels');
-            case 'company':
-                return $this->translator->trans('Company', [], 'Shop.Forms.Labels');
-            case 'vat_number':
-                return $this->translator->trans('VAT number', [], 'Shop.Forms.Labels');
-            case 'dni':
-                return $this->translator->trans('Identification number', [], 'Shop.Forms.Labels');
-            case 'other':
-                return $this->translator->trans('Other', [], 'Shop.Forms.Labels');
-            case 'companyid':
-                return $this->translator->trans('Company ID', [], 'Shop.Forms.Labels');
-            case 'department':
-                return $this->translator->trans('Department', [], 'Shop.Forms.Labels');
-            case 'project':
-                return $this->translator->trans('Project', [], 'Shop.Forms.Labels');
-            default:
-                return $field;
-        }
     }
 }

@@ -6,13 +6,54 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The PHP minors every job below runs on, from php.net on every run and the
+  # module's declared floor (dev/support-matrix.sh, TWO-27173). setup-php's
+  # minor-only pin resolves the newest patch of each, so no patch is pinned
+  # here. Reads only php.net and this checkout, so a GitHub or Docker Hub
+  # outage cannot block these jobs.
+  discover:
+    name: Discover
+    uses: ./.github/workflows/support-matrix.yml
+    with:
+      scope: php
+      table: php
+
+  # Every module file on every PHP minor from the declared floor (7.2) to the
+  # newest php.net supports: what a merchant's shop parses.
+  lint:
+    name: Lint (PHP ${{ matrix.php-version }})
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ${{ fromJSON(needs.discover.outputs.matrix).php }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+
+      - name: Lint the module
+        run: bash dev/ci/lint-module.sh
+
+  # The offline suite needs PHP 8.1 syntax (TESTS_PHP_FLOOR in
+  # dev/support-matrix.sh), so it runs from 8.1 up; the lint job covers the
+  # minors below that.
   test:
     name: PHP ${{ matrix.php-version }}
+    needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        php-version: ["8.2", "8.3"]
+        php-version: ${{ fromJSON(needs.discover.outputs.matrix).php_test }}
 
     steps:
       - name: Checkout
@@ -29,21 +70,173 @@ jobs:
           php -l twopayment.php
           php -l controllers/front/payment.php
           php -l controllers/front/invoice.php
+          php -l controllers/front/cron.php
           php -l controllers/admin/AdminTwopaymentInvoiceController.php
           php -l classes/TwoInvoiceRetrievalService.php
+          php -l classes/TwoCheckoutAmountException.php
+          php -l classes/TwoTaxCodeSection.php
           php -l tests/bootstrap.php
           php -l tests/TwoInvoiceRetrievalSpec.php
           php -l tests/CustomerAddressFormatterOverrideSpec.php
           php -l tests/TrackingNumberSpec.php
           php -l tests/DefaultPaymentTermSpec.php
+          php -l tests/OrderTermWireSpec.php
           php -l tests/MinimumOrderGateSpec.php
-          php -l tests/TwoApiIdentityParamsSpec.php
-          php -l classes/TwoSoleTrader.php
-          php -l tests/TwoSoleTraderSpec.php
+          php -l tests/FxRatesSpec.php
+          php -l tests/AjaxCheckoutFailureSpec.php
+          php -l tests/IdempotencyKeySpec.php
+          php -l tests/CheckoutLatencySpec.php
+          php -l tests/ShippingCostSourcingSpec.php
+          php -l tests/DefaultShippingTaxCodeSpec.php
+          php -l tests/DeprecatedCustomPaymentTermSpec.php
+          php -l classes/TwoStoredTerm.php
+          php -l tests/FulfilledStatusMappingSpec.php
+          php -l tests/AddressLookupConfigSpec.php
+          php -l tests/IntentApprovedNoticeSpec.php
+          php -l tests/DeployVersionInfoSpec.php
+          php -l tests/UpgradeScriptVersionSpec.php
+          php -l tests/OverrideMigrationSpec.php
+          php -l tests/ApiKeyVerificationSpec.php
+          php -l tests/MerchantRecordPolicySpec.php
+          php -l tests/MerchantIdResolutionSpec.php
+          php -l tests/SoleTraderTokenPreconditionSpec.php
+          php -l classes/TwoOverrideMigrator.php
+          php -l classes/TwoDiscrepancySnapshot.php
+          php -l classes/TwoOrderPostprocessing.php
+          php -l classes/TwoOrderPostprocessingException.php
+          php -l tests/OrderPostprocessingSpec.php
+          php -l tests/OrderPostprocessingTraceSpec.php
+          php -l classes/TwoOrderPostprocessingTrace.php
+          php -l tests/ShippingRateControlSpec.php
+          php -l upgrade/upgrade-2.7.18.php
+          php -l controllers/admin/AdminTwoErrorLogController.php
+          php -l tests/DiscrepancySnapshotSpec.php
+          php -l upgrade/upgrade-2.7.1.php
+          php -l tests/TaxCodeAdminSpec.php
+          php -l tests/fixtures/tax-admin-cases.php
+          php -l dev/tax-admin-baseline.php
           php -l tests/run.php
+          # Integration probes + their harness. They only run inside a
+          # PrestaShop container (.github/workflows/integration.yml), so this
+          # is where a syntax error in them gets caught cheaply.
+          php -l tests/integration/cart-rule-discounts.php
+          php -l tests/integration/default-shipping-tax-code.php
+          php -l tests/integration/line-item-image.php
+          php -l tests/integration/multi-carrier-update.php
+          php -l tests/integration/discrepancy-snapshot.php
+          php -l tests/integration/fixtures/twocarrierlesstest/twocarrierlesstest.php
+          php -l tests/integration/lib/probe-helpers.php
+          php -l tests/integration/matrix/carrierless-shipping-cell.php
+          php -l tests/integration/fixtures/twocarrierlesstest/override/classes/Cart.php
+          php -l tests/integration/order-postprocessing-hook.php
+          php -l tests/integration/order-management-form-end-field.php
+          php -l tests/integration/stale-merchant-id.php
+          php -l tests/integration/tax-code-clear-multistore.php
+          php -l tests/integration/order-shop-context-multistore.php
+          php -l tests/integration/error-log-access.php
+          php -l tests/integration/error-log-render.php
+          php -l tests/integration/fixtures/twoorderpostprocessingtest/twoorderpostprocessingtest.php
+          php -l dev/ci/seed-carrierless-cart.php
+          php -l dev/ci/two-api-stub.php
 
       - name: Run offline test suite
         run: php tests/run.php
 
-      - name: Run JS test suite
-        run: node tests/js/twoApiIdentityParams.test.js
+  # Separate from the offline suite so a catalogue that has drifted from the
+  # source reports as an i18n failure rather than one red line among sixty.
+  # A tool run, not a version check: one leg, on the newest PHP php.net
+  # supports, so it never sits on a minor that has gone end of life.
+  i18n-audit:
+    name: i18n audit
+    needs: discover
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ fromJSON(needs.discover.outputs.matrix).php_newest }}
+          coverage: none
+
+      - name: Catalogues agree with the source
+        run: dev/i18n-audit.sh
+
+  # phpstan.neon sets no phpVersion, so PHPStan judges the module against the
+  # PHP it runs on: every minor from 7.4 (PHPStan 2.x's own floor) up.
+  phpstan:
+    name: phpstan (PHP ${{ matrix.php-version }})
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ${{ fromJSON(needs.discover.outputs.matrix).phpstan }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+
+      - name: Download phpstan (pinned + checksum-verified)
+        env:
+          PHPSTAN_VERSION: "2.2.5"
+          PHPSTAN_SHA256: "1b2f03384ebcfd67053b06b69cbc0b9f62bf239349f69eaf723649409789e2e6"
+        run: |
+          curl -sL -o /tmp/phpstan.phar "https://github.com/phpstan/phpstan/releases/download/${PHPSTAN_VERSION}/phpstan.phar"
+          echo "${PHPSTAN_SHA256}  /tmp/phpstan.phar" | sha256sum -c -
+
+      # Real stub discovery (TWO-25107): phpstan resolves PrestaShop core
+      # classes from an actual core checkout instead of blanket
+      # class.notFound baseline ignores. Pinned to the module's minimum
+      # supported version (ps_versions_compliancy min in twopayment.php) so
+      # signatures are checked against the strictest floor the module
+      # claims to support. Sparse + blob-filtered: only the dirs
+      # scanDirectories in phpstan.neon needs (~9 MB, a few seconds).
+      - name: Fetch PrestaShop core sources (pinned)
+        env:
+          PS_CORE_TAG: "1.7.6.0"
+        run: |
+          git clone --depth 1 --branch "$PS_CORE_TAG" --filter=blob:none --sparse \
+            https://github.com/PrestaShop/PrestaShop.git /tmp/prestashop-core
+          git -C /tmp/prestashop-core sparse-checkout set classes config src/Core/Payment
+
+      # PrestaShop generates `class X extends XCore {}` aliases at runtime
+      # (PrestaShopAutoload); mirror them statically so phpstan can resolve
+      # the plain class names the module uses.
+      - name: Generate core class aliases
+        run: php dev/ci/generate-ps-class-aliases.php /tmp/prestashop-core /tmp/prestashop-class-aliases.php
+
+      - name: Run phpstan
+        run: php /tmp/phpstan.phar analyse --configuration=phpstan.neon --no-progress --memory-limit=1G
+
+  jest:
+    name: Jest (Node 20)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install JS devDependencies
+        run: npm ci --no-audit --no-fund
+
+      # Real gate, deliberately not continue-on-error: the company-search
+      # regressions these tests pin (stuck spinner, a destroyed instance writing
+      # to the live field, a row hook that runs on one jQuery UI and not the
+      # other) were all invisible to the PHP suites, so an advisory JS job would
+      # have caught none of them. Runs both jQuery UI projects.
+      - name: Run Jest
+        run: npm run test:js

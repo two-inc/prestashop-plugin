@@ -4,10 +4,8 @@
  * @license Two Commercial License
  */
 
-/* Legacy autocomplete loader (commented out) */
-/* .js-address-form .ui-autocomplete-loading {
-  background: white url("../img/loader.gif") right center no-repeat;
-}*/
+/* `.two-company-search-input` is a JS marker class with no styles of its own: the
+ * company-name field sizes and spaces like every other address input (TWO-25326). */
 
 /* Remove custom styling that modifies core radio/checkbox visuals for consistency */
 .two-payment-option .custom-radio  {
@@ -157,53 +155,42 @@
     gap: 12px;
 }
 
-.two-logo {
-    height: 32px;
+/* The brand's mark in the payment step's radio label (TWO-26609). Neither
+   classic nor Hummingbird sizes a payment option's logo, so the artwork would
+   render at its intrinsic size. Matched on the module's own asset path, which
+   every brand's logo resolves under. */
+.payment-option label img[src*="/twopayment/"] {
+    height: 1.5em;
     width: auto;
-}
-
-.two-tagline {
-    font-size: 13px;
-    color: #6c757d;
-    font-weight: 500;
-    margin: 0;
+    vertical-align: middle;
 }
 
 /* Info Tooltip - Inline Style */
 .two-info-tooltip {
     position: relative;
-    display: inline-block;
-    margin-left: 6px;
+    display: inline-flex;
     vertical-align: middle;
+}
+
+.two-info-link {
+    display: inline-flex;
+    line-height: 0;
+    text-decoration: none;
 }
 
 .two-info-icon {
-    width: 16px;
-    height: 16px;
-    background: #6c757d;
-    color: #fff;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    font-weight: bold;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    user-select: none;
-    vertical-align: middle;
+    width: 20px;
+    height: 19px;
 }
 
-.two-info-icon:hover {
-    background: #495057;
-    transform: scale(1.1);
-}
-
+/* Opacity rather than display/visibility: the open transition needs a fadeable property. */
 .two-tooltip-content {
     position: absolute;
     top: 100%;
-    left: 50%;
-    transform: translateX(-50%) translateY(-10px);
+    /* Anchored at the icon's left edge: the icon now opens the header, so a
+       box centred on it would hang past the tile's left edge (TWO-26609). */
+    left: 0;
+    transform: translateY(-10px);
     background: #fff;
     border: 1px solid #e9ecef;
     border-radius: 8px;
@@ -212,56 +199,42 @@
     width: 280px;
     z-index: 1000;
     opacity: 0;
-    visibility: hidden;
     transition: all 0.3s ease;
     pointer-events: none;
     margin-top: 8px;
+    text-align: left;
 }
 
-.two-info-tooltip:hover .two-tooltip-content {
+.two-info-tooltip:hover .two-tooltip-content,
+.two-info-tooltip:focus-within .two-tooltip-content {
     opacity: 1;
-    visibility: visible;
-    transform: translateX(-50%) translateY(0);
+    transform: translateY(0);
     pointer-events: auto;
 }
 
-.two-tooltip-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: #212529;
-    margin: 0 0 8px 0;
-}
-
 .two-tooltip-text {
+    display: block;
     font-size: 13px;
     color: #6c757d;
     line-height: 1.4;
-    margin: 0 0 12px 0;
+    margin: 0 0 8px 0;
 }
 
-.two-tooltip-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 13px;
-    font-weight: 500;
-    color: #0E113A;
-    text-decoration: none;
-    transition: all 0.2s ease;
+.two-tooltip-text--strong {
+    font-weight: 600;
+    color: #212529;
 }
 
-.two-tooltip-link:hover {
-    color: #1a1f4a;
-    text-decoration: none;
-    transform: translateX(2px);
+.two-tooltip-text:last-child {
+    margin-bottom: 0;
 }
 
-/* Tooltip Arrow - Centered */
+/* Tooltip Arrow - over the icon's centre (20px wide), as the box is anchored at its left edge */
 .two-tooltip-content::before {
     content: '';
     position: absolute;
     top: -6px;
-    left: 50%;
+    left: 10px;
     transform: translateX(-50%);
     width: 0;
     height: 0;
@@ -274,7 +247,7 @@
     content: '';
     position: absolute;
     top: -5px;
-    left: 50%;
+    left: 10px;
     transform: translateX(-50%);
     width: 0;
     height: 0;
@@ -512,29 +485,15 @@
         gap: 8px;
     }
     
-    .two-logo {
-        height: 28px;
-    }
-    
     .two-loading-container {
         padding: 20px;
     }
     
-    /* Mobile tooltip adjustments */
+    /* Mobile tooltip adjustments: the box opens rightwards from the icon, so
+       it is capped short of the viewport's right edge on the narrowest phones. */
     .two-tooltip-content {
         width: 260px;
-        left: -120px; /* Adjust positioning for smaller screens */
-        transform: translateY(-10px); /* Remove translateX for mobile */
-    }
-    
-    .two-info-tooltip:hover .two-tooltip-content {
-        transform: translateY(0); /* Remove translateX for mobile */
-    }
-    
-    .two-tooltip-content::before,
-    .two-tooltip-content::after {
-        left: 130px; /* Position arrow relative to smaller width */
-        transform: none;
+        max-width: calc(100vw - 7rem);
     }
     
     /* Adjust header padding for mobile */
@@ -573,11 +532,374 @@
 }
 
 /*
- * Payment terms chip selector (TWO-24752). Replaces the previous slider.
- * Structure/behaviour mirrors the Magento (Hyva) and WooCommerce chip
- * selectors; the palette keeps PrestaShop's existing slate accent
- * (#374151) so the chips stay consistent with the rest of this checkout.
- * The column layout leaves room for a per-chip surcharge sub-label.
+ * Tight-fitting positioned wrapper around the company field, created once by
+ * TwoCompanySearch.ensureFieldWrapper(). A plain block element with no
+ * padding of its own stretches to exactly the input's width, whatever a
+ * theme's own `.form-group`/column wrapper happens to add - which is what
+ * lets the org-number label, the dropdown panel and the return-to-search link
+ * below all match the field's real width and edge instead of the wider,
+ * offset box the theme wrapper used to provide.
+ *
+ * `position: relative` is load-bearing: the dropdown panel is absolutely
+ * positioned against this box, so the panel tracks the input rather than
+ * whatever happens to be the nearest positioned ancestor in the theme.
+ *
+ * It carries NO padding of its own: the org-number label below sits in normal
+ * flow and takes its own height (see `.two-company-id-hint`).
+ */
+.two-company-field-wrap {
+    display: block;
+    position: relative;
+}
+
+/*
+ * The sole-trader in-flight spinner (TWO-40): over the company-NAME field for
+ * the whole round trip, because selecting the Sole trader chip hides the
+ * dropdown row immediately and the "Select a different sole trader" flow opens
+ * no panel at all.
+ *
+ * Height comes from `--two-company-input-height`, not from the wrapper: the
+ * wrapper also carries the org-number hint and the "select a different sole
+ * trader" button below the input, so `100%` would centre the spinner somewhere
+ * under the field. ensureFieldWrapper() keeps it current.
+ */
+.two-company-name-spinner {
+    display: none;
+    position: absolute;
+    top: 0;
+    right: 8px;
+    width: 16px;
+    height: var(--two-company-input-height, 100%);
+    background: url('../img/loader.gif') no-repeat center center;
+    background-size: 16px 16px;
+    pointer-events: none;
+}
+
+/* Deliberately NOT also qualified on `.two-company-search-input`, the way
+   `.two-company-dropdown__query`'s spinner rule is on its own field. That
+   marker class is applied only once the dropdown is known to have built
+   (setupAutocomplete()), and it is skipped entirely on the fallback where the
+   panel failed to build - a state the "Select a different sole trader" flow
+   still reaches, since that button is rendered from the adoption and needs no
+   panel. `two-company-name-loading` is only ever set on the company field, so
+   the extra qualifier bought nothing but a way to silently not paint. */
+.two-company-name-loading ~ .two-company-name-spinner {
+    display: block;
+}
+
+/*
+ * Selected company's organisation number, a plain label BELOW the company-name
+ * field once a search result is chosen (TWO-25326).
+ *
+ * NORMAL FLOW, not absolutely positioned: `top: 100%` on an absolute child
+ * resolves against the containing block's PADDING box, so reserving room with
+ * a wrapper `padding-bottom` pushed the hint down onto the VAT-number field
+ * instead of clearing space above it. An in-flow block cannot overlap by
+ * construction and needs no clearance constant tracking the font size.
+ *
+ * `display: none` while empty - an empty inline box still occupies a line box,
+ * and an unselected field must take no more space than any other input on the
+ * address form.
+ *
+ * `text-align: end` rather than `right` so it follows the writing direction;
+ * the right edge matches the input because `.two-company-field-wrap` does.
+ */
+.two-company-id-hint {
+    display: none;
+    margin-top: 2px;
+    text-align: end;
+    color: #6b7280;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.two-company-id-hint.two-company-id-hint--visible {
+    display: block;
+}
+
+/*
+ * The anchored dropdown panel (TWO-25326).
+ *
+ * Absolutely positioned so it floats over the form rather than shoving the
+ * address step down every time it opens, but a CHILD of the field wrapper, so
+ * DOM order (and therefore tab order) is
+ * company-name -> query -> results -> mode chips -> next form control.
+ * See buildDropdown() in the companion JS for why that placement is the whole
+ * keyboard contract.
+ *
+ * The 8px gap and the shadow give the visible separation from the field that
+ * makes this read as a floating control rather than an in-field autocomplete.
+ */
+.two-company-dropdown {
+    position: absolute;
+    /*
+     * Anchored to the INPUT's own height, not `100%` of the wrapper: the
+     * wrapper also holds the org-number label and, in manual mode, the
+     * return-to-search link, so `100%` grows once a company is selected and
+     * the panel would reopen further than 8px below the field.
+     * ensureFieldWrapper() refreshes the custom property; the `100%` fallback
+     * is what a pre-measurement first paint gets.
+     */
+    top: calc(var(--two-company-input-height, 100%) + 8px);
+    left: 0;
+    width: 100%;
+    /*
+     * Higher than the 1000 the body-appended jQuery UI menu used to sit at,
+     * because this panel is now a CHILD of the address form rather than a
+     * sibling of everything: it has to clear sticky headers, theme overlays
+     * and the checkout's own furniture from further down the stacking order.
+     *
+     * NOT a complete answer, and it cannot be one from CSS in this file: an
+     * ancestor with `overflow: hidden` will CLIP the panel, and an ancestor
+     * that creates a stacking context (`transform`, `opacity`, `filter`)
+     * will trap it below its own siblings whatever value is used here.
+     * Appending to `<body>` made both impossible and cost the tab order
+     * instead - see buildDropdown() for why that trade was made the other
+     * way. Both hazards are theme-specific and need a real browser to rule
+     * out.
+     */
+    z-index: 9999;
+    box-sizing: border-box;
+    padding: 8px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+/* `hidden` is set alongside `display:none` by the JS; this makes the
+   attribute authoritative even against a theme that resets `[hidden]`. */
+.two-company-dropdown[hidden] {
+    display: none;
+}
+
+.two-company-dropdown__search {
+    position: relative;
+}
+
+/* Hidden while the Sole trader chip is the selected one - same reason the
+   panel's own `[hidden]` rule exists above: the attribute has to out-rank a
+   theme that resets `[hidden]`. */
+.two-company-dropdown__search[hidden] {
+    display: none;
+}
+
+.two-company-dropdown__query {
+    box-sizing: border-box;
+    width: 100%;
+    /* Right padding reserves the spinner's lane so a long query never runs
+       underneath it. */
+    padding: 6px 30px 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font: inherit;
+    text-overflow: ellipsis;
+}
+
+/* Firefox clips the placeholder from the input's own `text-overflow`; Chrome and
+   Safari only honour it on the pseudo-element, so both are declared. */
+.two-company-dropdown__query::placeholder {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/*
+ * Search-in-progress spinner, inside the query field at its right-hand end.
+ *
+ * A real element rather than a background-image on the input, so its position
+ * does not depend on whatever padding a theme has given text inputs. jQuery UI
+ * applies `ui-autocomplete-loading` on the live path and the fallback path
+ * applies `two-company-search-loading`; both land on the query field, so one
+ * rule covers both.
+ */
+.two-company-dropdown__spinner {
+    display: none;
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    width: 16px;
+    height: 16px;
+    margin-top: -8px;
+    background: url('../img/loader.gif') no-repeat center center;
+    background-size: 16px 16px;
+    pointer-events: none;
+}
+
+.two-company-dropdown__query.ui-autocomplete-loading ~ .two-company-dropdown__spinner,
+.two-company-dropdown__query.two-company-search-loading ~ .two-company-dropdown__spinner {
+    display: block;
+}
+
+/*
+ * The scroll container. The results list scrolls; the "not on the list"
+ * button below is its SIBLING and therefore never scrolls out of view.
+ */
+.two-company-dropdown__results {
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
+/*
+ * jQuery UI appends its own `<ul class="ui-autocomplete">` into the results
+ * host and positions it absolutely against the document. Inside the panel it
+ * has to be an ordinary in-flow block filling the host, or it floats free of
+ * the control it belongs to. `!important` is required because those are
+ * inline styles the widget writes on every open.
+ */
+.two-company-dropdown__results .ui-autocomplete {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    display: block;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    /*
+     * `!important` is REQUIRED on these two, unlike the geometry above.
+     * The generic `.ui-autocomplete` rule further down this file declares
+     * `border`, `border-radius`, `box-shadow` and `background` with
+     * `!important` (it has to - it is fighting jQuery UI's own theme). An
+     * `!important` declaration beats a non-`!important` one whatever the
+     * specificity or source order, so without these the <ul> paints its own
+     * bordered, shadowed, rounded box INSIDE the panel's box - two nested
+     * popups, which is what this rule exists to prevent.
+     */
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}
+
+/*
+ * Result rows.
+ *
+ * `.two-autocomplete-item` is the FALLBACK engine's row class. jQuery UI's own
+ * rows are styled separately, further down this file, through
+ * `.ui-autocomplete .ui-menu-item-wrapper` - they carry their own padding and
+ * hover and must keep it, so this rule deliberately does NOT list them.
+ * The fallback's rows previously matched nothing at all: no padding, no
+ * pointer, no hover, because every row rule in this file keys on
+ * jQuery-UI-only classes the fallback never produces.
+ */
+.two-company-dropdown__results .two-autocomplete-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/*
+ * Message rows on the FALLBACK path. They carry `two-autocomplete-message`
+ * and `ui-state-disabled` but not `ui-menu-item`/`ui-menu-item-wrapper`, so
+ * neither the row rule above nor the jQuery-UI-scoped message rule further
+ * down matches them - the "type 3 or more characters" hint rendered flush at
+ * zero padding next to properly padded results.
+ */
+.two-company-dropdown__results .two-autocomplete-message {
+    padding: 6px 10px;
+}
+
+.two-company-dropdown__results .two-autocomplete-item:hover,
+.two-company-dropdown__results .two-autocomplete-item.two-autocomplete-item--active {
+    background: #f0f2f5;
+}
+
+/*
+ * The API marks the matched substring with `mark`, whose UA default is a yellow
+ * highlighter no theme here resets. Scoped to the results, which both engines share.
+ */
+.two-company-dropdown__results mark {
+    background: transparent;
+    color: inherit;
+}
+
+/*
+ * The three-chip mode selector (TWO-40 design revision): "Sole Trader",
+ * "Registered Company" (default), "Enter Manually". Replaces the old plain
+ * link-style ".two-company-not-listed"/".two-company-sole-trader-entry" rows
+ * - those two classes are kept (each chip still carries its own, alongside
+ * the shared ".two-company-mode-chip") so the DOM stays selectable the same
+ * way, but the visual treatment is now a pill/chip, not a link.
+ *
+ * flex-wrap on the ROW, not on each chip's own text: with up to three chips,
+ * two of them conditional ("Sole Trader", "Enter Manually"), the row itself
+ * wraps to a second line on a narrow field before any single chip's label does.
+ */
+.two-company-mode-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #e0e0e0;
+}
+
+/*
+ * Each chip. `white-space: normal` + `word-break: break-word` deliberately,
+ * NOT `nowrap`/`text-overflow: ellipsis` (TWO-40 spec: "chip label text may
+ * need to wrap onto two lines — design for that", explicitly not truncate).
+ * `flex: 1 1 auto` with a `min-width` rather than a fixed width: the row
+ * has up to three chips of different label lengths and the field itself can
+ * be narrow (payment-tile placement, a compact theme column), so a fixed
+ * width either clips a long label or leaves visible slack next to a short
+ * one.
+ */
+.two-company-mode-chip {
+    flex: 1 1 auto;
+    min-width: 84px;
+    padding: 6px 10px;
+    border: 2px solid #e3e3e3;
+    border-radius: 6px;
+    background: #fff;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.3;
+    color: #091030;
+    text-align: center;
+    white-space: normal;
+    word-break: break-word;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+/* Padding absorbs the 1px the border gives up, so the chip does not resize. */
+.two-company-mode-chip:not(.two-company-mode-chip--selected):hover,
+.two-company-mode-chip:not(.two-company-mode-chip--selected):focus {
+    padding: 7px 11px;
+    border-width: 1px;
+    border-color: #091030;
+    background: #e3e3e3;
+    color: #091030;
+}
+
+.two-company-mode-chip.two-company-mode-chip--selected {
+    background: #091030;
+    border-color: #091030;
+    color: #fff;
+}
+
+@supports selector(:focus-visible) {
+    .two-company-mode-chip:focus {
+        outline: none;
+    }
+}
+
+/* An interactive control with no visible focus state is worse than no
+   keyboard support at all. */
+.two-company-mode-chip:focus:focus-visible {
+    outline: 2px solid #091030;
+    outline-offset: 2px;
+}
+
+/*
+ * Payment terms chip selector (TWO-24752). The column layout leaves room for
+ * a per-chip surcharge sub-label.
  */
 .two-term-chips {
     display: flex;
@@ -603,10 +925,10 @@
     justify-content: center;
     min-width: 44px;
     padding: 8px 14px;
-    border: 1px solid #d1d5db;
+    border: 2px solid #e3e3e3;
     border-radius: 8px;
     background: white;
-    color: #6b7280;
+    color: #091030;
     font-size: 12px;
     font-weight: 400;
     font-family: inherit;
@@ -615,31 +937,33 @@
     user-select: none;
 }
 
-.two-term-chip:hover {
-    border-color: #9ca3af;
-    color: #374151;
-    background: #f9fafb;
+.two-term-chip:not(.two-term-chip--selected):hover,
+.two-term-chip:not(.two-term-chip--selected):focus {
+    padding: 9px 15px;
+    border-width: 1px;
+    border-color: #091030;
+    background: #e3e3e3;
+    color: #091030;
 }
 
-.two-term-chip:focus {
-    outline: none;
+@supports selector(:focus-visible) {
+    .two-term-chip:focus {
+        outline: none;
+    }
 }
 
-.two-term-chip:focus-visible {
-    outline: 2px solid #374151;
+.two-term-chip:focus:focus-visible {
+    outline: 2px solid #091030;
     outline-offset: 2px;
 }
 
-.two-term-chip--selected,
-.two-term-chip--selected:hover,
-.two-term-chip--selected:focus {
-    border-color: #374151;
-    background: #374151;
+.two-term-chip.two-term-chip--selected {
+    border-color: #091030;
+    background: #091030;
     color: white;
-    font-weight: 500;
 }
 
-.two-term-chip--single {
+.two-term-chip.two-term-chip--single {
     cursor: default;
 }
 
@@ -711,10 +1035,15 @@
         gap: 6px;
     }
     
-    .two-term-chip {
+    .two-term-chip.two-term-chip {
         min-width: 40px;
         padding: 6px 10px;
         font-size: 12px;
+    }
+
+    .two-term-chip.two-term-chip:not(.two-term-chip--selected):hover,
+    .two-term-chip.two-term-chip:not(.two-term-chip--selected):focus {
+        padding: 7px 11px;
     }
     
     .two-terms-title {
@@ -1130,21 +1459,57 @@
     color: #dc3545;
 }
 
-/* Autocomplete Loading Indicator */
-.ui-autocomplete-loading {
-    background: white url("../img/loader.gif") right center no-repeat !important;
-    padding-right: 25px !important;
-}
+/* TWO-25288: an unscoped duplicate `.ui-autocomplete-loading` rule was removed here;
+   the scoped rule at the top of this file is now the only one. */
 
 /* Autocomplete Dropdown Styling */
+/*
+ * A proper small, contained dropdown matching the field it belongs to, like
+ * WC/Magento's select2/selectWoo - not the auto-widening box jQuery UI
+ * produces on its own. jQuery UI's `_resizeMenu` sizes this element to
+ * whichever is WIDER: the field, or the longest rendered label. With up to 50
+ * results it reliably outgrows the field (625px against a 281px field, live).
+ * `max-width` here is what actually contains it: the CSS width-resolution
+ * algorithm clamps a used width to `max-width` regardless of what inline
+ * `width` jQuery UI sets on this same element, so no `!important` is needed
+ * to win against it. The variable is kept current by
+ * TwoCompanySearch.constrainAutocompleteMenuWidth(), refreshed on every
+ * keystroke before jQuery UI redraws; the literal fallback only applies
+ * before that has ever run.
+ *
+ * The clamp itself is scoped to `.two-company-autocomplete-menu` (added to
+ * the widget element by TwoCompanySearch) rather than the bare
+ * `.ui-autocomplete` every other rule in this section still targets:
+ * `.ui-autocomplete` is jQuery UI's own un-namespaced default class, shared
+ * by any OTHER jQuery UI autocomplete the page might have live (a native
+ * PrestaShop lookup, another module) - an unscoped max-width would clamp THAT
+ * one to this field's width too, which is a functional break, not cosmetic
+ * bleed. `box-sizing: border-box` keeps the clamp's target the same box model
+ * `outerWidth()` measures, so the dropdown's own `1px solid` border does not
+ * push it a couple of pixels past the field on a theme with no global
+ * border-box reset.
+ */
 .ui-autocomplete {
     max-height: 200px;
     overflow-y: auto;
     border: 1px solid #ccc !important;
     border-radius: 4px !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+    /*
+     * with the previous shadow the panel's grey border sat flush against the
+     * field's own border (0px gap live), reading as one continuous control
+     * rather than a floating panel - on top of the JS `position` option now
+     * opening an 8px gap (see TwoCompanySearch.js), a visibly heavier shadow
+     * is what actually sells that gap as intentional rather than looking like
+     * a rendering seam.
+     */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
     background: white !important;
     z-index: 9999 !important;
+}
+
+.ui-autocomplete.two-company-autocomplete-menu {
+    max-width: var(--two-company-search-width, 320px);
+    box-sizing: border-box;
 }
 
 .ui-autocomplete .ui-menu-item {
@@ -1165,6 +1530,13 @@
     display: block !important;
     border: none !important;
     background: none !important;
+    /* A long company name must truncate rather than push the row (and with
+       it, jQuery UI's own width measurement) wider than the field - see the
+       `.ui-autocomplete` `max-width` comment above for why the row's natural
+       content width matters at all. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ui-autocomplete .ui-menu-item-wrapper:hover,
@@ -1178,45 +1550,148 @@
     color: #1976d2 !important;
 }
 
+/*
+ * Message rows - a message, not a selectable company.
+ *
+ * Keyed on the shared `two-autocomplete-message` class, NOT on the per-cause
+ * class next to it. Every message row (search unavailable, country not chosen,
+ * term too short) needs exactly this treatment, and keying the rules on one
+ * cause meant a new message row rendered looking like a clickable company while
+ * being unselectable - and the two render paths then did not match, because only
+ * the fallback path inlines the muted colour.
+ *
+ * Placed deliberately AFTER the generic dropdown rules above rather than with
+ * the other company-search rules at the top of this file: those rules paint
+ * every row's wrapper `!important`, so these have to win both on specificity and
+ * on source order.
+ */
+.two-autocomplete-message {
+    color: #888;
+    cursor: default;
+}
+
+/*
+ * `!important` because the generic `.ui-autocomplete .ui-menu-item-wrapper`
+ * rules further down this file declare their colour and background `!important`
+ * themselves, and jQuery UI puts `ui-menu-item-wrapper` on the wrapper of EVERY
+ * row including this one. Without it the row resolves to body-text colour with
+ * the hover highlight - i.e. it looks clickable while being unselectable - and
+ * only a resolved-style assertion catches that, never a class-name one.
+ *
+ * Both wrappers, because the version decides which one ships: jQuery UI 1.12
+ * and later wrap a row in a `<div>`, 1.10 and 1.11 in an `<a>`.
+ */
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > div,
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > a {
+    color: #888 !important;
+    cursor: default !important;
+}
+
+/* Never let a message row take jQuery UI's hover/active highlight. */
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > div.ui-state-active,
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > a.ui-state-active,
+.ui-autocomplete .two-autocomplete-message.ui-menu-item > a.ui-state-focus {
+    background: none !important;
+    border: none !important;
+    color: #888 !important;
+    cursor: default !important;
+    margin: 0 !important;
+}
+
+/*
+ * The way back out of manual entry. A real <button>, so every one of the
+ * browser's button defaults has to be undone to make it read as a link.
+ */
+.two-company-search-back,
+.two-company-select-different-sole-trader {
+    /*
+     * Right-aligned under the company-name field. `width: fit-content` plus
+     * an auto inline-start margin, not a full-width block with
+     * `text-align: end` - that would make the whole row clickable, well
+     * beyond the visible text. `margin-left` is the fallback for engines
+     * without logical properties; `margin-inline-start` is what makes this
+     * correct under RTL.
+     */
+    display: block;
+    width: -moz-fit-content;
+    width: fit-content;
+    margin-left: auto;
+    margin-inline-start: auto;
+    /*
+     * `margin-top` only: a bottom margin here stacks under the wrapper and
+     * leaves unwanted space before the next field on the form.
+     */
+    margin-top: 6px;
+    margin-bottom: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: #1976d2;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.two-company-search-back:focus,
+.two-company-select-different-sole-trader:focus,
+.two-sole-trader-blocked__button:focus {
+    outline: 2px solid #1976d2;
+    outline-offset: 2px;
+}
+
+/*
+ * What a blocked sole-trader signup popup leaves (TWO-26775): a panel over the
+ * whole open popover, in the popover's own colours, with one centred button.
+ */
+.two-sole-trader-blocked {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    border-radius: inherit;
+    background: #fff;
+}
+
+.two-sole-trader-blocked__button {
+    padding: 8px 16px;
+    border: 1px solid #1976d2;
+    border-radius: 4px;
+    background: #1976d2;
+    font: inherit;
+    color: #fff;
+    cursor: pointer;
+}
+
+/* The empty status region; a blocked popup leaves it empty, as the focused button says the caption. */
+.two-sole-trader-fallback__status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 /* Clean up unused styles */
 .two-payment-loading,
-.payment-option img[src*="TwoLogo.svg"],
 .payment-option.two-loading,
 .payment-option.two-loading::after {
     display: none !important;
 }
 
-/* Sole trader Business / Sole trader toggle (TWO-24755) */
-.two-sole-trader {
-    margin: 0 0 12px;
-}
-
-.two-sole-trader__toggle {
-    display: inline-flex;
-    border: 1px solid #d0d5dd;
-    border-radius: 6px;
-    overflow: hidden;
-}
-
-.two-sole-trader__mode {
-    padding: 6px 14px;
-    font-size: 13px;
-    line-height: 1.4;
-    cursor: pointer;
-    background: #fff;
-    color: #344054;
-    user-select: none;
-}
-
-.two-sole-trader__mode + .two-sole-trader__mode {
-    border-left: 1px solid #d0d5dd;
-}
-
-.two-sole-trader__mode--selected {
-    background: #1a1a1a;
-    color: #fff;
-}
-
+/*
+ * Sole trader enrolment messaging (TWO-24755). TWO-40 removed the upfront
+ * Business / Sole trader toggle this container used to render - see
+ * .two-company-sole-trader-entry above for the entry point it was replaced
+ * by. This container is empty of visible content (and therefore takes no
+ * space) until enrolment actually starts.
+ */
 .two-sole-trader__prompt {
     display: inline-block;
     margin-top: 8px;
@@ -1232,6 +1707,97 @@
 
 .two-sole-trader__error {
     margin-top: 8px;
+    font-size: 13px;
+    color: #b42318;
+}
+
+/*
+ * Company search mounted in the payment tile (TWO-25326) - the same
+ * TwoCompanySearch.js control the address area uses, rendered here when the
+ * admin setting is "Payment tile". The selected name and number reach the
+ * buyer through the intent-message sentence, not a label of their own.
+ */
+.two-tile-company-search {
+    margin-top: 12px;
+    /*
+     * The SAME horizontal inset as `.two-optional-fields` below (TWO-25326).
+     * Both are direct children of `.two-payment-container` with `width: 100%`
+     * inputs, so without this padding the control renders 32px wider than
+     * every other field in the tile, flush with the tile's own edges while
+     * the optional fields sit inset. The two values have to stay in step.
+     */
+    padding-left: 16px;
+    padding-right: 16px;
+}
+
+.two-tile-company-search .form-group {
+    margin-bottom: 0;
+}
+
+.two-tile-company-search label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.two-tile-company-search input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/*
+ * ADMIN config page: a setting that is unavailable because another setting
+ * turned it off (TWO-25326) - the address-lookup switch means nothing once
+ * the company search has moved into the payment tile.
+ *
+ * Applied by views/templates/admin/configuration.tpl to the whole
+ * `.form-group`, so the label and the help text fade with the control. The
+ * radios are separately `disabled`, so this is appearance only - it is not
+ * what stops the value being submitted, and `pointer-events` is set so the
+ * PrestaShop switch's own `<a class="slide-button">` overlay cannot be clicked
+ * either (a disabled radio underneath does not disable the anchor over it).
+ */
+.two-setting-unavailable {
+    opacity: 0.5;
+}
+
+.two-setting-unavailable .prestashop-switch {
+    pointer-events: none;
+}
+
+/* Optional buyer reference fields in the payment tile */
+.two-optional-fields {
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: #fafbfc;
+    border-radius: 6px;
+    border: 1px solid #f0f2f5;
+}
+
+.two-optional-field + .two-optional-field {
+    margin-top: 10px;
+}
+
+.two-optional-field__label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.two-optional-field__input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.two-optional-field--invalid .two-optional-field__input {
+    border-color: #b42318;
+}
+
+.two-optional-field__error {
+    display: block;
+    margin-top: 4px;
     font-size: 13px;
     color: #b42318;
 }

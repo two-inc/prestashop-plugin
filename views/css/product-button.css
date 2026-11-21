@@ -1,0 +1,68 @@
+/*
+ * TWO-25800: the product-page buy button.
+ *
+ * Sized to sit under the theme's add to cart control the way PayPal's express
+ * buttons do. Deliberately not styled to imitate the theme's primary button:
+ * this commits the buyer to a payment method, so it should read as a second,
+ * distinct choice rather than as another add to cart.
+ */
+
+.two-product-button {
+    /* Its own breathing room below: it is the last purchase control, and the
+       theme's next block butts straight up against it otherwise. */
+    margin: 0.5rem 0 1.5rem;
+}
+
+.two-product-button__cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    /* Sized to its own content rather than the column, so it reads as a pair
+       with the theme's add to cart beside it rather than as a banner. */
+    width: auto;
+    padding: 0.625rem 1rem;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    background: transparent;
+    font-weight: 600;
+    /* Set against the MARK's height, not the theme's body copy: "Buy with" and
+       the brand's logo are one phrase, and a label the theme sizes smaller than
+       the artwork beside it reads as a caption on the logo. */
+    font-size: 19px;
+    line-height: 1.2;
+    cursor: pointer;
+}
+
+.two-product-button__cta:hover,
+.two-product-button__cta:focus {
+    /* Only the surface changes: recolouring the text would break the
+       border, which inherits currentColor. */
+    background: rgba(0, 0, 0, 0.04);
+}
+
+.two-product-button__cta[disabled] {
+    opacity: 0.6;
+    cursor: default;
+}
+
+/* width auto, height fixed: constraining both squashes a wordmark whose
+   aspect ratio is not square. */
+.two-product-button__mark {
+    width: auto;
+    height: 20px;
+}
+
+.two-product-button__label {
+    white-space: nowrap;
+}
+
+/* Empty until core refuses an add, so it must take no room until it speaks. */
+.two-product-button__error:empty {
+    display: none;
+}
+
+.two-product-button__error {
+    margin: 0.5rem 0 0;
+    font-size: 0.875rem;
+}

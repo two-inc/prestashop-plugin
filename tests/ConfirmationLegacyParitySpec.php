@@ -30,6 +30,7 @@ final class ConfirmationLegacyParitySpec
     {
         self::testLegacyNoHashAttemptFailsClosedOnGenuineDivergence();
         self::testLegacyNoHashAttemptProceedsWhenParityHolds();
+        self::testPlacedOrderConsumesTheOrderIntentVerdict();
     }
 
     /* ---- fixtures ---- */
@@ -120,6 +121,11 @@ final class ConfirmationLegacyParitySpec
         ]];
         StubStore::$productCategories[9401] = [['name' => 'Books']];
         StubStore::$images[9401] = ['id_image' => 9401];
+        // Declared-rate relay (TWO-24880): the ordinary product's own
+        // tax-rules group (flat 5.5%, matching total/total_wt) — distinct
+        // from the fee product's merchant-selected group (400).
+        StubStore::$products[9401]['id_tax_rules_group'] = 500;
+        StubStore::$taxRuleRates[500] = 5.5;
         StubStore::$cartTotals[self::CART_ID] = [
             true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_GROSS],
             false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_NET],
@@ -218,7 +224,7 @@ final class ConfirmationLegacyParitySpec
                 return true;
             }
 
-            public function getTwoUpdateOrderData($order, $payment_data = null)
+            public function getTwoUpdateOrderData($order, $payment_data = null, $trigger = 'admin_edit', $twoOrder = null)
             {
                 return [];
             }
@@ -233,7 +239,7 @@ final class ConfirmationLegacyParitySpec
                 return true;
             }
 
-            public function syncLocalOrderStatusFromTwoState($order_id, $state)
+            public function syncLocalOrderStatusFromTwoState($order_id, $state, $confirmed_by_two = true)
             {
                 return true;
             }
@@ -326,5 +332,27 @@ final class ConfirmationLegacyParitySpec
         TinyAssert::same(1, $module->createOrderCalls, 'order creation must proceed when parity holds');
         TinyAssert::same('CONFIRMED', self::lastStatus($module), 'attempt confirmed');
         TinyAssert::true(strpos($redirect->getMessage(), 'order-confirmation') !== false, 'buyer lands on order confirmation');
+    }
+
+    /**
+     * The verdict and the cart it was stamped for both go with the
+     * order that consumed them, or they keep deciding the fee for a cart they
+     * were never asked about.
+     */
+    private static function testPlacedOrderConsumesTheOrderIntentVerdict(): void
+    {
+        $module = self::makeModule();
+        $cart = new Cart(self::CART_ID);
+        Context::getContext()->cart = $cart;
+        $module->syncTwoSurchargeCartLine($cart, true);
+
+        $cookie = Context::getContext()->cookie;
+        $cookie->two_order_intent_approved = '1';
+        $cookie->two_order_intent_cart_id = (string) self::CART_ID;
+
+        self::runConfirmation(self::makeController($module));
+
+        TinyAssert::false(isset($cookie->two_order_intent_approved), 'the verdict went with its order');
+        TinyAssert::false(isset($cookie->two_order_intent_cart_id), 'and so did the cart it spoke for');
     }
 }

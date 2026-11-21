@@ -6,16 +6,15 @@ declare(strict_types=1);
  * Offset pricing fee (buyer surcharge) + brand-driven rounding relay.
  * TWO-24752 (offset fee) and TWO-24893 (rounding basis + brand step).
  *
- * Covers: buyer_fee_share payload construction per term, the rounding relay
- * and its edge cases, the fee-quote fetch (fail-soft), fee-line construction
- * with the merchant-selected TaxRulesGroup's destination-resolved rate
- * (CONFIG_SURCHARGE_TAX_RULES_GROUP via getTwoSurchargeTaxRateForCart — the
- * pricing-preview response's total_fee_tax_rate is never a source), and
- * end-to-end injection into the order payload including a rounding-boundary
- * amount.
+ * The pricing-preview response's total_fee_tax_rate is never a source for the
+ * fee line's tax: CONFIG_SURCHARGE_TAX_RULES_GROUP via
+ * getTwoSurchargeTaxRateForCart() is.
  */
 final class SurchargeSpec
 {
+    /** What the stubbed fee quote answers in the update-replay rows. */
+    public static string $quotedFee = '5.00';
+
     public static function runAll(): void
     {
         self::testBuildBuyerFeeShareReturnsNullWhenDisabled();
@@ -30,10 +29,15 @@ final class SurchargeSpec
         self::testBuildRoundingOmittedForNoneUnmappedOrNonPositiveStep();
         self::testBuildTermsBlockEndOfMonth();
         self::testNormalizeTypeFallsBackToNone();
+        self::testUnrecognisedSurchargeMethodIsRefusedAtRuntime();
+        self::testUnrecognisedSurchargeMethodIsRefusedOnSave();
+        self::testUnrecognisedSurchargeMethodWithholdsTwoOnly();
         self::testGetSurchargeSettingsReadsConfigGrid();
         self::testBuildTwoBuyerFeeShareWiresConfigAndDefaultTerm();
+        self::testBuildTwoBuyerFeeShareQuotesAStoredPercentageOutsideRangeAtTheNearerBound();
         self::testRoundingStepOptionsAreBrandDrivenSortedAndFormatted();
         self::testSurchargeLineLabelTemplateBrandAndDefault();
+        self::testSurchargeLineLabelIsEmptyWithNoOfferedTerm();
         self::testPaymentTermCheckboxLabelsNeverCarrySurchargePreview();
         self::testSurchargeGridRendersEveryOfferableTermRowWithVisibilityState();
         self::testFetchTermFeeFailsSoftOnHttpError();
@@ -42,8 +46,16 @@ final class SurchargeSpec
         self::testSurchargeTaxRulesGroupIdReadsAdminConfig();
         self::testSurchargeTaxRateForCartResolvesDestinationThroughCoreGates();
         self::testSurchargeTaxRulesGroupOptionsNeverDropTheConfiguredSelection();
+        self::testSurchargeTaxRulesGroupOptionsNeverOfferTheNeverTaxedSentinel();
+        self::testNeverTaxedPredicateMatchesTheSentinelOnly();
+        self::testNeverTaxedNoticeReportsAStoredSentinel();
         self::testSurchargeTaxRulesGroupFormDefaultRequiresExplicitChoice();
         self::testSurchargeTaxTreatmentRequiredWhenSurchargesEnabled();
+        self::testSurchargeCapOfZeroIsRefusedOnSave();
+        self::testSurchargeCapZeroRuleIsSkippedWhileTheCapColumnIsHidden();
+        self::testSurchargeCapZeroRuleCoversTermsOutsideTheStoredTickedSubset();
+        self::testConfiguredZeroCapIsRelayedVerbatimAndAbsenceMeansUncapped();
+        self::testMonetaryMembersAreRoundedToTwoDecimalPlaces();
         self::testUpgrade250FlagsFlatRateShopsForTaxReselection();
         self::testSurchargeTaxMigrationNoticeLifecycle();
         self::testSurchargeLineItemUsesSelectedGroupDestinationRate();
@@ -53,11 +65,24 @@ final class SurchargeSpec
         self::testSurchargeLineItemTaxRateSelfConsistentAtHighPrecision();
         self::testSurchargeLineItemHonorsExplicitTermOverride();
         self::testOrderPayloadInjectsSurchargeLineAndBumpsTotals();
+        self::testCreatePayloadKnowsTheFeeRowByIdAndReference();
+        self::testUpdatePayloadReplaysThePlacedSurchargeLine();
+        self::testUpgrade2716SeedsRetiredFeeIdsFromOrderHistoryOnce();
+        self::testAdminOrderHooksWarnInsteadOfThrowingAFailedUpdate();
+        self::testOrderPageShowsAnUpdateTwoNeverReceivedUntilOneLands();
+        self::testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell();
+        self::testSurchargePercentageCeilingAppliesWhereThePercentageIsInUse();
+        self::testSurchargeGridEmptyStateReplacesTheHeadings();
+        self::testSurchargeGridNamesTheShopDefaultCurrency();
+        self::testSurchargeGridCellsAreCheckedWhateverTheMethod();
     }
 
     private static function reset(): void
     {
         StubStore::reset();
+        // The buyer-facing term set is what the fee grid is built over, so the
+        // term these specs configure fees for has to be one the merchant offers.
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . Twopayment::DEFAULT_PAYMENT_TERM_DAYS, 1);
     }
 
     /* ---- TwoSurchargeCalculator (pure) ---- */
@@ -65,7 +90,15 @@ final class SurchargeSpec
     private static function testBuildBuyerFeeShareReturnsNullWhenDisabled(): void
     {
         TinyAssert::same(null, TwoSurchargeCalculator::buildBuyerFeeShare(['type' => 'none'], 30, 30, false));
-        TinyAssert::same(null, TwoSurchargeCalculator::buildBuyerFeeShare(['type' => 'garbage'], 30, 30, false));
+        $threw = false;
+        try {
+            TwoSurchargeCalculator::buildBuyerFeeShare(['type' => 'garbage'], 30, 30, false);
+        } catch (Exception $e) {
+            // Internal backstop message: never rendered, and free of the value.
+            $threw = $e->getMessage() === 'Unrecognised surcharge method'
+                && strpos($e->getMessage(), 'garbage') === false;
+        }
+        TinyAssert::true($threw, 'an unrecognised method raises generically rather than pricing nothing');
     }
 
     private static function testBuildBuyerFeeSharePercentageOnly(): void
@@ -73,7 +106,9 @@ final class SurchargeSpec
         $settings = [
             'type' => 'percentage',
             'differential' => false,
-            'grid' => [30 => ['percentage' => 2.5, 'fixed' => 0, 'limit' => 0]],
+            // limit null, not 0: a limit of 0 is a real configured cap
+            // (relayed as cap => 0). Absence is what means "no cap".
+            'grid' => [30 => ['percentage' => 2.5, 'fixed' => 0, 'limit' => null]],
             'rounding_basis' => 'none',
             'rounding_step' => null,
         ];
@@ -81,7 +116,7 @@ final class SurchargeSpec
         TinyAssert::same(2.5, $share['percentage']);
         TinyAssert::same('buyer_pays', $share['surcharge_basis']);
         TinyAssert::false(isset($share['surcharge']), 'percentage-only must not send a fixed surcharge');
-        TinyAssert::false(isset($share['cap']), 'no cap when limit is 0');
+        TinyAssert::false(isset($share['cap']), 'no cap when no limit is configured');
         TinyAssert::false(isset($share['rounding']), 'no rounding block when basis is none');
         TinyAssert::false(isset($share['reference_terms']), 'no reference_terms outside differential mode');
     }
@@ -107,7 +142,7 @@ final class SurchargeSpec
         $settings = [
             'type' => 'fixed_and_percentage',
             'differential' => false,
-            'grid' => [30 => ['percentage' => 1.5, 'fixed' => 2.0, 'limit' => 0]],
+            'grid' => [30 => ['percentage' => 1.5, 'fixed' => 2.0, 'limit' => null]],
             'rounding_basis' => 'none',
             'rounding_step' => null,
         ];
@@ -200,6 +235,148 @@ final class SurchargeSpec
         TinyAssert::same('none', TwoSurchargeCalculator::normalizeType('wat'));
     }
 
+    /**
+     * The runtime read raises instead of quoting the order at 0%
+     * under a method nothing understands. Unset still means none.
+     */
+    private static function testUnrecognisedSurchargeMethodIsRefusedAtRuntime(): void
+    {
+        $cases = array(
+            array('wat', true, 'junk from a direct DB edit or an import'),
+            array('PERCENTAGE', true, 'the right method in the wrong case'),
+            array('0', true, 'a falsy string a truthiness check would have read as unset'),
+            array('', false, 'the never-saved key reads as none'),
+            array(false, false, 'an absent Configuration key reads as none'),
+            array('none', false, 'explicitly disabled'),
+            array('fixed_and_percentage', false, 'a known method'),
+        );
+        foreach ($cases as $case) {
+            list($stored, $refused, $description) = $case;
+            self::reset();
+            PrestaShopLogger::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $stored);
+            $error = null;
+            try {
+                (new TwopaymentTestHarness())->getTwoSurchargeSettings();
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            if (!$refused) {
+                // Accepted rows must not throw AT ALL, not merely avoid this
+                // one message.
+                TinyAssert::same(null, $error, 'must not throw: ' . $description);
+                continue;
+            }
+            // Reuses the module's existing method-unavailable line; no new string.
+            TinyAssert::same(
+                'Two payment is not available for this order.',
+                $error,
+                'refused with the existing generic line: ' . $description
+            );
+            TinyAssert::true(
+                strpos((string) $error, (string) $stored) === false,
+                'no stored value in the buyer message: ' . $description
+            );
+            foreach (TwoSurchargeCalculator::KNOWN_TYPES as $known) {
+                TinyAssert::true(
+                    strpos((string) $error, $known) === false,
+                    'no enum keys in the buyer message: ' . $description
+                );
+            }
+        }
+    }
+
+    /**
+     * The setMedia hook and the payment-option gate run on every
+     * front-office render, so a corrupt stored method withholds Two only —
+     * never 500s the page — and is reported once per render.
+     */
+    private static function testUnrecognisedSurchargeMethodWithholdsTwoOnly(): void
+    {
+        $cases = array(
+            array('wat', 'junk from a direct DB edit or an import'),
+            array('PERCENTAGE', 'the right method in the wrong case'),
+            array('0', 'a falsy string a truthiness check would have read as unset'),
+        );
+        foreach ($cases as $case) {
+            list($stored, $description) = $case;
+            self::reset();
+            PrestaShopLogger::reset();
+            TwopaymentTestHarness::resetSurchargeTypeLog();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $stored);
+            $module = new TwopaymentTestHarness();
+
+            // What the setMedia hook and the render-time preview both read.
+            TinyAssert::same(
+                null,
+                $module->getTwoSurchargeSettingsOrNull(),
+                'no settings rather than a raise: ' . $description
+            );
+            // What hookPaymentOptions gates on: withhold Two, fail closed.
+            TinyAssert::same(
+                false,
+                $module->isTwoSurchargeQuotableForCart(null),
+                'Two withheld from the payment options: ' . $description
+            );
+
+            $refusals = array_filter(PrestaShopLogger::$logs, function ($entry) use ($stored) {
+                return strpos($entry['message'], 'unrecognised stored surcharge method') !== false
+                    && strpos($entry['message'], $stored) !== false;
+            });
+            TinyAssert::same(1, count($refusals), 'reported once per render: ' . $description);
+
+            // Quiet path, keyed on the exception TYPE: the refusal reports
+            // itself, so the wrapper must not add a second line for it.
+            $extra = array_filter(PrestaShopLogger::$logs, function ($entry) {
+                return strpos($entry['message'], 'surcharge settings unavailable') !== false;
+            });
+            TinyAssert::same(0, count($extra), 'no second line for the refusal: ' . $description);
+        }
+    }
+
+    /**
+     * The save path refuses an unrecognised method outright, so a
+     * crafted POST cannot store one. Checked before the disabled early return.
+     */
+    private static function testUnrecognisedSurchargeMethodIsRefusedOnSave(): void
+    {
+        $cases = array(
+            array('wat', true, 'a crafted POST of a method that does not exist'),
+            array('PERCENTAGE', true, 'the right method in the wrong case'),
+            array('0', true, 'a falsy string a truthiness check would have read as unset'),
+            array('<script>x</script>', true, 'a crafted value is escaped before it reaches the page'),
+            array('none', false, 'disabling always saves'),
+            array('', false, 'an absent field reads as none'),
+        );
+        foreach ($cases as $case) {
+            list($posted, $refused, $description) = $case;
+            self::reset();
+            Tools::resetTestValues();
+            Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', $posted);
+            $module = self::makeConfigHarness();
+            $error = null;
+            $errors = array();
+            try {
+                $errors = $module->validateSurchargeFormForTest();
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            TinyAssert::same(null, $error, 'validation reports, never raises: ' . $description);
+            $refusals = array_filter($errors, function ($err) {
+                return strpos((string) $err, 'Unrecognised surcharge method') !== false;
+            });
+            TinyAssert::same($refused, count($refusals) > 0, $description);
+            // Passed RAW: displayError renders through Smarty with escape_html
+            // on, so pre-escaping here would double-encode for the admin.
+            if ($posted === '<script>x</script>') {
+                TinyAssert::true(
+                    strpos(implode(' ', $errors), '<script>x</script>') !== false,
+                    'the value is reported verbatim, the renderer escapes: ' . $description
+                );
+            }
+        }
+    }
+
     /* ---- Module wiring ---- */
 
     private static function testGetSurchargeSettingsReadsConfigGrid(): void
@@ -239,6 +416,35 @@ final class SurchargeSpec
         TinyAssert::same(['type' => 'NET_TERMS', 'duration_days' => 30], $share['reference_terms']);
     }
 
+    /**
+     * TWO-27185: Two's fee quote refuses a percentage outside 0 to 100, so one
+     * stored before the save refused it (TWO-27162, TWO-27107) is quoted at
+     * the nearer bound and left as stored. Values from 0 to 100 pass through
+     * untouched.
+     */
+    private static function testBuildTwoBuyerFeeShareQuotesAStoredPercentageOutsideRangeAtTheNearerBound(): void
+    {
+        // [method, stored percentage, quoted percentage, description]
+        $cases = [
+            ['percentage', '150', 100.0, 'a stored 150 is quoted as 100'],
+            ['fixed_and_percentage', '150', 100.0, 'a fixed fee and percentage quotes 150 as 100 too'],
+            ['percentage', '100.5', 100.0, 'a stored 100.5 is quoted as 100'],
+            ['percentage', '100', 100.0, 'a stored 100 is quoted as 100'],
+            ['percentage', '99.5', 99.5, 'a stored 99.5 is quoted untouched'],
+            ['percentage', '0', 0.0, 'a stored 0 is quoted as 0'],
+            ['percentage', '-5', 0.0, 'a stored -5 is quoted as 0'],
+        ];
+
+        foreach ($cases as [$method, $stored, $quoted, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $method);
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $stored);
+            $share = (new TwopaymentTestHarness())->buildTwoBuyerFeeShare(30);
+            TinyAssert::same($quoted, $share['percentage'], $description);
+            TinyAssert::same($stored, Configuration::get('PS_TWO_SURCHARGE_PCT_30'), $description . ' (stored value kept)');
+        }
+    }
+
     private static function testRoundingStepOptionsAreBrandDrivenSortedAndFormatted(): void
     {
         self::reset();
@@ -248,16 +454,92 @@ final class SurchargeSpec
         TinyAssert::same('10.00', $options['10.00']);
     }
 
+    /**
+     * Only the translated default names the basis - a merchant
+     * template and a brand label are the author's own wording.
+     */
     private static function testSurchargeLineLabelTemplateBrandAndDefault(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-        // Default (no config, brand label null): term-naming default label.
-        TinyAssert::same('Payment terms fee - 30 days', $module->getTwoSurchargeLineLabel(30));
-        TinyAssert::same('Payment terms fee - 60 days', $module->getTwoSurchargeLineLabel(60));
-        // Merchant template with %s term substitution still wins over the default.
-        Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', 'Financing fee (%s days)');
-        TinyAssert::same('Financing fee (30 days)', $module->getTwoSurchargeLineLabel(30));
+        // [term type, term days, merchant template, brand label, expected label, description].
+        $cases = array(
+            array('STANDARD', 14, '', null, 'Payment terms fee - 14 days', 'standard, 14-day term'),
+            array('STANDARD', 30, '', null, 'Payment terms fee - 30 days', 'standard, 30-day term'),
+            array('STANDARD', 90, '', null, 'Payment terms fee - 90 days', 'standard, 90-day term'),
+            array('EOM', 30, '', null, 'Payment terms fee - 30 days from end of month', 'EOM, 30-day term'),
+            array('EOM', 45, '', null, 'Payment terms fee - 45 days from end of month', 'EOM, 45-day term'),
+            array('EOM', 60, '', null, 'Payment terms fee - 60 days from end of month', 'EOM, 60-day term'),
+            array('STANDARD', 30, 'Financing fee (%s days)', null, 'Financing fee (30 days)', 'standard, merchant template'),
+            array('EOM', 30, 'Financing fee (%s days)', null, 'Financing fee (30 days)', 'EOM, merchant template'),
+            array('STANDARD', 30, '', 'Credit fee', 'Credit fee', 'standard, brand label'),
+            array('EOM', 30, '', 'Credit fee', 'Credit fee', 'EOM, brand label'),
+        );
+
+        foreach ($cases as $case) {
+            list($termType, $days, $template, $brandLabel, $expected, $description) = $case;
+            self::reset();
+            Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $termType);
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . $days, 1);
+            Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', $template);
+            $module = self::moduleWithBrandFeeLineLabel($brandLabel);
+            TinyAssert::same($expected, $module->getTwoSurchargeLineLabel($days), 'surcharge line label: ' . $description);
+        }
+    }
+
+    /** @param string|null $label the brand's 'fee_line_label' */
+    private static function moduleWithBrandFeeLineLabel($label): object
+    {
+        return new class ($label) extends TwopaymentTestHarness {
+            /** @var string|null */
+            private $feeLineLabel;
+
+            /** @param string|null $label */
+            public function __construct($label)
+            {
+                parent::__construct();
+                $this->feeLineLabel = $label;
+            }
+
+            public function getTwoBrandConfig($key)
+            {
+                return $key === 'fee_line_label' && $this->feeLineLabel !== null
+                    ? $this->feeLineLabel
+                    : parent::getTwoBrandConfig($key);
+            }
+        };
+    }
+
+    /**
+     * The label names a day count, and with no offered term there is
+     * no day count the merchant holds - so the buyer is shown none, whichever
+     * of the three wordings would otherwise apply.
+     */
+    private static function testSurchargeLineLabelIsEmptyWithNoOfferedTerm(): void
+    {
+        // [surcharge line template, description].
+        $wordings = array(
+            array('', 'the platform default wording'),
+            array('Financing fee (%s days)', 'a merchant template'),
+        );
+
+        foreach ($wordings as $case) {
+            list($template, $description) = $case;
+            self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_LINE_DESC', $template);
+            $module = new TwopaymentTestHarness();
+            TinyAssert::true(
+                $module->getTwoSurchargeLineLabel(30) !== '',
+                'an offered term is labelled: ' . $description
+            );
+
+            // The record reports nothing, so nothing is offered.
+            $module->primeTwoAvailableTerms(array());
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 10);
+            TinyAssert::same(
+                '',
+                $module->getTwoSurchargeLineLabel(30),
+                'no offered term, no label: ' . $description
+            );
+        }
     }
 
     /**
@@ -266,9 +548,7 @@ final class SurchargeSpec
      * surcharge preview, even when a non-zero surcharge is configured. That
      * screen is where the merchant picks which terms to OFFER, not a place
      * to preview what the BUYER will be charged - conflating the two showed
-     * the wrong fee concept next to each term. (The configured-rate preview
-     * itself has since been removed everywhere: the checkout chip now shows
-     * a loading indicator until the real quoted amount resolves.)
+     * the wrong fee concept next to each term.
      */
     private static function testPaymentTermCheckboxLabelsNeverCarrySurchargePreview(): void
     {
@@ -342,7 +622,6 @@ final class SurchargeSpec
                 strpos($html, $rowPattern($days, $visible)) !== false,
                 'expected ' . ($visible ? 'visible' : 'hidden') . ' grid row for ' . $days . ' days'
             );
-            // Inputs exist for every offerable term regardless of visibility.
             TinyAssert::true(
                 strpos($html, 'name="PS_TWO_SURCHARGE_PCT_' . $days . '"') !== false,
                 'expected percentage input for ' . $days . ' days'
@@ -443,10 +722,8 @@ final class SurchargeSpec
         $cart->id_address_invoice = 900;
         $cart->id_address_delivery = 901;
 
-        // Covered destination resolves the group's rate as a fraction.
         TinyAssert::same(0.21, $module->getTwoSurchargeTaxRateForCart($cart), 'covered destination resolves the group rate');
 
-        // Destination without a matching rule -> 0 (core zero-rating).
         $cart->id_address_invoice = 901;
         TinyAssert::same(0.0, $module->getTwoSurchargeTaxRateForCart($cart), 'no rule for the destination must resolve 0');
         $cart->id_address_invoice = 900;
@@ -470,12 +747,10 @@ final class SurchargeSpec
         Configuration::updateValue('VATNUMBER_MANAGEMENT', 0);
         TinyAssert::same(0.21, $module->getTwoSurchargeTaxRateForCart($cart), 'exemption only applies when the vatnumber module manages it');
 
-        // "No tax" sentinel (id 0) resolves 0 for every destination.
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
         TinyAssert::same(0.0, $module->getTwoSurchargeTaxRateForCart($cart), 'group id 0 must always resolve 0');
     }
 
-    /** Harness exposing the protected config-form helpers under test. */
     private static function makeConfigHarness(): TwopaymentTestHarness
     {
         return new class extends TwopaymentTestHarness {
@@ -527,19 +802,97 @@ final class SurchargeSpec
             TinyAssert::true(is_string($option['id']), 'option ids must be strings (PHP 7 template loose == would conflate \'\' with 0)');
             $byId[$option['id']] = (string) $option['name'];
         }
-        TinyAssert::same(['-- Select surcharge tax treatment --', 'No tax', 'Standard rate', 'Retired rate (inactive)'], array_values($byId), 'placeholder leads; deactivated configured group must stay selectable, flagged inactive');
-        TinyAssert::same(['', '0', '400', '500'], array_map('strval', array_keys($byId)), 'inactive groups that are NOT configured stay hidden');
+        TinyAssert::same(['-- Select surcharge tax treatment --', 'Standard rate', 'Retired rate (inactive)'], array_values($byId), 'placeholder leads; deactivated configured group must stay selectable, flagged inactive');
+        TinyAssert::same(['', '400', '500'], array_map('strval', array_keys($byId)), 'inactive groups that are NOT configured stay hidden; the never-taxed sentinel is never offered');
 
         // Configured group active -> plain listing, no duplicate, no tag.
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
         $options = $module->optionsForTest();
-        TinyAssert::count(3, $options);
-        TinyAssert::same('Standard rate', (string) $options[2]['name'], 'active configured group is listed once, untagged');
+        TinyAssert::count(2, $options);
+        TinyAssert::same('Standard rate', (string) $options[1]['name'], 'active configured group is listed once, untagged');
 
         // Configured group deleted entirely -> nothing to inject (runtime
-        // already fails safe to "No tax" for a nonexistent group).
+        // already fails safe to an untaxed fee for a nonexistent group).
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '999');
-        TinyAssert::count(3, $module->optionsForTest());
+        TinyAssert::count(2, $module->optionsForTest());
+    }
+
+    /**
+     * The never-taxed treatment (PrestaShop's core "No tax" sentinel, tax
+     * rules group pseudo-id 0) is NEVER in the dropdown - not for a fresh
+     * shop, and not for a shop that already stores it. TWO-25279: there is no
+     * grandfathering, so a stored sentinel is reported by
+     * getTwoSurchargeNeverTaxedNotice() rather than re-offered.
+     *
+     * Also proves the option list is filtered through the shared predicate
+     * rather than merely relying on core to omit the sentinel: a core row
+     * carrying id 0 is dropped.
+     */
+    private static function testSurchargeTaxRulesGroupOptionsNeverOfferTheNeverTaxedSentinel(): void
+    {
+        self::reset();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        foreach (['', '0', ' 0 ', '400'] as $stored) {
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, $stored);
+            $ids = array_map('strval', array_column($module->optionsForTest(), 'id'));
+            TinyAssert::true(!in_array('0', $ids, true), 'the never-taxed sentinel must never be offered (stored: "' . $stored . '")');
+        }
+
+        self::reset();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        StubStore::$taxRulesGroups[0] = ['name' => 'No tax', 'active' => 1];
+        $module = self::makeConfigHarness();
+        $ids = array_map('strval', array_column($module->optionsForTest(), 'id'));
+        TinyAssert::same(['', '400'], $ids, 'a core row carrying the sentinel id is dropped by the shared predicate');
+    }
+
+    /**
+     * The shared predicate every enforcement site delegates to. Only the
+     * sentinel is never-taxed; unselected and garbage are a DIFFERENT state
+     * with a different message, and must not be reported as never-taxed.
+     */
+    private static function testNeverTaxedPredicateMatchesTheSentinelOnly(): void
+    {
+        $module = new TwopaymentTestHarness();
+
+        // Every shape the checkout resolver would in fact leave untaxed:
+        // numeric, floored at 0. Includes '0.5' and '-5', which
+        // getTwoSurchargeTaxRulesGroupId() also collapses to 0.
+        foreach (['0', ' 0 ', '0.0', '00', 0, '-0', '0.5', '-5'] as $neverTaxed) {
+            TinyAssert::true($module->isTwoSurchargeNeverTaxedTreatment($neverTaxed), 'must read as never-taxed: ' . var_export($neverTaxed, true));
+        }
+        // Unselected / non-numeric is a DIFFERENT state, and booleans are not
+        // a treatment at all (Configuration::get returns false when unset).
+        foreach (['', '  ', 'abc', '400', 400, false, true, null, []] as $other) {
+            TinyAssert::false($module->isTwoSurchargeNeverTaxedTreatment($other), 'must NOT read as never-taxed: ' . var_export($other, true));
+        }
+    }
+
+    /**
+     * Fail-loud half of the enforce-only rescope: a shop still storing the
+     * never-taxed sentinel gets a visible error naming the consequence, not
+     * a silently placeholder-looking dropdown. The migration nag cannot do
+     * this job - it self-retires the moment ANY value is stored.
+     */
+    private static function testNeverTaxedNoticeReportsAStoredSentinel(): void
+    {
+        self::reset();
+        $module = self::makeConfigHarness();
+
+        TinyAssert::same('', $module->getTwoSurchargeNeverTaxedNotice(), 'unset config is unselected, not never-taxed');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
+        TinyAssert::same('', $module->getTwoSurchargeNeverTaxedNotice(), 'blank config is unselected, not never-taxed');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        TinyAssert::same('', $module->getTwoSurchargeNeverTaxedNotice(), 'a real group is not never-taxed');
+
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
+        $notice = $module->getTwoSurchargeNeverTaxedNotice();
+        TinyAssert::true($notice !== '', 'a stored sentinel must be reported');
+        TinyAssert::true(strpos($notice, 'UNTAXED') !== false, 'the notice spells out the consequence');
+        TinyAssert::true($notice === $module->getTwoSurchargeNeverTaxedNotice(), 'the notice persists - it must not self-retire like the migration nag');
+        TinyAssert::same('0', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP), 'reporting must not silently rewrite the merchant tax config');
     }
 
     /**
@@ -558,8 +911,12 @@ final class SurchargeSpec
         TinyAssert::same('', $module->formDefaultForTest(), 'unset config must stay on the unselected placeholder');
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
         TinyAssert::same('', $module->formDefaultForTest(), 'blank config must stay on the unselected placeholder');
+        // A stored never-taxed sentinel is reported as-is rather than
+        // rewritten (TWO-25279): the value is not in the option list, so the
+        // select renders the placeholder, and
+        // getTwoSurchargeNeverTaxedNotice() is what tells the merchant why.
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
-        TinyAssert::same('0', $module->formDefaultForTest(), 'an explicitly saved "No tax" IS a selection and pre-selects');
+        TinyAssert::same('0', $module->formDefaultForTest(), 'a stored sentinel is reported unchanged, never silently rewritten');
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
         TinyAssert::same('400', $module->formDefaultForTest(), 'stored selection is the pre-selection');
     }
@@ -599,9 +956,16 @@ final class SurchargeSpec
         Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, ' ');
         TinyAssert::count(1, $module->validateSurchargeFormForTest());
 
-        // Enabled + explicit "No tax" -> allowed.
+        // Enabled + the never-taxed sentinel -> blocked outright, with its
+        // OWN message (TWO-25279). No already-stored exemption: the shop is
+        // told to pick a real group, not allowed to re-save the sentinel.
         Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
-        TinyAssert::count(0, $module->validateSurchargeFormForTest());
+        $errors = $module->validateSurchargeFormForTest();
+        TinyAssert::count(1, $errors);
+        TinyAssert::true(strpos((string) $errors[0], 'untaxed in every country') !== false, 'the never-taxed refusal names the consequence, not just "not one of your groups"');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
+        TinyAssert::count(1, $module->validateSurchargeFormForTest(), 'a shop already storing the sentinel is still refused');
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '');
 
         // Enabled + existing group -> allowed.
         Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
@@ -631,6 +995,240 @@ final class SurchargeSpec
     }
 
     /**
+     * A cap of exactly 0 is refused on save (TWO-25289). It bounds the WHOLE
+     * fee - the percentage and the fixed fee together - so it silently wipes a
+     * configured fixed fee too, and the intent it gets mistaken for is
+     * expressible directly with 0% and a 0 fixed fee. A BLANK cap stays valid
+     * and still means "no cap".
+     */
+    private static function testSurchargeCapOfZeroIsRefusedOnSave(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        // Surcharges enabled with a valid tax treatment, so the only thing
+        // under test here is the grid.
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        foreach (['PCT', 'FIXED', 'CAP'] as $suffix) {
+            Tools::setTestValue('PS_TWO_SURCHARGE_' . $suffix . '_30', '');
+        }
+
+        // Blank cap -> allowed, and still means "no cap".
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a blank cap must stay valid');
+
+        // A cap of 0, however it is typed -> blocked, with an error that says
+        // what to do instead. A SUB-CENT cap goes with it: the calculator
+        // rounds the cap to 2dp before sending, so 0.001 would pass an
+        // exact-zero check and then arrive as a hard cap of 0.00 - the very
+        // outcome being refused, one step later.
+        foreach (['0', '0.0', '0.00', '00', '0.001', '0.004'] as $zero) {
+            Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', $zero);
+            $errors = $module->validateSurchargeFormForTest();
+            TinyAssert::count(1, $errors);
+            TinyAssert::true(
+                strpos((string) $errors[0], 'cannot be 0') !== false,
+                sprintf('a cap typed as "%s" must be refused, naming zero as the problem', $zero)
+            );
+        }
+
+        // 0.005 rounds UP to 0.01, so it survives: the boundary is where the
+        // rounding lands, not an arbitrary threshold.
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', '0.005');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a cap that rounds UP to 0.01 must survive');
+
+        // A positive cap -> allowed. And a zero PERCENTAGE with a zero FIXED
+        // fee is allowed too: that pair is exactly what the error tells the
+        // merchant to use instead.
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', '9');
+        Tools::setTestValue('PS_TWO_SURCHARGE_PCT_30', '0');
+        Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_30', '0');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a positive cap with 0% and 0 fixed must be valid');
+        Tools::resetTestValues();
+    }
+
+    /**
+     * While the cap column is HIDDEN (a surcharge type with no percentage) the
+     * zero rule is skipped. The admin JS hides the column and the help text
+     * explaining the rule with it, so refusing a legacy zero there would abort
+     * the whole Payment Settings save over a field the merchant can neither see
+     * nor read about.
+     */
+    private static function testSurchargeCapZeroRuleIsSkippedWhileTheCapColumnIsHidden(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        foreach (['PCT', 'FIXED'] as $suffix) {
+            Tools::setTestValue('PS_TWO_SURCHARGE_' . $suffix . '_30', '');
+        }
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', '0');
+
+        // Fixed-only: the cap column is hidden, so the save must go through.
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'fixed');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a hidden cap column must not block the save');
+
+        // Percentage: the column is visible, so the same value is refused.
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        $errors = $module->validateSurchargeFormForTest();
+        TinyAssert::true(count($errors) > 0, 'a visible cap column still refuses a zero');
+        TinyAssert::true(
+            strpos((string) $errors[0], 'cannot be 0') !== false,
+            'the error must name zero as the problem'
+        );
+        Tools::resetTestValues();
+    }
+
+    /**
+     * The zero rule must run over the RENDERED term set, not the stored ticked
+     * subset. The grid renders a row per OFFERABLE term, so a cap can be typed
+     * on a term the merchant is ticking in the SAME submit - and the ticked
+     * subset is rewritten only after this validation runs. Validating the
+     * stored subset therefore skipped that cell and stored the zero
+     * unvalidated.
+     *
+     * This test deliberately uses a NON-DEFAULT term. The two term sources
+     * disagree only where the offerable set and the ticked subset diverge:
+     * with nothing ticked, the ticked subset collapses to its
+     * DEFAULT_PAYMENT_TERM_DAYS fallback, so any assertion written on the
+     * default term is answered identically by both and cannot tell them apart.
+     */
+    private static function testSurchargeCapZeroRuleCoversTermsOutsideTheStoredTickedSubset(): void
+    {
+        self::reset();
+        Tools::resetTestValues();
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module = self::makeConfigHarness();
+
+        // The stored subset is the default term ALONE - the merchant has not
+        // ticked anything else yet.
+        Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . Twopayment::DEFAULT_PAYMENT_TERM_DAYS, '1');
+
+        // Pick a term that is offerable but NOT in the stored subset, so the
+        // two sources genuinely answer differently.
+        $offerable = array_map('intval', Twopayment::PAYMENT_TERMS_OPTIONS);
+        $unticked = null;
+        foreach ($offerable as $candidate) {
+            if ($candidate !== Twopayment::DEFAULT_PAYMENT_TERM_DAYS) {
+                $unticked = $candidate;
+                break;
+            }
+        }
+        TinyAssert::true($unticked !== null, 'the offerable set must contain a non-default term');
+
+        // The divergence, asserted rather than assumed: the ticked subset does
+        // not contain the term, the offerable (rendered) set does.
+        TinyAssert::same(
+            [Twopayment::DEFAULT_PAYMENT_TERM_DAYS],
+            $module->configurableTermSetForTest(),
+            'the stored ticked subset must not contain the term under test'
+        );
+        TinyAssert::true(in_array($unticked, $offerable, true), 'the term under test must be offerable, and so rendered');
+
+        Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        // The merchant ticks the term in THIS submit. The stored subset still
+        // does not know about it while the surcharge grid is validated.
+        Tools::setTestValue('PS_TWO_PAYMENT_TERMS_' . $unticked, '1');
+        Tools::setTestValue('PS_TWO_SURCHARGE_PCT_' . $unticked, '2.5');
+        Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_' . $unticked, '');
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_' . $unticked, '0');
+
+        $errors = $module->validateSurchargeFormForTest();
+        TinyAssert::count(1, $errors, 'a zero cap on a rendered-but-not-yet-ticked term must be refused');
+        TinyAssert::true(
+            strpos((string) $errors[0], 'cannot be 0') !== false,
+            'the error must name zero as the problem'
+        );
+        TinyAssert::true(
+            strpos((string) $errors[0], (string) $unticked . '-day') !== false,
+            sprintf('the error must name the %d-day term, proving the rendered set was walked', $unticked)
+        );
+
+        // A positive cap on that same term still saves, so the rule is about
+        // the value and not about the term being outside the stored subset.
+        Tools::setTestValue('PS_TWO_SURCHARGE_CAP_' . $unticked, '9');
+        TinyAssert::count(0, $module->validateSurchargeFormForTest(), 'a positive cap on the same term must be valid');
+        Tools::resetTestValues();
+    }
+
+    /**
+     * The settings read must keep ABSENT and ZERO distinguishable, and the
+     * calculator must relay a configured zero rather than dropping it. An
+     * unset Configuration key reads back as false and (float) false is 0.0,
+     * so the naive cast conflated the two - and the calculator's old `> 0`
+     * filter then turned a configured 0 into "no cap", relaying the
+     * percentage UNCAPPED. That is the overcharge TWO-25289 closes.
+     */
+    private static function testConfiguredZeroCapIsRelayedVerbatimAndAbsenceMeansUncapped(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2.5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '3');
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '0');
+        $module = new TwopaymentTestHarness();
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(0.0, $settings['grid'][30]['limit'], 'a stored 0 is a real cap, not an absence');
+        $share = $module->buildTwoBuyerFeeShare(30);
+        TinyAssert::true(array_key_exists('cap', $share), 'a configured zero cap must not be dropped from the payload');
+        TinyAssert::same(0.0, $share['cap'], 'a configured zero cap is relayed as 0, never as "no cap"');
+
+        // Blank cap -> null through the settings read, and no `cap` key at
+        // all on the wire, which is what "uncapped" means.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '');
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(null, $settings['grid'][30]['limit'], 'a blank cap reads back as null, not 0.0');
+        $share = $module->buildTwoBuyerFeeShare(30);
+        TinyAssert::false(array_key_exists('cap', $share), 'an unconfigured cap sends no cap key');
+
+        // Non-numeric is absent too, NOT a zero cap. Without the is_numeric
+        // gate it would cast to 0.0 and become a real cap of zero, silently
+        // suppressing the whole fee on a shop that was previously uncapped.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', 'abc');
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(null, $settings['grid'][30]['limit'], 'a non-numeric stored cap is absent, not 0.0');
+        TinyAssert::false(
+            array_key_exists('cap', $module->buildTwoBuyerFeeShare(30)),
+            'a non-numeric stored cap must never be relayed as a zero cap'
+        );
+
+        // A NEGATIVE stored cap is absent as well. Letting a zero through must
+        // not also let a negative through.
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '-10');
+        $settings = $module->getTwoSurchargeSettings();
+        TinyAssert::same(null, $settings['grid'][30]['limit'], 'a negative stored cap is absent, not -10.0');
+        TinyAssert::false(
+            array_key_exists('cap', $module->buildTwoBuyerFeeShare(30)),
+            'a negative stored cap must never be relayed'
+        );
+    }
+
+    /**
+     * The pricing API refuses a monetary value finer than two decimal places
+     * rather than rounding it, so an over-precise configured amount was
+     * rejected upstream and surfaced to the buyer as a generic error
+     * (TWO-25289).
+     */
+    private static function testMonetaryMembersAreRoundedToTwoDecimalPlaces(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'fixed_and_percentage');
+        Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2.5');
+        Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', '10.999');
+        Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', '20.005');
+        $module = new TwopaymentTestHarness();
+        $share = $module->buildTwoBuyerFeeShare(30);
+        TinyAssert::same(11.0, $share['surcharge'], 'the fixed fee is rounded to 2dp before the request');
+        TinyAssert::same(20.01, $share['cap'], 'the cap is rounded to 2dp before the request');
+    }
+
+    /**
      * upgrade-2.5.0.php: a shop upgrading with the pre-release flat rate
      * (PS_TWO_SURCHARGE_TAX_RATE) configured and no TaxRulesGroup selected
      * gets a logged warning + the persistent "needs re-selection" flag - it
@@ -651,6 +1249,10 @@ final class SurchargeSpec
         TinyAssert::count(1, PrestaShopLogger::$logs);
         TinyAssert::same(2, PrestaShopLogger::$logs[0]['severity'], 'logged as a warning');
         TinyAssert::true(strpos(PrestaShopLogger::$logs[0]['message'], 'UNTAXED') !== false, 'log spells out the consequence');
+        // The log must name the field the merchant will actually see
+        // (TWO-25279 renamed it), or the instruction sends them looking for a
+        // setting that no longer exists under that name.
+        TinyAssert::true(strpos(PrestaShopLogger::$logs[0]['message'], 'Surcharge tax treatment') !== false, 'log names the field by its current admin label');
 
         // Group already selected -> no flag, no log.
         self::reset();
@@ -716,12 +1318,23 @@ final class SurchargeSpec
         TinyAssert::same('1', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE), 'an unselected save must NOT retire the nag');
         TinyAssert::true($module->getTwoSurchargeTaxMigrationNotice() !== '', 'notice persists after an unselected save');
 
-        // An explicit "No tax" submission stores '0' and retires the nag.
+        // A never-taxed submission can no longer be persisted at all
+        // (TWO-25279), so it stores '' and does NOT retire the nag - this is
+        // the surcharges-disabled path, where validTwoSurchargeFormValues
+        // never runs and the save guard is the only enforcement.
         Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '0');
         $module->saveSurchargeFormForTest();
         Tools::resetTestValues();
-        TinyAssert::same('0', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP), 'explicit "No tax" submission stores the sentinel');
-        TinyAssert::false((bool) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE), 'explicit selection retires the nag');
+        TinyAssert::same('', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP), 'a never-taxed submission must never be persisted');
+        TinyAssert::same('1', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE), 'a refused submission must NOT retire the nag');
+
+        // A real group submission stores and retires the nag.
+        Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+        StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+        $module->saveSurchargeFormForTest();
+        Tools::resetTestValues();
+        TinyAssert::same('400', (string) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP), 'a real group submission is stored');
+        TinyAssert::false((bool) Configuration::get(Twopayment::CONFIG_SURCHARGE_TAX_MIGRATION_NOTICE), 'a real selection retires the nag');
         TinyAssert::same('', $module->getTwoSurchargeTaxMigrationNotice());
     }
 
@@ -752,7 +1365,7 @@ final class SurchargeSpec
         $cart->id_currency = 978;
         $cart->id_address_invoice = 900;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 100.0);
-        TinyAssert::same('SERVICE', $line['type']);
+        TinyAssert::same('BUYER_FEE', $line['type']);
         TinyAssert::same('Payment terms fee - 30 days', $line['name']);
         TinyAssert::same('5.00', $line['net_amount']);
         TinyAssert::same('0.25', $line['tax_rate'], 'tax rate comes from the selected group, never the pricing response');
@@ -832,7 +1445,6 @@ final class SurchargeSpec
         TinyAssert::same('10.10', $line['net_amount']);
         TinyAssert::same('2.53', $line['tax_amount']);
         TinyAssert::same('12.63', $line['gross_amount']);
-        // The constructed line must satisfy the Two line-item formulas.
         TinyAssert::true($module->validateTwoLineItems([$line]));
     }
 
@@ -841,9 +1453,9 @@ final class SurchargeSpec
         self::reset();
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '2');
-        // Group rate needing more than TAX_RATE_PRECISION (3dp) decimals
-        // as a fraction (21.0098% → 0.210098). Tax must be computed from the
-        // SNAPPED rate that is actually sent, else the line fails
+        // High-precision group rate (21.0098% → 0.210098): TAX_RATE_PRECISION
+        // (6dp) now carries the full fraction in the sent payload. Tax must
+        // be computed from the SENT rate, else the line fails
         // validateTwoLineItems and is dropped.
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
         StubStore::$taxRuleRates[400] = [34 => 21.0098];
@@ -863,9 +1475,9 @@ final class SurchargeSpec
         $cart->id_currency = 978;
         $cart->id_address_invoice = 900;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 5000.0);
-        TinyAssert::same('0.21', $line['tax_rate'], 'rate is snapped to the sent precision');
-        TinyAssert::same('210.00', $line['tax_amount'], 'tax computed from the sent (snapped) rate, not full precision');
-        TinyAssert::same('1210.00', $line['gross_amount']);
+        TinyAssert::same('0.210098', $line['tax_rate'], 'full 6dp rate survives the sent precision');
+        TinyAssert::same('210.10', $line['tax_amount'], 'tax computed from the sent rate');
+        TinyAssert::same('1210.10', $line['gross_amount']);
         TinyAssert::true($module->validateTwoLineItems([$line]), 'high-precision fee tax rate must not silently drop the line');
     }
 
@@ -894,7 +1506,7 @@ final class SurchargeSpec
         $cart->id_currency = 978;
         $line = $module->buildTwoSurchargeLineItemForCart($cart, 100.0, 60);
         TinyAssert::same(60, $module->capturedDays, 'explicit term override must reach the fee quote, not the default term');
-        TinyAssert::same('SERVICE', $line['type']);
+        TinyAssert::same('BUYER_FEE', $line['type']);
     }
 
     private static function testOrderPayloadInjectsSurchargeLineAndBumpsTotals(): void
@@ -953,6 +1565,10 @@ final class SurchargeSpec
         ]];
         StubStore::$productCategories[9301] = [['name' => 'Books']];
         StubStore::$images[9301] = ['id_image' => 9301];
+        // Declared-rate relay (TWO-24880): product rate from its tax-rules
+        // group at the cart's tax address, never the row's 'rate' field.
+        StubStore::$products[9301]['id_tax_rules_group'] = 500;
+        StubStore::$taxRuleRates[500] = 5.5;
         StubStore::$cartTotals[7001] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,
@@ -993,11 +1609,644 @@ final class SurchargeSpec
         TinyAssert::same('6.75', $payload['tax_amount']);
 
         $feeLines = array_values(array_filter($payload['line_items'], function ($item) {
-            return isset($item['type']) && $item['type'] === 'SERVICE' && $item['name'] === 'Payment terms fee - 30 days';
+            return isset($item['type']) && $item['type'] === 'BUYER_FEE' && $item['name'] === 'Payment terms fee - 30 days';
         }));
         TinyAssert::count(1, $feeLines);
         TinyAssert::same('5.00', $feeLines[0]['net_amount']);
         TinyAssert::same('0.25', $feeLines[0]['tax_rate']);
         TinyAssert::same('6.25', $feeLines[0]['gross_amount']);
     }
+
+    /**
+     * TWO-26076: an order update (admin edit, tracking number) PUTs the fee
+     * line PrestaShop recorded on the order, whatever the surcharge config
+     * says now. Placed: 5.00 net at 25% on a 105.50 order. `tax_rate` is the
+     * order_detail column (8.x writes it, 1.7 leaves it 0.000); `odt` is the
+     * row's order_detail_tax rates, which every version writes. The order's
+     * cart holds the same rows, under the fee id they were placed with, while that product exists.
+     */
+    private static function testUpdatePayloadReplaysThePlacedSurchargeLine(): void
+    {
+        $fee = fn (array $over = []) => $over + [
+            'id_order' => 8001, 'product_id' => 77, 'product_reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE,
+            'product_name' => 'Stored fee label', 'product_quantity' => 1,
+            'total_price_tax_excl' => '5.000000', 'total_price_tax_incl' => '6.250000', 'tax_rate' => '25.000', 'odt' => [25.0],
+        ];
+        $v17 = ['tax_rate' => '0.000'];
+        $exempt = ['total_price_tax_incl' => '5.000000', 'odt' => []];
+        $label = 'Payment terms fee - 30 days';
+        $taxes = fn (int $method, string $net, string $gross) => $v17 + ['odt' => [10.0, 5.0], 'tax_computation_method' => (string) $method, 'total_price_tax_excl' => $net, 'total_price_tax_incl' => $gross];
+        $cases = [
+            // [change after the order, order_detail rows, want fee lines/net/tax/gross/rate/name/order gross, description]
+            [fn () => Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '401'), [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'tax group changed after order'],
+            [fn () => Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'none'), [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'surcharge disabled after order'],
+            [fn () => StubStore::$taxRuleRates[400] = [33 => 12.0], [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'rate rule edited after order'],
+            [fn () => self::$quotedFee = '9.00', [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'fee re-quotes differently after order'],
+            [fn () => null, [$fee()], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'unchanged'],
+            [fn () => null, [$fee($exempt)], '1/5.00/0.00/5.00/0/' . $label . '/110.50', 'VAT-number exempt at placement: core keeps the group rate, applies none'],
+            [fn () => null, [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'PS 1.7 shape: order_detail.tax_rate is 0.000, the rate lives in order_detail_tax'],
+            [fn () => null, [$fee($v17 + ['product_quantity' => 2, 'total_price_tax_excl' => '10.000000', 'total_price_tax_incl' => '12.500000'])], '1/10.00/2.50/12.50/0.25/' . $label . '/118.00', 'quantity 2 replays the row total'],
+            [fn () => null, [$fee($v17), $fee($v17 + ['total_price_tax_excl' => '2.000000', 'total_price_tax_incl' => '2.500000'])], '1/7.00/1.75/8.75/0.25/' . $label . '/114.25', 'two fee rows are summed'],
+            [fn () => null, [], '0/-/-/-/-/-/105.50', 'no fee row: deleted, or placed before the feature'],
+            [fn () => Configuration::updateValue('PS_TWO_PAYMENT_TERMS_30', 0), [$fee($v17)], '1/5.00/1.25/6.25/0.25/Stored fee label/111.75', 'empty live label falls back to the stored row name'],
+            [fn () => null, [$fee($v17), $fee($v17 + ['total_price_tax_excl' => '2.000000', 'total_price_tax_incl' => '2.200000', 'odt' => [10.0]])], 'throws TWO-26076', 'fee rows at different rates fail loud'],
+            [fn () => null, [$fee($v17 + ['total_price_tax_incl' => '6.300000'])], 'throws TWO-26076', 'back-office edit off the rate by more than the tolerance fails loud'],
+            [fn () => Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_IDS_SEEDED', '1'), [$fee($v17), $fee($v17 + ['product_id' => 555])], 'throws TWO-26076', 'the fee reference under an id the fee never had fails loud'],
+            [function () { Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '88'); StubStore::$products[88] = StubStore::$products[77]; unset(StubStore::$products[77]); }, [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'fee recreated before retired ids were recorded: seeded from order history'],
+            [fn () => [Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS', '12'), StubStore::$products[12] = ['reference' => 'SKU-12', 'id_tax_rules_group' => 500]], [$fee($v17), $fee($v17 + ['product_id' => 12, 'product_reference' => 'SKU-12', 'product_name' => 'Real item', 'total_price_tax_excl' => '20.000000', 'total_price_tax_incl' => '21.100000', 'odt' => [5.5]])], '1/5.00/1.25/6.25/0.25/' . $label . '/132.85', 'a real product that reused a retired fee id is sold, not the fee'],
+            [fn () => [Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '88'), StubStore::$products[88] = StubStore::$products[77], Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS', '77')], [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'the fee under a retired id is the fee'],
+            [fn ($m) => [StubStore::$products[77]['reference'] = 'EDITED', $m->getTwoSurchargeCartProductId(true)], [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'live id changed after the order: reference edited, fee product recreated'],
+            [function () { unset(StubStore::$products[77]); }, [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'merchant deleted the fee product'],
+            [fn () => [Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '0'), Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS', '12,77')], [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'live id 0, placed id retired'],
+            [function () { Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '0'); unset(StubStore::$products[77]); }, [$fee($v17)], '1/5.00/1.25/6.25/0.25/' . $label . '/111.75', 'live id 0, placed id deleted but never recorded as retired: seeded from order history'],
+            [fn () => null, [$fee($taxes(1, '5.000000', '5.750000'))], '1/5.00/0.75/5.75/0.15/' . $label . '/111.25', 'combined 10% + 5% on 5.00 adds the rates'],
+            [fn () => null, [$fee($taxes(1, '2.000000', '2.300000'))], '1/2.00/0.30/2.30/0.15/' . $label . '/107.80', 'combined 10% + 5% on 2.00 adds the rates'],
+            [fn () => null, [$fee($taxes(2, '5.000000', '5.780000'))], '1/5.00/0.78/5.78/0.155/' . $label . '/111.28', 'one after another 10% then 5% on 5.00 compounds the rates'],
+            [fn () => null, [$fee($taxes(2, '2.000000', '2.310000'))], '1/2.00/0.31/2.31/0.155/' . $label . '/107.81', 'one after another 10% then 5% on 2.00 compounds the rates, not 15% inside tolerance'],
+        ];
+        $failures = [];
+        foreach ($cases as [$change, $rows, $expected, $description]) {
+            self::reset();
+            PrestaShopLogger::reset();
+            self::$quotedFee = '5.00';
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '77');
+            StubStore::$products[77] = ['reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, 'is_virtual' => 1, 'visibility' => 'none'];
+            StubStore::$taxRuleRates[400] = [33 => 25.0];
+            StubStore::$taxRuleRates[401] = [33 => 0.0];
+            StubStore::$taxRuleRates[500] = 5.5;
+            StubStore::$products[9301]['id_tax_rules_group'] = 500;
+            StubStore::$customers[7001] = ['email' => 'buyer@example.com', 'firstname' => 'Eva', 'lastname' => 'Martin', 'loaded' => true];
+            StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+            StubStore::$addresses[7101] = ['id_country' => 33, 'company' => 'Acme FR SAS', 'companyid' => 'FR123456789', 'address1' => '10 Rue de Paris', 'city' => 'Paris', 'postcode' => '75001', 'phone' => '+33100000000', 'loaded' => true];
+            StubStore::$countries[33] = 'FR';
+            StubStore::$carts[7001] = ['id_customer' => 7001, 'id_currency' => 978, 'id_address_invoice' => 7101, 'id_address_delivery' => 7101, 'id_carrier' => 0, 'id_lang' => 1];
+
+            $module = new class extends TwopaymentTestHarness {
+                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                {
+                    return ['http_status' => 200, 'buyer_fee_share' => SurchargeSpec::$quotedFee, 'currency' => 'EUR'];
+                }
+            };
+            $change($module);
+            $item = [
+                'id_product' => 9301, 'link_rewrite' => 'item', 'name' => 'Reduced VAT item', 'description_short' => '',
+                'manufacturer_name' => '', 'ean13' => '', 'upc' => '', 'total' => 100.00, 'total_wt' => 105.50,
+                'cart_quantity' => 1, 'rate' => 5.5, 'price' => 100.00, 'reduction' => 0,
+            ];
+            StubStore::$cartProducts[7001] = [$item];
+            StubStore::$cartTotals[7001] = [true => [Cart::BOTH => 105.50], false => [Cart::BOTH => 100.00]];
+            $order = PlacedOrderStub::fromCart(8001, 7001);
+            foreach ($rows as $i => $row) {
+                StubStore::$orderDetails[] = $row + ['id_order_detail' => 9000 + $i];
+                $order->total_paid_tax_incl += (float) $row['total_price_tax_incl'];
+                $order->total_paid_tax_excl += (float) $row['total_price_tax_excl'];
+            }
+            // One cart row per product; core's Cart::getProducts joins product_shop, so a deleted product's row drops out.
+            foreach (array_filter($rows, fn ($row) => isset(StubStore::$products[$row['product_id']])) as $row) {
+                $cartRow = StubStore::$cartProducts[7001][$row['product_id']] ?? ['id_product' => $row['product_id'], 'reference' => StubStore::$products[$row['product_id']]['reference'] ?? '', 'name' => $row['product_name'], 'cart_quantity' => 0, 'total' => 0.0, 'total_wt' => 0.0, 'rate' => 0.0] + $item;
+                $cartRow['cart_quantity'] += $row['product_quantity'];
+                $cartRow['total'] += (float) $row['total_price_tax_excl'];
+                $cartRow['total_wt'] += (float) $row['total_price_tax_incl'];
+                StubStore::$cartProducts[7001][$row['product_id']] = $cartRow;
+            }
+            StubStore::$cartProducts[7001] = array_values(StubStore::$cartProducts[7001]);
+            StubStore::$cartTotals[7001] = [
+                true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => array_sum(array_column(StubStore::$cartProducts[7001], 'total_wt'))],
+                false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => array_sum(array_column(StubStore::$cartProducts[7001], 'total'))],
+                'average_products_tax_rate' => 5.5,
+            ];
+            try {
+                $payload = $module->getTwoUpdateOrderData($order, ['two_order_reference' => 'ref-8001', 'two_day_on_invoice' => '30']);
+                $feeLines = array_values(array_filter($payload['line_items'], fn ($item) => ($item['type'] ?? '') === 'BUYER_FEE'));
+                $line = $feeLines[0] ?? [];
+                $actual = implode('/', [count($feeLines), $line['net_amount'] ?? '-', $line['tax_amount'] ?? '-', $line['gross_amount'] ?? '-', $line['tax_rate'] ?? '-', $line['name'] ?? '-', $payload['gross_amount']]);
+            } catch (Exception $e) {
+                $named = array_filter(PrestaShopLogger::$logs, fn ($log) => $log['severity'] === 3 && strpos($log['message'], 'TWO-26076') !== false);
+                $actual = $named !== [] ? 'throws TWO-26076' : 'throws without a TWO-26076 log: ' . $e->getMessage();
+            }
+            if ($actual !== $expected) {
+                $failures[] = $description . ': want ' . $expected . ', got ' . $actual;
+            }
+        }
+        TinyAssert::same([], $failures, "fee lines/net/tax/gross/rate/name/order gross\n  " . implode("\n  ", $failures));
+    }
+
+    /** TWO-26076: ids the fee reference was sold under before retirements were recorded become retired, once. */
+    private static function testUpgrade2716SeedsRetiredFeeIdsFromOrderHistoryOnce(): void
+    {
+        self::reset();
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.16.php';
+        Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '77');
+        StubStore::$products[77] = ['reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, 'is_virtual' => 1, 'visibility' => 'none'];
+        $fee = Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE;
+        StubStore::$orderDetails = [
+            ['id_order' => 1, 'product_id' => 12, 'product_reference' => $fee],
+            ['id_order' => 2, 'product_id' => 12, 'product_reference' => $fee],
+            ['id_order' => 3, 'product_id' => 77, 'product_reference' => $fee],
+            ['id_order' => 4, 'product_id' => 30, 'product_reference' => 'SKU-30'],
+        ];
+        TinyAssert::true(upgrade_module_2_7_16(new TwopaymentTestHarness()));
+        TinyAssert::same('12', (string) Configuration::get('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS'), 'old fee ids only: not the live id, not merchandise');
+        StubStore::$orderDetails[] = ['id_order' => 5, 'product_id' => 555, 'product_reference' => $fee];
+        TinyAssert::true(upgrade_module_2_7_16(new TwopaymentTestHarness()));
+        TinyAssert::same('12', (string) Configuration::get('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS'), 'a second run seeds nothing: a later unknown id must fail loud, not become the fee');
+    }
+
+    /** TWO-26076: an id MySQL reused for a real product is sold; the fee needs its id AND its reference. */
+    private static function testCreatePayloadKnowsTheFeeRowByIdAndReference(): void
+    {
+        $row = fn (int $id, string $reference, float $net, float $gross) => [
+            'id_product' => $id, 'reference' => $reference, 'link_rewrite' => 'item', 'name' => 'Item ' . $id, 'description_short' => '',
+            'manufacturer_name' => '', 'ean13' => '', 'upc' => '', 'total' => $net, 'total_wt' => $gross,
+            'cart_quantity' => 1, 'rate' => 5.5, 'price' => $net, 'reduction' => 0,
+        ];
+        $fee = Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE;
+        $cases = [
+            // [retired ids, extra cart row, want product lines/payload gross, description]
+            ['12', $row(12, 'SKU-12', 20.00, 21.10), '2/126.60', 'a real product that reused a retired fee id is sold'],
+            ['12', $row(12, $fee, 5.00, 6.25), '1/105.50', 'the fee under a retired id is not sold'],
+            ['', $row(77, $fee, 5.00, 6.25), '1/105.50', 'the fee under the live id is not sold'],
+            ['', $row(555, $fee, 20.00, 21.10), '2/126.60', 'the fee reference under an id the fee never had is sold'],
+        ];
+        $failures = [];
+        foreach ($cases as [$retired, $extra, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'none');
+            Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_PRODUCT_ID, '77');
+            Configuration::updateValue('PS_TWO_SURCHARGE_RETIRED_PRODUCT_IDS', $retired);
+            StubStore::$products[77] = ['reference' => $fee, 'is_virtual' => 1, 'visibility' => 'none'];
+            foreach ([9301, 12, 555] as $id) {
+                StubStore::$products[$id]['id_tax_rules_group'] = 500;
+            }
+            StubStore::$taxRuleRates[500] = 5.5;
+            StubStore::$customers[7001] = ['email' => 'buyer@example.com', 'firstname' => 'Eva', 'lastname' => 'Martin', 'secure_key' => 'k', 'loaded' => true];
+            StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+            StubStore::$addresses[7101] = ['id_country' => 33, 'company' => 'Acme FR SAS', 'companyid' => 'FR123456789', 'address1' => '10 Rue de Paris', 'city' => 'Paris', 'postcode' => '75001', 'phone' => '+33100000000', 'loaded' => true];
+            StubStore::$countries[33] = 'FR';
+            $cart = new Cart(7001);
+            $cart->id_customer = 7001;
+            $cart->id_currency = 978;
+            $cart->id_address_invoice = 7101;
+            $cart->id_address_delivery = 7101;
+            $cart->id_carrier = 0;
+            $cart->id_lang = 1;
+            StubStore::$cartProducts[7001] = [$row(9301, 'SKU-9301', 100.00, 105.50), $extra];
+            StubStore::$cartTotals[7001] = [
+                true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => array_sum(array_column(StubStore::$cartProducts[7001], 'total_wt'))],
+                false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => array_sum(array_column(StubStore::$cartProducts[7001], 'total'))],
+                'average_products_tax_rate' => 5.5,
+            ];
+            try {
+                $payload = (new TwopaymentTestHarness())->getTwoNewOrderData('merchant-attempt-7001', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm', 'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '', 'merchant_order_verification_failed_url' => '', 'merchant_invoice_url' => '', 'merchant_shipping_document_url' => '',
+                ], false);
+                $products = array_filter($payload['line_items'], fn ($item) => ($item['type'] ?? '') !== 'SHIPPING_FEE');
+                $actual = count($products) . '/' . $payload['gross_amount'];
+            } catch (Exception $e) {
+                $actual = 'throws: ' . $e->getMessage();
+            }
+            if ($actual !== $expected) {
+                $failures[] = $description . ': want ' . $expected . ', got ' . $actual;
+            }
+        }
+        TinyAssert::same([], $failures, "product lines/payload gross\n  " . implode("\n  ", $failures));
+    }
+
+    /**
+     * TWO-26076: core has already saved the admin's edit when these hooks run.
+     * A payload that cannot be built must not reach core's AJAX (on 1.7 a 500,
+     * so the admin retries and duplicates the line): it is logged, and the
+     * admin is told the edit was saved but not sent.
+     */
+    private static function testAdminOrderHooksWarnInsteadOfThrowingAFailedUpdate(): void
+    {
+        $cases = [
+            // [hook, want warning fragment, want log fragment, description]
+            ['hookActionOrderEdited', 'This order edit was saved in PrestaShop but was not sent', 'TWO-26076 order edit saved but not sent to Two', 'order edit'],
+            ['hookActionAdminOrdersTrackingNumberUpdate', 'The tracking number was saved in PrestaShop but was not sent', 'tracking number update skipped', 'tracking number'],
+        ];
+        $failures = [];
+        foreach ($cases as [$hook, $wantWarning, $wantLog, $description]) {
+            self::reset();
+            PrestaShopLogger::reset();
+            $module = new class extends TwopaymentTestHarness {
+                use StubbedTwoUpdateBuyerCompany;
+                public array $requests = [];
+                public array $warnings = [];
+
+                public function getTwoOrderPaymentData($id_order)
+                {
+                    return ['two_order_id' => 'two-order-uuid'];
+                }
+
+                public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
+                {
+                    throw new Exception('The placed surcharge line cannot be replayed: stubbed');
+                }
+
+                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                {
+                    $this->requests[] = $endpoint;
+                    return ['http_status' => 200];
+                }
+
+                public function addTwoBackOfficeWarning($message)
+                {
+                    $this->warnings[] = $message;
+                    return true;
+                }
+            };
+            $order = new class {
+                public bool $loaded = true;
+                public int $id = 8001;
+                public int $id_cart = 0;
+                public string $module = 'twopayment';
+
+                public function getOrderPaymentCollection(): array
+                {
+                    return [];
+                }
+
+                public function getIdOrderCarrier(): int
+                {
+                    return 0;
+                }
+
+                public function getBrother(): array
+                {
+                    return [];
+                }
+            };
+            try {
+                $module->$hook(['order' => $order]);
+                $logged = array_filter(PrestaShopLogger::$logs, fn ($log) => $log['severity'] === 3 && strpos($log['message'], $wantLog) !== false);
+                $actual = implode('/', [
+                    count($module->requests) . ' sent',
+                    count(array_filter($module->warnings, fn ($w) => strpos($w, $wantWarning) === 0)) . ' warned',
+                    count($logged) . ' logged',
+                ]);
+            } catch (Throwable $e) {
+                $actual = 'rethrown: ' . $e->getMessage();
+            }
+            if ($actual !== '0 sent/1 warned/1 logged') {
+                $failures[] = $description . ': want 0 sent/1 warned/1 logged, got ' . $actual;
+            }
+        }
+        TinyAssert::same([], $failures, "PUTs sent/warnings/logs\n  " . implode("\n  ", $failures));
+    }
+
+    /** TWO-26076: 1.7 drops the hooks' warnings, so a failed PUT marks the order until one lands. */
+    private static function testOrderPageShowsAnUpdateTwoNeverReceivedUntilOneLands(): void
+    {
+        $prior = '2026-09-29 10:00:00';
+        $cases = [
+            // [hook, PUT outcome (throw or HTTP status), marker before, want marker/private notes/order page, description]
+            ['hookActionOrderEdited', 'throw', null, 'new/1/shown', 'edit payload fails'],
+            ['hookActionOrderEdited', 400, null, 'new/1/shown', 'edit rejected by Two'],
+            ['hookActionOrderEdited', 'throw', $prior, 'kept/1/shown', 'a second failure keeps the first time'],
+            ['hookActionOrderEdited', 200, $prior, 'none/0/hidden', 'a landed edit clears it'],
+            ['hookActionAdminOrdersTrackingNumberUpdate', 'throw', null, 'new/1/shown', 'tracking payload fails'],
+            ['hookActionAdminOrdersTrackingNumberUpdate', 400, null, 'new/1/shown', 'tracking rejected by Two'],
+            ['hookActionAdminOrdersTrackingNumberUpdate', 200, $prior, 'none/0/hidden', 'a landed tracking number clears it'],
+        ];
+        $failures = [];
+        foreach ($cases as [$hook, $outcome, $before, $expected, $description]) {
+            self::reset();
+            StubStore::$twoPaymentRows[8001] = ['id_order' => 8001, 'two_order_id' => 'two-order-uuid', 'two_not_sent_at' => $before];
+            $module = new class extends TwopaymentTestHarness {
+                use StubbedTwoUpdateBuyerCompany;
+                /** @var int|string */
+                public $outcome = 200;
+                public array $notes = [];
+
+                public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
+                {
+                    if ($this->outcome === 'throw') {
+                        throw new Exception('stubbed payload failure');
+                    }
+                    return ['gross_amount' => '1.00'];
+                }
+
+                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                {
+                    return ['http_status' => $this->outcome];
+                }
+
+                public function addTwoBackOfficeWarning($message)
+                {
+                    return true;
+                }
+
+                protected function addTwoOrderPrivateNote($idOrder, $text)
+                {
+                    $this->notes[] = $text;
+                }
+
+                protected function syncTwoAdminOrderPaymentDataFromProvider($id_order, $twopaymentdata)
+                {
+                    return $twopaymentdata;
+                }
+
+                protected function enrichTwoAdminOrderPaymentData($id_order, $twopaymentdata)
+                {
+                    return $twopaymentdata;
+                }
+            };
+            $module->outcome = $outcome;
+            $order = new class {
+                public bool $loaded = true;
+                public int $id = 8001;
+                public int $id_cart = 0;
+                public string $module = 'twopayment';
+
+                public function getOrderPaymentCollection(): array
+                {
+                    return [];
+                }
+
+                public function getBrother(): array
+                {
+                    return [];
+                }
+            };
+            $module->$hook(['order' => $order]);
+            $marker = (string) (StubStore::$twoPaymentRows[8001]['two_not_sent_at'] ?? '');
+            $module->context->smarty->assigned = [];
+            $module->hookDisplayAdminOrderLeft(['id_order' => 8001]);
+            $shown = (string) ($module->context->smarty->assigned['two_not_sent_since'] ?? '');
+            $actual = implode('/', [
+                $marker === '' ? 'none' : ($marker === $before ? 'kept' : 'new'),
+                count(array_filter($module->notes, fn ($note) => strpos($note, 'not sent to the invoice provider') !== false)),
+                $shown === '' ? 'hidden' : ($shown === substr($marker, 0, 16) . ' UTC' ? 'shown' : 'wrong: ' . $shown),
+            ]);
+            if ($actual !== $expected) {
+                $failures[] = $description . ': want ' . $expected . ', got ' . $actual;
+            }
+        }
+        TinyAssert::same([], $failures, "marker/private notes/order page\n  " . implode("\n  ", $failures));
+    }
+
+    /**
+     * TWO-25707: a comma decimal separator is a supported way to type a
+     * surcharge value, so it is normalised before the numeric check rather
+     * than refused by it. A rejection names the cell it came from - the grid
+     * has three columns per term, and a message naming none of them leaves the
+     * merchant hunting.
+     */
+    private static function testSurchargeCommaDecimalsAreNormalisedAndRejectionsNameTheCell(): void
+    {
+        // [posted percentage, fixed fee, cap, expected error fragments, expected stored triple, description]
+        $cases = [
+            ['12,5', '', '', [], ['12.5', '', ''], 'a comma percentage is accepted and stored as a dot decimal'],
+            ['12.5', '', '1,5', [], ['12.5', '', '1.5'], 'a comma cap is accepted alongside a dot percentage'],
+            ['12,5', '2,25', '3,5', [], ['12.5', '2.25', '3.5'], 'every cell in the row normalises'],
+            ['12.5', '', '1.5', [], ['12.5', '', '1.5'], 'dot decimals keep working'],
+            ['', '', '0,4', [], ['', '', '0.4'], 'a sub-unit comma cap is normalised before the zero-cap rule reads it'],
+            ['', '1,000', '', ['Fixed fee for the 30-day term'], null, 'a thousands separator is not a decimal comma'],
+            ['', '', 'abc', ['Cap for the 30-day term'], null, 'a bad cap is named as the cap, not as another column'],
+            ['1.234,5', '', '', ['Percentage for the 30-day term'], null, 'both separators are ambiguous and refused'],
+            ['abc', '', '', ['Percentage for the 30-day term'], null, 'a non-number is refused by column and term'],
+            ['', '-1', '', ['Fixed fee for the 30-day term'], null, 'a negative is refused by column and term'],
+            ['', '', '0,0', ['Surcharge cap for the 30-day term cannot be 0'], null, 'a comma zero cap is normalised before the zero-cap rule'],
+            ['abc', 'abc', '', ['Percentage for the 30-day term', 'Fixed fee for the 30-day term'], null, 'each bad cell is reported, not just the first'],
+            ['100', '', '', [], ['100', '', ''], 'a percentage of 100 saves: it passes the whole fee on (TWO-27162)'],
+            ['100.01', '', '', ['Percentage for the 30-day term must be between 0 and 100'], null, 'a percentage above 100 is refused: Two\'s fee quote refuses it'],
+            ['100,01', '', '', ['Percentage for the 30-day term must be between 0 and 100'], null, 'a comma percentage above 100 is refused on its normalised value'],
+            ['1e3', '', '', ['Percentage for the 30-day term must be between 0 and 100'], null, 'an exponent percentage is refused on its value, 1000'],
+            ['', '150', '150', [], ['', '150', '150'], 'the 100 ceiling is the percentage\'s alone, not the fixed fee\'s or the cap\'s'],
+        ];
+
+        foreach ($cases as [$pct, $fixed, $cap, $expectedErrors, $expectedStored, $description]) {
+            self::reset();
+            Tools::resetTestValues();
+            StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+            $module = self::makeConfigHarness();
+
+            Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            Tools::setTestValue('PS_TWO_PAYMENT_TERMS_30', '1');
+            Tools::setTestValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_30', $fixed);
+            Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', $cap);
+
+            $errors = $module->validateSurchargeFormForTest();
+            TinyAssert::count(count($expectedErrors), $errors, $description);
+            foreach ($expectedErrors as $index => $fragment) {
+                TinyAssert::true(
+                    strpos($errors[$index], $fragment) !== false,
+                    $description . ' (expected "' . $fragment . '" in "' . $errors[$index] . '")'
+                );
+            }
+
+            if ($expectedStored === null) {
+                continue;
+            }
+            $module->saveSurchargeFormForTest();
+            TinyAssert::same($expectedStored[0], (string) Configuration::get('PS_TWO_SURCHARGE_PCT_30'), $description);
+            TinyAssert::same($expectedStored[1], (string) Configuration::get('PS_TWO_SURCHARGE_FIXED_30'), $description);
+            TinyAssert::same($expectedStored[2], (string) Configuration::get('PS_TWO_SURCHARGE_CAP_30'), $description);
+        }
+    }
+
+    /**
+     * TWO-27162: a percentage above 100 is refused only where the percentage
+     * is in use, the term offered in this submission and the method using a
+     * percentage. A hidden cell still posts, and refusing it would block the
+     * whole save over a value the merchant cannot see.
+     */
+    private static function testSurchargePercentageCeilingAppliesWhereThePercentageIsInUse(): void
+    {
+        // [method, term ticked in this post, posted term type (null: absent, stored EOM), term, refused, description]
+        $cases = [
+            ['percentage', true, 'STANDARD', 30, true, 'an offered percentage term at 150 is refused'],
+            ['fixed_and_percentage', true, 'STANDARD', 30, true, 'a fixed fee and percentage uses the percentage too'],
+            ['percentage', false, 'STANDARD', 30, false, 'an unticked term is hidden: its stored 150 saves untouched'],
+            ['fixed', true, 'STANDARD', 30, false, 'a fixed-only method hides the percentage: a stored 150 saves'],
+            ['none', true, 'STANDARD', 30, false, 'no method uses no percentage: 150 saves and no grid hint is due'],
+            ['percentage', true, 'EOM', 90, false, 'a term the end-of-month type does not offer is hidden: 150 saves'],
+            ['percentage', true, 'EOM', 30, true, 'an end-of-month term under that type is offered: refused'],
+            ['percentage', true, null, 90, false, 'an absent term type selector falls back to the stored type'],
+        ];
+
+        foreach ($cases as [$method, $ticked, $termType, $days, $refused, $description]) {
+            self::reset();
+            Tools::resetTestValues();
+            StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+            $module = self::makeConfigHarness();
+
+            Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', $method);
+            Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            if ($termType === null) {
+                Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', 'EOM');
+            } else {
+                Tools::setTestValue('PS_TWO_PAYMENT_TERM_TYPE', $termType);
+            }
+            if ($ticked) {
+                Tools::setTestValue('PS_TWO_PAYMENT_TERMS_' . $days, '1');
+            }
+            Tools::setTestValue('PS_TWO_SURCHARGE_PCT_' . $days, '150');
+
+            $errors = $module->validateSurchargeFormForTest();
+            TinyAssert::count($refused ? 1 : 0, $errors, $description);
+            if ($refused) {
+                TinyAssert::true(
+                    strpos($errors[0], 'Percentage for the ' . $days . '-day term must be between 0 and 100') !== false,
+                    $description . ' (got "' . $errors[0] . '")'
+                );
+            } elseif ($days === 30) {
+                $module->saveSurchargeFormForTest();
+                TinyAssert::same('150', (string) Configuration::get('PS_TWO_SURCHARGE_PCT_30'), $description);
+            }
+        }
+        Tools::resetTestValues();
+    }
+
+    /**
+     * TWO-25708: with no offered term the grid has nothing to configure, so
+     * the Term/Percentage/Cap headings give way to the instruction that says
+     * how to get a row - never a bare set of headings over an empty table.
+     */
+    private static function testSurchargeGridEmptyStateReplacesTheHeadings(): void
+    {
+        $harness = static function (): object {
+            return new class extends TwopaymentTestHarness {
+                public function getTwoSurchargeGridHtmlPublic(): string
+                {
+                    return $this->getTwoSurchargeGridHtml();
+                }
+            };
+        };
+        $instruction = 'No payment term is available to surcharge.';
+
+        // [ticked terms, term type, stored custom term, grid expected visible, description]
+        $cases = [
+            [[30, 60], 'STANDARD', '', true, 'an offered term keeps the grid on screen'],
+            [[], 'STANDARD', '', false, 'no ticked term leaves nothing to configure'],
+            [[90], 'EOM', '', false, 'a ticked term the term type excludes offers no row either'],
+            [[30], 'EOM', '', true, 'a ticked EOM-eligible term keeps the grid on screen'],
+            // The deprecated custom term is offered without a tick of its own,
+            // so the instruction would deny a term checkout is charging for.
+            [[], 'STANDARD', '45', true, 'a custom term is offered even with nothing ticked'],
+            [[], 'EOM', '90', true, 'the term type does not withdraw the custom term either'],
+            [[], 'STANDARD', 'abc', false, 'an unusable custom term offers nothing'],
+            [[], 'STANDARD', '120', false, 'a custom term the source does not offer offers nothing'],
+        ];
+
+        foreach ($cases as [$ticked, $termType, $customTerm, $gridVisible, $description]) {
+            self::reset();
+            StubStore::$currencies[1] = ['iso_code' => 'EUR', 'loaded' => true];
+            Configuration::updateValue('PS_CURRENCY_DEFAULT', 1);
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            foreach (Twopayment::PAYMENT_TERMS_OPTIONS as $days) {
+                Configuration::updateValue('PS_TWO_PAYMENT_TERMS_' . (int) $days, in_array((int) $days, $ticked, true) ? 1 : 0);
+            }
+            Configuration::updateValue('PS_TWO_PAYMENT_TERM_TYPE', $termType);
+            Configuration::updateValue('PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS', $customTerm);
+            $html = $harness()->getTwoSurchargeGridHtmlPublic();
+
+            TinyAssert::true(
+                (strpos($html, 'id="two-surcharge-grid" class="table" style="width:auto;margin-bottom:0;display:none;"') !== false) !== $gridVisible,
+                $description . ' (grid visibility)'
+            );
+            TinyAssert::true(
+                (strpos($html, 'id="two-surcharge-empty" class="help-block" style="margin-bottom:0;display:none;"') !== false) === $gridVisible,
+                $description . ' (instruction visibility)'
+            );
+            TinyAssert::true(
+                strpos($html, $instruction) !== false,
+                $description . ': the instruction must be rendered whatever its visibility, so the JS only has to toggle it'
+            );
+            // The cap help text describes cells that are only on screen while
+            // a row is.
+            TinyAssert::true(
+                (strpos($html, '<p class="help-block two-col-cap" style="margin-top:8px;display:none;">') !== false) !== $gridVisible,
+                $description . ' (cap help visibility)'
+            );
+            // The currency note goes with the grid (TWO-27107).
+            TinyAssert::true(
+                (strpos($html, '<p id="two-surcharge-currency-note" class="help-block" style="margin-top:8px;display:none;">') !== false) !== $gridVisible,
+                $description . ' (currency note visibility)'
+            );
+        }
+    }
+
+    /**
+     * TWO-27107: the grid states the currency its amounts are in, which is the
+     * shop's default currency, and says nothing when that cannot be read.
+     */
+    private static function testSurchargeGridNamesTheShopDefaultCurrency(): void
+    {
+        $harness = new class extends TwopaymentTestHarness {
+            public function getTwoSurchargeGridHtmlPublic(): string
+            {
+                return $this->getTwoSurchargeGridHtml();
+            }
+        };
+
+        // [default currency id, currency rows, expected note or null, description]
+        $cases = [
+            [2, [2 => ['iso_code' => 'nok', 'loaded' => true]], "Amounts are in the shop&#039;s default currency, NOK.", 'the default currency ISO code, upper-cased'],
+            [3, [2 => ['iso_code' => 'NOK', 'loaded' => true], 3 => ['iso_code' => 'SEK', 'loaded' => true]], "Amounts are in the shop&#039;s default currency, SEK.", 'the default, not another shop currency'],
+            [9, [], null, 'no note when the default currency cannot be loaded'],
+        ];
+        foreach ($cases as [$defaultId, $currencies, $expected, $description]) {
+            self::reset();
+            StubStore::$currencies = $currencies;
+            Configuration::updateValue('PS_CURRENCY_DEFAULT', $defaultId);
+            $html = $harness->getTwoSurchargeGridHtmlPublic();
+            if ($expected === null) {
+                TinyAssert::false(strpos($html, 'two-surcharge-currency-note') !== false, $description);
+                continue;
+            }
+            TinyAssert::true(strpos($html, $expected) !== false, $description . ' (got: ' . $html . ')');
+        }
+    }
+
+    /**
+     * TWO-27107: grid cells are checked whatever the surcharge method. A junk
+     * value posted while the method is none was stored unchecked, and became a
+     * live fee the moment the method was switched on.
+     */
+    private static function testSurchargeGridCellsAreCheckedWhateverTheMethod(): void
+    {
+        // [method, percentage, fixed fee, cap, expected error fragments, description]
+        $cases = [
+            ['none', 'abc', '', '', ['Percentage for the 30-day term'], 'a non-number is refused while the method is none'],
+            ['none', '', '-1', '', ['Fixed fee for the 30-day term'], 'a negative is refused while the method is none'],
+            ['none', '', '', 'x', ['Cap for the 30-day term'], 'a bad cap is refused while the method is none'],
+            ['none', '12,5', '2', '', [], 'valid cells pass while the method is none'],
+            ['none', '', '', '', [], 'an empty grid passes while the method is none'],
+            ['none', '', '', '0', [], 'a zero cap is not refused while the cap column is hidden'],
+            ['fixed', '', '-1', '', ['Fixed fee for the 30-day term'], 'a live method still refuses a negative'],
+        ];
+        foreach ($cases as [$method, $pct, $fixed, $cap, $expectedErrors, $description]) {
+            self::reset();
+            Tools::resetTestValues();
+            StubStore::$taxRulesGroups[400] = ['name' => 'Standard rate', 'active' => 1];
+            $module = self::makeConfigHarness();
+            Tools::setTestValue('PS_TWO_SURCHARGE_TYPE', $method);
+            Tools::setTestValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '400');
+            Tools::setTestValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Tools::setTestValue('PS_TWO_SURCHARGE_FIXED_30', $fixed);
+            Tools::setTestValue('PS_TWO_SURCHARGE_CAP_30', $cap);
+
+            $errors = $module->validateSurchargeFormForTest();
+            TinyAssert::count(count($expectedErrors), $errors, $description . ' (got: ' . implode(' | ', $errors) . ')');
+            foreach ($expectedErrors as $index => $fragment) {
+                TinyAssert::true(strpos($errors[$index], $fragment) !== false, $description);
+                // The grid is hidden under none, so the error says how to reach it.
+                TinyAssert::same(
+                    $method === 'none',
+                    strpos($errors[$index], 'The grid is hidden while Surcharge method is "No surcharge applied"') !== false,
+                    $description . ': the how-to-reach hint shows only while the grid is hidden'
+                );
+            }
+        }
+        Tools::resetTestValues();
+    }
+
 }

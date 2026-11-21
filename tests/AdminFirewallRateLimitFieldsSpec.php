@@ -1,0 +1,627 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * The Diagnostics custom request-header table that replaced the single
+ * firewall-token field, plus the rate-limit controls it sits beside.
+ *
+ * The header list is one Configuration key holding JSON, rendered as an
+ * HTML table because HelperForm has no repeatable-row field type. Two
+ * properties are load-bearing and easy to lose:
+ *
+ *   - every configured row is sent from the server on EVERY call, including
+ *     from a shop with no key stored, because the firewall the rows exist to
+ *     clear does not care whether Two would have authenticated the request;
+ *   - only rows ticked "also send from browser" reach the browser at all,
+ *     since anything published there is readable by the buyer.
+ */
+final class AdminFirewallRateLimitFieldsSpec
+{
+    public static function runAll(): void
+    {
+        self::testRemovedFirewallTokenFieldsAreGone();
+        self::testCustomHeaderTableAndRateLimitAreInDiagnostics();
+        self::testNewFieldLabelsAreSentenceCase();
+        self::testHelpTextIsExact();
+
+        self::testEveryConfiguredHeaderIsAttached();
+        self::testNoHeadersConfiguredAttachesNothing();
+        self::testHeadersAttachedWithoutApiKey();
+        self::testUnsendableRowsAreDropped();
+        self::testOnlyBrowserFlaggedRowsReachTheBrowser();
+
+        self::testTableRendersStoredRows();
+        self::testTableEscapesStoredValues();
+
+        self::testSaveStoresSubmittedRows();
+        self::testSaveOfAnEmptiedTableStoresAnEmptyList();
+        self::testSaveIgnoresAnUnrelatedPost();
+
+        self::testValidationRejectsMalformedHeaderName();
+        self::testValidationRejectsValuelessRow();
+        self::testValidationRejectsLineBreakInValue();
+        self::testValidationRejectsReservedHeaderNames();
+        self::testDuplicateHeaderNamesAreRefusedAndFirstWinsOnRead();
+        self::testValidationRejectsNonPrintableValues();
+        self::testHeaderValidatorsAnchorAtEndOfString();
+        self::testValidationAcceptsWellFormedRows();
+        self::testReservedNameListIsComplete();
+        self::testReservedRowsAreNeverSent();
+
+        self::testTrustedProxiesValidationRejectsMalformedEntry();
+        self::testTrustedProxiesValidationRejectsZeroWidthCidr();
+        self::testTrustedProxiesValidationAcceptsWellFormedEntries();
+
+        self::testBrowserHeaderMapWiredIntoMediaHook();
+    }
+
+    private static function reset(): void
+    {
+        StubStore::reset();
+        PrestaShopLogger::reset();
+    }
+
+    private static function formInputsByName(array $form): array
+    {
+        $byName = array();
+        foreach ($form['form']['input'] as $input) {
+            if (isset($input['name'])) {
+                $byName[$input['name']] = $input;
+            }
+        }
+
+        return $byName;
+    }
+
+    private static function diagnosticsInputs(TwopaymentTestHarness $module): array
+    {
+        return self::formInputsByName(
+            (new ReflectionMethod(Twopayment::class, 'getTwoDiagnosticsForm'))->invoke($module)
+        );
+    }
+
+    private static function generalInputs(TwopaymentTestHarness $module): array
+    {
+        return self::formInputsByName(
+            (new ReflectionMethod(Twopayment::class, 'getTwoGeneralForm'))->invoke($module)
+        );
+    }
+
+    private static function storeHeaders(array $rows): void
+    {
+        Configuration::updateValue(Twopayment::CONFIG_CUSTOM_HEADERS, json_encode($rows));
+    }
+
+    // ---- admin field presence ------------------------------------------------
+
+    private static function testRemovedFirewallTokenFieldsAreGone(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        TinyAssert::false(
+            isset(self::generalInputs($module)['PS_TWO_FIREWALL_TOKEN']),
+            'the single firewall-token field is replaced by the Diagnostics header table'
+        );
+        TinyAssert::false(
+            isset(self::diagnosticsInputs($module)['PS_TWO_FIREWALL_TOKEN_BROWSER']),
+            'the browser-token switch is replaced by the per-row "also send from browser" tick'
+        );
+    }
+
+    private static function testCustomHeaderTableAndRateLimitAreInDiagnostics(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        $inputs = self::diagnosticsInputs($module);
+
+        foreach (array(Twopayment::CONFIG_CUSTOM_HEADERS, 'PS_TWO_TRUSTED_PROXIES', 'PS_TWO_DISABLE_RATE_LIMIT') as $name) {
+            TinyAssert::true(isset($inputs[$name]), $name . ' renders on the Diagnostics form');
+        }
+        TinyAssert::same('html', $inputs[Twopayment::CONFIG_CUSTOM_HEADERS]['type']);
+        TinyAssert::same('textarea', $inputs['PS_TWO_TRUSTED_PROXIES']['type']);
+        TinyAssert::same('switch', $inputs['PS_TWO_DISABLE_RATE_LIMIT']['type']);
+
+        $general = self::generalInputs($module);
+        foreach (array(Twopayment::CONFIG_CUSTOM_HEADERS, 'PS_TWO_TRUSTED_PROXIES', 'PS_TWO_DISABLE_RATE_LIMIT') as $name) {
+            TinyAssert::false(isset($general[$name]), $name . ' must not also render on the General form');
+        }
+    }
+
+    private static function testNewFieldLabelsAreSentenceCase(): void
+    {
+        self::reset();
+        $inputs = self::diagnosticsInputs(new TwopaymentTestHarness());
+
+        TinyAssert::same('Custom request headers', $inputs[Twopayment::CONFIG_CUSTOM_HEADERS]['label']);
+        TinyAssert::same('Trusted proxies', $inputs['PS_TWO_TRUSTED_PROXIES']['label']);
+        TinyAssert::same('Disable checkout rate limiting', $inputs['PS_TWO_DISABLE_RATE_LIMIT']['label']);
+    }
+
+    private static function testHelpTextIsExact(): void
+    {
+        self::reset();
+        $inputs = self::diagnosticsInputs(new TwopaymentTestHarness());
+
+        TinyAssert::same(
+            'Addresses of your own reverse proxies, load balancers or CDN egress, as IPs or CIDR ranges, separated by commas or new lines. These IP addresses will be exempt from rate limiting.',
+            $inputs['PS_TWO_TRUSTED_PROXIES']['desc']
+        );
+
+        // The publish-to-the-buyer warning the removed switch carried has to
+        // survive on the table, since ticking a row does the same thing.
+        TinyAssert::true(
+            strpos(
+                $inputs[Twopayment::CONFIG_CUSTOM_HEADERS]['html_content'],
+                'will be published to the buyer&#039;s brower and may be read by anyone'
+            ) !== false,
+            'the table must still warn that a browser-ticked header is readable by anyone'
+        );
+    }
+
+    // ---- request headers -----------------------------------------------------
+
+    private static function headersFor(TwopaymentTestHarness $module, string $endpoint): array
+    {
+        return (new ReflectionMethod(Twopayment::class, 'getTwoRequestHeaders'))->invoke($module, $endpoint);
+    }
+
+    private static function testEveryConfiguredHeaderIsAttached(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
+        self::storeHeaders(array(
+            array('name' => 'X-WAF-TOKEN', 'value' => 'waf-token-1', 'send_from_browser' => false),
+            array('name' => 'X-Corp-Gate', 'value' => 'gate-2', 'send_from_browser' => true),
+        ));
+        $headers = self::headersFor(new TwopaymentTestHarness(), '/v1/order');
+
+        TinyAssert::true(in_array('X-WAF-TOKEN:waf-token-1', $headers, true), 'the first configured header is attached');
+        TinyAssert::true(in_array('X-Corp-Gate:gate-2', $headers, true), 'the second configured header is attached');
+    }
+
+    private static function testNoHeadersConfiguredAttachesNothing(): void
+    {
+        self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
+        self::storeHeaders(array());
+
+        TinyAssert::same(
+            array('Content-Type: application/json; charset=utf-8', 'X-API-Key:test-api-key'),
+            self::headersFor(new TwopaymentTestHarness(), '/v1/order'),
+            'an empty header list must add nothing at all'
+        );
+    }
+
+    private static function testHeadersAttachedWithoutApiKey(): void
+    {
+        // Unlike X-API-Key, these are not gated on a key being stored: a shop
+        // with none still has to clear the merchant's firewall.
+        self::reset();
+        self::storeHeaders(array(
+            array('name' => 'X-WAF-TOKEN', 'value' => 'waf-token-1', 'send_from_browser' => false),
+        ));
+
+        TinyAssert::true(
+            in_array('X-WAF-TOKEN:waf-token-1', self::headersFor(new TwopaymentTestHarness(), '/v1/order_intent'), true),
+            'a configured header must travel with no API key stored too'
+        );
+    }
+
+    private static function testUnsendableRowsAreDropped(): void
+    {
+        self::reset();
+        self::storeHeaders(array(
+            array('name' => 'X-Has Space', 'value' => 'v', 'send_from_browser' => false),
+            array('name' => 'X-Injects', 'value' => "v\r\nX-Evil: 1", 'send_from_browser' => false),
+            array('name' => 'X-Valueless', 'value' => '', 'send_from_browser' => false),
+            array('name' => 'X-Good', 'value' => 'good', 'send_from_browser' => false),
+        ));
+
+        TinyAssert::same(
+            array('X-Good:good'),
+            Twopayment::getTwoCustomHeaderLines(),
+            'a name with a space, a value carrying CRLF and a valueless row are all unsendable and must be dropped'
+        );
+    }
+
+    private static function testOnlyBrowserFlaggedRowsReachTheBrowser(): void
+    {
+        self::reset();
+        self::storeHeaders(array(
+            array('name' => 'X-Server-Only', 'value' => 'secret', 'send_from_browser' => false),
+            array('name' => 'X-Corp-Gate', 'value' => 'gate-2', 'send_from_browser' => true),
+        ));
+
+        TinyAssert::same(
+            array('X-Corp-Gate' => 'gate-2'),
+            Twopayment::getTwoBrowserCustomHeaders(),
+            'an unticked row must never be published to the buyer'
+        );
+    }
+
+    // ---- the rendered table --------------------------------------------------
+
+    private static function tableHtml(TwopaymentTestHarness $module): string
+    {
+        return (string) self::diagnosticsInputs($module)[Twopayment::CONFIG_CUSTOM_HEADERS]['html_content'];
+    }
+
+    private static function testTableRendersStoredRows(): void
+    {
+        self::reset();
+        self::storeHeaders(array(
+            array('name' => 'X-Server-Only', 'value' => 'secret', 'send_from_browser' => false),
+            array('name' => 'X-Corp-Gate', 'value' => 'gate-2', 'send_from_browser' => true),
+        ));
+        $html = self::tableHtml(new TwopaymentTestHarness());
+
+        TinyAssert::true(
+            strpos($html, 'name="two_custom_header_name[0]" value="X-Server-Only"') !== false
+                && strpos($html, 'name="two_custom_header_value[0]" value="secret"') !== false
+                && strpos($html, 'name="two_custom_header_browser[0]">') !== false,
+            'the unticked row renders with its own index and an unchecked box'
+        );
+        TinyAssert::true(
+            strpos($html, 'name="two_custom_header_name[1]" value="X-Corp-Gate"') !== false
+                && strpos($html, 'name="two_custom_header_browser[1]" checked>') !== false,
+            'the ticked row renders on the next index with a checked box'
+        );
+        TinyAssert::true(
+            strpos($html, 'name="two_custom_headers_submitted" value="1"') !== false,
+            'the marker input must render, else removing the last row saves as "field absent"'
+        );
+    }
+
+    private static function testTableEscapesStoredValues(): void
+    {
+        self::reset();
+        self::storeHeaders(array(
+            array('name' => 'X-Quote', 'value' => '"><script>alert(1)</script>', 'send_from_browser' => false),
+        ));
+        $html = self::tableHtml(new TwopaymentTestHarness());
+
+        TinyAssert::true(strpos($html, '<script>') === false, 'a stored value must not break out of the value attribute');
+        TinyAssert::true(
+            strpos($html, 'value="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"') !== false,
+            'the stored value renders escaped'
+        );
+    }
+
+    // ---- save ---------------------------------------------------------------
+
+    private static function harnessExposingSaveAndValidate(): Twopayment
+    {
+        return new class() extends TwopaymentTestHarness {
+            /** @return array<int,string> */
+            public function validateDiagnosticsFormForTest(): array
+            {
+                $this->errors = array();
+                $this->validTwoDiagnosticsFormValues();
+
+                return $this->errors;
+            }
+
+            public function saveDiagnosticsFormForTest(): void
+            {
+                $this->saveTwoDiagnosticsFormValues();
+            }
+        };
+    }
+
+    private static function testSaveStoresSubmittedRows(): void
+    {
+        self::reset();
+        Tools::setTestValue('two_custom_headers_submitted', '1');
+        Tools::setTestValue('two_custom_header_name', array(0 => ' X-WAF-TOKEN ', 3 => 'X-Corp-Gate', 7 => '  '));
+        Tools::setTestValue('two_custom_header_value', array(0 => ' waf-token-1 ', 3 => 'gate-2', 7 => ''));
+        Tools::setTestValue('two_custom_header_browser', array(3 => '1'));
+
+        self::harnessExposingSaveAndValidate()->saveDiagnosticsFormForTest();
+
+        TinyAssert::same(
+            array(
+                array('name' => 'X-WAF-TOKEN', 'value' => 'waf-token-1', 'send_from_browser' => false),
+                array('name' => 'X-Corp-Gate', 'value' => 'gate-2', 'send_from_browser' => true),
+            ),
+            json_decode((string) Configuration::get(Twopayment::CONFIG_CUSTOM_HEADERS), true),
+            'submitted rows are trimmed, reindexed, and the wholly blank row dropped'
+        );
+    }
+
+    private static function testSaveOfAnEmptiedTableStoresAnEmptyList(): void
+    {
+        self::reset();
+        self::storeHeaders(array(array('name' => 'X-WAF-TOKEN', 'value' => 'waf-token-1', 'send_from_browser' => false)));
+        // Removing every row leaves no header inputs in the POST at all.
+        Tools::setTestValue('two_custom_headers_submitted', '1');
+
+        self::harnessExposingSaveAndValidate()->saveDiagnosticsFormForTest();
+
+        TinyAssert::same(
+            array(),
+            json_decode((string) Configuration::get(Twopayment::CONFIG_CUSTOM_HEADERS), true),
+            'an emptied table must save as an empty list, not leave the old rows in place'
+        );
+    }
+
+    private static function testSaveIgnoresAnUnrelatedPost(): void
+    {
+        self::reset();
+        self::storeHeaders(array(array('name' => 'X-WAF-TOKEN', 'value' => 'waf-token-1', 'send_from_browser' => false)));
+
+        self::harnessExposingSaveAndValidate()->saveDiagnosticsFormForTest();
+
+        TinyAssert::same(
+            array(array('name' => 'X-WAF-TOKEN', 'value' => 'waf-token-1', 'send_from_browser' => false)),
+            json_decode((string) Configuration::get(Twopayment::CONFIG_CUSTOM_HEADERS), true),
+            'a POST carrying no header table must leave the stored rows alone'
+        );
+    }
+
+    // ---- save validation -----------------------------------------------------
+
+    private static function validate(): array
+    {
+        return self::harnessExposingSaveAndValidate()->validateDiagnosticsFormForTest();
+    }
+
+    private static function testValidationRejectsMalformedHeaderName(): void
+    {
+        self::reset();
+        Tools::setTestValue('two_custom_headers_submitted', '1');
+        Tools::setTestValue('two_custom_header_name', array('X-Has Space'));
+        Tools::setTestValue('two_custom_header_value', array('v'));
+
+        TinyAssert::true(count(self::validate()) > 0, 'a header name outside the RFC 7230 token set must be refused');
+    }
+
+    private static function testValidationRejectsValuelessRow(): void
+    {
+        self::reset();
+        Tools::setTestValue('two_custom_headers_submitted', '1');
+        Tools::setTestValue('two_custom_header_name', array('X-WAF-TOKEN'));
+        Tools::setTestValue('two_custom_header_value', array(''));
+
+        TinyAssert::true(
+            count(self::validate()) > 0,
+            'a named row with no value would be silently dropped from the header list, so it must be refused instead'
+        );
+    }
+
+    private static function testValidationRejectsLineBreakInValue(): void
+    {
+        self::reset();
+        Tools::setTestValue('two_custom_headers_submitted', '1');
+        Tools::setTestValue('two_custom_header_name', array('X-WAF-TOKEN'));
+        Tools::setTestValue('two_custom_header_value', array("token\r\nX-Evil: 1"));
+
+        TinyAssert::true(count(self::validate()) > 0, 'a value that could split the request must be refused');
+    }
+
+    /** TWO-27107: a repeated name, matched case-insensitively, is refused on save; on read the first row wins. */
+    private static function testDuplicateHeaderNamesAreRefusedAndFirstWinsOnRead(): void
+    {
+        // [names, values, expected error count, description]
+        $cases = [
+            [['X-A', 'X-B'], ['1', '2'], 0, 'distinct names save'],
+            [['X-A', 'X-A'], ['1', '2'], 1, 'the same name twice is refused'],
+            [['X-A', 'x-a'], ['1', '2'], 1, 'a name differing only in case is refused'],
+            [['X-A', 'X-B', 'X-a'], ['1', '2', '3'], 1, 'a later repeat is refused even with a row between'],
+            [['X-A', 'x-a', 'X-A'], ['1', '2', '3'], 2, 'each repeat is named'],
+        ];
+        foreach ($cases as [$names, $values, $expected, $description]) {
+            self::reset();
+            Tools::setTestValue('two_custom_headers_submitted', '1');
+            Tools::setTestValue('two_custom_header_name', $names);
+            Tools::setTestValue('two_custom_header_value', $values);
+            $errors = self::validate();
+            TinyAssert::same($expected, count($errors), $description . ' (got: ' . implode(' | ', $errors) . ')');
+            foreach ($errors as $error) {
+                TinyAssert::true(strpos($error, 'already used by another row') !== false, $description . ': the error names the rule');
+            }
+        }
+
+        self::reset();
+        self::storeHeaders(array(
+            array('name' => 'X-A', 'value' => 'first', 'send_from_browser' => true),
+            array('name' => 'x-a', 'value' => 'second', 'send_from_browser' => true),
+            array('name' => 'X-B', 'value' => 'b', 'send_from_browser' => false),
+        ));
+        TinyAssert::same(array('X-A:first', 'X-B:b'), Twopayment::getTwoCustomHeaderLines(), 'a stored repeat is dropped and the first row wins');
+        TinyAssert::same(array('X-A' => 'first'), Twopayment::getTwoBrowserCustomHeaders(), 'the browser map keeps the first row too');
+    }
+
+    private static function testValidationRejectsReservedHeaderNames(): void
+    {
+        $cases = array(
+            array('host', 'the Host header curl sets on every request'),
+            array('Content-Type', 'the content type the API payload declares'),
+            array('CONTENT-LENGTH', 'the body length curl sets on every request'),
+            array('Accept', 'content negotiation'),
+            array('accept-language', 'language negotiation'),
+            array('Accept-Encoding', 'response compression the plugin never asks curl to decode'),
+            array('accept-ENCODING', 'response compression negotiation, in mixed casing'),
+            array('X-API-Key', 'the API credential, in the casing this plugin sends'),
+            array('x-api-key', 'the API credential, lowercased'),
+            array('X-Api-Key', 'the API credential, in mixed casing'),
+            array('X-Vendor-Name', 'the vendor identifier this plugin sends'),
+            array('x-vendor-NAME', 'the vendor identifier, in mixed casing'),
+            array('Idempotency-Key', 'the key naming one operation to Two'),
+            array('idempotency-KEY', 'the operation key, in mixed casing'),
+            array('X-Idempotency-Key', 'the operation key, in its prefixed spelling'),
+            array('X-Forwarded-For', 'proxy-supplied caller identity'),
+            array('x-real-ip', 'proxy-supplied caller identity'),
+            array('Connection', 'hop-by-hop connection control'),
+            array('connection', 'connection control, lowercased'),
+            array('Keep-Alive', 'hop-by-hop connection tuning'),
+            array('KEEP-ALIVE', 'connection tuning, uppercased'),
+            array('Proxy-Authenticate', 'a proxy-hop challenge'),
+            array('Proxy-Authorization', 'proxy-hop credentials'),
+            array('proxy-authorization', 'proxy-hop credentials, lowercased'),
+            array('TE', 'transfer-encoding negotiation'),
+            array('te', 'transfer-encoding negotiation, lowercased'),
+            array('Trailer', 'the trailer declaration for a chunked body'),
+            array('Transfer-Encoding', 'the body framing curl owns'),
+            array('transfer-ENCODING', 'body framing, in mixed casing'),
+            array('Upgrade', 'a protocol switch on the connection'),
+            array('Expect', 'a 100-continue handshake curl owns'),
+            array('EXPECT', 'a 100-continue handshake, uppercased'),
+            array('Authorization', 'a forgeable request credential'),
+            array('authorization', 'a request credential, lowercased'),
+            array('Cookie', 'forgeable caller-supplied state'),
+            array('COOKIE', 'caller-supplied state, uppercased'),
+        );
+
+        foreach ($cases as list($name, $description)) {
+            self::reset();
+            Tools::setTestValue('two_custom_headers_submitted', '1');
+            Tools::setTestValue('two_custom_header_name', array($name));
+            Tools::setTestValue('two_custom_header_value', array('anything'));
+
+            // Every name here is well-formed, so count>0 would pass on a rejection from another rule.
+            TinyAssert::true(
+                strpos(implode("\n", self::validate()), 'is reserved') !== false,
+                'a row named "' . $name . '" must be refused as reserved - it carries ' . $description
+            );
+        }
+    }
+
+    private static function testValidationRejectsNonPrintableValues(): void
+    {
+        $cases = array(
+            array("token\r\nX-Evil: 1", 'CRLF splits the request'),
+            array("token\nX-Evil: 1", 'a bare LF splits the request'),
+            array("token\0suffix", 'NUL truncates the value in C string handling'),
+            array("token\tsuffix", 'a tab is a control character'),
+            array('tokén', 'non-ASCII text is encoded ambiguously between store, curl and firewall'),
+        );
+
+        foreach ($cases as list($value, $description)) {
+            self::reset();
+            Tools::setTestValue('two_custom_headers_submitted', '1');
+            Tools::setTestValue('two_custom_header_name', array('X-WAF-TOKEN'));
+            Tools::setTestValue('two_custom_header_value', array($value));
+
+            TinyAssert::true(count(self::validate()) > 0, 'the value must be refused: ' . $description);
+        }
+    }
+
+    /**
+     * The validators are asserted directly: the save path trims the posted row, so a
+     * trailing newline never reaches them through the form.
+     */
+    private static function testHeaderValidatorsAnchorAtEndOfString(): void
+    {
+        $cases = array(
+            array('isValidTwoHeaderValue', "waf-token-1\n", false, 'a value ending in LF carries the byte that splits the request'),
+            array('isValidTwoHeaderValue', "waf-token-1\r", false, 'a value ending in CR carries half a request-splitting sequence'),
+            array('isValidTwoHeaderValue', "waf-token-1\r\n", false, 'a value ending in CRLF terminates the header line'),
+            array('isValidTwoHeaderValue', "waf-token-1\nX-Evil: 1", false, 'an embedded LF appends a header of the merchant\'s choosing'),
+            array('isValidTwoHeaderValue', 'waf-token-1', true, 'printable ASCII is still accepted'),
+            array('isValidTwoHeaderName', "X-WAF-TOKEN\n", false, 'a name ending in LF splits the request before the value is read'),
+            array('isValidTwoHeaderName', 'X-WAF-TOKEN', true, 'an RFC 7230 token is still accepted'),
+        );
+
+        foreach ($cases as list($validator, $input, $expected, $description)) {
+            TinyAssert::same(
+                $expected,
+                Twopayment::$validator($input),
+                'Twopayment::' . $validator . '() must return ' . var_export($expected, true) . ': ' . $description
+            );
+        }
+    }
+
+    /** The cases above cover every name individually; only a whole-list assertion catches an added one. */
+    private static function testReservedNameListIsComplete(): void
+    {
+        $expected = array(
+            'accept', 'accept-encoding', 'accept-language', 'authorization', 'connection', 'content-length',
+            'content-type', 'cookie', 'expect', 'host', 'idempotency-key', 'keep-alive', 'proxy-authenticate',
+            'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'x-api-key',
+            'x-forwarded-for', 'x-idempotency-key', 'x-real-ip', 'x-vendor-name',
+        );
+
+        $actual = Twopayment::reservedTwoHeaderNames();
+        sort($actual);
+
+        TinyAssert::same($expected, $actual, 'the reserved-name list must hold exactly these 23 names, lowercased');
+    }
+
+    private static function testReservedRowsAreNeverSent(): void
+    {
+        self::reset();
+        self::storeHeaders(array(
+            array('name' => 'X-Api-Key', 'value' => 'merchant-key', 'send_from_browser' => true),
+            array('name' => 'Transfer-Encoding', 'value' => 'chunked', 'send_from_browser' => true),
+            array('name' => 'X-Good', 'value' => 'good', 'send_from_browser' => true),
+        ));
+
+        TinyAssert::same(
+            array('X-Good:good'),
+            Twopayment::getTwoCustomHeaderLines(),
+            'a reserved row stored before the save-time check existed must still not be sent'
+        );
+        TinyAssert::same(
+            array('X-Good' => 'good'),
+            Twopayment::getTwoBrowserCustomHeaders(),
+            'nor may a reserved row reach the browser'
+        );
+    }
+
+    private static function testValidationAcceptsWellFormedRows(): void
+    {
+        self::reset();
+        Tools::setTestValue('two_custom_headers_submitted', '1');
+        Tools::setTestValue('two_custom_header_name', array('X-WAF-TOKEN', 'X-Corp-Gate'));
+        Tools::setTestValue('two_custom_header_value', array('waf-token-1', 'gate-2'));
+        Tools::setTestValue('two_custom_header_browser', array(1 => '1'));
+
+        TinyAssert::count(0, self::validate(), 'well-formed header rows must not be refused');
+    }
+
+    // ---- trusted-proxies save validation -------------------------------------
+
+    private static function testTrustedProxiesValidationRejectsMalformedEntry(): void
+    {
+        self::reset();
+        Tools::setTestValue('PS_TWO_TRUSTED_PROXIES', 'not-an-address');
+
+        TinyAssert::true(count(self::validate()) > 0, 'a malformed proxy entry must be refused at save time');
+    }
+
+    private static function testTrustedProxiesValidationRejectsZeroWidthCidr(): void
+    {
+        self::reset();
+        Tools::setTestValue('PS_TWO_TRUSTED_PROXIES', '0.0.0.0/0');
+
+        TinyAssert::true(count(self::validate()) > 0, 'a /0 entry must be refused, not silently stored as exempting every caller');
+    }
+
+    private static function testTrustedProxiesValidationAcceptsWellFormedEntries(): void
+    {
+        self::reset();
+        Tools::setTestValue('PS_TWO_TRUSTED_PROXIES', "10.0.0.0/8\n2001:db8::/32");
+
+        TinyAssert::count(0, self::validate(), 'well-formed CIDR entries must not be refused');
+    }
+
+    // ---- browser-facing config (source-inspection, same style as the
+    // existing Media-hook coverage in CompanySearchCountrySourcingSpec) -----
+
+    private static function testBrowserHeaderMapWiredIntoMediaHook(): void
+    {
+        $source = file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        TinyAssert::true(is_string($source) && $source !== '', 'could not read twopayment.php');
+
+        $start = strpos($source, 'public function hookActionFrontControllerSetMedia()');
+        TinyAssert::true($start !== false, 'hookActionFrontControllerSetMedia() no longer exists');
+        $body = substr($source, $start, 20000);
+
+        TinyAssert::true(
+            strpos($body, "'custom_headers' => self::getTwoBrowserCustomHeaders()") !== false,
+            'the browser-facing config must publish only the browser-flagged rows'
+        );
+    }
+}
