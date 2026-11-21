@@ -1206,6 +1206,16 @@ for any country's answer through `soleTraderAvailability` by design. Recorded he
 a trade-off precisely so it is not "fixed" back into an invoice-address tier later:
 reintroducing that tier is the stale-value bug this item removed.
 
+**Superseded in the browser by TWO-27354; the server resolver above is unchanged.** The
+browser can tell which address the one select belongs to, which the server cannot: core
+marks the editable form with `saveAddress` and states whether the addresses are shared
+(`use_same_address`, or an invoice block on later passes). `TwoSoleTrader.billingCountry()`
+now reads the select only when that form saves the invoice address (the invoice form, or
+the delivery form while the addresses are shared) and otherwise posts the published cart
+invoice country. A live invoice-address select still beats the saved value, so the
+stale-value bug stays removed; only the delivery select stops standing in for the billing
+country once the buyer has said the two differ.
+
 ---
 
 ## #13 — two distinct modes: ENABLED writes, DISABLED reads
@@ -2067,7 +2077,8 @@ paths.
 
 **The payment tile — verified, and needs no new resolver.**
 `TwoSoleTrader.billingCountry()` reads the address form's country select when there is
-one and falls back to `config.billingCountry`, i.e. that same published value. On the
+one and it saves the invoice address (TWO-27354), and falls back to `config.billingCountry`,
+i.e. that same published value. On the
 payment step PrestaShop renders no address form and therefore no select at all, so the
 fallback is what the tile actually uses — which is the billing/invoice address,
 explicitly, exactly as R2 requires. Pinned by a spec; no resolver added.
