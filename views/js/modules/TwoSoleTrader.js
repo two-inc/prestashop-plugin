@@ -430,7 +430,10 @@ class TwoSoleTrader {
      * Only for calls to Two's own host. The shop-internal URLs moduleUrl()
      * builds are a different server and do not take these params.
      *
-     * Either param is dropped when the config does not carry it, so a page that
+     * `merchant` is the merchant short name, empty until a verified save has
+     * stored one (TWO-27352).
+     *
+     * Each param is dropped when the config does not carry it, so a page that
      * somehow runs without the config sends a correct URL rather than a literal
      * `client=undefined`.
      */
@@ -442,6 +445,9 @@ class TwoSoleTrader {
         }
         if (config.client_version) {
             params.set('client_v', config.client_version);
+        }
+        if (config.merchant) {
+            params.set('merchant', config.merchant);
         }
         const query = params.toString();
         if (!query) {

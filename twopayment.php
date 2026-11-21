@@ -37,7 +37,7 @@ class Twopayment extends PaymentModule
     
     // Constants for payment terms
     const DEFAULT_PAYMENT_TERM_DAYS = 30; // Default payment term in days
-    const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options (all > 0: getMerchantDueInDays() treats a cached 0 as "unset")
+    const PAYMENT_TERMS_OPTIONS = [7, 14, 15, 20, 30, 45, 60, 90]; // Available payment term options (all > 0: getMerchantDueInDays() treats a cached 0 as "unset")
     // EOM (End-of-Month) terms are only offerable for these durations.
     const EOM_PAYMENT_TERMS_OPTIONS = [30, 45, 60];
     // The cached GET /v1/merchant record has NO expiry and is never evicted.
@@ -4392,7 +4392,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Real-time buyer eligibility check (Order Intent) before purchase') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Automatic order fulfillment when order status changes (configurable)') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for standard and end-of-month (EOM) payment terms') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Configurable payment terms (7, 15, 20, 30, 45, 60, 90 days)') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Configurable payment terms (7, 14, 15, 20, 30, 45, 60, 90 days)') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Handle full refunds through PrestaShop admin') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . sprintf($this->l('Send partial refunds (credit slips) to %s automatically - do not also refund them in the Merchant Portal'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . sprintf($this->l('Display %s order information in admin order view'), $this->getTwoBrandConfig('product_name')) . '</li>
@@ -8208,7 +8208,7 @@ class Twopayment extends PaymentModule
         // path hit the cache instead of fetching inline.
         $this->refreshTwoFxRates();
 
-        // The same `client`/`client_v` pair every server-side call attaches, so
+        // The same `client`/`client_v`/`merchant` params every server-side call attaches, so
         // the browser-side calls to Two can attach a byte-identical one. Read
         // from getTwoClientParams() rather than restated here: the version it
         // reports carries a `+<sha7>` suffix on a deployed build, which a bare
@@ -8310,6 +8310,7 @@ class Twopayment extends PaymentModule
                 'module_dir' => $this->_path,
                 'client' => $client_params['client'],
                 'client_version' => $client_params['client_v'],
+                'merchant' => isset($client_params['merchant']) ? $client_params['merchant'] : '',
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 // 0, not a day count, when no term is offered.
@@ -16134,10 +16135,8 @@ class Twopayment extends PaymentModule
         if ($version) {
             $params['v'] = $version;
         }
-        
-        if (!empty($params)) {
-            $pdf_url .= '?' . http_build_query($params);
-        }
+
+        $pdf_url .= '?' . http_build_query(array_merge($this->getTwoClientParams(), $params));
 
         return $pdf_url;
     }
@@ -22915,11 +22914,22 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The identity query params every Two API call carries: `client`, `client_v`
+     * and `merchant`, the merchant short name the saved API key verified as
+     * (TWO-27352). `merchant` is left out until a verified save has stored a
+     * short name, rather than sent empty.
+     *
      * @return array<string, string>
      */
     public function getTwoClientParams()
     {
-        return array('client' => 'PS', 'client_v' => $this->getTwoClientVersion());
+        $params = array('client' => 'PS', 'client_v' => $this->getTwoClientVersion());
+        $merchant = trim((string) $this->merchant_short_name);
+        if ($merchant !== '') {
+            $params['merchant'] = $merchant;
+        }
+
+        return $params;
     }
 
     /**
