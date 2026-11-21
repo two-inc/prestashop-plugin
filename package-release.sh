@@ -51,6 +51,34 @@ echo "Creating temporary package directory..."
 mkdir -p "${TEMP_DIR}/${MODULE_NAME}"
 cd "${MODULE_DIR}"
 
+# Stamp the deployed commit into a sidecar file INSIDE the module source dir so
+# it is picked up by the copy below and ships inside the packaged module.
+# getTwoDeployedCommitHash() reads this LAST (TWO-25194) — a live `.git` gitlink or
+# directory always wins, because this stamp is frozen at build time. The stamp is what
+# resolves the sha in a packaged artifact, which ships no .git at all.
+SIDECAR_FILE="${MODULE_DIR}/.two-deployed-commit"
+SIDECAR_PREEXISTING=0
+if [ -f "${SIDECAR_FILE}" ]; then
+    SIDECAR_PREEXISTING=1
+fi
+if COMMIT_SHA=$(git -C "${MODULE_DIR}" rev-parse --short HEAD 2>/dev/null) && [ -n "${COMMIT_SHA}" ]; then
+    printf '%s\n' "${COMMIT_SHA}" > "${SIDECAR_FILE}"
+    echo "✓ Stamped deployed commit: ${COMMIT_SHA}"
+else
+    echo "ERROR: Unable to resolve git commit for .two-deployed-commit stamp"
+    exit 1
+fi
+
+# Remove the stamp again on exit unless it was already tracked in the source tree,
+# so packaging never leaves the working tree dirty.
+cleanup_sidecar() {
+    if [ "${SIDECAR_PREEXISTING}" -eq 0 ]; then
+        rm -f "${SIDECAR_FILE}"
+    fi
+    rm -rf "${TEMP_DIR}"
+}
+trap cleanup_sidecar EXIT
+
 # Copy files, excluding unnecessary ones
 echo "Copying module files (excluding dev files)..."
 
@@ -59,23 +87,27 @@ if command -v rsync &> /dev/null; then
     rsync -av \
         --exclude='.git' \
         --exclude='.gitignore' \
+        --exclude='.gitattributes' \
         --exclude='.DS_Store' \
         --exclude='__MACOSX' \
         --exclude='.cursor' \
         --exclude='.ai' \
         --exclude='.review' \
         --exclude='.phpunit.cache' \
+        --exclude='/tests' \
+        --exclude='/dev' \
         --exclude='CLAUDE.md' \
+        --exclude='AGENTS.md' \
         --exclude='PRODUCTION_REVIEW.md' \
         --exclude='package-release.sh' \
         --exclude='*.log' \
         --exclude='node_modules' \
         --exclude='.idea' \
+        --exclude='*.tmp' \
         --exclude='*.swp' \
         --exclude='*.swo' \
         --exclude='*~' \
         --exclude='.env' \
-        --exclude='.env.local' \
         --exclude='composer.lock' \
         --exclude='package.json' \
         --exclude='package-lock.json' \
@@ -88,14 +120,19 @@ else
         ! -path './.ai/*' \
         ! -path './.review/*' \
         ! -path './.phpunit.cache/*' \
+        ! -path './tests/*' \
+        ! -path './dev/*' \
         ! -name '.gitignore' \
+        ! -name '.gitattributes' \
         ! -name '.DS_Store' \
         ! -name 'CLAUDE.md' \
+        ! -name 'AGENTS.md' \
         ! -name 'PRODUCTION_REVIEW.md' \
         ! -name 'package-release.sh' \
         ! -name '*.log' \
         ! -path '*/node_modules/*' \
         ! -path '*/.idea/*' \
+        ! -name '*.tmp' \
         ! -name '*.swp' \
         ! -name '*.swo' \
         ! -name '*~' \
@@ -111,6 +148,15 @@ echo ""
 
 # Remove any .DS_Store files that might have been copied
 find "${TEMP_DIR}" -name ".DS_Store" -delete 2>/dev/null || true
+
+# Fail loudly if the commit stamp did not make it into the built artifact -
+# a silently missing sidecar means the shop reports no commit hash at all.
+if [ ! -s "${TEMP_DIR}/${MODULE_NAME}/.two-deployed-commit" ]; then
+    echo "ERROR: .two-deployed-commit missing (or empty) in the packaged module."
+    echo "       Check the copy exclude-lists in this script."
+    exit 1
+fi
+echo "✓ Commit stamp present in artifact: $(cat "${TEMP_DIR}/${MODULE_NAME}/.two-deployed-commit")"
 
 # Create ZIP file
 echo "Creating ZIP archive..."
@@ -148,7 +194,9 @@ echo "  ✗ .git directory"
 echo "  ✗ .cursor directory (IDE config)"
 echo "  ✗ .ai directory (AI context files)"
 echo "  ✗ CLAUDE.md (AI context file)"
+echo "  ✗ AGENTS.md (agent instructions; links into .ai/)"
 echo "  ✗ PRODUCTION_REVIEW.md (internal docs)"
+echo "  ✗ tests/ and dev/ (test suite and development tooling)"
 echo "  ✗ Development files (.DS_Store, logs, etc.)"
 echo ""
 echo "Ready for distribution! 🚀"

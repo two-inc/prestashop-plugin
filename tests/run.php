@@ -62,17 +62,21 @@ final class OrderBuilderSpec
     {
         self::testValidateTwoLineItemsRejectsBrokenTaxFormula();
         self::testGetTwoTaxSubtotalsNormalizesTaxRateToTwoDecimals();
-        self::testGetTwoProductItemsUsesAppliedTaxRateWhenConfiguredRateDiffers();
+        self::testGetTwoProductItemsThrowsWhenDeclaredRateDivergesFromAmounts();
         self::testGetTwoProductItemsSplitsEcotaxIntoServiceLine();
         self::testGetTwoNewOrderDataSupportsFivePointFivePercentVat();
         self::testGetTwoNewOrderDataIncludesGiftWrappingLine();
-        self::testGetTwoNewOrderDataSnapsGiftWrappingRateToCanonicalContext();
-        self::testGetTwoProductItemsSnapsMinorRateDriftToKnownProductContexts();
-        self::testGetTwoProductItemsSpanishFallbackDefaultsToTwentyOnePercentWithoutKnownContext();
+        self::testGetTwoNewOrderDataSourcesGiftWrappingRateFromConfiguredGroup();
+        self::testGetTwoProductItemsRelaysDeclaredRateWithinRoundingTolerance();
+        self::testGetTwoProductItemsRelaysNonCanonicalDeclaredRateInsteadOfSpanishFallback();
+        self::testGetTwoProductItemsMultiJurisdictionCartRelaysPerLineDeclaredRates();
+        self::testGetTwoProductItemsIgnoresCountryOnlyRateFieldAndRelaysAddressCorrectRate();
+        self::testGetTwoNewOrderDataSplitsAtcpShippingAcrossProductRateClasses();
+        self::testGetTwoProductItemsHighQuantityLineStaysWithinNetTolerance();
         self::testGetTwoNewOrderDataOmitsTopLevelTaxRate();
         self::testGetTwoNewOrderDataOmitsTaxSubtotalsWhenDisabled();
         self::testGetTwoIntentOrderDataOmitsTopLevelTaxRateAndOmitsTaxSubtotalsWhenDisabled();
-        self::testGetTwoNewOrderDataThrowsWhenLineItemsFailFormulaValidation();
+        self::testGetTwoNewOrderDataSendsLineItemsThatFailFormulaValidation();
         self::testGetTwoNewOrderDataThrowsWhenCartTotalsMismatchIsMaterial();
         self::testGetTwoIntentOrderDataContinuesWhenCartTotalsDoNotReconcile();
         self::testGetTwoNewOrderDataAllowsTwoCentReconciliationDrift();
@@ -81,6 +85,7 @@ final class OrderBuilderSpec
         self::testGetTwoNewOrderDataIncludesShippingAndDiscountLineItemsWhenReconciled();
         self::testGetTwoNewOrderDataFallbackFreeShippingUsesShippingTaxContext();
         self::testGetTwoNewOrderDataUsesCartRuleMonetaryValuesForDiscountLines();
+        self::testCartRulesOnTaxedProductsNeverBorrowTheZeroRatedShippingRate();
         self::testGetTwoNewOrderDataHandlesMixedCartRuleMetadataWithPartialFallback();
         self::testGetTwoNewOrderDataMixedMetadataKeepsCompleteRuleValuesAndFreeShippingContext();
         self::testGetTwoNewOrderDataSpanishOddDecimalsKeepCanonicalTwentyOneDiscountRates();
@@ -90,7 +95,7 @@ final class OrderBuilderSpec
         self::testMerchantCase1BuildsExpectedOrderPayload();
         self::testMerchantCase2BlocksOnInconsistentOrderTotals();
         self::testMerchantCase3BuildsSimpleOrderPayload();
-        self::testGetTwoRequestHeadersSkipApiKeyForOrderIntent();
+        self::testGetTwoRequestHeadersSendApiKeyOnEveryEndpoint();
         self::testCheckTwoOrderIntentApprovalAtPaymentDeclinesEvenWhenFrontendCookieSaysApproved();
         self::testCheckTwoOrderIntentApprovalAtPaymentAllowsApprovedResponse();
         self::testCheckTwoOrderIntentApprovalAtPaymentHandlesProviderNetworkFailure();
@@ -100,17 +105,24 @@ final class OrderBuilderSpec
         self::testCreateTwoLocalOrderAfterProviderVerificationFailsWhenNoRecoverableOrderExists();
         self::testCancelTwoOrderBestEffortReturnsTrueOnSuccessAndFalseOnFailure();
         self::testSnapshotHashIgnoresTaxRateChangesBeyondTwoDecimals();
-        self::testBuildTwoOrderCreateIdempotencyKeyIsDeterministicForSameSnapshot();
+        self::testBuildTwoOrderCreateIdempotencyKeyIsOnePerAttempt();
         self::testHasTwoOrderRebindingConflictDetectsMismatchedTwoOrderIds();
         self::testIsTwoAttemptCallbackAuthorizedWithMatchingKey();
         self::testIsTwoAttemptCallbackAuthorizedFallsBackToContextCustomerKeyWhenRequestKeyMissing();
         self::testIsTwoAttemptCallbackAuthorizedRejectsMismatchedKeys();
-        self::testGetTwoBuyerPortalUrlUsesEnvironmentSpecificBuyerDomains();
+        self::testNoPortalLinksAreRendered();
+        self::testAdminHelpTextTypos();
         self::testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId();
         self::testResolveTwoAttemptOrderIdForCancellationFallsBackToCartOrderId();
         self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
         self::testIsTwoAttemptStatusTerminalMatchesCancelledGuard();
         self::testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain();
+        self::testGetTwoVerifiedPendingFulfillmentStatusIdUsesConfiguredFallbackChain();
+        self::testGetTwoInitialAwaitingStatusIdUsesConfiguredFallbackChain();
+        self::testLegacyOrderAwaitingVerificationMatchesMappedAndBrandedStates();
+        self::testUpgradeMovesOnlyThePreparationDefaultPair();
+        self::testPreparationDefaultMigrationCoversEveryShopTier();
+        self::testRecreatedStatesMapToTheModuleStatuses();
         self::testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId();
         self::testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled();
         self::testIsTwoOrderCancelledResponseRequires2xxAndCancelledState();
@@ -121,14 +133,14 @@ final class OrderBuilderSpec
         self::testAddTwoBackOfficeWarningReturnsFalseWhenNoController();
         self::testApplyTwoCancelledOrderStateProfileToStatusObjectUsesConfiguredCancelledState();
         self::testForceTwoCancelledOrderHistoryStateBeforeInsertRewritesPendingStatus();
-        self::testGetTwoCheckoutCompanyDataUsesAddressVatNumberForAnyCountry();
+        self::testGetTwoCheckoutCompanyDataNeverSourcesOrgNumberFromVatNumber();
         self::testGetTwoCheckoutCompanyDataPrefersCurrentAddressOrgNumberOverSessionCompany();
         self::testGetTwoCheckoutCompanyDataUsesValidatedCookieFallback();
         self::testGetTwoCheckoutCompanyDataClearsStaleCookieOnCountryMismatch();
         self::testGetTwoCheckoutCompanyDataIgnoresStaleCookieWhenAddressCompanyChangesSameCountry();
-        self::testSaveGeneralFormDoesNotChangeSslVerificationFlag();
-        self::testSaveOtherFormUpdatesSslVerificationFlag();
-        self::testOtherSettingsFormDoesNotExposeOrderIntentToggle();
+        self::testSaveDiagnosticsFormUpdatesSslVerificationFlag();
+        self::testSaveOrderManagementFormUpdatesTaxSubtotalsFlag();
+        self::testOrderManagementFormDoesNotExposeOrderIntentToggle();
         self::testHookActionAdminControllerSetMediaRegistersCssOnModuleConfigPage();
         self::testHookActionAdminControllerSetMediaSkipsUnrelatedAdminPage();
         self::testHookPaymentOptionsAllowsTwoCoveredCurrencies();
@@ -149,31 +161,111 @@ final class OrderBuilderSpec
         self::testGetTwoErrorMessageReadsNestedDataMessage();
         self::testGetTwoErrorMessageIgnoresSuccessMessagePayload();
         self::testGetTwoProductItemsSkipsEmptyBarcodeEntries();
+        self::testGetTwoProductItemsSourcesImageFromCartRow();
         self::testGetTwoProductItemsThrowsOnNegativeDiscount();
         self::testGetTwoProductItemsThrowsOnNegativeReduction();
         self::testGetTwoProductItemsAllowsPositiveDiscount();
         self::testGetTwoProductItemsToleratesUnitPriceRoundingDrift();
-        self::testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber();
-        self::testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber();
-        self::testGetTwoRequestHeadersSkipAuthForOrderIntent();
+        self::testExtractOrgNumberFromAddressNeverUsesVatNumber();
+        self::testExtractOrgNumberFromAddressUsesInMemoryCompanyid();
         self::testGetAvailablePaymentTermsIntersectsBackendWithAdminSubset();
         self::testGetAvailablePaymentTermsWithdrawnBackendTermDrops();
-        self::testGetAvailablePaymentTermsFallsBackToHardcodedWhenBackendUnresolved();
+        self::testGetAvailablePaymentTermsIsEmptyWhenBackendUnresolved();
         self::testGetAvailablePaymentTermsEomConstrainsToEomSubset();
-        self::testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault();
-        self::testGetMerchantAvailableTermsCacheOnlyNeverFetches();
+        self::testGetAvailablePaymentTermsIsEmptyWhenNothingOfferableIsTicked();
+        self::testGetMerchantAvailableTermsRefetchDecisionTable();
+        self::testGetMerchantAvailableTermsSkipsFetchWithKeysNeverWritten();
+        self::testTheMerchantRecordClockAfterEachResponseShape();
+        self::testAMerchantRecordlessTwoHundredKeepsTheSiblingCaches();
         self::testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale();
         self::testGetMerchantAvailableTermsRespectsExplicitEmptyList();
         self::testGetMerchantAvailableTermsSkipsFetchWithoutIdentity();
-        self::testInvalidateMerchantAvailableTermsClearsCache();
         self::testSaveGeneralFormPreservesHiddenBackendWithdrawnTermPreference();
         self::testStoreTwoFeeQuoteInSessionForcesImmediateCookieWrite();
+        self::testFeeQuoteIsReusedByTheNextRequestThroughTheCookie();
     }
 
     private static function reset(): void
     {
         StubStore::reset();
         PrestaShopLogger::reset();
+    }
+
+    /**
+     * The cart these specs' session-company fixtures are scoped to (TWO-40).
+     */
+    private const SESSION_COMPANY_CART_ID = 6140;
+
+    /**
+     * Seed a stored company selection the way the module writes one.
+     *
+     * A stored selection is scoped to the cart it was chosen in (TWO-40), so the
+     * fixture has to supply both the cart stamp and a loaded cart carrying that
+     * id - an unstamped record is treated as absent by design, and a fixture that
+     * omitted the stamp would be testing the discard path rather than whatever it
+     * meant to test.
+     *
+     * @param array<string,string> $fields short field names, per Twopayment::COMPANY_SESSION_FIELDS
+     */
+    private static function seedSessionCompany(TwopaymentTestHarness $module, array $fields): void
+    {
+        StubStore::$carts[self::SESSION_COMPANY_CART_ID] = [];
+        $module->context->cart = new Cart(self::SESSION_COMPANY_CART_ID);
+        $module->storeTwoCartScopedCompany($fields);
+    }
+
+    /**
+     * Declared-rate relay wiring (TWO-24880): a product's tax rate is
+     * sourced from its tax-rules group resolved at the cart's tax address,
+     * never from amounts or the row's 'rate' field. This declares the
+     * merchant-configured rate for a product and guarantees the cart has a
+     * loaded tax address for the resolver.
+     */
+    private static function declareProductRate(Cart $cart, int $pid, float $ratePct): void
+    {
+        self::ensureCartTaxAddress($cart);
+        StubStore::$products[$pid]['id_tax_rules_group'] = 9000 + $pid;
+        StubStore::$taxRuleRates[9000 + $pid] = $ratePct;
+    }
+
+    /** Declare the shop's configured gift-wrapping tax group rate. */
+    private static function declareWrappingRate(Cart $cart, float $ratePct): void
+    {
+        self::ensureCartTaxAddress($cart);
+        StubStore::$configuration['PS_GIFT_WRAPPING_TAX_RULES_GROUP'] = 7001;
+        StubStore::$taxRuleRates[7001] = $ratePct;
+    }
+
+    /** Declare the shop's configured ecotax tax group rate. */
+    private static function declareEcotaxRate(Cart $cart, float $ratePct): void
+    {
+        self::ensureCartTaxAddress($cart);
+        StubStore::$configuration['PS_ECOTAX_TAX_RULES_GROUP_ID'] = 7002;
+        StubStore::$taxRuleRates[7002] = $ratePct;
+    }
+
+    /** Declare a carrier's tax-rules group rate for shipping lines. */
+    private static function declareCarrierRate(Cart $cart, int $carrierId, float $ratePct): void
+    {
+        self::ensureCartTaxAddress($cart);
+        StubStore::$carriers[$carrierId]['tax_rules_group_id'] = 8000 + $carrierId;
+        StubStore::$taxRuleRates[8000 + $carrierId] = $ratePct;
+    }
+
+    /**
+     * The declared-rate resolver needs a LOADED cart tax address
+     * (PS_TAX_ADDRESS_TYPE, default invoice). Seed a minimal ES address only
+     * when the cart fixture set none of its own.
+     */
+    private static function ensureCartTaxAddress(Cart $cart): void
+    {
+        if ((int) $cart->id_address_invoice > 0 || (int) $cart->id_address_delivery > 0) {
+            return;
+        }
+        if (!isset(StubStore::$addresses[9901])) {
+            StubStore::$addresses[9901] = ['id_country' => 34, 'loaded' => true];
+        }
+        $cart->id_address_invoice = 9901;
     }
 
     private static function testValidateTwoLineItemsRejectsBrokenTaxFormula(): void
@@ -185,6 +277,8 @@ final class OrderBuilderSpec
             'name' => 'TV',
             'net_amount' => '100.00',
             'tax_amount' => '15.00',
+            // Gross kept consistent (net + tax) so ONLY the tax formula is broken.
+            'gross_amount' => '115.00',
             'tax_rate' => '0.21',
             'unit_price' => '100.00',
             'quantity' => 1,
@@ -213,7 +307,7 @@ final class OrderBuilderSpec
         TinyAssert::same('72.75', $subtotals[0]['tax_amount']);
     }
 
-    private static function testGetTwoProductItemsUsesAppliedTaxRateWhenConfiguredRateDiffers(): void
+    private static function testGetTwoProductItemsThrowsWhenDeclaredRateDivergesFromAmounts(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -222,12 +316,14 @@ final class OrderBuilderSpec
         $cart->id_lang = 1;
         $cart->id_carrier = 999;
 
+        // Declared 21% but PrestaShop applied 20.50 tax on 100.00 net: the
+        // relay never derives/substitutes a rate — it fails loud.
         StubStore::$cartProducts[10] = [[
             'id_product' => 501,
             'link_rewrite' => 'smart-tv',
             'name' => 'Smart TV',
             'description_short' => 'Test description',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '1234567890123',
             'upc' => '012345678905',
             'total' => 100.00,
@@ -240,13 +336,14 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[501] = [['name' => 'Electronics']];
         StubStore::$images[501] = ['id_image' => 9001];
+        self::declareProductRate($cart, 501, 21.0);
 
-        $items = $module->getTwoProductItems($cart);
-
-        TinyAssert::count(1, $items);
-        TinyAssert::same('0.205', $items[0]['tax_rate']);
-        TinyAssert::same('20.50', $items[0]['tax_amount']);
-        TinyAssert::same('120.50', $items[0]['gross_amount']);
+        TinyAssert::throws(
+            static function () use ($module, $cart): void {
+                $module->getTwoProductItems($cart);
+            },
+            'Declared tax rate diverges'
+        );
     }
 
     private static function testGetTwoProductItemsSplitsEcotaxIntoServiceLine(): void
@@ -278,6 +375,10 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[777] = [['name' => 'Accessories']];
         StubStore::$images[777] = ['id_image' => 9011];
+        // Ecotax rate comes from the configured PS_ECOTAX_TAX_RULES_GROUP_ID
+        // group (the row's ecotax_tax_rate field is no longer read).
+        self::declareProductRate($cart, 777, 21.0);
+        self::declareEcotaxRate($cart, 5.5);
 
         $items = $module->getTwoProductItems($cart);
 
@@ -324,6 +425,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[888] = [['name' => 'Misc']];
         StubStore::$images[888] = ['id_image' => 9012];
+        self::declareProductRate($cart, 888, 21.0);
 
         TinyAssert::throws(
             static function () use ($module, $cart): void {
@@ -368,6 +470,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[889] = [['name' => 'Misc']];
         StubStore::$images[889] = ['id_image' => 9013];
+        self::declareProductRate($cart, 889, 21.0);
 
         TinyAssert::throws(
             static function () use ($module, $cart): void {
@@ -409,6 +512,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[890] = [['name' => 'Misc']];
         StubStore::$images[890] = ['id_image' => 9014];
+        self::declareProductRate($cart, 890, 21.0);
 
         $items = $module->getTwoProductItems($cart);
 
@@ -449,6 +553,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[891] = [['name' => 'Misc']];
         StubStore::$images[891] = ['id_image' => 9015];
+        self::declareProductRate($cart, 891, 21.0);
 
         $items = $module->getTwoProductItems($cart);
 
@@ -509,6 +614,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9301] = [['name' => 'Books']];
         StubStore::$images[9301] = ['id_image' => 9301];
+        self::declareProductRate($cart, 9301, 5.5);
         StubStore::$cartTotals[7001] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,
@@ -587,6 +693,8 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9302] = [['name' => 'Gifts']];
         StubStore::$images[9302] = ['id_image' => 9302];
+        self::declareProductRate($cart, 9302, 21.0);
+        self::declareWrappingRate($cart, 21.0);
         StubStore::$cartTotals[7002] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,
@@ -627,7 +735,7 @@ final class OrderBuilderSpec
         TinyAssert::true($hasWrappingLine);
     }
 
-    private static function testGetTwoNewOrderDataSnapsGiftWrappingRateToCanonicalContext(): void
+    private static function testGetTwoNewOrderDataSourcesGiftWrappingRateFromConfiguredGroup(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -678,6 +786,11 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9303] = [['name' => 'Gifts']];
         StubStore::$images[9303] = ['id_image' => 9303];
+        // Wrapping (2.47 net / 2.99 gross -> 0.52 tax) reconciles with the
+        // configured PS_GIFT_WRAPPING_TAX_RULES_GROUP at 21%: the declared
+        // rate is relayed as-is.
+        self::declareProductRate($cart, 9303, 21.0);
+        self::declareWrappingRate($cart, 21.0);
         StubStore::$cartTotals[7003] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,
@@ -716,7 +829,7 @@ final class OrderBuilderSpec
         TinyAssert::same('0.21', (string)$wrappingLine['tax_rate']);
     }
 
-    private static function testGetTwoProductItemsSnapsMinorRateDriftToKnownProductContexts(): void
+    private static function testGetTwoProductItemsRelaysDeclaredRateWithinRoundingTolerance(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -725,52 +838,40 @@ final class OrderBuilderSpec
         $cart->id_lang = 1;
         $cart->id_carrier = 0;
 
+        // Applied tax 21.01 on net 100.00 is within the 2-cent rounding
+        // tolerance of the declared 21% rate: the declared rate is relayed
+        // and PrestaShop's reported amounts are preserved untouched.
         StubStore::$cartProducts[12] = [
             [
-                'id_product' => 8801,
-                'link_rewrite' => 'anchor-product',
-                'name' => 'Anchor Product',
-                'description_short' => 'Anchor',
-                'manufacturer_name' => 'ACME',
-                'ean13' => '',
-                'upc' => '',
-                'total' => 100.00,
-                'total_wt' => 121.00,
-                'cart_quantity' => 1,
-                'rate' => 21.0,
-                'price' => 100.00,
-                'reduction' => 0,
-            ],
-            [
                 'id_product' => 8802,
-                'link_rewrite' => 'drift-product',
-                'name' => 'Drift Product',
+                'link_rewrite' => 'rounding-drift-product',
+                'name' => 'Rounding Drift Product',
                 'description_short' => 'Drift',
                 'manufacturer_name' => 'ACME',
                 'ean13' => '',
                 'upc' => '',
-                'total' => 2.47,
-                'total_wt' => 2.99,
+                'total' => 100.00,
+                'total_wt' => 121.01,
                 'cart_quantity' => 1,
-                // Intentionally missing rate field to simulate amount-derived drift.
-                'price' => 2.47,
+                'price' => 100.00,
                 'reduction' => 0,
             ],
         ];
 
-        StubStore::$productCategories[8801] = [['name' => 'General']];
         StubStore::$productCategories[8802] = [['name' => 'General']];
-        StubStore::$images[8801] = ['id_image' => 8801];
         StubStore::$images[8802] = ['id_image' => 8802];
+        self::declareProductRate($cart, 8802, 21.0);
 
         $items = $module->getTwoProductItems($cart);
 
-        TinyAssert::count(2, $items);
+        TinyAssert::count(1, $items);
         TinyAssert::same('0.21', (string)$items[0]['tax_rate']);
-        TinyAssert::same('0.21', (string)$items[1]['tax_rate']);
+        TinyAssert::same('21.01', (string)$items[0]['tax_amount']);
+        TinyAssert::same('121.01', (string)$items[0]['gross_amount']);
+        TinyAssert::same('100.00', (string)$items[0]['net_amount']);
     }
 
-    private static function testGetTwoProductItemsSpanishFallbackDefaultsToTwentyOnePercentWithoutKnownContext(): void
+    private static function testGetTwoProductItemsRelaysNonCanonicalDeclaredRateInsteadOfSpanishFallback(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -794,6 +895,11 @@ final class OrderBuilderSpec
         $cart->id_address_invoice = 7401;
         $cart->id_address_delivery = 7402;
 
+        // REGRESSION (TWO-24880): the deleted Spanish-fallback code relabeled
+        // near-canonical ES lines to 21% whenever |tax - net*0.21| <= 0.02.
+        // Here tax is 0.06 and |0.06 - 0.30*0.21| = 0.003, so the old code
+        // would have emitted 0.21. The relay must emit the merchant's
+        // declared 20% untouched.
         StubStore::$cartProducts[14] = [[
             'id_product' => 8811,
             'link_rewrite' => 'es-fallback-product',
@@ -802,20 +908,352 @@ final class OrderBuilderSpec
             'manufacturer_name' => 'ACME',
             'ean13' => '',
             'upc' => '',
-            'total' => 2.47,
-            'total_wt' => 2.99,
+            'total' => 0.30,
+            'total_wt' => 0.36,
             'cart_quantity' => 1,
-            // Intentionally no rate field to force amount-derived unresolved context.
-            'price' => 2.47,
+            'price' => 0.30,
             'reduction' => 0,
         ]];
         StubStore::$productCategories[8811] = [['name' => 'General']];
         StubStore::$images[8811] = ['id_image' => 8811];
+        self::declareProductRate($cart, 8811, 20.0);
 
         $items = $module->getTwoProductItems($cart);
 
         TinyAssert::count(1, $items);
+        TinyAssert::same('0.2', (string)$items[0]['tax_rate']);
+        TinyAssert::same('0.06', (string)$items[0]['tax_amount']);
+    }
+
+    private static function testGetTwoProductItemsMultiJurisdictionCartRelaysPerLineDeclaredRates(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(16);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 0;
+
+        // One cart, three tax jurisdictions: each line relays its OWN
+        // declared group rate (21% / 10% / no group = 0%), never a blend.
+        StubStore::$cartProducts[16] = [
+            [
+                'id_product' => 8821,
+                'link_rewrite' => 'standard-rate-product',
+                'name' => 'Standard Rate Product',
+                'description_short' => 'Standard',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 100.00,
+                'total_wt' => 121.00,
+                'cart_quantity' => 1,
+                'rate' => 21.0,
+                'price' => 100.00,
+                'reduction' => 0,
+            ],
+            [
+                'id_product' => 8822,
+                'link_rewrite' => 'reduced-rate-product',
+                'name' => 'Reduced Rate Product',
+                'description_short' => 'Reduced',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 50.00,
+                'total_wt' => 55.00,
+                'cart_quantity' => 1,
+                'rate' => 10.0,
+                'price' => 50.00,
+                'reduction' => 0,
+            ],
+            [
+                'id_product' => 8823,
+                'link_rewrite' => 'zero-rate-product',
+                'name' => 'Zero Rate Product',
+                'description_short' => 'Zero',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 30.00,
+                'total_wt' => 30.00,
+                'cart_quantity' => 1,
+                'rate' => 0.0,
+                'price' => 30.00,
+                'reduction' => 0,
+            ],
+        ];
+        StubStore::$productCategories[8821] = [['name' => 'General']];
+        StubStore::$productCategories[8822] = [['name' => 'General']];
+        StubStore::$productCategories[8823] = [['name' => 'General']];
+        StubStore::$images[8821] = ['id_image' => 8821];
+        StubStore::$images[8822] = ['id_image' => 8822];
+        StubStore::$images[8823] = ['id_image' => 8823];
+        self::declareProductRate($cart, 8821, 21.0);
+        self::declareProductRate($cart, 8822, 10.0);
+        // 8823: no tax-rules group declared (core "No tax" sentinel -> 0).
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(3, $items);
         TinyAssert::same('0.21', (string)$items[0]['tax_rate']);
+        TinyAssert::same('21.00', (string)$items[0]['tax_amount']);
+        TinyAssert::same('0.1', (string)$items[1]['tax_rate']);
+        TinyAssert::same('5.00', (string)$items[1]['tax_amount']);
+        TinyAssert::same('0', (string)$items[2]['tax_rate']);
+        TinyAssert::same('0.00', (string)$items[2]['tax_amount']);
+    }
+
+    private static function testGetTwoProductItemsIgnoresCountryOnlyRateFieldAndRelaysAddressCorrectRate(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(17);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 0;
+        self::ensureCartTaxAddress($cart); // seeds ES (country 34) invoice address
+
+        // The getProducts() row carries the country-only 'rate' field (21.0)
+        // while the product's declared group resolves 7% for this cart's tax
+        // address, so the relay must emit 7%. The stub resolves rates by
+        // country id, so this pins only that the row field loses to
+        // TaxManagerFactory — real sub-national (state/zip) zone resolution
+        // can only be proven against a live PrestaShop tax engine, and is
+        // still owed a live staging order to a Canary Islands or Ceuta
+        // address.
+        StubStore::$cartProducts[17] = [[
+            'id_product' => 502,
+            'link_rewrite' => 'igic-product',
+            'name' => 'IGIC Product',
+            'description_short' => 'Sub-national rate',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 100.00,
+            'total_wt' => 107.00,
+            'cart_quantity' => 1,
+            'rate' => 21.0, // country-only field: must be ignored
+            'price' => 100.00,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[502] = [['name' => 'General']];
+        StubStore::$images[502] = ['id_image' => 9502];
+        StubStore::$products[502]['id_tax_rules_group'] = 9502;
+        // Country-mapped shape: the group resolves 7% for country 34 only.
+        StubStore::$taxRuleRates[9502] = [34 => 7.0];
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(1, $items);
+        TinyAssert::same('0.07', (string)$items[0]['tax_rate']);
+        TinyAssert::same('7.00', (string)$items[0]['tax_amount']);
+        TinyAssert::same('107.00', (string)$items[0]['gross_amount']);
+    }
+
+    private static function testGetTwoNewOrderDataSplitsAtcpShippingAcrossProductRateClasses(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        // PS_ATCP_SHIPWRAP taxes shipping at the blended average product
+        // rate ((100*0.21 + 50*0.10) / 150 = 17.333% -> gross 11.73 on net
+        // 10.00). The payload must NEVER carry that blended rate: the charge
+        // is split across the cart's canonical product rate classes.
+        StubStore::$configuration['PS_ATCP_SHIPWRAP'] = 1;
+
+        StubStore::$customers[6201] = [
+            'email' => 'buyer@example.com',
+            'firstname' => 'Pia',
+            'lastname' => 'Sol',
+            'secure_key' => 'secure-key-6201',
+            'loaded' => true,
+        ];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        StubStore::$countries[34] = 'ES';
+        StubStore::$addresses[7601] = [
+            'id_country' => 34,
+            'company' => 'SPAIN',
+            'companyid' => 'E20468708',
+            'address1' => 'Calle Tres 3',
+            'city' => 'Madrid',
+            'postcode' => '28009',
+            'phone' => '666666676',
+            'loaded' => true,
+        ];
+        StubStore::$addresses[7602] = StubStore::$addresses[7601];
+        StubStore::$carriers[62] = [
+            'name' => 'ATCP Carrier',
+            'delay' => '',
+            'shipping_method' => Carrier::SHIPPING_METHOD_PRICE,
+            'tax_rules_group_id' => 0, // irrelevant under PS_ATCP_SHIPWRAP
+        ];
+
+        $cart = new Cart(6201);
+        $cart->id_customer = 6201;
+        $cart->id_currency = 978;
+        $cart->id_address_invoice = 7601;
+        $cart->id_address_delivery = 7602;
+        $cart->id_carrier = 62;
+        $cart->id_lang = 1;
+
+        StubStore::$cartProducts[6201] = [
+            [
+                'id_product' => 8831,
+                'link_rewrite' => 'atcp-standard',
+                'name' => 'ATCP Standard',
+                'description_short' => 'Standard',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 100.00,
+                'total_wt' => 121.00,
+                'cart_quantity' => 1,
+                'rate' => 21.0,
+                'price' => 100.00,
+                'reduction' => 0,
+            ],
+            [
+                'id_product' => 8832,
+                'link_rewrite' => 'atcp-reduced',
+                'name' => 'ATCP Reduced',
+                'description_short' => 'Reduced',
+                'manufacturer_name' => 'ACME',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 50.00,
+                'total_wt' => 55.00,
+                'cart_quantity' => 1,
+                'rate' => 10.0,
+                'price' => 50.00,
+                'reduction' => 0,
+            ],
+        ];
+        StubStore::$productCategories[8831] = [['name' => 'General']];
+        StubStore::$productCategories[8832] = [['name' => 'General']];
+        StubStore::$images[8831] = ['id_image' => 8831];
+        StubStore::$images[8832] = ['id_image' => 8832];
+        self::declareProductRate($cart, 8831, 21.0);
+        self::declareProductRate($cart, 8832, 10.0);
+        StubStore::$cartShipping[6201] = [
+            true => 11.73,
+            false => 10.00,
+        ];
+        StubStore::$cartTotals[6201] = [
+            true => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 187.73,
+                Cart::ONLY_SHIPPING => 11.73,
+            ],
+            false => [
+                Cart::ONLY_DISCOUNTS => 0.00,
+                Cart::BOTH => 160.00,
+                Cart::ONLY_SHIPPING => 10.00,
+            ],
+            'average_products_tax_rate' => 17.3333,
+        ];
+
+        $payload = $module->getTwoNewOrderData('merchant-attempt-6201', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+
+        $shippingLines = [];
+        foreach ($payload['line_items'] as $line) {
+            if ((string)($line['type'] ?? '') === 'SHIPPING_FEE') {
+                $shippingLines[] = $line;
+            }
+        }
+
+        // Exactly the two canonical product rate classes - no blended rate.
+        TinyAssert::count(2, $shippingLines);
+        $seenRates = [];
+        $netSum = 0.0;
+        $taxSum = 0.0;
+        foreach ($shippingLines as $line) {
+            $seenRates[] = (string)$line['tax_rate'];
+            $lineNet = (float)$line['net_amount'];
+            $lineTax = (float)$line['tax_amount'];
+            $lineGross = (float)$line['gross_amount'];
+            $lineRate = (float)$line['tax_rate'];
+            $netSum = round($netSum + $lineNet, 2);
+            $taxSum = round($taxSum + $lineTax, 2);
+            // Each split line must be rate-consistent and gross-exact.
+            TinyAssert::true(
+                abs($lineTax - $lineRate * $lineNet) <= 0.02,
+                'Shipping split line must satisfy |tax - rate*net| <= 0.02, got tax=' . $line['tax_amount'] . ' rate=' . $line['tax_rate'] . ' net=' . $line['net_amount']
+            );
+            TinyAssert::same(
+                number_format($lineNet + $lineTax, 2, '.', ''),
+                number_format($lineGross, 2, '.', ''),
+                'Shipping split line gross must equal net + tax exactly'
+            );
+        }
+        sort($seenRates);
+        TinyAssert::same(['0.1', '0.21'], $seenRates, 'Expected ONLY the canonical 10% and 21% rate classes, never the blended 17.33%');
+        TinyAssert::same('10.00', number_format($netSum, 2, '.', ''), 'Split nets must sum to the PrestaShop shipping net');
+        TinyAssert::same('1.73', number_format($taxSum, 2, '.', ''), 'Split taxes must sum to the PrestaShop shipping tax');
+        TinyAssert::same('187.73', (string)$payload['gross_amount']);
+        TinyAssert::same('160.00', (string)$payload['net_amount']);
+    }
+
+    private static function testGetTwoProductItemsHighQuantityLineStaysWithinNetTolerance(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+
+        $cart = new Cart(19);
+        $cart->id_lang = 1;
+        $cart->id_carrier = 0;
+
+        // High-quantity ROUND_ITEM-style edge: 400 x 8.34005 = 3336.02, but
+        // the emitted 2dp unit price (8.34) implies 400 x 8.34 = 3336.00 -
+        // a 0.02 drift, comfortably inside NET_FORMULA_TOLERANCE (0.05).
+        // (NET_FORMULA_TOLERANCE is deliberately NOT tightened to 0.02:
+        // a >2dp unit price at high quantity drifts up to qty*0.005, e.g.
+        // 400 x 8.3449 = 1.96 of drift - the 2dp-unit/6dp-discount
+        // absorption gap must be fixed before tightening, design 4.3 pt 4.)
+        // Declared 21%: tax 700.56 = round(3336.02 * 0.21, 2).
+        StubStore::$cartProducts[19] = [[
+            'id_product' => 8851,
+            'link_rewrite' => 'bulk-precision-product',
+            'name' => 'Bulk Precision Product',
+            'description_short' => 'Bulk precision',
+            'manufacturer_name' => 'ACME',
+            'ean13' => '',
+            'upc' => '',
+            'total' => 3336.02,
+            'total_wt' => 4036.58,
+            'cart_quantity' => 400,
+            'rate' => 21.0,
+            'price' => 8.34005,
+            'reduction' => 0,
+        ]];
+        StubStore::$productCategories[8851] = [['name' => 'Bulk']];
+        StubStore::$images[8851] = ['id_image' => 8851];
+        self::declareProductRate($cart, 8851, 21.0);
+
+        $items = $module->getTwoProductItems($cart);
+
+        TinyAssert::count(1, $items);
+        TinyAssert::same('3336.02', (string)$items[0]['net_amount']);
+        TinyAssert::same('700.56', (string)$items[0]['tax_amount']);
+        TinyAssert::same('4036.58', (string)$items[0]['gross_amount']);
+        TinyAssert::same('0.21', (string)$items[0]['tax_rate']);
+        TinyAssert::same('8.34', (string)$items[0]['unit_price']);
+        TinyAssert::same('0.00', (string)$items[0]['discount_amount']);
+        TinyAssert::same(400, (int)$items[0]['quantity']);
+        // The 0.02 drift between qty*unit_price and net must pass the
+        // net-formula validation (tolerance 0.05).
+        TinyAssert::true(
+            $module->validateTwoLineItems($items),
+            'High-quantity line with 2-cent net-formula drift must validate'
+        );
+        TinyAssert::count(0, PrestaShopLogger::$logs);
     }
 
     private static function testGetTwoNewOrderDataOmitsTopLevelTaxRate(): void
@@ -1086,21 +1524,26 @@ final class OrderBuilderSpec
         $currency = new Currency(840);
         $address = new Address(603);
 
-        $payloadWithSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
-        TinyAssert::false(isset($payloadWithSubtotals['tax_rate']));
-        TinyAssert::true(isset($payloadWithSubtotals['tax_subtotals']));
-        TinyAssert::true(isset($payloadWithSubtotals['billing_address']));
-        TinyAssert::true(isset($payloadWithSubtotals['shipping_address']));
-        TinyAssert::same('ES', $payloadWithSubtotals['billing_address']['country']);
-        TinyAssert::same('ES', $payloadWithSubtotals['shipping_address']['country']);
-
-        StubStore::$configuration['PS_TWO_ENABLE_TAX_SUBTOTALS'] = 0;
-        $payloadWithoutSubtotals = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
-        TinyAssert::false(isset($payloadWithoutSubtotals['tax_rate']));
-        TinyAssert::false(isset($payloadWithoutSubtotals['tax_subtotals']));
+        // Two's API does not define order-level tax_subtotals, billing_address or discount_amount on the order intent
+        // request, so none is sent whatever the "Validate tax subtotals" setting says (ABN-621).
+        foreach ([1, 0] as $subtotalsSetting) {
+            StubStore::$configuration['PS_TWO_ENABLE_TAX_SUBTOTALS'] = $subtotalsSetting;
+            $payload = $module->getTwoIntentOrderData($cart, $customer, $currency, $address);
+            TinyAssert::false(isset($payload['tax_rate']));
+            foreach (['tax_subtotals', 'billing_address', 'discount_amount'] as $dropped) {
+                TinyAssert::false(array_key_exists($dropped, $payload), "intent body must not carry order-level $dropped (Validate tax subtotals=$subtotalsSetting)");
+            }
+            TinyAssert::true(isset($payload['shipping_address']));
+            TinyAssert::same('ES', $payload['shipping_address']['country']);
+        }
     }
 
-    private static function testGetTwoNewOrderDataThrowsWhenLineItemsFailFormulaValidation(): void
+    /**
+     * TWO-26283: a line's arithmetic is Two's API's to judge, so a line whose tax contradicts its declared rate goes
+     * out as built rather than being refused locally. This holds here because getTwoProductItems() is stubbed: in a
+     * real build with no merchant handler, the declared-rate shop-match check still refuses such a line.
+     */
+    private static function testGetTwoNewOrderDataSendsLineItemsThatFailFormulaValidation(): void
     {
         self::reset();
 
@@ -1111,6 +1554,8 @@ final class OrderBuilderSpec
                     'name' => 'Broken line',
                     'net_amount' => '100.00',
                     'tax_amount' => '10.00',
+                    // Gross consistent (net + tax); ONLY the tax formula is broken.
+                    'gross_amount' => '110.00',
                     'tax_rate' => '0.21',
                     'unit_price' => '100.00',
                     'quantity' => 1,
@@ -1159,16 +1604,21 @@ final class OrderBuilderSpec
             'average_products_tax_rate' => 21.0,
         ];
 
-        TinyAssert::throws(function () use ($module, $cart): void {
-            $module->getTwoNewOrderData('merchant-attempt-56', $cart, [
-                'merchant_confirmation_url' => 'https://shop.local/confirm',
-                'merchant_cancel_order_url' => 'https://shop.local/cancel',
-                'merchant_edit_order_url' => '',
-                'merchant_order_verification_failed_url' => '',
-                'merchant_invoice_url' => '',
-                'merchant_shipping_document_url' => '',
-            ]);
-        }, 'Invalid line item formulas');
+        $payload = $module->getTwoNewOrderData('merchant-attempt-56', $cart, [
+            'merchant_confirmation_url' => 'https://shop.local/confirm',
+            'merchant_cancel_order_url' => 'https://shop.local/cancel',
+            'merchant_edit_order_url' => '',
+            'merchant_order_verification_failed_url' => '',
+            'merchant_invoice_url' => '',
+            'merchant_shipping_document_url' => '',
+        ]);
+        TinyAssert::same(['100.00', '10.00', '110.00', '0.21'], [
+            $payload['line_items'][0]['net_amount'],
+            $payload['line_items'][0]['tax_amount'],
+            $payload['line_items'][0]['gross_amount'],
+            $payload['line_items'][0]['tax_rate'],
+        ], 'the line goes out as built');
+        TinyAssert::same(['100.00', '10.00', '110.00'], [$payload['net_amount'], $payload['tax_amount'], $payload['gross_amount']], 'order totals from the line');
     }
 
     private static function testGetTwoNewOrderDataThrowsWhenCartTotalsMismatchIsMaterial(): void
@@ -1177,7 +1627,7 @@ final class OrderBuilderSpec
 
         $lineItems = [
             [
-                'name' => 'TV LG 4K UHD',
+                'name' => 'TV Acme 4K UHD',
                 'description' => 'Product',
                 'gross_amount' => '1609.76',
                 'net_amount' => '1330.38',
@@ -1191,7 +1641,7 @@ final class OrderBuilderSpec
                 'image_url' => '',
                 'product_page_url' => '',
                 'type' => 'PHYSICAL',
-                'details' => ['brand' => 'LG', 'barcodes' => [], 'categories' => []],
+                'details' => ['brand' => 'Acme', 'barcodes' => [], 'categories' => []],
             ],
             [
                 'name' => 'Envio gratis (+1 mas)',
@@ -1700,10 +2150,10 @@ final class OrderBuilderSpec
 
         StubStore::$cartProducts[491] = [[
             'id_product' => 777,
-            'link_rewrite' => 'tv-lg',
-            'name' => 'TV LG 4K UHD',
+            'link_rewrite' => 'tv-acme',
+            'name' => 'TV Acme 4K UHD',
             'description_short' => 'TV',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '',
             'upc' => '',
             'total' => 1320.66,
@@ -1715,6 +2165,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[777] = [['name' => 'TV']];
         StubStore::$images[777] = ['id_image' => 9901];
+        self::declareProductRate($cart, 777, 21.0);
         StubStore::$cartShipping[491] = [
             true => 58.00,
             false => 47.93,
@@ -1846,6 +2297,8 @@ final class OrderBuilderSpec
         StubStore::$productCategories[780] = [['name' => 'General']];
         StubStore::$images[779] = ['id_image' => 9903];
         StubStore::$images[780] = ['id_image' => 9904];
+        // 779 is zero-rated: no tax-rules group declared (resolves 0).
+        self::declareProductRate($cart, 780, 21.0);
         StubStore::$cartShipping[494] = [
             true => 116.00,
             false => 95.87,
@@ -1951,10 +2404,15 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[778] = [['name' => 'Bulk']];
         StubStore::$images[778] = ['id_image' => 9902];
+        self::declareProductRate($cart, 778, 21.0);
         StubStore::$cartShipping[492] = [
             true => 121.00,
             false => 100.00,
         ];
+        // Discount nets must reconcile with the declared 21% context under
+        // the relay (the deleted code blended a synthetic rate instead):
+        // free-shipping carve-out is 121.00/100.00, the remainder
+        // 588.25 gross / 486.16 net implies exactly round(486.16*0.21)=102.09.
         StubStore::$cartTotals[492] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 709.25,
@@ -1962,8 +2420,8 @@ final class OrderBuilderSpec
                 Cart::ONLY_SHIPPING => 0.00,
             ],
             false => [
-                Cart::ONLY_DISCOUNTS => 586.25,
-                Cart::BOTH => 2513.75,
+                Cart::ONLY_DISCOUNTS => 586.16,
+                Cart::BOTH => 2513.84,
                 Cart::ONLY_SHIPPING => 0.00,
             ],
             'average_products_tax_rate' => 21.0,
@@ -1996,6 +2454,51 @@ final class OrderBuilderSpec
         $lineRate = (float)$discountLine['tax_rate'];
         $diff = abs($lineTax - ($lineNet * $lineRate));
         TinyAssert::true($diff <= 0.02, 'Expected discount line tax formula to remain within tolerance, diff=' . $diff);
+    }
+
+    /**
+     * TWO-27129: three products at 21%, shipping at 0% (a module that zeroes shipping tax), and two whole-order
+     * amounts tax included. Core values them at 21%; the second rule's net is a cent off 21% of it, which the old
+     * rate solver explained by moving three cents onto the 0% shipping rate. Traced, each stays on its products.
+     */
+    private static function testCartRulesOnTaxedProductsNeverBorrowTheZeroRatedShippingRate(): void
+    {
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        $cart = new Cart(27129);
+        $cart->id_carrier = 271;
+        StubStore::$carriers[271] = ['name' => 'Courier', 'delay' => '', 'shipping_method' => Carrier::SHIPPING_METHOD_WEIGHT, 'tax_rules_group_id' => 272];
+        StubStore::$taxRuleRates[272] = 0.0;
+        $rows = [[2711, '379.00', '313.22', 1], [2712, '125.26', '103.52', 2], [2713, '39.00', '32.23', 1]];
+        StubStore::$cartProducts[27129] = [];
+        foreach ($rows as [$id, $gross, $net, $qty]) {
+            StubStore::$cartProducts[27129][] = [
+                'id_product' => $id, 'link_rewrite' => 'p' . $id, 'name' => 'Product ' . $id, 'description_short' => '',
+                'manufacturer_name' => '', 'ean13' => '', 'upc' => '', 'total' => (float) $net, 'total_wt' => (float) $gross,
+                'cart_quantity' => $qty, 'price' => round((float) $net / $qty, 6), 'reduction' => 0,
+            ];
+            self::declareProductRate($cart, $id, 21.0);
+        }
+        StubStore::$cartTotals[27129] = [
+            true => [Cart::ONLY_SHIPPING => 32.98, Cart::ONLY_DISCOUNTS => 32.98, Cart::BOTH => 543.26],
+            false => [Cart::ONLY_SHIPPING => 32.98, Cart::ONLY_DISCOUNTS => 27.26, Cart::BOTH => 454.69],
+        ];
+        StubStore::$cartRules[27129] = [
+            ['name' => 'Voucher A', 'value_real' => 29.99, 'value_tax_exc' => 24.79, 'reduction_amount' => 29.99, 'reduction_tax' => 1, 'reduction_product' => 0],
+            ['name' => 'Voucher B', 'value_real' => 2.99, 'value_tax_exc' => 2.47, 'reduction_amount' => 2.99, 'reduction_tax' => 1, 'reduction_product' => 0],
+        ];
+
+        $discounts = [];
+        foreach ($module->getTwoProductItems($cart) as $line) {
+            if ((float) $line['gross_amount'] < 0) {
+                $discounts[] = $line['name'] . ' ' . $line['gross_amount'] . '/' . $line['net_amount'] . '/' . $line['tax_amount'] . '@' . $line['tax_rate'];
+            }
+        }
+        TinyAssert::same(
+            'Voucher A -29.99/-24.79/-5.20@0.21; Voucher B -2.99/-2.47/-0.52@0.21',
+            implode('; ', $discounts),
+            'no 0% discount line unless a rule discounts a 0% line'
+        );
     }
 
     private static function testGetTwoNewOrderDataUsesCartRuleMonetaryValuesForDiscountLines(): void
@@ -2087,6 +2590,9 @@ final class OrderBuilderSpec
         StubStore::$productCategories[8202] = [['name' => 'Stationery']];
         StubStore::$images[8201] = ['id_image' => 8201];
         StubStore::$images[8202] = ['id_image' => 8202];
+        // 8201 is zero-rated (430.80/430.80): no group declared (resolves 0).
+        self::declareProductRate($cart, 8202, 21.0);
+        self::declareWrappingRate($cart, 21.0);
         StubStore::$cartShipping[493] = [
             true => 116.00,
             false => 95.87,
@@ -2217,6 +2723,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[8302] = [['name' => 'General']];
         StubStore::$images[8302] = ['id_image' => 8302];
+        self::declareProductRate($cart, 8302, 21.0);
         StubStore::$cartShipping[497] = [true => 0.00, false => 0.00];
         StubStore::$cartTotals[497] = [
             true => [
@@ -2341,6 +2848,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[8396] = [['name' => 'General']];
         StubStore::$images[8396] = ['id_image' => 8396];
+        self::declareProductRate($cart, 8396, 10.0);
         StubStore::$cartShipping[596] = [true => 12.10, false => 10.00];
         StubStore::$cartTotals[596] = [
             true => [
@@ -2474,6 +2982,9 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[8397] = [['name' => 'General']];
         StubStore::$images[8397] = ['id_image' => 8397];
+        // Declared 21%: applied tax 115.89 vs expected 115.88 is within the
+        // 2-cent relay tolerance, so the declared rate is relayed as-is.
+        self::declareProductRate($cart, 8397, 21.0);
         StubStore::$cartShipping[597] = [true => 2.99, false => 2.47];
         StubStore::$cartTotals[597] = [
             true => [
@@ -2602,6 +3113,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[8398] = [['name' => 'General']];
         StubStore::$images[8398] = ['id_image' => 8398];
+        self::declareProductRate($cart, 8398, 21.0);
         StubStore::$cartShipping[598] = [true => 1.21, false => 1.00];
         StubStore::$cartTotals[598] = [
             true => [
@@ -2731,6 +3243,7 @@ final class OrderBuilderSpec
         ];
         StubStore::$productCategories[8301] = [['name' => 'General']];
         StubStore::$images[8301] = ['id_image' => 8301];
+        self::declareProductRate($cart, 8301, 21.0);
         StubStore::$cartShipping[496] = [true => 0.00, false => 0.00];
         StubStore::$cartTotals[496] = [
             true => [
@@ -2820,10 +3333,10 @@ final class OrderBuilderSpec
 
         StubStore::$cartProducts[6101] = [[
             'id_product' => 9101,
-            'link_rewrite' => 'tv-lg-4k',
-            'name' => 'TV LG 4K UHD, SmartTV con IA, 164 cm (65")',
+            'link_rewrite' => 'tv-acme-4k',
+            'name' => 'TV Acme 4K UHD, SmartTV con IA, 164 cm (65")',
             'description_short' => 'TV',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '',
             'upc' => '',
             'total' => 1320.66,
@@ -2835,6 +3348,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9101] = [['name' => 'TV']];
         StubStore::$images[9101] = ['id_image' => 9101];
+        self::declareProductRate($cart, 9101, 21.0);
         StubStore::$cartShipping[6101] = [
             true => 58.00,
             false => 47.93,
@@ -2950,10 +3464,10 @@ final class OrderBuilderSpec
 
         StubStore::$cartProducts[6102] = [[
             'id_product' => 9201,
-            'link_rewrite' => 'lg-projector',
-            'name' => 'LG CineBeam LED Projector with SmartTV WebOS',
+            'link_rewrite' => 'acme-projector',
+            'name' => 'Acme LED Projector with SmartTV',
             'description_short' => 'Projector',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '',
             'upc' => '',
             'total' => 548.53,
@@ -2965,6 +3479,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9201] = [['name' => 'Projectors']];
         StubStore::$images[9201] = ['id_image' => 9201];
+        self::declareProductRate($cart, 9201, 21.0);
         StubStore::$cartShipping[6102] = [
             true => 2.99,
             false => 2.47,
@@ -3040,10 +3555,10 @@ final class OrderBuilderSpec
 
         StubStore::$cartProducts[6103] = [[
             'id_product' => 9301,
-            'link_rewrite' => 'lg-xboom',
-            'name' => 'LG XBOOM High Voltage Speaker, 1000W',
+            'link_rewrite' => 'acme-speaker',
+            'name' => 'Acme High Voltage Speaker, 1000W',
             'description_short' => 'Speaker',
-            'manufacturer_name' => 'LG',
+            'manufacturer_name' => 'Acme',
             'ean13' => '',
             'upc' => '',
             'total' => 409.24,
@@ -3055,6 +3570,7 @@ final class OrderBuilderSpec
         ]];
         StubStore::$productCategories[9301] = [['name' => 'Audio']];
         StubStore::$images[9301] = ['id_image' => 9301];
+        self::declareProductRate($cart, 9301, 21.0);
         StubStore::$cartShipping[6103] = [
             true => 2.99,
             false => 2.47,
@@ -3102,49 +3618,29 @@ final class OrderBuilderSpec
         TinyAssert::true($hasShipping, 'Expected shipping line');
     }
 
-    private static function testGetTwoRequestHeadersSkipApiKeyForOrderIntent(): void
+    private static function testGetTwoRequestHeadersSendApiKeyOnEveryEndpoint(): void
     {
         self::reset();
+        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'test-api-key');
         $module = new TwopaymentTestHarness();
 
-        $orderIntentHeaders = $module->getTwoRequestHeaders('/v1/order_intent');
-        $orderIntentHeadersWithExtras = $module->getTwoRequestHeaders(
-            '/v1/order_intent',
-            ['Authorization: Bearer should-not-leak', 'X-API-Key: should-not-leak']
-        );
-        $createOrderHeaders = $module->getTwoRequestHeaders('/v1/order');
-
-        $orderIntentHasApiKey = false;
-        foreach ($orderIntentHeaders as $header) {
-            if (strpos($header, 'X-API-Key:') === 0) {
-                $orderIntentHasApiKey = true;
-                break;
-            }
+        // Order intent carries the key like every other call (TWO-27236).
+        $cases = [
+            ['/v1/order_intent', 'an order intent'],
+            ['/v1/order_intent?client=ps', 'an order intent with a query string'],
+            ['/v1/order', 'an order create'],
+            ['/v1/order/abc-123', 'an order read'],
+            ['/companies/v2/company?q=acme&country=NO', 'a company search'],
+            ['/companies/v2/company/NO123', 'a company lookup'],
+            ['/companies/v2/supported-countries', 'the company search country list'],
+        ];
+        foreach ($cases as [$endpoint, $description]) {
+            TinyAssert::same(
+                ['X-API-Key:test-api-key'],
+                array_values(preg_grep('/^X-API-Key:/i', $module->getTwoRequestHeaders($endpoint))),
+                $description . ': the API key, once'
+            );
         }
-
-        $orderIntentHasAuthHeaders = false;
-        foreach ($orderIntentHeadersWithExtras as $header) {
-            if (
-                strpos($header, 'X-API-Key:') === 0 ||
-                strpos($header, 'Authorization:') === 0 ||
-                strpos($header, 'Proxy-Authorization:') === 0
-            ) {
-                $orderIntentHasAuthHeaders = true;
-                break;
-            }
-        }
-
-        $createOrderHasApiKey = false;
-        foreach ($createOrderHeaders as $header) {
-            if (strpos($header, 'X-API-Key:') === 0) {
-                $createOrderHasApiKey = true;
-                break;
-            }
-        }
-
-        TinyAssert::false($orderIntentHasApiKey, 'Order intent headers must not include X-API-Key');
-        TinyAssert::false($orderIntentHasAuthHeaders, 'Order intent headers must not include auth headers');
-        TinyAssert::true($createOrderHasApiKey, 'Create order headers must include X-API-Key');
     }
 
     private static function testCheckTwoOrderIntentApprovalAtPaymentDeclinesEvenWhenFrontendCookieSaysApproved(): void
@@ -3517,20 +4013,17 @@ final class OrderBuilderSpec
         TinyAssert::same($hashA, $hashB);
     }
 
-    private static function testBuildTwoOrderCreateIdempotencyKeyIsDeterministicForSameSnapshot(): void
+    private static function testBuildTwoOrderCreateIdempotencyKeyIsOnePerAttempt(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        $cart = new Cart(991);
-        $cart->id_customer = 123;
+        $keyA = $module->buildTwoOrderCreateIdempotencyKey('attempt-token-1');
+        $keyB = $module->buildTwoOrderCreateIdempotencyKey('attempt-token-1');
+        $keyC = $module->buildTwoOrderCreateIdempotencyKey('attempt-token-2');
 
-        $keyA = $module->buildTwoOrderCreateIdempotencyKey($cart, 'snapshot-hash-1');
-        $keyB = $module->buildTwoOrderCreateIdempotencyKey($cart, 'snapshot-hash-1');
-        $keyC = $module->buildTwoOrderCreateIdempotencyKey($cart, 'snapshot-hash-2');
-
-        TinyAssert::same($keyA, $keyB);
-        TinyAssert::notSame($keyA, $keyC);
+        TinyAssert::same($keyA, $keyB, 'a retry of one attempt reuses its key');
+        TinyAssert::notSame($keyA, $keyC, 'a new attempt gets a new key');
     }
 
     private static function testHasTwoOrderRebindingConflictDetectsMismatchedTwoOrderIds(): void
@@ -3591,19 +4084,40 @@ final class OrderBuilderSpec
         TinyAssert::false($module->isTwoAttemptCallbackAuthorized($attempt, '', 41, 'secure-key-42'));
     }
 
-    private static function testGetTwoBuyerPortalUrlUsesEnvironmentSpecificBuyerDomains(): void
+    /** TWO-27107: the admin help text carries none of the old typos. */
+    private static function testAdminHelpTextTypos(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
+        $source = (string) file_get_contents(dirname(__DIR__) . '/twopayment.php');
+        // [typo, corrected, description]
+        $cases = [
+            ['which is appear on checkout page', 'The payment method title shown at checkout.', 'title help grammar'],
+            ['Enter your api key', 'Enter your API key', 'API key casing'],
+            ['(Hold Ctrl/Cmd to select multiple. Default', '(hold Ctrl/Cmd to select multiple). Default', 'fulfilment help bracket closed'],
+        ];
+        foreach ($cases as [$typo, $corrected, $description]) {
+            TinyAssert::false(strpos($source, $typo) !== false, $description . ': typo still present');
+            TinyAssert::true(strpos($source, $corrected) !== false, $description . ': corrected text missing');
+        }
+    }
 
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'production');
-        TinyAssert::same('https://buyer.two.inc/login', $module->getTwoBuyerPortalUrl());
-
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'development');
-        TinyAssert::same('https://buyer.sandbox.two.inc/login', $module->getTwoBuyerPortalUrl());
-
-        Configuration::updateValue('PS_TWO_ENVIRONMENT', 'staging');
-        TinyAssert::same('https://buyer.staging.two.inc/login', $module->getTwoBuyerPortalUrl());
+    /**
+     * TWO-27107: no plugin links to the merchant or buyer portal, so this one
+     * does not either. The getters are gone and no template is handed a
+     * portal URL.
+     */
+    private static function testNoPortalLinksAreRendered(): void
+    {
+        foreach (['getTwoPortalUrl', 'getTwoBuyerPortalUrl'] as $method) {
+            TinyAssert::false(method_exists('Twopayment', $method), $method . ' must not exist');
+        }
+        $root = dirname(__DIR__);
+        $files = array_merge(glob($root . '/views/templates/hook/*.tpl'), glob($root . '/views/templates/front/*.tpl') ?: [], [$root . '/twopayment.php']);
+        foreach ($files as $file) {
+            TinyAssert::false(
+                (bool) preg_match('/two_(buyer_)?portal_url|PORTAL_HOSTS|TWO_PORTAL_BASE_URL/', (string) file_get_contents($file)),
+                basename($file) . ' must not carry a portal link'
+            );
+        }
     }
 
     private static function testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId(): void
@@ -3664,19 +4178,172 @@ final class OrderBuilderSpec
 
     private static function testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain(): void
     {
+        // TWO-26289: the merchant's Order Cancelled mapping wins, as for every other mapped status.
+        // [PS_TWO_OS_CANCELLED_MAP, PS_TWO_OS_CANCELLED, PS_OS_CANCELED, expected, description]
+        $cases = [
+            [902, 901, 903, 902, 'mapping wins over the branded state'],
+            [0, 901, 903, 901, 'no mapping falls back to the branded state'],
+            [0, 0, 903, 903, 'neither falls back to core Canceled'],
+        ];
+        foreach ($cases as [$map, $branded, $core, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_CANCELLED', $branded);
+            Configuration::updateValue('PS_OS_CANCELED', $core);
+            TinyAssert::same($expected, (new TwopaymentTestHarness())->getTwoCancelledOrderStatusId(), $description);
+        }
+    }
+
+    private static function testGetTwoVerifiedPendingFulfillmentStatusIdUsesConfiguredFallbackChain(): void
+    {
+        // TWO-26289: the merchant's Verified mapping wins, as confirmation applies it.
+        // [PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP, PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT, PS_OS_PREPARATION, expected, description]
+        $cases = [
+            [902, 901, 903, 902, 'mapping wins over the branded state'],
+            [0, 901, 903, 901, 'no mapping falls back to the branded state'],
+            [0, 0, 903, 903, 'neither falls back to core Processing in progress'],
+        ];
+        foreach ($cases as [$map, $branded, $core, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $branded);
+            Configuration::updateValue('PS_OS_PREPARATION', $core);
+            $module = new TwopaymentTestHarness();
+            TinyAssert::same($expected, $module->getTwoVerifiedPendingFulfillmentStatusId(), 'verified: ' . $description);
+            // TWO-27329: confirmation moves the order to that same status.
+            TinyAssert::same($expected, $module->getTwoVerifiedStatusIdForConfirmation(), 'confirmation: ' . $description);
+        }
+    }
+
+    private static function testGetTwoInitialAwaitingStatusIdUsesConfiguredFallbackChain(): void
+    {
+        // TWO-27329: a Two order is created in the merchant's Awaiting mapping.
+        // [PS_TWO_OS_AWAITING_VERIFICATION_MAP, PS_TWO_OS_AWAITING_VERIFICATION, PS_OS_PREPARATION, expected, description]
+        $cases = [
+            [902, 901, 903, 902, 'mapping wins over the branded state'],
+            [0, 901, 903, 901, 'no mapping falls back to the branded state'],
+            [0, 0, 903, 903, 'neither falls back to core Processing in progress'],
+        ];
+        foreach ($cases as [$map, $branded, $core, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION', $branded);
+            Configuration::updateValue('PS_OS_PREPARATION', $core);
+            TinyAssert::same($expected, (new TwopaymentTestHarness())->getTwoInitialAwaitingStatusId(), 'awaiting: ' . $description);
+        }
+    }
+
+    private static function testLegacyOrderAwaitingVerificationMatchesMappedAndBrandedStates(): void
+    {
+        // TWO-27329: an order in the mapped Awaiting status or the branded one is still awaiting,
+        // unless that status is also the Verified one or the order is recorded as fulfilling or later.
+        // [awaiting map, verified map, order's current_state, recorded Two state, expected, description]
+        $cases = [
+            [902, 911, 902, 'VERIFIED', true, 'the mapped Awaiting status'],
+            [902, 911, 901, 'VERIFIED', true, 'the branded state, from before the mapping changed'],
+            [902, 911, 911, 'VERIFIED', false, 'the Verified status'],
+            [911, 911, 911, 'VERIFIED', false, 'a mapping shared with Verified cannot tell the two apart'],
+            [911, 911, 901, 'VERIFIED', true, 'the branded state while the mapping is shared with Verified'],
+            [902, 911, 950, 'VERIFIED', false, 'an unrelated status'],
+            [902, 911, 902, 'CONFIRMED', true, 'confirmed at Two but left in Awaiting by a confirmation that stopped part way'],
+            [902, 911, 902, 'FULFILLED', false, 'a fulfilled order moved back into the mapped Awaiting status'],
+            [902, 911, 901, 'fulfilling', false, 'a fulfilling order in the branded state, recorded in lower case'],
+            [902, 911, 902, 'PARTIALLY_FULFILLED', false, 'a partly fulfilled order moved back into the mapped Awaiting status'],
+            [902, 911, 902, 'REFUNDED', false, 'a refunded order moved back into the mapped Awaiting status'],
+        ];
+        foreach ($cases as [$awaiting_map, $verified_map, $current, $recorded, $expected, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', $awaiting_map);
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION', 901);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $verified_map);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', 910);
+            StubStore::$orders[77] = ['module' => 'twopayment', 'current_state' => $current];
+            $module = new class ($recorded) extends TwopaymentTestHarness {
+                private $recorded;
+
+                public function __construct($recorded)
+                {
+                    parent::__construct();
+                    $this->recorded = $recorded;
+                }
+
+                public function getTwoOrderPaymentData($id_order)
+                {
+                    return ['two_order_id' => 'two-order-77', 'two_order_state' => $this->recorded];
+                }
+            };
+            TinyAssert::same($expected, $module->isTwoLegacyOrderAwaitingVerification(77), 'legacy awaiting: ' . $description);
+        }
+    }
+
+    private static function testUpgradeMovesOnlyThePreparationDefaultPair(): void
+    {
+        // TWO-27329: the 2.7.25 upgrade moves the old Processing in progress (3) default for both
+        // mappings to the module's own statuses, and nothing else.
+        // [awaiting map, verified map, branded awaiting, branded verified, expected awaiting map, expected verified map, description]
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.25.php';
+        $cases = [
+            [3, 3, 901, 910, 901, 910, 'the Processing in progress pair moves to the module statuses'],
+            [3, 911, 901, 910, 3, 911, 'only Awaiting on Processing in progress is untouched'],
+            [902, 3, 901, 910, 902, 3, 'only Verified on Processing in progress is untouched'],
+            [902, 911, 901, 910, 902, 911, 'custom mappings are untouched'],
+            [901, 910, 901, 910, 901, 910, 'mappings already on the module statuses are untouched'],
+            [3, 3, 0, 0, 3, 3, 'missing module statuses leave the pair as it is'],
+            [3, 3, 901, 0, 3, 3, 'a missing Verified module status leaves the pair as it is'],
+        ];
+        foreach ($cases as [$awaiting, $verified, $brandedAwaiting, $brandedVerified, $expectedAwaiting, $expectedVerified, $description]) {
+            self::reset();
+            $module = new TwopaymentTestHarness();
+            Configuration::updateValue('PS_OS_PREPARATION', 3);
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION', $brandedAwaiting);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $brandedVerified);
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', $awaiting);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $verified);
+            TinyAssert::true(upgrade_module_2_7_25($module), $description . ': the upgrade succeeds');
+            TinyAssert::same($expectedAwaiting, (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP'), $description . ': awaiting map');
+            TinyAssert::same($expectedVerified, (int) Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'), $description . ': verified map');
+        }
+    }
+
+    private static function testPreparationDefaultMigrationCoversEveryShopTier(): void
+    {
+        // TWO-27329: each tier is judged by the pair it reads before the upgrade, and only a mapping
+        // the tier holds itself is written.
         self::reset();
         $module = new TwopaymentTestHarness();
+        StubStore::$multistore = true;
+        StubStore::$shops = [1 => 1, 2 => 1, 3 => 2];
+        StubStore::$configuration['PS_OS_PREPARATION'] = 3;
+        StubStore::$configuration['PS_TWO_OS_AWAITING_VERIFICATION'] = 901;
+        StubStore::$configuration['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT'] = 910;
+        StubStore::$configuration['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = 3;
+        StubStore::$configuration['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'] = 3;
+        StubStore::$configurationGroup[2]['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = 3;
+        StubStore::$configurationGroup[2]['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'] = 3;
+        StubStore::$configurationShop[2]['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = 902;
 
-        Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
-        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 902);
-        Configuration::updateValue('PS_OS_CANCELED', 903);
-        TinyAssert::same(901, $module->getTwoCancelledOrderStatusId());
+        TinyAssert::same(2, $module->migrateTwoPreparationStatusMaps(), 'the global and shop group 2 tiers moved');
+        TinyAssert::same(901, StubStore::$configuration['PS_TWO_OS_AWAITING_VERIFICATION_MAP'], 'global awaiting map');
+        TinyAssert::same(910, StubStore::$configuration['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'], 'global verified map');
+        TinyAssert::same(901, StubStore::$configurationGroup[2]['PS_TWO_OS_AWAITING_VERIFICATION_MAP'], 'shop group awaiting map');
+        TinyAssert::same(910, StubStore::$configurationGroup[2]['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'], 'shop group verified map');
+        TinyAssert::same(902, StubStore::$configurationShop[2]['PS_TWO_OS_AWAITING_VERIFICATION_MAP'], 'a shop with its own Awaiting mapping keeps it');
+        TinyAssert::false(isset(StubStore::$configurationShop[2]['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP']), 'a shop inheriting the Verified mapping gets no copy');
+        TinyAssert::false(isset(StubStore::$configurationShop[1]['PS_TWO_OS_AWAITING_VERIFICATION_MAP']), 'a shop inheriting both mappings gets no copy');
+    }
 
-        Configuration::updateValue('PS_TWO_OS_CANCELLED', 0);
-        TinyAssert::same(902, $module->getTwoCancelledOrderStatusId());
-
-        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 0);
-        TinyAssert::same(903, $module->getTwoCancelledOrderStatusId());
+    private static function testRecreatedStatesMapToTheModuleStatuses(): void
+    {
+        // TWO-27329: a shop with no module statuses has them created with the maps on them, as install() does.
+        self::reset();
+        Configuration::updateValue('PS_OS_PREPARATION', 3);
+        $ensure = new ReflectionMethod(Twopayment::class, 'ensureCustomStatesExist');
+        $ensure->invoke(new TwopaymentTestHarness());
+        $awaiting = (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
+        $verified = (int) Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
+        TinyAssert::true($awaiting > 0 && $verified > 0 && $awaiting !== $verified, 'the module statuses are created');
+        TinyAssert::same($awaiting, (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP'), 'awaiting map on the module status');
+        TinyAssert::same($verified, (int) Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'), 'verified map on the module status');
     }
 
     private static function testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId(): void
@@ -3711,9 +4378,10 @@ final class OrderBuilderSpec
         };
 
         Configuration::updateValue('PS_TWO_OS_CANCELLED', 901);
+        Configuration::updateValue('PS_TWO_OS_CANCELLED_MAP', 6);
         TinyAssert::true($module->syncLocalOrderStatusFromTwoState(55, 'CANCELLED'));
         TinyAssert::count(1, $module->calls);
-        TinyAssert::same([55, 901], $module->calls[0]);
+        TinyAssert::same([55, 6], $module->calls[0], 'a provider cancel moves the order to the mapped status, not the branded one');
 
         TinyAssert::false($module->syncLocalOrderStatusFromTwoState(56, 'CONFIRMED'));
         TinyAssert::count(1, $module->calls);
@@ -3755,15 +4423,25 @@ final class OrderBuilderSpec
 
     private static function testShouldBlockTwoStatusTransitionByCancelledStateCoversVerifiedAndFulfillment(): void
     {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-        Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', 901);
-        Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
-        Configuration::updateValue('PS_OS_SHIPPING', 4);
-
-        TinyAssert::true($module->shouldBlockTwoStatusTransitionByCancelledState(901));
-        TinyAssert::true($module->shouldBlockTwoStatusTransitionByCancelledState(4));
-        TinyAssert::false($module->shouldBlockTwoStatusTransitionByCancelledState(99));
+        // TWO-26289: a cancelled order may not move to the mapped Verified status, the branded one, or a fulfilment status.
+        // [PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP, PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT, target status, blocked, description]
+        $cases = [
+            [902, 0, 902, true, 'mapping only: the mapped Verified status is blocked'],
+            [0, 901, 901, true, 'branded only: the branded Verified state is blocked'],
+            [902, 901, 902, true, 'both set: the mapped Verified status is blocked'],
+            [902, 901, 901, true, 'both set: the branded Verified state is blocked too'],
+            [902, 901, 4, true, 'a fulfilment status is blocked'],
+            [902, 901, 99, false, 'any other status is allowed'],
+            [902, 901, 0, false, 'no status is allowed'],
+        ];
+        foreach ($cases as [$map, $branded, $target, $blocked, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $map);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $branded);
+            Configuration::updateValue('PS_TWO_OS_FULFILLED_MAP', json_encode([4]));
+            Configuration::updateValue('PS_OS_SHIPPING', 4);
+            TinyAssert::same($blocked, (new TwopaymentTestHarness())->shouldBlockTwoStatusTransitionByCancelledState($target), $description);
+        }
     }
 
     private static function testIsTwoOrderFulfillableStateRequiresConfirmed(): void
@@ -3849,7 +4527,19 @@ final class OrderBuilderSpec
         TinyAssert::true($order->updated);
     }
 
-    private static function testGetTwoCheckoutCompanyDataUsesAddressVatNumberForAnyCountry(): void
+    /**
+     * A VAT number on the address is NOT an organisation number (TWO-40).
+     *
+     * This test previously asserted the opposite - that GB123456789 in
+     * `vat_number` became organisation number 123456789. That fallback is gone:
+     * the two identifiers come from different registers and coincide only by
+     * accident, so relaying one as the other asks Two to credit-check a number
+     * that does not identify the buyer's company. The company NAME still
+     * resolves; only the number is withheld, and an empty number is the correct
+     * answer because it lets Two's own resolution fail loudly instead of being
+     * papered over.
+     */
+    private static function testGetTwoCheckoutCompanyDataNeverSourcesOrgNumberFromVatNumber(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
@@ -3866,7 +4556,7 @@ final class OrderBuilderSpec
         $data = $module->getTwoCheckoutCompanyData($address);
 
         TinyAssert::same('Acme UK Ltd', $data['company_name']);
-        TinyAssert::same('123456789', $data['organization_number']);
+        TinyAssert::same('', $data['organization_number']);
         TinyAssert::same('GB', $data['country_iso']);
     }
 
@@ -3876,17 +4566,24 @@ final class OrderBuilderSpec
         $module = new TwopaymentTestHarness();
 
         // Stale session from previously selected UK address/company
-        $module->context->cookie->two_company_name = 'CHEESE AND BEES LTD';
-        $module->context->cookie->two_company_id = 'SC806781';
-        $module->context->cookie->two_company_country = 'GB';
-        $module->context->cookie->two_company_address_id = '28';
+        self::seedSessionCompany($module, [
+            'name' => 'CHEESE AND BEES LTD',
+            'id' => 'SC806781',
+            'country' => 'GB',
+            'address_id' => '28',
+        ]);
 
-        // Current selected address is Spanish and has org number in VAT field
+        // Current selected address is Spanish and carries its org number in the
+        // `dni` field. This fixture used to hold 'ESB12345678' in `vat_number`
+        // instead; the VAT-number fallback was retired in TWO-40, so the source
+        // moved to the identifier field that legitimately carries an
+        // organisation number. What this test pins is unchanged: the CURRENT
+        // address's org number beats a stale session company.
         StubStore::$countries[34] = 'ES';
         StubStore::$addresses[29] = [
             'id_country' => 34,
             'company' => 'Queso y Abejas S.L.',
-            'vat_number' => 'ESB12345678',
+            'dni' => 'B12345678',
             'loaded' => true,
         ];
 
@@ -3903,9 +4600,11 @@ final class OrderBuilderSpec
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        $module->context->cookie->two_company_name = 'Acme ES S.L.';
-        $module->context->cookie->two_company_id = 'B12345678';
-        $module->context->cookie->two_company_country = 'ES';
+        self::seedSessionCompany($module, [
+            'name' => 'Acme ES S.L.',
+            'id' => 'B12345678',
+            'country' => 'ES',
+        ]);
 
         StubStore::$addresses[802] = [
             'id_country' => 34,
@@ -3926,9 +4625,11 @@ final class OrderBuilderSpec
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        $module->context->cookie->two_company_name = 'Acme Norge';
-        $module->context->cookie->two_company_id = 'NO123';
-        $module->context->cookie->two_company_country = 'NO';
+        self::seedSessionCompany($module, [
+            'name' => 'Acme Norge',
+            'id' => 'NO123',
+            'country' => 'NO',
+        ]);
 
         StubStore::$addresses[803] = [
             'id_country' => 34,
@@ -3942,9 +4643,9 @@ final class OrderBuilderSpec
         TinyAssert::same('', $data['company_name']);
         TinyAssert::same('', $data['organization_number']);
         TinyAssert::same('ES', $data['country_iso']);
-        TinyAssert::false(isset($module->context->cookie->two_company_name));
-        TinyAssert::false(isset($module->context->cookie->two_company_id));
-        TinyAssert::false(isset($module->context->cookie->two_company_country));
+        TinyAssert::false(TwoSessionRecord::has('company', 'name'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'id'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'country'));
     }
 
     private static function testGetTwoCheckoutCompanyDataIgnoresStaleCookieWhenAddressCompanyChangesSameCountry(): void
@@ -3952,10 +4653,12 @@ final class OrderBuilderSpec
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        $module->context->cookie->two_company_name = 'Acme ES S.L.';
-        $module->context->cookie->two_company_id = 'B12345678';
-        $module->context->cookie->two_company_country = 'ES';
-        $module->context->cookie->two_company_address_id = '999';
+        self::seedSessionCompany($module, [
+            'name' => 'Acme ES S.L.',
+            'id' => 'B12345678',
+            'country' => 'ES',
+            'address_id' => '999',
+        ]);
 
         StubStore::$addresses[804] = [
             'id_country' => 34,
@@ -3971,61 +4674,64 @@ final class OrderBuilderSpec
         TinyAssert::same('ES', $data['country_iso']);
     }
 
-    private static function testSaveGeneralFormDoesNotChangeSslVerificationFlag(): void
+    private static function testSaveDiagnosticsFormUpdatesSslVerificationFlag(): void
     {
+        // TWO-25386 Part 1 section regroup: Disable SSL Verification renders
+        // under, and is saved by, the Diagnostics panel (Section F) alongside
+        // the other debug-only controls - it moved out of the former
+        // "Advanced Settings"/"Other" panel (and never lived in General).
         self::reset();
         $module = new class extends TwopaymentTestHarness {
-            public function saveGeneralForTest(): void
+            public function saveDiagnosticsForTest(): void
             {
-                $this->saveTwoGeneralFormValues();
-            }
-        };
-
-        Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 1);
-        Tools::setTestValue('PS_TWO_DISABLE_SSL_VERIFY', 0);
-        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
-        Tools::setTestValue('PS_TWO_TITLE_1', 'Two title');
-        Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Two subtitle');
-        Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
-        Tools::setTestValue('PS_TWO_MERCHANT_API_KEY', 'api-key');
-
-        $module->saveGeneralForTest();
-
-        TinyAssert::same(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
-    }
-
-    private static function testSaveOtherFormUpdatesSslVerificationFlag(): void
-    {
-        self::reset();
-        $module = new class extends TwopaymentTestHarness {
-            public function saveOtherForTest(): void
-            {
-                $this->saveTwoOtherFormValues();
+                $this->saveTwoDiagnosticsFormValues();
             }
         };
 
         Configuration::updateValue('PS_TWO_DISABLE_SSL_VERIFY', 0);
-        Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1);
         Tools::setTestValue('PS_TWO_DISABLE_SSL_VERIFY', 1);
-        Tools::setTestValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 0);
 
-        $module->saveOtherForTest();
+        $module->saveDiagnosticsForTest();
 
         TinyAssert::same(1, (int) Configuration::get('PS_TWO_DISABLE_SSL_VERIFY'));
-        TinyAssert::same(0, (int) Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS'));
     }
 
-    private static function testOtherSettingsFormDoesNotExposeOrderIntentToggle(): void
+    private static function testSaveOrderManagementFormUpdatesTaxSubtotalsFlag(): void
     {
+        // TWO-25386 Part 1 section regroup: "Validate tax subtotals"
+        // now renders under, and is saved by, the Order Management
+        // panel (Section E) - it moved out of the former "Advanced
+        // Settings"/"Other" panel, which no longer exists as a single form.
         self::reset();
         $module = new class extends TwopaymentTestHarness {
-            public function getOtherFormForTest(): array
+            public function saveOrderManagementForTest(): void
             {
-                return $this->getTwoOtherForm();
+                $this->saveTwoOrderManagementFormValues();
             }
         };
 
-        $form = $module->getOtherFormForTest();
+        Configuration::updateValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 1);
+        Tools::setTestValue('PS_TWO_ENABLE_TAX_SUBTOTALS', 0);
+
+        $module->saveOrderManagementForTest();
+
+        TinyAssert::same(0, (int) Configuration::get('PS_TWO_ENABLE_TAX_SUBTOTALS'));
+    }
+
+    private static function testOrderManagementFormDoesNotExposeOrderIntentToggle(): void
+    {
+        // Order intent lives in the Checkout Fields panel (Section B), not
+        // Order Management (Section E) - regression guard carried over from
+        // the pre-TWO-25386 "Other Settings" panel this replaced.
+        self::reset();
+        $module = new class extends TwopaymentTestHarness {
+            public function getOrderManagementFormForTest(): array
+            {
+                return $this->getTwoOrderManagementForm();
+            }
+        };
+
+        $form = $module->getOrderManagementFormForTest();
         $inputNames = array_map(function ($field) {
             return isset($field['name']) ? (string) $field['name'] : '';
         }, $form['form']['input']);
@@ -4268,7 +4974,7 @@ final class OrderBuilderSpec
                 parent::__construct();
                 $this->backend = $backend;
             }
-            public function getMerchantAvailableTerms($refresh = false)
+            public function getMerchantAvailableTerms()
             {
                 return $this->backend;
             }
@@ -4297,15 +5003,21 @@ final class OrderBuilderSpec
         TinyAssert::same([30], $module->getAvailablePaymentTerms());
     }
 
-    private static function testGetAvailablePaymentTermsFallsBackToHardcodedWhenBackendUnresolved(): void
+    /**
+     * An unresolved backend set offers the BUYER nothing: the
+     * hardcoded option list keeps the admin screens usable and must never be
+     * composed into a term a merchant may not hold. The admin-side set over
+     * the same cold cache is the control, so this cannot pass by emptying both.
+     */
+    private static function testGetAvailablePaymentTermsIsEmptyWhenBackendUnresolved(): void
     {
         self::reset();
-        // Cold cache (unresolved backend): degrade to the historical hardcoded
-        // option list rather than blanking the term set.
         $module = self::termsHarness([]);
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_7', 1);
         Configuration::updateValue('PS_TWO_PAYMENT_TERMS_90', 1);
-        TinyAssert::same([7, 90], $module->getAvailablePaymentTerms());
+
+        TinyAssert::same([], $module->getAvailablePaymentTerms());
+        TinyAssert::same([7, 90], $module->configurableTermSetForTest());
     }
 
     private static function testGetAvailablePaymentTermsEomConstrainsToEomSubset(): void
@@ -4319,13 +5031,22 @@ final class OrderBuilderSpec
         TinyAssert::same([30], $module->getAvailablePaymentTerms());
     }
 
-    private static function testGetAvailablePaymentTermsEmptyOfferFallsBackToDefault(): void
+    /**
+     * Backend resolves a set but the admin ticks nothing offerable:
+     * the buyer is offered NO term rather than the account default, which the
+     * merchant may not hold. The admin screens keep a non-empty set, because
+     * they render and save a row per term.
+     */
+    private static function testGetAvailablePaymentTermsIsEmptyWhenNothingOfferableIsTicked(): void
     {
         self::reset();
-        // Backend resolves a set but the admin ticks nothing offerable -> the
-        // account default term (pre-feature degrade posture).
         $module = self::termsHarness([60]);
-        TinyAssert::same([Twopayment::DEFAULT_PAYMENT_TERM_DAYS], $module->getAvailablePaymentTerms());
+
+        TinyAssert::same([], $module->getAvailablePaymentTerms());
+        TinyAssert::same(
+            [Twopayment::DEFAULT_PAYMENT_TERM_DAYS],
+            $module->configurableTermSetForTest()
+        );
     }
 
     /**
@@ -4345,16 +5066,137 @@ final class OrderBuilderSpec
         };
     }
 
-    private static function testGetMerchantAvailableTermsCacheOnlyNeverFetches(): void
+    /**
+     * Given a cached record and its stamp, When the seam is read, Then
+     * only two reads reach the wire: no record has ever been fetched, or the
+     * held one is old enough to say the schedule has stopped.
+     */
+    private static function testGetMerchantAvailableTermsRefetchDecisionTable(): void
+    {
+        $unset = null; // never written: PrestaShop reads an absent key back as false
+        $ok = ['http_status' => 200, 'available_terms' => [30, 7]];
+        $noField = ['http_status' => 200, 'id' => 'mid'];
+        $notARecord = ['http_status' => 200, 'detail' => 'ok'];
+        $fresh = -60;
+        $stale = -(Twopayment::MERCHANT_RECORD_STALE_AFTER + 60);
+
+        $cases = [
+            ['[30,60]', $fresh, true,  $ok,      0, [30, 60], 'a fetched record inside the staleness window never reaches the wire'],
+            ['[30,60]', $stale, true,  $ok,      1, [7, 30],  'a fetched record past the staleness window stands in for the schedule'],
+            ['[30,60]', $stale, true,  $notARecord, 1, [30, 60], 'a stand-in that fails serves the held record anyway'],
+            ['',        0,      false, $ok,      1, [7, 30],  'a record never fetched is fetched on read'],
+            [$unset,    0,      false, $ok,      1, [7, 30],  'a list never written at all is unresolved too, not an answer'],
+            ['',        -100,   false, $ok,      0, [],       'the retry backoff rate-limits the never-fetched read'],
+            ['[]',      $fresh, true,  $ok,      0, [],       'an explicitly empty offer set is an answer, not a gap to refetch'],
+            ['',        0,      false, $noField, 1, [],       'a 200 that carries no term list leaves it unresolved'],
+            ['',        0,      false, $notARecord, 1, [],    'a 200 that is not the merchant record at all is a failed fetch'],
+        ];
+
+        foreach ($cases as [$cached, $tsOffset, $fetched, $response, $expectedCalls, $expectedTerms, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+            // fetchHarness() seeds a resolved list when the key is absent, so
+            // the cache row is set after it.
+            $module = self::fetchHarness();
+            if ($cached === null) {
+                Configuration::deleteByName(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS);
+            } else {
+                Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, $cached);
+            }
+            // The invoice-distribution row is what says a fetch has ever succeeded.
+            if ($fetched) {
+                Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, '0');
+            } else {
+                Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, '');
+            }
+            Configuration::updateValue(
+                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+                $tsOffset === 0 ? 0 : time() + $tsOffset
+            );
+            $module->responses[] = $response;
+
+            $terms = $module->getMerchantAvailableTerms();
+
+            TinyAssert::same($expectedCalls, $module->calls, 'wire calls: ' . $description);
+            TinyAssert::same($expectedTerms, $terms, 'terms: ' . $description);
+        }
+    }
+
+    /**
+     * Where each response shape leaves the success stamp on a read that had no
+     * record to serve. A failure keeps the bumped stamp, which is that read's
+     * own retry floor; only a success is a success.
+     */
+    private static function testTheMerchantRecordClockAfterEachResponseShape(): void
+    {
+        $cases = [
+            [['http_status' => 200, 'available_terms' => [30]], true, 'a record carrying the term list has been fetched'],
+            [['http_status' => 200, 'id' => 'mid'], true, 'a record with the term list absent has still answered'],
+            [['http_status' => 200, 'detail' => 'ok'], false, 'a 200 that is not the record has fetched nothing'],
+            [['http_status' => 0], false, 'a transport failure has fetched nothing'],
+        ];
+
+        foreach ($cases as [$response, $expectedFetched, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+            $module = self::fetchHarness();
+            $module->responses[] = $response;
+
+            $module->getMerchantAvailableTerms();
+
+            // The stamp and this time() can straddle a one-second boundary.
+            $age = time() - (int) Configuration::get(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS);
+            TinyAssert::true(
+                $age >= 0 && $age <= 1,
+                'clock: ' . $description . ' (stamp ' . $age . 's old)'
+            );
+            TinyAssert::same($expectedFetched, $module->hasFetchedMerchantRecord(), 'fetched: ' . $description);
+        }
+    }
+
+    /** The siblings this fetch feeds default permissive on an absent field. */
+    private static function testAMerchantRecordlessTwoHundredKeepsTheSiblingCaches(): void
+    {
+        $minimum = json_encode(['amount' => 250.0, 'currency' => 'EUR', 'basis' => 'net']);
+        $cases = [
+            [['http_status' => 200, 'detail' => 'ok'], '["GB"]', 1, $minimum, 30, 'a body answering none of the fetch\'s questions keeps them'],
+            [['http_status' => 200, 'data' => ['id' => 'mid']], '["GB"]', 1, $minimum, 30, 'a body whose fields sit somewhere the consumers do not read keeps them'],
+            [['http_status' => 200, 'id' => 'mid'], 'null', 0, '', 0, 'a real record with the fields absent overwrites them'],
+        ];
+
+        foreach ($cases as [$response, $countries, $distributed, $min, $due, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
+            Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '["GB"]');
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED, 1);
+            Configuration::updateValue(Twopayment::CONFIG_PLATFORM_MIN_ORDER, $minimum);
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS, 30);
+            $module = self::fetchHarness();
+            $module->responses[] = $response;
+
+            $module->getMerchantAvailableTerms();
+
+            TinyAssert::same($countries, Configuration::get(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES), 'buyer countries: ' . $description);
+            TinyAssert::same($distributed, (int) Configuration::get(Twopayment::CONFIG_MERCHANT_INVOICE_DISTRIBUTED), 'invoice distribution: ' . $description);
+            TinyAssert::same($min, Configuration::get(Twopayment::CONFIG_PLATFORM_MIN_ORDER), 'platform minimum: ' . $description);
+            TinyAssert::same($due, (int) Configuration::get(Twopayment::CONFIG_MERCHANT_DUE_IN_DAYS), 'default term: ' . $description);
+        }
+    }
+
+    /** An unset merchant id or API key is not an identity to fetch with. */
+    private static function testGetMerchantAvailableTermsSkipsFetchWithKeysNeverWritten(): void
     {
         self::reset();
-        Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
-        Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
+        // Neither identity key ever written, so both read back as false.
         $module = self::fetchHarness();
-        // Cache-only read never fetches, even with a cold cache: the seam is
-        // reached from render paths that must not block on HTTP.
-        TinyAssert::same([], $module->getMerchantAvailableTerms());
-        TinyAssert::same(0, $module->calls);
+        Configuration::deleteByName(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS);
+        $module->responses[] = ['http_status' => 200, 'available_terms' => [30]];
+
+        TinyAssert::same([], $module->getMerchantAvailableTerms(), 'no identity resolves no terms');
+        TinyAssert::same(0, $module->calls, 'a never-configured shop must not reach the wire');
     }
 
     private static function testGetMerchantAvailableTermsRefreshNormalisesCachesAndServesStale(): void
@@ -4363,36 +5205,38 @@ final class OrderBuilderSpec
         Configuration::updateValue('PS_TWO_MERCHANT_ID', 'mid');
         Configuration::updateValue('PS_TWO_MERCHANT_API_KEY', 'key');
         $module = self::fetchHarness();
-        $expire = static function () {
-            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        $makeStale = static function () {
+            Configuration::updateValue(
+                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+                time() - Twopayment::MERCHANT_RECORD_STALE_AFTER - 1
+            );
+            Configuration::updateValue(Twopayment::CONFIG_MERCHANT_RECORD_STALE_COOLDOWN_TS, 0);
         };
 
-        // First refresh: normalised (ints, dedup, non-positive dropped, non-numeric
+        // First read: normalised (ints, dedup, non-positive dropped, non-numeric
         // dropped rather than intval'd to a phantom 1, sorted).
         $module->responses[] = ['http_status' => 200, 'available_terms' => [60, 30, 30, 0, -5, 90, [7], true, null]];
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
-        TinyAssert::same(1, $module->calls);
-
-        // Within the TTL: served from cache, no request; cache-only reads agree.
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
         TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
         TinyAssert::same(1, $module->calls);
 
-        // Fetch failure after expiry: last-known list served, not blanked.
-        $expire();
+        // Inside the staleness window: served from cache, no request.
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
+        TinyAssert::same(1, $module->calls);
+
+        // Stand-in fetch fails: last-known list served, not blanked.
+        $makeStale();
         $module->responses[] = ['http_status' => 0];
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
         TinyAssert::same(2, $module->calls);
 
-        // ...and the failure still bumped the clock: an immediate re-refresh does
-        // NOT hammer the API (one stall per TTL, not per view).
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        // ...and the stand-in cooldown holds, so a dead schedule is not a fetch per read.
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
         TinyAssert::same(2, $module->calls);
 
-        // Successful response WITHOUT the field (older backend): stale kept.
-        $expire();
+        // Successful response WITHOUT the field (older backend): held list kept.
+        $makeStale();
         $module->responses[] = ['http_status' => 200, 'due_in_days' => 14];
-        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same([30, 60, 90], $module->getMerchantAvailableTerms());
     }
 
     private static function testGetMerchantAvailableTermsRespectsExplicitEmptyList(): void
@@ -4404,33 +5248,27 @@ final class OrderBuilderSpec
         // Seed a stale list, then an explicit [] must overwrite it (the backend
         // says nothing is offerable) - distinct from a failure serving stale.
         $module->responses[] = ['http_status' => 200, 'available_terms' => [30, 60]];
-        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms(true));
-        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms());
+        Configuration::updateValue(
+            Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+            time() - Twopayment::MERCHANT_RECORD_STALE_AFTER - 1
+        );
         $module->responses[] = ['http_status' => 200, 'available_terms' => []];
-        TinyAssert::same([], $module->getMerchantAvailableTerms(true));
+        TinyAssert::same([], $module->getMerchantAvailableTerms());
     }
 
     private static function testGetMerchantAvailableTermsSkipsFetchWithoutIdentity(): void
     {
         self::reset();
-        // No merchant id / API key: no fetch even on refresh with an expired TTL
-        // and a queued response.
-        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, time() - 901);
+        // No merchant id / API key: no fetch even with a stale stamp and a queued response.
+        Configuration::updateValue(
+            Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS,
+            time() - Twopayment::MERCHANT_RECORD_STALE_AFTER - 1
+        );
         $module = self::fetchHarness();
         $module->responses[] = ['http_status' => 200, 'available_terms' => [7]];
-        $module->getMerchantAvailableTerms(true);
+        $module->getMerchantAvailableTerms();
         TinyAssert::same(0, $module->calls);
-    }
-
-    private static function testInvalidateMerchantAvailableTermsClearsCache(): void
-    {
-        self::reset();
-        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS, '[30,60]');
-        Configuration::updateValue(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS_TS, 999);
-        $module = new TwopaymentTestHarness();
-        TinyAssert::same([30, 60], $module->getMerchantAvailableTerms());
-        $module->invalidateMerchantAvailableTerms();
-        TinyAssert::same([], $module->getMerchantAvailableTerms());
     }
 
     /**
@@ -4451,7 +5289,7 @@ final class OrderBuilderSpec
 
         // Backend has since narrowed the offerable set to [30]; 60 is hidden.
         $module = new class extends TwopaymentTestHarness {
-            public function getMerchantAvailableTerms($refresh = false)
+            public function getMerchantAvailableTerms()
             {
                 return [30];
             }
@@ -4462,7 +5300,7 @@ final class OrderBuilderSpec
         };
 
         // The form rendered only the 30 checkbox, so only 30 is POSTed.
-        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'development');
+        Tools::setTestValue('PS_TWO_ENVIRONMENT', 'staging');
         Tools::setTestValue('PS_TWO_TITLE_1', 'Two title');
         Tools::setTestValue('PS_TWO_SUB_TITLE_1', 'Two subtitle');
         Tools::setTestValue('PS_TWO_MERCHANT_SHORT_NAME', 'merchant');
@@ -4500,14 +5338,55 @@ final class OrderBuilderSpec
         // storeTwoFeeQuoteInSession() is private; invoke via reflection rather
         // than widening its visibility just for the test.
         $method = new ReflectionMethod(Twopayment::class, 'storeTwoFeeQuoteInSession');
-        $method->invoke($module, '7|100.00|GB|GBP', [
+        $method->invoke($module, '7:100.00:GB:GBP', [
             'buyer_fee_share' => '1.23',
             'total_fee_tax_rate' => '0.20',
             'currency' => 'GBP',
         ]);
 
         TinyAssert::same(1, $spyCookie->writeCalls);
-        TinyAssert::same('7|100.00|GB|GBP', (string) $spyCookie->two_fee_quote_key);
+        TinyAssert::same('7:100.00:GB:GBP', (string) $spyCookie->two_fee_quote_key);
+    }
+
+    /**
+     * TWO-26084: a charge-path fee quote fetched in one request is served from
+     * the cookie in the next, with no second pricing call. Core's cookie
+     * refuses '|' and '¤', so a key carrying either never reached the cookie.
+     */
+    private static function testFeeQuoteIsReusedByTheNextRequestThroughTheCookie(): void
+    {
+        $cases = [
+            [30, 100.0, 'GB', 'GBP', 'whole amount'],
+            [60, 1234.5, 'NO', 'NOK', 'fractional amount'],
+            [90, 0.01, 'SE', 'SEK', 'smallest amount'],
+        ];
+        foreach ($cases as [$days, $gross, $country, $currency, $description]) {
+            self::reset();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_' . $days, '2');
+            $request = function () use ($currency) {
+                $module = new class extends TwopaymentTestHarness {
+                    public $feeCalls = 0;
+                    public $quoteCurrency = '';
+                    public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                    {
+                        $this->feeCalls++;
+                        return ['http_status' => 200, 'buyer_fee_share' => '2.00', 'currency' => $this->quoteCurrency];
+                    }
+                };
+                $module->quoteCurrency = $currency;
+
+                return $module;
+            };
+
+            $first = $request();
+            $quote = $first->fetchTwoTermFee($days, $gross, $country, $currency, true);
+            TinyAssert::same(1, $first->feeCalls, 'first request must price: ' . $description);
+
+            $second = $request();
+            TinyAssert::same($quote, $second->fetchTwoTermFee($days, $gross, $country, $currency, true), 'cached quote must match: ' . $description);
+            TinyAssert::same(0, $second->feeCalls, 'second request must be served from the cookie: ' . $description);
+        }
     }
 
     private static function testSyncTwoAdminOrderPaymentDataFromProviderPullsLatestTermsFromTwo(): void
@@ -4739,32 +5618,40 @@ final class OrderBuilderSpec
     {
         self::reset();
         $module = new TwopaymentTestHarness();
-        $module->context->cookie->two_company_name = 'Acme Ltd';
-        $module->context->cookie->two_company_id = 'NO123';
-        $module->context->cookie->two_company_country = 'NO';
+        // Stamped with the current cart, so the country guard is what fires here
+        // and not the cart-scope gate (TWO-40).
+        self::seedSessionCompany($module, [
+            'name' => 'Acme Ltd',
+            'id' => 'NO123',
+            'country' => 'NO',
+        ]);
 
         $data = $module->getTwoValidatedSessionCompanyData('ES');
 
         TinyAssert::same('', $data['company_name']);
         TinyAssert::same('', $data['organization_number']);
-        TinyAssert::false(isset($module->context->cookie->two_company_name));
-        TinyAssert::false(isset($module->context->cookie->two_company_id));
-        TinyAssert::false(isset($module->context->cookie->two_company_country));
+        TinyAssert::false(TwoSessionRecord::has('company', 'name'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'id'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'country'));
     }
 
     private static function testGetTwoValidatedSessionCompanyDataRejectsLegacySessionWithoutCountryMarker(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
-        $module->context->cookie->two_company_name = 'Acme Ltd';
-        $module->context->cookie->two_company_id = 'NO123';
+        // Stamped with the current cart, so the missing country marker is what
+        // fires here and not the cart-scope gate (TWO-40).
+        self::seedSessionCompany($module, [
+            'name' => 'Acme Ltd',
+            'id' => 'NO123',
+        ]);
 
         $data = $module->getTwoValidatedSessionCompanyData('ES');
 
         TinyAssert::same('', $data['company_name']);
         TinyAssert::same('', $data['organization_number']);
-        TinyAssert::false(isset($module->context->cookie->two_company_name));
-        TinyAssert::false(isset($module->context->cookie->two_company_id));
+        TinyAssert::false(TwoSessionRecord::has('company', 'name'));
+        TinyAssert::false(TwoSessionRecord::has('company', 'id'));
     }
 
     private static function testBuildTwoApiResponseLogSummaryRedactsNestedProviderPayload(): void
@@ -4863,6 +5750,7 @@ final class OrderBuilderSpec
 
         StubStore::$productCategories[701] = [['name' => 'Furniture']];
         StubStore::$images[701] = ['id_image' => 9901];
+        self::declareProductRate($cart, 701, 21.0);
 
         $items = $module->getTwoProductItems($cart);
 
@@ -4870,76 +5758,137 @@ final class OrderBuilderSpec
         TinyAssert::same([], $items[0]['details']['barcodes']);
     }
 
-    private static function testExtractOrgNumberFromAddressKeepsNonCountryPrefixVatNumber(): void
+    /**
+     * TWO-26071: the image comes from the cart row's own id_image, which core
+     * resolves per combination; a product with no image sends no image_url.
+     */
+    private static function testGetTwoProductItemsSourcesImageFromCartRow(): void
+    {
+        // [id_product_attribute, cart row id_image (null: key absent), expected image_url, description]
+        $cases = [
+            [0, '702-55', 'https://img.local/702-55', 'product with a cover image (PS 1.7/8 id_image form)'],
+            [0, '55', 'https://img.local/55', 'product with a cover image (PS 9 id_image form)'],
+            [31, '702-77', 'https://img.local/702-77', 'combination with its own image'],
+            [0, 'en-default', '', 'product with no image'],
+            [0, null, '', 'cart row with no id_image key'],
+            [0, '0', '', 'image id 0 (PS 9 form)'],
+            [0, '702-0', '', 'image id 0 (PS 1.7/8 form)'],
+        ];
+        foreach ($cases as [$idProductAttribute, $idImage, $expected, $description]) {
+            self::reset();
+            $module = new TwopaymentTestHarness();
+
+            $cart = new Cart(812);
+            $cart->id_lang = 1;
+            $cart->id_carrier = 999;
+            $row = [
+                'id_product' => 702,
+                'id_product_attribute' => $idProductAttribute,
+                'id_image' => $idImage,
+                'link_rewrite' => 'desk-lamp',
+                'name' => 'Desk Lamp',
+                'description_short' => 'Lamp',
+                'manufacturer_name' => 'Acme',
+                'ean13' => '',
+                'upc' => '',
+                'total' => 100.00,
+                'total_wt' => 121.00,
+                'cart_quantity' => 1,
+                'rate' => 21.0,
+                'price' => 100.00,
+                'reduction' => 0,
+            ];
+            if ($idImage === null) {
+                unset($row['id_image']);
+            }
+            StubStore::$cartProducts[812] = [$row];
+            StubStore::$productCategories[702] = [['name' => 'Lighting']];
+            self::declareProductRate($cart, 702, 21.0);
+
+            $items = $module->getTwoProductItems($cart);
+
+            TinyAssert::count(1, $items);
+            TinyAssert::same($expected, $items[0]['image_url'], $description);
+        }
+    }
+
+    /**
+     * `vat_number` is never a source for the organisation number (TWO-40).
+     *
+     * Both shapes the retired fallback used to accept are pinned here, because
+     * both of them looked like a working feature: a VAT number whose two-letter
+     * prefix does NOT match the address country was returned verbatim, and one
+     * whose prefix DID match had the prefix stripped first. Neither is an
+     * organisation number. Do not re-add either branch - assert the empty
+     * string so a reintroduction is a red test rather than a silent behaviour
+     * change.
+     */
+    private static function testExtractOrgNumberFromAddressNeverUsesVatNumber(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
 
         StubStore::$countries[826] = 'GB';
+
+        // Prefix that does not match the address country.
         StubStore::$addresses[812] = [
             'id_country' => 826,
             'company' => 'Cheese Box Ltd',
             'vat_number' => 'SC806781',
             'loaded' => true,
         ];
+        TinyAssert::same('', $module->extractOrgNumberFromAddress(new Address(812), 'GB'));
 
-        $address = new Address(812);
-        $orgNumber = $module->extractOrgNumberFromAddress($address, 'GB');
-
-        TinyAssert::same('SC806781', $orgNumber);
-    }
-
-    private static function testExtractOrgNumberFromAddressStripsMatchingCountryPrefixVatNumber(): void
-    {
-        self::reset();
-        $module = new TwopaymentTestHarness();
-
-        StubStore::$countries[826] = 'GB';
+        // Prefix that does match the address country.
         StubStore::$addresses[813] = [
             'id_country' => 826,
             'company' => 'Cheese Box Ltd',
             'vat_number' => 'GB123456789',
             'loaded' => true,
         ];
-
-        $address = new Address(813);
-        $orgNumber = $module->extractOrgNumberFromAddress($address, 'GB');
-
-        TinyAssert::same('123456789', $orgNumber);
+        TinyAssert::same('', $module->extractOrgNumberFromAddress(new Address(813), 'GB'));
     }
 
-    private static function testGetTwoRequestHeadersSkipAuthForOrderIntent(): void
+    /**
+     * `companyid` IS a source, and the branch reading it is not dead code.
+     *
+     * There is no `companyid` column on `ps_address`, which is why the reader is
+     * behind a `property_exists()` guard - and why it reads as unreachable on a
+     * quick inspection. It is reached on every form-first order intent: the
+     * order-intent controller assigns `$address->companyid` on the loaded
+     * Address object in memory, immediately before handing that object to the
+     * payload builder, so the buyer's just-typed organisation number reaches the
+     * payload without the address being saved first. This test exists so the
+     * next dead-code sweep deletes a red test instead of that path.
+     */
+    private static function testExtractOrgNumberFromAddressUsesInMemoryCompanyid(): void
     {
         self::reset();
         $module = new TwopaymentTestHarness();
 
-        $orderIntentHeaders = $module->getTwoRequestHeaders(
-            '/v1/order_intent',
-            ['Authorization: Bearer should-not-leak', 'X-API-Key: should-not-leak']
-        );
-        $createOrderHeaders = $module->getTwoRequestHeaders('/v1/order');
+        StubStore::$countries[826] = 'GB';
+        StubStore::$addresses[814] = [
+            'id_country' => 826,
+            'company' => 'Cheese Box Ltd',
+            'loaded' => true,
+        ];
 
-        foreach ($orderIntentHeaders as $header) {
-            TinyAssert::false(strpos($header, 'X-API-Key:') === 0);
-            TinyAssert::false(strpos($header, 'Authorization:') === 0);
-            TinyAssert::false(strpos($header, 'Proxy-Authorization:') === 0);
-        }
+        $address = new Address(814);
+        // Exactly what controllers/front/orderintent.php does before building the payload.
+        $address->companyid = '  912345678  ';
 
-        $createOrderHasApiKey = false;
-        foreach ($createOrderHeaders as $header) {
-            if (strpos($header, 'X-API-Key:') === 0) {
-                $createOrderHasApiKey = true;
-                break;
-            }
-        }
-        TinyAssert::true($createOrderHasApiKey);
+        TinyAssert::same('912345678', $module->extractOrgNumberFromAddress($address, 'GB'));
     }
 }
 
 require __DIR__ . '/CustomerAddressFormatterOverrideSpec.php';
 require __DIR__ . '/TwoInvoiceRetrievalSpec.php';
 require __DIR__ . '/TrackingNumberSpec.php';
+require __DIR__ . '/OrderEditRefusalSpec.php';
+require __DIR__ . '/PlacedOrderUpdateSpec.php';
+require __DIR__ . '/CartRuleTracingSpec.php';
 require __DIR__ . '/RefundSpec.php';
+require __DIR__ . '/IdempotencyKeySpec.php';
 require __DIR__ . '/SurchargeSpec.php';
 require __DIR__ . '/DefaultPaymentTermSpec.php';
 require __DIR__ . '/DeployVersionInfoSpec.php';
@@ -4947,16 +5896,97 @@ require __DIR__ . '/MerchantFeeRatesSpec.php';
 require __DIR__ . '/TermSurchargeAmountsSpec.php';
 require __DIR__ . '/SurchargeCartLineSpec.php';
 require __DIR__ . '/ConfirmationLegacyParitySpec.php';
+require __DIR__ . '/CancelMirrorSpec.php';
+require __DIR__ . '/PendingRecoverySpec.php';
 require __DIR__ . '/MinimumOrderGateSpec.php';
+require __DIR__ . '/InvoiceUploadGateSpec.php';
+require __DIR__ . '/FxRatesSpec.php';
 require __DIR__ . '/TwoSoleTraderSpec.php';
-require __DIR__ . '/TwoApiIdentityParamsSpec.php';
+require __DIR__ . '/SslVerificationSpec.php';
+require __DIR__ . '/ShippingCostSourcingSpec.php';
+require __DIR__ . '/AjaxCheckoutFailureSpec.php';
+require __DIR__ . '/CheckoutLatencySpec.php';
+require __DIR__ . '/FulfilledStatusMappingSpec.php';
+require __DIR__ . '/AddressLookupConfigSpec.php';
+require __DIR__ . '/AddressLookupGatingSpec.php';
+require __DIR__ . '/ValidateTaxSubtotalsSpec.php';
+require __DIR__ . '/CompanySearchLocationConfigSpec.php';
+require __DIR__ . '/CompanySearchLocationKeyMigrationSpec.php';
+require __DIR__ . '/SkipConfirmTokenKeyMigrationSpec.php';
+require __DIR__ . '/OrderLifecycleNoteSpec.php';
+require __DIR__ . '/OrgNumberPreVerificationSpec.php';
+require __DIR__ . '/IntentApprovedNoticeSpec.php';
+require __DIR__ . '/BrandTokenSpec.php';
+require __DIR__ . '/UpgradeScriptVersionSpec.php';
+require __DIR__ . '/CompanySearchCountrySourcingSpec.php';
+require __DIR__ . '/SessionCompanyClearSpec.php';
+require __DIR__ . '/ManualEntryDisownSpec.php';
+require __DIR__ . '/MirrorWriteRecordSpec.php';
+require __DIR__ . '/CartRecordStorageSpec.php';
+require __DIR__ . '/CartRecordRetentionSpec.php';
+require __DIR__ . '/OrderCompanyPersistenceSpec.php';
+require __DIR__ . '/SoleTraderTokenPreconditionSpec.php';
+require __DIR__ . '/OverrideMigrationSpec.php';
+require __DIR__ . '/OverrideReinstallSpec.php';
+require __DIR__ . '/EnvironmentUpgradeMigrationSpec.php';
+require __DIR__ . '/EnvironmentOptionsSpec.php';
+require __DIR__ . '/CheckoutTitleSpec.php';
+require __DIR__ . '/CheckoutSubtitleSpec.php';
+require __DIR__ . '/ProductPromoMessageSpec.php';
+require __DIR__ . '/ProductButtonSpec.php';
+require __DIR__ . '/ConfigFallbackSpec.php';
+require __DIR__ . '/TranslationCatalogueSpec.php';
+require __DIR__ . '/CompanyRefusalMessageSpec.php';
+require __DIR__ . '/AssetCacheBustingSpec.php';
+require __DIR__ . '/ApiKeyVerificationSpec.php';
+require __DIR__ . '/RequiredPhoneFieldSpec.php';
+require __DIR__ . '/AdminControlsSpec.php';
+require __DIR__ . '/PaymentCountryRestrictionSpec.php';
+require __DIR__ . '/MerchantRecordKeyBindingSpec.php';
+require __DIR__ . '/MerchantRecordPolicySpec.php';
+require __DIR__ . '/MerchantIdResolutionSpec.php';
+require __DIR__ . '/BillingCompanyCaptureSpec.php';
+require __DIR__ . '/BuyerCompanyFallbackSpec.php';
+require __DIR__ . '/BuyerCountryGateSpec.php';
+require __DIR__ . '/TwoRateLimiterSpec.php';
+require __DIR__ . '/AdminFirewallRateLimitFieldsSpec.php';
+require __DIR__ . '/DefaultShippingTaxCodeSpec.php';
+require __DIR__ . '/fixtures/symfony-console-stubs.php';
+require __DIR__ . '/ShippingTaxFallbackGateSpec.php';
+require __DIR__ . '/ServiceConfigParametersSpec.php';
+require __DIR__ . '/EomTermTypeVisibilitySpec.php';
+require __DIR__ . '/IntentDeclinedNoticeSpec.php';
+require __DIR__ . '/DeprecatedCustomPaymentTermSpec.php';
+require __DIR__ . '/CheckoutWithholdReasonSpec.php';
+require __DIR__ . '/PaymentTileAboutControlSpec.php';
+require __DIR__ . '/PaymentOptionLogoSpec.php';
+require __DIR__ . '/ReconciliationDriftMessageSpec.php';
+require __DIR__ . '/OrderPostprocessingSpec.php';
+require __DIR__ . '/OrderShopContextSpec.php';
+require __DIR__ . '/OrderPostprocessingTraceSpec.php';
+require __DIR__ . '/DroppedRequestKeysSpec.php';
+require __DIR__ . '/ShippingRateControlSpec.php';
+require __DIR__ . '/PostcodeFormatSpec.php';
+require __DIR__ . '/DiscrepancySnapshotSpec.php';
+require __DIR__ . '/TaxCodeSpec.php';
+require __DIR__ . '/TaxCodeAdminSpec.php';
+require __DIR__ . '/OrderTendersSpec.php';
+require __DIR__ . '/DebugApiLoggingSpec.php';
+require __DIR__ . '/ErrorLogAccessSpec.php';
+require __DIR__ . '/ApiRefusalLogSpec.php';
+require __DIR__ . '/OrderTermWireSpec.php';
+require __DIR__ . '/CompanyLookupIdSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
     'CustomerAddressFormatterOverrideSpec::runAll' => [CustomerAddressFormatterOverrideSpec::class, 'runAll'],
     'TwoInvoiceRetrievalSpec::runAll' => [TwoInvoiceRetrievalSpec::class, 'runAll'],
     'TrackingNumberSpec::runAll' => [TrackingNumberSpec::class, 'runAll'],
+    'OrderEditRefusalSpec::runAll' => [OrderEditRefusalSpec::class, 'runAll'],
+    'PlacedOrderUpdateSpec::runAll' => [PlacedOrderUpdateSpec::class, 'runAll'],
+    'CartRuleTracingSpec::runAll' => [CartRuleTracingSpec::class, 'runAll'],
     'RefundSpec::runAll' => [RefundSpec::class, 'runAll'],
+    'IdempotencyKeySpec::runAll' => [IdempotencyKeySpec::class, 'runAll'],
     'SurchargeSpec::runAll' => [SurchargeSpec::class, 'runAll'],
     'DefaultPaymentTermSpec::runAll' => [DefaultPaymentTermSpec::class, 'runAll'],
     'DeployVersionInfoSpec::runAll' => [DeployVersionInfoSpec::class, 'runAll'],
@@ -4964,9 +5994,85 @@ $tests = [
     'TermSurchargeAmountsSpec::runAll' => [TermSurchargeAmountsSpec::class, 'runAll'],
     'SurchargeCartLineSpec::runAll' => [SurchargeCartLineSpec::class, 'runAll'],
     'ConfirmationLegacyParitySpec::runAll' => [ConfirmationLegacyParitySpec::class, 'runAll'],
+    'CancelMirrorSpec::runAll' => [CancelMirrorSpec::class, 'runAll'],
+    'PendingRecoverySpec::runAll' => [PendingRecoverySpec::class, 'runAll'],
     'MinimumOrderGateSpec::runAll' => [MinimumOrderGateSpec::class, 'runAll'],
+    'InvoiceUploadGateSpec::runAll' => [InvoiceUploadGateSpec::class, 'runAll'],
+    'FxRatesSpec::runAll' => [FxRatesSpec::class, 'runAll'],
     'TwoSoleTraderSpec::runAll' => [TwoSoleTraderSpec::class, 'runAll'],
-    'TwoApiIdentityParamsSpec::runAll' => [TwoApiIdentityParamsSpec::class, 'runAll'],
+    'SslVerificationSpec::runAll' => [SslVerificationSpec::class, 'runAll'],
+    'ShippingCostSourcingSpec::runAll' => [ShippingCostSourcingSpec::class, 'runAll'],
+    'AjaxCheckoutFailureSpec::runAll' => [AjaxCheckoutFailureSpec::class, 'runAll'],
+    'CheckoutLatencySpec::runAll' => [CheckoutLatencySpec::class, 'runAll'],
+    'FulfilledStatusMappingSpec::runAll' => [FulfilledStatusMappingSpec::class, 'runAll'],
+    'AddressLookupConfigSpec::runAll' => [AddressLookupConfigSpec::class, 'runAll'],
+    'AddressLookupGatingSpec::runAll' => [AddressLookupGatingSpec::class, 'runAll'],
+    'ValidateTaxSubtotalsSpec::runAll' => [ValidateTaxSubtotalsSpec::class, 'runAll'],
+    'CompanySearchLocationConfigSpec::runAll' => [CompanySearchLocationConfigSpec::class, 'runAll'],
+    'CompanySearchLocationKeyMigrationSpec::runAll' => [CompanySearchLocationKeyMigrationSpec::class, 'runAll'],
+    'SkipConfirmTokenKeyMigrationSpec::runAll' => [SkipConfirmTokenKeyMigrationSpec::class, 'runAll'],
+    'OrderLifecycleNoteSpec::runAll' => [OrderLifecycleNoteSpec::class, 'runAll'],
+    'OrgNumberPreVerificationSpec::runAll' => [OrgNumberPreVerificationSpec::class, 'runAll'],
+    'IntentApprovedNoticeSpec::runAll' => [IntentApprovedNoticeSpec::class, 'runAll'],
+    'BrandTokenSpec::runAll' => [BrandTokenSpec::class, 'runAll'],
+    'UpgradeScriptVersionSpec::runAll' => [UpgradeScriptVersionSpec::class, 'runAll'],
+    'CompanySearchCountrySourcingSpec::runAll' => [CompanySearchCountrySourcingSpec::class, 'runAll'],
+    'SessionCompanyClearSpec::runAll' => [SessionCompanyClearSpec::class, 'runAll'],
+    'ManualEntryDisownSpec::runAll' => [ManualEntryDisownSpec::class, 'runAll'],
+    'MirrorWriteRecordSpec::runAll' => [MirrorWriteRecordSpec::class, 'runAll'],
+    'CartRecordStorageSpec::runAll' => [CartRecordStorageSpec::class, 'runAll'],
+    'CartRecordRetentionSpec::runAll' => [CartRecordRetentionSpec::class, 'runAll'],
+    'OrderCompanyPersistenceSpec::runAll' => [OrderCompanyPersistenceSpec::class, 'runAll'],
+    'SoleTraderTokenPreconditionSpec::runAll' => [SoleTraderTokenPreconditionSpec::class, 'runAll'],
+    'OverrideMigrationSpec::runAll' => [OverrideMigrationSpec::class, 'runAll'],
+    'OverrideReinstallSpec::runAll' => [OverrideReinstallSpec::class, 'runAll'],
+    'EnvironmentUpgradeMigrationSpec::runAll' => [EnvironmentUpgradeMigrationSpec::class, 'runAll'],
+    'EnvironmentOptionsSpec::runAll' => [EnvironmentOptionsSpec::class, 'runAll'],
+    'CheckoutTitleSpec::runAll' => [CheckoutTitleSpec::class, 'runAll'],
+    'CheckoutSubtitleSpec::runAll' => [CheckoutSubtitleSpec::class, 'runAll'],
+    'ProductPromoMessageSpec::runAll' => [ProductPromoMessageSpec::class, 'runAll'],
+    'ProductButtonSpec::runAll' => [ProductButtonSpec::class, 'runAll'],
+    'PaymentTileAboutControlSpec::runAll' => [PaymentTileAboutControlSpec::class, 'runAll'],
+    'PaymentOptionLogoSpec::runAll' => [PaymentOptionLogoSpec::class, 'runAll'],
+    'DiscrepancySnapshotSpec::runAll' => [DiscrepancySnapshotSpec::class, 'runAll'],
+    'TaxCodeSpec::runAll' => [TaxCodeSpec::class, 'runAll'],
+    'TaxCodeAdminSpec::runAll' => [TaxCodeAdminSpec::class, 'runAll'],
+    'ConfigFallbackSpec::runAll' => [ConfigFallbackSpec::class, 'runAll'],
+    'TranslationCatalogueSpec::runAll' => [TranslationCatalogueSpec::class, 'runAll'],
+    'CompanyRefusalMessageSpec::runAll' => [CompanyRefusalMessageSpec::class, 'runAll'],
+    'AssetCacheBustingSpec::runAll' => [AssetCacheBustingSpec::class, 'runAll'],
+    'ApiKeyVerificationSpec::runAll' => [ApiKeyVerificationSpec::class, 'runAll'],
+    'RequiredPhoneFieldSpec::runAll' => [RequiredPhoneFieldSpec::class, 'runAll'],
+    'AdminControlsSpec::runAll' => [AdminControlsSpec::class, 'runAll'],
+    'PaymentCountryRestrictionSpec::runAll' => [PaymentCountryRestrictionSpec::class, 'runAll'],
+    'MerchantRecordKeyBindingSpec::runAll' => [MerchantRecordKeyBindingSpec::class, 'runAll'],
+    'MerchantRecordPolicySpec::runAll' => [MerchantRecordPolicySpec::class, 'runAll'],
+    'MerchantIdResolutionSpec::runAll' => [MerchantIdResolutionSpec::class, 'runAll'],
+    'BillingCompanyCaptureSpec::runAll' => [BillingCompanyCaptureSpec::class, 'runAll'],
+    'BuyerCompanyFallbackSpec::runAll' => [BuyerCompanyFallbackSpec::class, 'runAll'],
+    'BuyerCountryGateSpec::runAll' => [BuyerCountryGateSpec::class, 'runAll'],
+    'TwoRateLimiterSpec::runAll' => [TwoRateLimiterSpec::class, 'runAll'],
+    'AdminFirewallRateLimitFieldsSpec::runAll' => [AdminFirewallRateLimitFieldsSpec::class, 'runAll'],
+    'DefaultShippingTaxCodeSpec::runAll' => [DefaultShippingTaxCodeSpec::class, 'runAll'],
+    'ShippingTaxFallbackGateSpec::runAll' => [ShippingTaxFallbackGateSpec::class, 'runAll'],
+    'ServiceConfigParametersSpec::runAll' => [ServiceConfigParametersSpec::class, 'runAll'],
+    'EomTermTypeVisibilitySpec::runAll' => [EomTermTypeVisibilitySpec::class, 'runAll'],
+    'IntentDeclinedNoticeSpec::runAll' => [IntentDeclinedNoticeSpec::class, 'runAll'],
+    'DeprecatedCustomPaymentTermSpec::runAll' => [DeprecatedCustomPaymentTermSpec::class, 'runAll'],
+    'CheckoutWithholdReasonSpec::runAll' => [CheckoutWithholdReasonSpec::class, 'runAll'],
+    'ReconciliationDriftMessageSpec::runAll' => [ReconciliationDriftMessageSpec::class, 'runAll'],
+    'OrderPostprocessingSpec::runAll' => [OrderPostprocessingSpec::class, 'runAll'],
+    'OrderShopContextSpec::runAll' => [OrderShopContextSpec::class, 'runAll'],
+    'OrderPostprocessingTraceSpec::runAll' => [OrderPostprocessingTraceSpec::class, 'runAll'],
+    'DroppedRequestKeysSpec::runAll' => [DroppedRequestKeysSpec::class, 'runAll'],
+    'ShippingRateControlSpec::runAll' => [ShippingRateControlSpec::class, 'runAll'],
+    'PostcodeFormatSpec::runAll' => [PostcodeFormatSpec::class, 'runAll'],
+    'OrderTendersSpec::runAll' => [OrderTendersSpec::class, 'runAll'],
+    'DebugApiLoggingSpec::runAll' => [DebugApiLoggingSpec::class, 'runAll'],
+    'ErrorLogAccessSpec::runAll' => [ErrorLogAccessSpec::class, 'runAll'],
+    'ApiRefusalLogSpec::runAll' => [ApiRefusalLogSpec::class, 'runAll'],
+    'OrderTermWireSpec::runAll' => [OrderTermWireSpec::class, 'runAll'],
+    'CompanyLookupIdSpec::runAll' => [CompanyLookupIdSpec::class, 'runAll'],
 ];
 
 $failed = 0;
@@ -4977,6 +6083,9 @@ foreach ($tests as $name => $callable) {
     } catch (Throwable $e) {
         $failed++;
         fwrite(STDERR, "FAIL {$name}: {$e->getMessage()}\n");
+        if (getenv('TESTS_TRACE')) {
+            fwrite(STDERR, $e->getTraceAsString() . "\n");
+        }
     }
 }
 

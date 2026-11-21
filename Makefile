@@ -2,7 +2,7 @@
 # Development environment
 # ==============================================================================
 
--include .env.local
+-include .env
 
 CONTAINER  := prestashop
 DB_CONTAINER := prestashop-db
@@ -11,31 +11,46 @@ PORT       := 1237
 URL        := http://localhost:$(PORT)/
 
 MODULE_NAME := twopayment
+PHPSTAN_VERSION      := 2.2.5
+# Re-derive this hash from the official GitHub release page/checksums when
+# bumping PHPSTAN_VERSION — never copy it from elsewhere.
+PHPSTAN_SHA256       := 1b2f03384ebcfd67053b06b69cbc0b9f62bf239349f69eaf723649409789e2e6
 ADMIN_MAIL  := exampleuser@two.inc
 ADMIN_PASSWD := examplepassword123
 export PORT
 
 # Internal Two devs (@two.inc gcloud account) point at staging; everyone else
 # at sandbox. Mirrors the Magento plugin convention. Override either via
-# .env.local or `make ... TWO_ENV=...`.
+# .env or `make ... TWO_ENV=...`.
 TWO_ENV              := $(shell gcloud config get-value account 2>/dev/null | grep -q '@two\.inc$$' && echo staging || echo sandbox)
 TWO_API_BASE_URL     ?= https://api.$(TWO_ENV).two.inc
-TWO_PORTAL_BASE_URL  ?= https://portal.$(TWO_ENV).two.inc
-export TWO_API_BASE_URL TWO_PORTAL_BASE_URL
-# Plugin admin config only exposes 'sandbox' vs 'production' â€” TWO_ENV
-# selects the API URL the dev loop hits, TWO_ENVIRONMENT selects the
-# plugin's admin-side mode.
-TWO_ENVIRONMENT      ?= sandbox
+# Hosted checkout-page app (sole-trader signup). Overridable on its own - point
+# it at a locally-served checkout-page, or at an FRP tunnel pointing at one,
+# while the API stays on staging/sandbox. Defaulted to the SAME TWO_ENV as the
+# API on purpose: the delegated-authority tokens the API mints are redeemed by
+# the checkout-page app, so a dev loop that silently mixed environments here
+# would fail the signup flow rather than fall back to anything. Values a browser
+# must resolve (this one) cannot use host.docker.internal - see "Service URL
+# overrides" in README.
+TWO_CHECKOUT_BASE_URL ?= https://checkout.$(TWO_ENV).two.inc
+export TWO_API_BASE_URL TWO_CHECKOUT_BASE_URL
+# TWO_ENV selects the API URL the dev loop hits, TWO_ENVIRONMENT selects the
+# plugin's admin-side mode (production, sandbox or staging).
+TWO_ENVIRONMENT      ?= $(TWO_ENV)
+# Offers the Staging environment in the admin (TWO-26604). Set for internal
+# Two devs, the same people TWO_ENV points at staging.
+TWO_INTERNAL_ENVIRONMENTS ?= $(if $(filter staging,$(TWO_ENV)),1,)
+export TWO_INTERNAL_ENVIRONMENTS
 TWO_STORE_COUNTRY    ?= NO
 export TWO_STORE_COUNTRY
 
-.PHONY: help install configure run debug stop clean flush logs proxy archive test
+.PHONY: help install configure run debug stop clean flush logs proxy archive test test-js test-integration carrierless-shop carrierless-matrix bump patch minor major phpstan tax-admin-baseline bumpver-patch bumpver-minor bumpver-major
 
 .DEFAULT_GOAL := help
 
 ## Show this help
 help:
-	@awk '/^## /{desc=substr($$0,4)} /^[a-zA-Z_-]+:/{if(desc){printf "  \033[36m%-16s\033[0m %s\n",$$1,desc; desc=""}}' $(MAKEFILE_LIST)
+	@awk '/^## /{desc=substr($$0,4)} /^[a-zA-Z_-]+:/{if(desc){printf "  \033[36m%-18s\033[0m %s\n",$$1,desc; desc=""}}' $(MAKEFILE_LIST)
 
 ## Create PrestaShop + MariaDB containers, install the Two module
 install: clean
@@ -69,12 +84,13 @@ install: clean
 	echo ""; \
 	echo "========================================="; \
 	echo " PrestaShop store: $(URL)"; \
-	echo " Admin panel:      $(URL)admin-dev"; \
+	echo " Admin panel:      $(URL)admin"; \
 	if [ -n "$$PROXY_URL" ]; then \
 		echo " Proxy store:     $$PROXY_URL/"; \
-		echo " Proxy admin:     $$PROXY_URL/admin-dev"; \
+		echo " Proxy admin:     $$PROXY_URL/admin"; \
 	fi; \
 	echo " Credentials:      $(ADMIN_MAIL) / $(ADMIN_PASSWD)"; \
+	dev/print-resolved-hosts.sh $(CONTAINER) $(MODULE_NAME); \
 	echo "========================================="
 
 ## Update Two payment config (writes key + calls verify_api_key so the
@@ -99,12 +115,13 @@ run:
 	echo ""; \
 	echo "========================================="; \
 	echo " PrestaShop store: $(URL)"; \
-	echo " Admin panel:      $(URL)admin-dev"; \
+	echo " Admin panel:      $(URL)admin"; \
 	if [ -n "$$PROXY_URL" ]; then \
 		echo " Proxy store:     $$PROXY_URL/"; \
-		echo " Proxy admin:     $$PROXY_URL/admin-dev"; \
+		echo " Proxy admin:     $$PROXY_URL/admin"; \
 	fi; \
 	echo " Credentials:      $(ADMIN_MAIL) / $(ADMIN_PASSWD)"; \
+	dev/print-resolved-hosts.sh $(CONTAINER) $(MODULE_NAME); \
 	echo "========================================="
 
 ## Start with PS_DEV_MODE on and caches cleared (hot reload)
@@ -138,6 +155,91 @@ logs:
 ## Run the unit test harness (same suite CI runs)
 test:
 	docker run --rm -v "$(CURDIR)":/app -w /app php:8.2-cli php tests/run.php
+
+# Unlike `test` / `phpstan` / `format`, this one runs on the HOST rather than in
+# a container: it needs Node, same implicit prerequisite as `bumpver` for the
+# version targets. Install once with any Node 20+ and it is self-servicing after
+# that. Re-runs `npm ci` whenever the lockfile is newer than the installed tree,
+# so a devDependency bump cannot leave you testing against stale versions while
+# CI tests against the pinned ones.
+## Run the Jest suite over the module's browser JS (needs host Node 20+; same suite CI runs)
+test-js:
+	@if [ ! -d node_modules ] || [ package-lock.json -nt node_modules ]; then \
+		npm ci --no-audit --no-fund; \
+	fi
+	npm run test:js
+
+# Carrier-less shipping (TWO-25200 / TWO-25217). A shop where shipping is
+# priced but no carrier declares a tax rules group for it — the shape the
+# optional "Default shipping tax code" setting exists for. Not part of
+# `install`: it is a deliberately unusual shop, not a default dev shop.
+#
+# What it does:
+#   - installs tests/integration/fixtures/twocarrierlesstest, which injects a
+#     priced delivery option belonging to no carrier
+#   - creates a customer, a company address, a 25% tax rules group and a cart
+#     carrying that delivery selection (id_carrier = 0)
+## Set up the local shop for carrier-less shipping
+carrierless-shop:
+	PS_CONTAINER=$(CONTAINER) dev/ci/seed-carrierless-cart.sh
+	PS_CONTAINER=$(CONTAINER) dev/ci/install-order-postprocessing-fixture.sh
+	@echo ""
+	@echo "========================================="
+	@echo " Carrier-less shipping is set up."
+	@echo " Admin field:  $(URL)admin -> Modules -> Two -> Configure -> Advanced settings"
+	@echo "               -> 'Default shipping tax code'"
+	@echo " Probe it:     make test-integration"
+	@echo "========================================="
+
+# Configs 4/5 (merchant override) run only with MERCHANT_OVERRIDE_PATH,
+# MERCHANT_SHIM_PATH and MERCHANT_RATE_CONFIG_KEY set; see tests/integration/README.md.
+## Cross carrier-less shipping modes with Default shipping tax code configs on a throwaway shop; prints a results table
+# The image defaults as docker-compose.yml does; CI passes a discovered one.
+carrierless-matrix:
+	PS_IMAGE="$${PS_IMAGE:-$${PRESTASHOP_IMAGE:-prestashop/prestashop:8-apache}}" dev/ci/run-carrierless-matrix.sh
+
+## Run the tests/integration probes against the running local shop (run make carrierless-shop first)
+test-integration:
+	PS_CONTAINER=$(CONTAINER) dev/ci/run-integration-probes.sh
+
+## Compare the Order management render's Configuration writes with the base commit's (TWO-26153; host PHP)
+tax-admin-baseline:
+	dev/tax-admin-baseline.sh
+
+## Run phpstan static analysis (same gate CI runs)
+phpstan:
+	docker run --rm -v "$(CURDIR)":/app -w /app php:8.2-cli bash -c "\
+		php -r \"copy('https://github.com/phpstan/phpstan/releases/download/$(PHPSTAN_VERSION)/phpstan.phar', '/tmp/phpstan.phar');\" \
+		&& echo '$(PHPSTAN_SHA256)  /tmp/phpstan.phar' | sha256sum -c - \
+		&& php /tmp/phpstan.phar analyse --configuration=phpstan.neon --no-progress --memory-limit=1G"
+
+# Requires bumpver on PATH (pip install bumpver / pipx install bumpver),
+# same implicit prerequisite as the sibling plugin repos.
+# tag/push are off in bumpver.toml — this only commits the bump locally.
+#
+# Version-bump convention (TWO-25256): the version is computed from the
+# conventional-commit types of a PR's own commits and committed onto that PR's
+# branch by .github/workflows/version-bump.yml, so it describes the change
+# rather than the branch it merges into. DO NOT hand-run a bump for a PR into
+# `staging` - CI owns it, and a hand-run one is at best redundant.
+#
+# `make bump` is now a PREVIEW of that decision (it writes nothing). The
+# explicit patch/minor/major targets remain for a deliberate manual override.
+bumpver-%:
+	SKIP=commit-msg bumpver update --$*
+
+## Preview the version this branch's PR will land with (writes nothing)
+bump:
+	@.github/scripts/decide-bump-level.sh origin/staging HEAD >/dev/null
+
+## Bump patch version (prefer `make bump`)
+patch: bumpver-patch
+
+## Bump minor version (prefer `make bump`)
+minor: bumpver-minor
+
+## Bump major version (prefer `make bump`)
+major: bumpver-major
 
 ## Create a versioned zip archive
 archive:

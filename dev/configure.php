@@ -21,8 +21,9 @@ require '/var/www/html/config/config.inc.php';
 
 $apiKey      = getenv('TWO_API_KEY') ?: 'dummy-dev-key';
 $environment = getenv('TWO_ENVIRONMENT') ?: 'sandbox';
-// Plugin uses 'development' internally; 'sandbox' is an alias from the Makefile UX.
-$pluginEnv = ($environment === 'production') ? 'production' : 'development';
+// Stored as given when it is one of the plugin's environments (TWO-26604);
+// anything else is stored as 'sandbox', the plugin's own fallback.
+$pluginEnv = in_array($environment, array('production', 'sandbox', 'staging'), true) ? $environment : 'sandbox';
 
 // --- Defensive dedup: keep highest id_configuration row per (name, NULL scope). ---
 $keys = [

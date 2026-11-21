@@ -1,12 +1,57 @@
-/**
- * Two Payment Module - Production Ready with Enhanced Compatibility
- * Defensive initialization for merchant environment compatibility
- */
-
-// CRITICAL FIX: Ensure jQuery is available before executing
 (function() {
     'use strict';
     let localFallbackAttempted = false;
+
+    // Exposed on `window` for the Jest suite - the module's scripts are plain
+    // classic scripts with nothing to require(), so this is how the mapping
+    // gets covered at all.
+    //
+    // The switches arrive in two different shapes and must be read
+    // accordingly: the location/lookup switches are Configuration STRINGS
+    // ('0'/'1'), the verification verdict is a real boolean. Every one of them
+    // is written so that only an explicit "off" value turns anything off - an
+    // absent key (an older cached config payload, a theme that rebuilds the
+    // payload) must never read as "disabled".
+    function buildCheckoutManagerConfig(config) {
+        return {
+            // TWO-25326: decides WHERE the one control renders:
+            // '1' (default) = address area, '0' = payment tile. Absent reads
+            // as address-area, matching the server-side resolver.
+            companySearchInAddressArea: config.company_name_search !== '0',
+            // Separate toggle from companySearchInAddressArea (TWO-25203):
+            // the address / DNI / VAT fill is independent of where the search
+            // widget renders, and only matters when the control is in the
+            // address area. Absent reads as enabled, matching the server-side
+            // default-on resolver.
+            addressLookupEnabled: config.address_lookup !== '0',
+            // TWO-25326: an absent key must read as verified rather than take
+            // the search away from a working shop.
+            apiKeyVerified: config.api_key_verified !== false,
+            // TWO-25386: an absent key - an older cached config payload
+            // predating this admin toggle - must read as enabled.
+            orderIntentEnabled: config.enable_order_intent !== 0
+                && config.enable_order_intent !== '0'
+                && config.enable_order_intent !== false,
+            // TWO-40: seeds the manager's in-memory selection so it survives
+            // the page loads the address step is made of - see
+            // TwoCheckoutManager.seedConfirmedCompanySelectionFromServer().
+            confirmedCompany: config.confirmed_company || null,
+            checkoutHost: config.checkout_host,
+            orderIntentUrl: config.order_intent_url,
+            ajaxToken: config.ajax_token,
+            // No default. An absent list means no term is offered, and
+            // substituting one offers the buyer a term the merchant may not hold.
+            available_payment_terms: config.available_payment_terms || [],
+            default_payment_term: config.default_payment_term || 0,
+            // 0 when the server published no retained selection; the picker
+            // then falls back to the default term.
+            selected_payment_term: config.selected_payment_term || 0,
+            payment_term_type: config.payment_term_type
+        };
+    }
+
+    window.twoBuildCheckoutManagerConfig = buildCheckoutManagerConfig;
+
 
     function getLocalJQueryCandidates() {
         const candidates = [];
@@ -58,10 +103,8 @@
         });
     }
 
-    // Wait for jQuery to be available (with timeout)
     function waitForJQuery(callback, maxAttempts = 50) {
         if (typeof jQuery !== 'undefined' && typeof $ !== 'undefined') {
-            // jQuery is available, proceed
             callback();
         } else if (maxAttempts > 0) {
             if (maxAttempts === 25 && !localFallbackAttempted) {
@@ -72,71 +115,76 @@
                 });
                 return;
             }
-            // jQuery not yet available, wait and retry
             setTimeout(function() {
                 waitForJQuery(callback, maxAttempts - 1);
             }, 100);
         } else {
-            // jQuery failed to load after timeout
             console.error('Two Payment: jQuery not available after timeout. Module cannot initialize.');
         }
     }
     
-    // Initialize when jQuery is ready
     waitForJQuery(function() {
         $(document).ready(function() {
     
-    // DEFENSIVE: Guard against missing configuration
     if (typeof twopayment === 'undefined') {
         console.warn('Two Payment: Configuration not found. Module may not be properly loaded.');
         return;
     }
     
-    // DEFENSIVE: Guard against missing dependencies
     if (typeof TwoCheckoutManager === 'undefined') {
         console.error('Two Payment: TwoCheckoutManager class not found. Check script loading order.');
         return;
     }
     
-    // DEFENSIVE: Retry initialization if DOM isn't ready
     function initializeTwoPayment() {
         try {
             if (window.TwoCheckoutManager_Instance && typeof window.TwoCheckoutManager_Instance.cleanup === 'function') {
                 window.TwoCheckoutManager_Instance.cleanup();
             }
 
-            // Initialize the checkout manager with configuration
-            const checkoutManager = new TwoCheckoutManager({
-                companySearchEnabled: twopayment.company_name_search === '1',
-                orderIntentEnabled: true,
-                checkoutHost: twopayment.checkout_host,
-                orderIntentUrl: twopayment.order_intent_url,
-                ajaxToken: twopayment.ajax_token,
-                available_payment_terms: twopayment.available_payment_terms || [30],
-                default_payment_term: twopayment.default_payment_term || 30,
-                payment_term_type: twopayment.payment_term_type
-            });
+            const checkoutManager = new TwoCheckoutManager(buildCheckoutManagerConfig(twopayment));
             
-            // Store global reference for modules
             window.TwoCheckoutManager_Instance = checkoutManager;
 
-            // Sole trader flow (TWO-24755) - separate presentation module,
-            // active only when the merchant enabled it.
+            // Sole trader flow (TWO-24755). Always constructed; availability is
+            // decided per billing country by the server-side registry answer
+            // via soleTraderAvailability. The enrolment entry point lives
+            // inside TwoCompanySearch's dropdown, which reads this instance's
+            // availability cache and calls startEnrollment() directly; this
+            // instance owns the enrolment mechanics (token minting, the signup
+            // popup, autofill).
             if (
                 typeof TwoSoleTrader !== 'undefined' &&
-                twopayment.sole_trader &&
-                String(twopayment.sole_trader.enabled) === '1' &&
                 !window.TwoSoleTrader_Instance
             ) {
                 window.TwoSoleTrader_Instance = new TwoSoleTrader({
-                    enabled: true,
                     checkoutHost: twopayment.checkout_host,
                     orderIntentUrl: twopayment.order_intent_url,
                     ajaxToken: twopayment.ajax_token,
+                    // TWO-25326: availability is about the cart's billing
+                    // country, not the visitor/shop country. The payment step
+                    // renders no country select, so it has to come from the
+                    // payload - under its own key, since the search's
+                    // `company_search_country` falls back to the shipping address.
+                    billingCountry: twopayment.sole_trader_country,
                     shopCountry: twopayment.shop_country,
+                    statusLabel: twopayment.i18n && twopayment.i18n.sole_trader_status_label
+                });
+            }
+
+            // Always constructed: which fields exist in the DOM is
+            // decided server-side by the four PS_TWO_ENABLE_* switches, and
+            // with none of them on this module finds nothing to mirror.
+            if (typeof TwoOptionalFields !== 'undefined') {
+                if (
+                    window.TwoOptionalFields_Instance &&
+                    typeof window.TwoOptionalFields_Instance.cleanup === 'function'
+                ) {
+                    window.TwoOptionalFields_Instance.cleanup();
+                }
+                window.TwoOptionalFields_Instance = new TwoOptionalFields({
                     i18n: {
-                        registered_business: twopayment.i18n && twopayment.i18n.sole_trader_registered_business,
-                        sole_trader: twopayment.i18n && twopayment.i18n.sole_trader_label
+                        invalid_invoice_email: twopayment.i18n && twopayment.i18n.invalid_invoice_email
                     }
                 });
             }
@@ -144,7 +192,7 @@
         } catch (error) {
             console.error('Two Payment: Initialization failed:', error);
             
-            // Fallback: Try again after short delay for theme compatibility
+            // Retry once for theme compatibility.
             setTimeout(() => {
                 try {
                     if (typeof TwoCheckoutManager !== 'undefined') {
@@ -152,16 +200,7 @@
                             window.TwoCheckoutManager_Instance.cleanup();
                         }
 
-                        const checkoutManager = new TwoCheckoutManager({
-                            companySearchEnabled: twopayment.company_name_search === '1',
-                            orderIntentEnabled: true,
-                            checkoutHost: twopayment.checkout_host,
-                            orderIntentUrl: twopayment.order_intent_url,
-                            ajaxToken: twopayment.ajax_token,
-                            available_payment_terms: twopayment.available_payment_terms || [30],
-                            default_payment_term: twopayment.default_payment_term || 30,
-                            payment_term_type: twopayment.payment_term_type
-                        });
+                        const checkoutManager = new TwoCheckoutManager(buildCheckoutManagerConfig(twopayment));
                         window.TwoCheckoutManager_Instance = checkoutManager;
                     }
                 } catch (retryError) {
@@ -171,12 +210,14 @@
         }
     }
     
-    // Initialize immediately
     initializeTwoPayment();
 
     window.addEventListener('beforeunload', function() {
         if (window.TwoCheckoutManager_Instance && typeof window.TwoCheckoutManager_Instance.cleanup === 'function') {
             window.TwoCheckoutManager_Instance.cleanup();
+        }
+        if (window.TwoOptionalFields_Instance && typeof window.TwoOptionalFields_Instance.cleanup === 'function') {
+            window.TwoOptionalFields_Instance.cleanup();
         }
     });
         }); 

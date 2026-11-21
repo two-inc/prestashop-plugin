@@ -67,12 +67,12 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         $extra_data = array();
         if (!empty($attempt['two_order_id'])) {
             $two_order_id = $attempt['two_order_id'];
-            $cancel_response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
+            $cancel_response = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', new Cart((int) $attempt['id_cart']));
             $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
             if ($cancel_http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Attempt cancel failed for token ' . $attempt_token . ', Two order ' . $two_order_id .
-                    ', HTTP ' . $cancel_http_status,
+                    ' - ' . $this->module->getTwoApiErrorDetail($cancel_response),
                     2
                 );
             }
@@ -146,15 +146,14 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
                 '. Local cancellation aborted to preserve provider-first consistency.',
                 3
             );
-            $message = sprintf($this->module->l('Could not update status to cancelled, please check with Two admin for id %s'), (string)$order->id);
+            $message = sprintf($this->module->l('Could not update status to cancelled, please check with %1$s admin for id %2$s'), $this->module->getTwoBrandConfig('product_name'), (string)$order->id);
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
         $two_order_id = (string)$orderpaymentdata['two_order_id'];
 
-        $cancel_response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
-        $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
+        $cancel_response = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
 
         $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
         $response_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
@@ -180,34 +179,22 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             PrestaShopLogger::addLog(
                 'TwoPayment: Legacy cancel callback could not confirm CANCELLED provider state for order ' . (int)$order->id .
                 ', Two order ' . $two_order_id .
-                ', cancel_http=' . $cancel_http_status .
+                ', cancel: ' . $this->module->getTwoApiErrorDetail($cancel_response) .
                 ', fetch_http=' . $response_http_status .
                 ', provider_state=' . (isset($response['state']) ? (string)$response['state'] : 'unknown'),
                 2
             );
-            $message = sprintf($this->module->l('Could not update status to cancelled, please check with Two admin for id %s'), $two_order_id);
+            $message = sprintf($this->module->l('Could not update status to cancelled, please check with %1$s admin for id %2$s'), $this->module->getTwoBrandConfig('product_name'), $two_order_id);
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
         $this->module->restoreDuplicateCart($order->id, $order->id_customer);
-        $this->module->changeOrderStatus($order->id, $this->getCancelledStatus());
+        $this->module->changeOrderStatus($order->id, $this->module->getTwoCancelledOrderStatusId());
 
         $message = $this->module->l('Your order is cancelled.');
         $this->errors[] = $message;
         $this->redirectWithNotifications('index.php?controller=order');
-    }
-
-    private function getCancelledStatus()
-    {
-        $cancelled_status = Configuration::get('PS_TWO_OS_CANCELLED');
-        if (!$cancelled_status) {
-            $cancelled_status = Configuration::get('PS_TWO_OS_CANCELLED_MAP');
-            if (!$cancelled_status) {
-                $cancelled_status = Configuration::get('PS_OS_CANCELED');
-            }
-        }
-        return (int)$cancelled_status;
     }
 
     /**

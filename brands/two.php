@@ -2,10 +2,9 @@
 /**
  * Two brand defaults (PrestaShop).
  *
- * A minimal brand-config seam mirroring the WooCommerce plugin's
- * brands/two.php and the Magento plugin's brand descriptors. Values here are
- * the Two defaults; a white-label overlay can replace this file to narrow or
- * relabel them. Only the surcharge-relevant keys are defined for now
+ * A minimal brand-config seam. Values here are the Two defaults; a
+ * white-label overlay can replace this file to narrow or relabel them.
+ * Only the surcharge-relevant keys are defined for now
  * (TWO-24893); the full brand-config foundation is TWO-24746.
  *
  * @return array<string, mixed>
@@ -16,12 +15,67 @@ if (!defined('_PS_VERSION_')) {
 }
 
 return array(
+    // Customer-facing product name (admin captions, checkout copy, order
+    // notes) - TWO-25386. An overlay replaces this with its own brand name;
+    // getTwoBrandConfig() resolves it wherever the plugin used to hardcode
+    // the literal word "Two".
+    'product_name' => 'Two',
+    // Module-relative path to the brand's mark, or null where a brand ships
+    // none. TWO-25799 resolves the product-page badge's image through this
+    // rather than hardcoding Two's asset: a hardcoded mark would put Two's
+    // logo on an overlay's storefront the day one exists, and it would
+    // disagree with the configurable product_name beside it.
+    'logo' => 'views/img/TwoLogo.svg',
+    // Legal/company name the merchant is told to contact.
+    'provider_full_name' => 'Two',
     // Increments the buyer surcharge line may be rounded to, offered in the
-    // admin Rounding Step select. Mirrors the WooCommerce brand
-    // available_rounding_steps and Magento's RoundingStep source model; an
-    // overlay narrows the set.
+    // admin Rounding Step select. An overlay narrows the set.
     'rounding_steps' => array(0.10, 0.50, 1.00, 5.00, 10.00),
     // Buyer-facing label for the offset-pricing fee line; null falls back to
     // the translated default in Twopayment::getTwoSurchargeLineLabel().
     'fee_line_label' => null,
+    // ON/OFF switch for the order-intent APPROVED notice shown inline in the
+    // Two payment option at checkout (TWO-25218). Explicit boolean ONLY,
+    // resolved by Twopayment::isIntentApprovedNoticeEnabled():
+    //
+    //   true          - notice ON. Declared explicitly here, not left implied.
+    //   false         - notice suppressed entirely: no element is rendered,
+    //                   not even an empty wrapper.
+    //   key absent    - documented default TRUE (notice ON). This is what
+    //                   keeps a third-party overlay that declares nothing on ON.
+    //   anything else - a clear logged error, then the default TRUE. Never a
+    //                   silent third behaviour. Deliberately not a throw: this
+    //                   resolves on a buyer-facing checkout render, and a white
+    //                   screen is a worse failure than a notice that stays on.
+    //
+    // What is switched: the buyer-facing reassurance messaging around the
+    // order-intent pre-check - the APPROVED notice, and the loading overlay
+    // shown while the check runs (TWO-25224; it carries our own "Checking Two
+    // payment eligibility..." copy, so the two switch together).
+    'intent_approved_notice_enabled' => true,
+    // COPY OVERRIDE ONLY for that notice (TWO-25218), resolved by
+    // Twopayment::getIntentApprovedNotice():
+    //
+    //   null (or key absent) - platform default translated copy. The Two default.
+    //   non-empty string     - used verbatim as the company-variant template,
+    //                          where %s is the buyer's company name.
+    //
+    // NOTE: an empty or whitespace-only string is now INERT - it resolves to
+    // the platform default copy. It is NOT an off switch. Under TWO-25213 it
+    // was, so that is what a reader will remember; the switch is
+    // 'intent_approved_notice_enabled' above and nothing else. An override
+    // replaces the company variant only; the no-company copy stays default.
+    'intent_approved_notice' => null,
+    // "What is <brand>?" explainer target for the payment tile, the
+    // same canonical URL the other platforms use. A brand declaring none (null,
+    // absent, empty or a non-http(s) scheme) renders no icon and no link at all.
+    // Resolved by Twopayment::getTwoAboutUrl().
+    'about_url' => 'https://www.two.inc/what-is-two',
+    // "How lines are matched" link beside the "Tax codes for 0% lines" intro (TWO-26153): the README section that
+    // specifies the matching, on the default branch. null renders no link.
+    'tax_codes_help_url' => 'https://github.com/two-inc/prestashop-plugin#tax-codes-for-0-lines',
+    // DECLINED VERDICT notice, contract as above; hides that text only, never the block.
+    'intent_declined_notice_enabled' => true,
+    // COPY OVERRIDE ONLY for the declined notice, contract as 'intent_approved_notice' above.
+    'intent_declined_notice' => null,
 );

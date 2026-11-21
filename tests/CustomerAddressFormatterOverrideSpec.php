@@ -59,6 +59,7 @@ final class CustomerAddressFormatterOverrideSpec
         self::testCountryFieldIsPositionedBeforeCompany();
         self::testDniFieldIsPreservedByOverride();
         self::testCountrySwitchKeepsCoreFormatterCountryInSync();
+        self::testCompanyFieldCarriesNoPlaceholder();
     }
 
     private static function testOverrideConstructorInitializesCoreTranslatorState(): void
@@ -162,6 +163,38 @@ final class CustomerAddressFormatterOverrideSpec
 
         TinyAssert::same(6, (int) $formatter->getCountry()->id, 'Expected formatter country to switch to Spain');
         TinyAssert::true(isset($format['dni']) && $format['dni']->isRequired(), 'Expected dni to be required after country switch to Spain');
+    }
+
+
+    /**
+     * The address form renders the company field as core wrote it: the module
+     * has no wording for an empty one.
+     */
+    private static function testCompanyFieldCarriesNoPlaceholder(): void
+    {
+        $overridePath = dirname(__DIR__) . '/override/classes/form/CustomerAddressFormatter.php';
+        if (!class_exists('CustomerAddressFormatter', false)) {
+            require_once $overridePath;
+        }
+
+        $translator = new class {
+            public function trans($message, array $params = [], $domain = null): string
+            {
+                return (string) $message;
+            }
+        };
+
+        $formatter = new CustomerAddressFormatter(new Country(), $translator, []);
+        $format = $formatter->getFormat();
+
+        TinyAssert::true(
+            isset($format['company']) && $format['company'] instanceof FormField,
+            'the company field itself must still be there'
+        );
+        TinyAssert::false(
+            array_key_exists('placeholder', $format['company']->getAvailableValues()),
+            'the override must write no placeholder onto the company field'
+        );
     }
 
     private static function makeCountry(int $id): Country

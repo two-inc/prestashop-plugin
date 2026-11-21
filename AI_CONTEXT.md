@@ -7,8 +7,7 @@ AI agent operating manual for the `twopayment` module.
 | Item | Value |
 | --- | --- |
 | Module | `twopayment` |
-| Version | `2.4.0` |
-| PrestaShop support | `1.7.6` to `9.x` |
+| PrestaShop support | `1.7.6` to `9.x` (`ps_versions_compliancy` in `twopayment.php`) |
 | Core model | Provider-first checkout (Two first, PrestaShop order second) |
 | Main file | `twopayment.php` |
 
@@ -79,15 +78,59 @@ Reliable B2B invoice checkout via Two, with:
   - Order intent polling and UI messaging
 - `views/js/modules/TwoCompanySearch.js`
   - Company discovery and selection
-- `views/js/modules/TwoFieldValidation.js`
-  - Account/company field validation behavior
+- `views/js/modules/TwoSoleTrader.js`
+  - Sole-trader enrolment mechanics and the availability answer
+    `TwoCompanySearch.js`'s "I'm a sole trader" row reads (TWO-40 removed the
+    old upfront chip UI this module used to render itself). Availability
+    resolution does NOT depend on `.two-sole-trader` existing on the page
+    (TWO-40 follow-up) - that container, rendered only by `paymentinfo.tpl`,
+    exists solely to host enrolment prompt/status/error messaging. The answer
+    is adopted server-side on first paint where the container IS present
+    (TWO-25326), resolved over `soleTraderAvailability` otherwise, and cached
+    both in memory and in localStorage per country (24h TTL, namespaced per
+    checkout environment) so a later page load can skip the round trip.
+    Enrolment (`startEnrollment()`/`getCurrentBuyer()`) also has to work with
+    no container at all - on the address-editor page, where the chip lives
+    (`TwoCompanySearch.js`) but `.two-sole-trader` never renders - so a
+    no-match buyer lookup there calls `openPopup()` directly instead of the
+    payment-step's two-click `showPrompt()`->`openPopup()` (TWO-40 follow-up).
+    Tokens are minted, and the 30-minute refresh armed, as soon as an eligible
+    billing country resolves rather than on the buyer's first chip click, and
+    the autofill lookup runs off those tokens the moment they land, with its
+    answer held client-side - so the chip click is a synchronous branch on
+    state already known and `window.open()` never sits behind a round trip
+    inside the gesture. A held buyer prepopulates with no popup; a held "none",
+    or an answer still in flight, resolves inside the click's own call stack.
+    The answer is held under the country whose tokens authorised the lookup,
+    and a failed pre-click lookup holds nothing - the click then runs its own,
+    as it did before the prefetch existed. A landed
+    mint is acted on only when `_mintHasWaiter` AND `enrolling` agree, neither
+    being sufficient alone: `enrolling` stays true after a failed click and is
+    cleared for a click still riding a mint, while the waiter outlives an
+    enrolment that completed mid-mint. So the eager mint, one overlapping a
+    click already served by existing tokens, one whose click was abandoned
+    mid-flight, and one landing after the enrolment finished all land
+    silently. Tokens carry the country they were minted
+    for, and every entry point treats tokens for a country the buyer has left
+    as absent (TWO-40 follow-up).
+    Minting posts the buyer's currently selected country, because the cart has
+    no invoice address on that page - the server resolves invoice address ->
+    posted country -> delivery address and refuses if none resolves, with the
+    registry check still the only authorisation gate (TWO-40 follow-up)
+- `views/js/modules/TwoOptionalFields.js`
+  - Optional buyer reference fields in the payment tile: mirrors each visible
+    input into its hidden twin inside the payment form (the tile is a sibling
+    of that form, not a child), and rejects a malformed invoice email on submit
 
 ### Admin UI
 - `views/templates/hook/displayAdminOrderLeft.tpl`
 - `views/templates/hook/displayAdminOrderTabContent.tpl`
 
 ### Tests
-- `tests/run.php` (self-contained runner; specs: OrderBuilderSpec inline, `tests/TrackingNumberSpec.php`, `tests/CustomerAddressFormatterOverrideSpec.php`)
+- `tests/run.php` — self-contained runner (inline order-builder specs plus an explicit
+  `require` per `tests/*Spec.php`; a new spec file must be added to that list)
+- `tests/e2e/` — Playwright checkout suite
+- See `tests/README.md`
 
 ### Upgrades
 - `upgrade/upgrade-*.php`
@@ -95,19 +138,27 @@ Reliable B2B invoice checkout via Two, with:
 ## 6) i18n Rules
 
 When adding/changing user-facing strings:
-1. Wrap PHP strings with `$this->l(...)`.
+1. Wrap PHP strings with `$this->l(...)` in the module class, and `$this->module->l(...)` in controllers: PrestaShop 9 removed `ModuleAdminController::l()`.
 2. For JS, expose keys via `Media::addJsDef(... 'i18n' => [...])` in `twopayment.php`.
 3. Consume keys in JS; avoid raw English literals for user-facing errors/messages.
-4. Add/update `translations/es.php` with natural Spanish, not literal machine phrasing.
+4. Add/update every locale in `translations/` — `es.php`, `nl.php`, `no.php`, `sv.php` — with
+   natural phrasing, not literal machine output. Dutch uses the informal `je`/`jouw` register.
 5. Re-check template `{l s=... mod='twopayment'}` coverage.
+6. Edit those files by hand. Do not regenerate them from the back office translation screen:
+   it keys module PHP strings by filename, while the runtime looks them up under the module
+   name, so a save there produces rows nothing reads. See the i18n section of `AGENTS.md`.
 
 ## 7) Tax and Amount Safety
 
+**Read [.ai/vat-rate-sourcing.md](.ai/vat-rate-sourcing.md) before touching any payload
+builder.** It is the authoritative account of how rates are sourced and where the payload
+fails loud. The one rule that governs everything else: the plugin relays the merchant's
+declared tax rate and never derives one from the amounts.
+
 Before changing payload builders:
 - Verify line-item formulas and rounding behavior.
-- Ensure product-level, shipping, and discount lines reconcile to order totals.
+- Ensure product-level, shipping, wrapping, ecotax and discount lines reconcile to order totals.
 - Validate behavior for mixed rates and tax-exempt contexts.
-- Keep fallback tax-derivation logic deterministic.
 
 Always run the order-builder test suite after tax/amount edits.
 
@@ -116,13 +167,13 @@ Always run the order-builder test suite after tax/amount edits.
 Run from module root:
 
 ```bash
-php -l twopayment.php
-php -l controllers/front/payment.php
-php -l controllers/front/orderintent.php
-php tests/run.php
+make test              # php tests/run.php in the CI container
+make test-js           # jest over views/js (jsdom + real jQuery/jQuery UI); host Node 20+
+make phpstan           # the static-analysis gate CI runs
+make test-integration  # real-engine probes; needs `make carrierless-shop` first
 ```
 
-For broader edits, lint any touched PHP files and re-run tests.
+Lint any PHP file you touched (`php -l path/to/file.php`).
 
 ## 9) Logging and Debugging
 
@@ -155,7 +206,5 @@ Before release/tag:
 - Preserve backward compatibility unless explicitly changing behavior.
 - Document any behavior-changing decision in `CHANGELOG.md` and relevant docs.
 - If a rule here conflicts with code behavior, update this file in the same change.
-
-## Revision Notes
-
-- 2026-02-26: Rewritten for v2.4.0 architecture and provider-first safeguards.
+- Document only current behaviour here. History belongs in `CHANGELOG.md`; dated
+  engineering notes belong in `.ai/decisions.md` / `.ai/learnings.md`.

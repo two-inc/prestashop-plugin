@@ -4,19 +4,46 @@ This folder contains deterministic tests for order-building and payload safety l
 
 ## What is covered
 
-- Line item formula validation (`tax_amount = net_amount * tax_rate` and net formula)
+- Line item formula validation (`tax_amount = net_amount * tax_rate`, exact `gross = net + tax`, net formula)
 - Tax subtotal grouping and decimal tax-rate precision retention
-- Product tax-rate derivation when configured and applied rates differ
+- Declared-rate relay: the address-correct rate is used and the country-only
+  `$line_item['rate']` field is ignored; a non-canonical declared rate is relayed as-is;
+  a declared rate that diverges from the applied amounts throws
 - Non-integer VAT handling for line-item formula safety (e.g. 5.5%)
-- Order-level tax-rate derivation from final net/tax totals
 - Guardrails that reject invalid line items before building order payloads
+- Cart-vs-order-lines reconciliation diagnostics naming only the drifted figures (gross, net, tax)
+- Line-item `image_url` sourced from the cart row's combination-aware `id_image`, empty when the product has no image
 - Snapshot hash sensitivity to tax-rate precision changes beyond two decimals
 - Gift wrapping payload line composition and reconciliation safety
+- `PS_ATCP_SHIPWRAP` shipping split across the cart's canonical product rate classes
+- Free-shipping discount gross re-derivation when the net cap bites
+- High-quantity lines staying inside `NET_FORMULA_TOLERANCE`
 - Currency compatibility gating for payment option visibility
+- Buyer fee quote failure withholding the payment option at checkout, judged on the charged term only
 - Large rounded discount split handling keeps tax-formula validation stable
 - Cart-rule monetary (`value_real`/`value_tax_exc`) discount line attribution
-- Tracking number sourcing (order_carrier vs legacy shipping_number) and the admin tracking-update hook (TWO-24762)
-- Partial refunds via credit slips: amount+currency payload, slip-ID idempotency key, remaining-balance guard, and duplicate-refund suppression (TWO-24759)
+- Buyer company resolution across the intent, create and update payloads: the invoice address wins, the shipping address is the fallback, and the name and organisation number always come from the same address
+- Tracking number sourcing (order_carrier vs legacy shipping_number) and the admin tracking-update hook
+- Order updates replaying the placed order (order lines, recorded taxes, the shipping each order charged, vouchers, invoiced wrapping rate) across every order of a multi-carrier split rather than the live cart, skipping an unchanged update, and leaving other payments alone
+- Partial refunds via credit slips: amount+currency payload, slip-ID idempotency key, remaining-balance guard, and duplicate-refund suppression
+- Default shipping tax code: no-default-value refusal parity, an omitted-field save never wiping the stored selection, the carrier-wins resolution order, and the TWO-26082 gate (field hidden and fallback ignored until the `twopayment:shipping-tax-fallback` console command enables it, globally or per shop, with an order following its cart's shop), and a check that the module's service files reference only parameters PrestaShop 1.7.6 defines in the container that loads them
+- Request keys Two's API does not define (`DroppedRequestKeysSpec`, ABN-621): the order edit carries no order-level `buyer`, the order intent no order-level `discount_amount`, `billing_address` or `tax_subtotals`, and the create and the lines' own `discount_amount` are unchanged. The edit's change detection (the md5 of the hash basis, pinned to its pre-change value) still follows the buyer company, and the intent decision key (in `CheckoutLatencySpec`) still follows the billing country and the cart discount. A golden mismatch names the field that moved.
+- The order postprocessing hook (`OrderPostprocessingSpec`, TWO-26092): with no subscriber every builder's payload is byte-identical to a golden taken from the pre-hook builder (`fixtures/order-postprocessing-golden.json`); hook edits are sent as returned, including a payload that does not add up by itself (TWO-26283); a throwing, non-array or unencodable subscriber fails the request with its one code; each shop-match check refuses with no merchant handler, stands down for one (with the log line naming it) and comes back through `runTwoShopMatchChecks()` (TWO-26274, with the update path in `PlacedOrderUpdateSpec`, the credit slip in `RefundSpec` and the fee parity in `SurchargeCartLineSpec`); with a handler that owns a failing check on a single line, the buyer fee's cart line is still written and the create and the update send that fee; which modules count as a merchant handler; after the hook only the shop-match checks judge a payload, so one that does not add up is refused only where a shop-match check fails; the API's error message reaches the log and the order; every request type fires exactly once and sends the post-hook payload; `order_lines` carries Two's lines on the refunds and updates and is null elsewhere (TWO-26282, with the admin edit and tracking number call counts and refusals in `OrderEditRefusalSpec`), and `order_refunds` Two's refunds from the same read on the same firings (TWO-26287, with the README's left-to-refund example, and in `RefundSpec` the log of a refund the module could not itemise written only when it is sent without lines); the `recomputeTwoOrderTotals()` helper; the Debug Mode diff; and a call-site allowlist that goes red when an order request is sent, or a builder stops firing the hook, outside the choke
+
+- Tax codes on 0% lines (`TaxCodeSpec`, TWO-24877, TWO-26153): the shared case table one row per case (steps 1 to 4, a matched row on (none) never falling through, the EU VAT area boundary, merchant-country buyers, whitespace-only VAT), unmapped lines getting no code (the module picks none), the buyer VAT number (trimmed, the invoice address as its only source, and `buyer_vat_number` sent on a Spanish merchant's create except for a Spanish buyer, absent otherwise and on updates), ecotax, wrapping, buyer fee and discount lines, shipping mapped by the delivery option's carriers or the Default shipping tax code, the merchant country stored and refetched once, the code list's retry floor, the settings save and rows, the migration on every shop tier, updates sending placement's codes and sharing only mapped codes with keyless lines (and the old rule for records written before 2.7.20), a corrupt mapping read only for a 0% line, failing loud there and withholding the payment method at checkout, the code list hiding codes that need a reason, and byte-identical goldens (`fixtures/tax-code-golden.json`, written on the base branch) for the non-zero, non-Spanish and uncoded payloads
+- The "Tax codes for 0% lines" admin section (`TaxCodeAdminSpec`, TWO-26153): one row per case of `fixtures/tax-admin-cases.php` (when it shows, its notices and Clear), each also checking that rendering and saving it leaves the create, update, refund and hook-context payloads as they were; the profile and code-list floors, Clear on every shop tier, posted rows ignored unless shown, the 0%-only dropdowns, and a cleared shop sending the unmapped golden. `dev/tax-admin-baseline.sh` renders the same cases on the base commit and compares the Configuration rows written
+- Tenders (`OrderTendersSpec`, TWO-26326): a create with tenders declares them as `prepaid_amount` with the lines at full price and `payable_amount` and `gross_amount` the outstanding amount, and the subscribers and the placement record see them; with no tenders, a declared zero, or an order placed without a prepaid record, the create and update body hashes equal the golden; an edit of an order placed with tenders always declares them, even at zero; a bad declaration is refused with a log line naming no label; a cart-rule voucher is never in `order_tenders`; `validateOrder` gets Two's gross plus the prepaid amount; a credit slip's `amount` is the slip less what it returned to the tenders and `prepaid_amount` the rest, capped at what Two holds, with the balance guard counting refunds without their prepaid part; the Refunded remainder carries the prepaid left; `recomputeTwoOrderTotals()` keeps a body's prepaid amount; the row records the prepaid amount Two holds at confirmation, else the one sent after the subscribers; a refund wholly from the prepaid part still lets Refunded send what is outstanding; slips in a row draw the tenders down, and one returning more than the slip or than Two holds is refused with an order note; and a throwing tender module leaves a legacy edit and other requests going on with no tenders, but refuses the edit of an order placed with prepaid
+- Debug Mode's API call log (`DebugApiLoggingSpec`, TWO-26340): one line per call with the request's and response's body, headers and status, the API key and custom header values redacted, error severity at HTTP 400 and above or on a connection error, and nothing with Debug Mode off
+- Parity with the WooCommerce and Magento plugins (TWO-26340): the whole-order tolerance of max(0.02, (lines + 1) x 0.005) (`ReconciliationDriftMessageSpec`), refunds sending `tax_subtotals` only while Validate tax subtotals is on, with the split recorded either way (`RefundSpec`), and the buyer fee line typed `BUYER_FEE`
+- Company-details postcodes fitted to the country's `zip_code_format` before the checkout copies them (`PostcodeFormatSpec`, TWO-26257), checked against core's `Country::checkZipCode()`
+- Dev-mode service URL overrides (`TWO_API_BASE_URL`, `TWO_CHECKOUT_BASE_URL`):
+  each resolves independently of the other, and both are ignored unless
+  `_PS_MODE_DEV_` is true
+
+`TwoSoleTraderSpec` resolves those URLs in a **child PHP process**
+(`tests/fixtures/dev-mode-url-probe.php`, invoked with `PROBE_PS_MODE_DEV=1|0|unset`):
+`_PS_MODE_DEV_` is a constant, so one process cannot exercise both sides of the gate,
+and the offline suite itself runs with the constant undefined.
 
 ## Why this matters
 
@@ -27,24 +54,36 @@ These tests protect payment-critical invariants:
 
 ## Run tests (offline)
 
-```bash
-php tests/run.php
-```
-
-## Recommended pre-commit checks
-
 From module root:
 
 ```bash
-php -l twopayment.php
-php tests/run.php
+make test              # in the CI container (preferred)
+php tests/run.php      # directly, if you have a local PHP
 ```
 
-If you touched additional PHP files, lint them too:
+A new `tests/*Spec.php` file must also be added to the `require` list at the bottom of
+`tests/run.php` — the runner does not glob.
+
+## Browser JS suite (Jest)
+
+`tests/js/` covers the module's front-office JavaScript under `views/js/`. CI gates it
+(`.github/workflows/tests.yml`, job `jest`); locally it is `make test-js`.
 
 ```bash
-php -l path/to/file.php
+make test-js           # installs devDeps when the lockfile moves, then npm run test:js
 ```
+
+This target runs on the host, not in a container: it needs Node 20+ installed, the
+same implicit prerequisite `bumpver` is for the version targets.
+
+Unlike the PHP harness these tests glob, so a new `tests/js/*.test.js` file needs no
+registration. See `tests/js/README.md` for how the harness stands the browser up.
+
+## Playwright checkout suite
+
+`tests/e2e/` drives a real checkout against a provisioned PrestaShop container; CI runs it
+on every PrestaShop x PHP combination `dev/support-matrix.sh` discovers, plus PrestaShop
+1.7.6 (`.github/workflows/e2e.yml`; see "CI support matrix" in the top-level README).
 
 ## Real-engine integration matrix
 
@@ -57,7 +96,7 @@ This matrix validates cart-rule/tax/discount parity against real PrestaShop chec
 ## When to add tests
 
 Add or update tests when you change:
-- Tax derivation logic
+- Tax rate sourcing or the divergence assertions
 - Order line item/net/gross/tax formulas
 - Shipping/discount payload composition
 - Snapshot or idempotency-sensitive hash inputs

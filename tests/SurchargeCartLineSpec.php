@@ -2,26 +2,10 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../controllers/front/orderintent.php';
+
 /**
  * Buyer surcharge as a REAL PrestaShop cart line (hidden virtual product).
- *
- * Covers the three hardest correctness bars of the feature:
- * - idempotent add/remove wiring (select Two twice -> one line; switch away
- *   -> removed; switch back -> one line; fresh request replays -> no dupes,
- *   no stale leftovers),
- * - net-amount parity: the cart line's net is produced by the SAME
- *   computation path as the Two payload's fee line
- *   (buildTwoSurchargeLineItemForCart over the shared quote cache), asserted
- *   end-to-end through getTwoNewOrderData,
- * - tax: PrestaShop applies the merchant-selected TaxRulesGroup
- *   (CONFIG_SURCHARGE_TAX_RULES_GROUP) to the line natively - the hidden fee
- *   product carries the group on its id_tax_rules_group field like any real
- *   product, and the Two payload resolves the SAME group for the SAME
- *   destination (getTwoSurchargeTaxRateForCart), so the sides cannot drift.
- *
- * Plus the money-protective guards: the order-create parity gate (fail
- * closed on cart-vs-payload fee divergence) and the front-controller
- * stale-line guard (other payment module / lost session marker).
  */
 final class SurchargeCartLineSpec
 {
@@ -40,13 +24,21 @@ final class SurchargeCartLineSpec
         self::testDeselectRemovesLineAndReselectReaddsOnce();
         self::testFreshRequestReplayLeavesNoDuplicateOrStaleLine();
         self::testTermChangeUpdatesAmountWithoutDuplicating();
-        self::testQuoteFailureRemovesLineAndStaysConsistent();
+        self::testQuoteFailureKeepsLineAndFailsLoudly();
+        self::testUnrecognisedMethodKeepsLineAndFailsLoudly();
         self::testCartLineNetMatchesTwoPayloadFeeLine();
         self::testOrderCreateParityGateFailsClosedOnDivergence();
+        self::testOrderCreateParityGateFailsClosedOnUnavailableQuote();
+        self::testParityGateIsTheDefaultHandlers();
+        self::testParityAppliesWhileTheFeeLineIsUnchanged();
+        self::testOrderCreateCompletesForANonChargingTermDuringAnOutage();
+        self::testNonEnforcingPathStaysQuietOnAnUnavailableQuote();
         self::testStaleGuardRemovesLineForOtherPaymentModuleController();
         self::testStaleGuardRemovesLineWhenSessionMarkerLost();
         self::testStaleGuardKeepsLegitimateLine();
+        self::testStaleGuardLeavesGuestCheckoutStateRestorable();
         self::testHiddenProductShapeAndLazyCreation();
+        self::testFeeProductCreationRestoresTheShopContext();
         self::testStaleSequencedSyncRequestIsIgnoredServerSide();
         self::testAuthoritativeSyncBypassesSequenceGuard();
         self::testSequencedSyncFailsSoftWhenLockHeldByConcurrentRequest();
@@ -60,6 +52,16 @@ final class SurchargeCartLineSpec
         self::testFirstFeeOrderDetailRowFromOrderCreationIsAllowed();
         self::testFeeGuardTriggerDdlInstalledIdempotentlyAndDropped();
         self::testFeeGuardTriggerEnsuredLazilyOnCartSync();
+        self::testActionPresentCartMovesSurchargeToOwnRowBeforeShipping();
+        self::testActionPresentCartNoOpsWhenSurchargeNotSelected();
+        self::testActionPresentCartNoOpsWhenRowAbsentFromPresentedProducts();
+        self::testActionPresentCartSelfHealsOnExistingInstall();
+        self::testSurchargeLineLeavesPersistedCheckoutStateRestorable();
+        self::testUncompletedCheckoutStateIsNotForged();
+        self::testBuyerSyncWithholdsTheFeeOnlyWhereThisCartWasRefused();
+        self::testOrderCreateNeverChargesAFeeTheSummaryWithheld();
+        self::testRecordedRefusalIsStampedWithItsOwnCart();
+        self::testRestampRefusedWhenTheStoredStateAlreadyDrifted();
     }
 
     /* ---- fixtures ---- */
@@ -70,9 +72,7 @@ final class SurchargeCartLineSpec
         Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'percentage');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', '5');
         Configuration::updateValue('PS_TWO_SURCHARGE_PCT_60', '8');
-        // Merchant's own tax rules group, selected in the module config:
-        // covers the fixture buyer's country (FR) at 25%. Destinations the
-        // group has no rule for resolve 0 (core behaviour).
+        // Destinations the group has no rule for resolve 0 (core behaviour).
         StubStore::$taxRulesGroups[self::TAX_GROUP_ID] = ['name' => 'FR standard rate', 'active' => 1];
         StubStore::$taxRuleRates[self::TAX_GROUP_ID] = [self::COUNTRY_FR => 25.0];
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, (string) self::TAX_GROUP_ID);
@@ -118,6 +118,11 @@ final class SurchargeCartLineSpec
         ]];
         StubStore::$productCategories[9401] = [['name' => 'Books']];
         StubStore::$images[9401] = ['id_image' => 9401];
+        // Declared-rate relay (TWO-24880): the ordinary product's own
+        // tax-rules group (flat 5.5%, matching total/total_wt) — distinct
+        // from the fee product's merchant-selected group (TAX_GROUP_ID).
+        StubStore::$products[9401]['id_tax_rules_group'] = 500;
+        StubStore::$taxRuleRates[500] = 5.5;
         StubStore::$cartTotals[self::CART_ID] = [
             true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_GROSS],
             false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_NET],
@@ -190,13 +195,11 @@ final class SurchargeCartLineSpec
         $lines = self::feeLines();
         TinyAssert::count(1, $lines);
         TinyAssert::same(1, (int) $lines[0]['cart_quantity']);
-        // Net = quoted buyer_fee_share (5.00); gross applies the merchant's
-        // selected tax rules group rate for the buyer's country (FR -> 25%).
+        // Gross applies the selected group's rate for the buyer's country (FR -> 25%).
         TinyAssert::same(5.00, round((float) $lines[0]['total'], 2));
         TinyAssert::same(6.25, round((float) $lines[0]['total_wt'], 2));
         TinyAssert::same(25.0, round((float) $lines[0]['rate'], 2));
 
-        // Cart totals carry the fee line.
         TinyAssert::same(111.75, round((float) $cart->getOrderTotal(true, Cart::BOTH), 2));
         TinyAssert::same(105.00, round((float) $cart->getOrderTotal(false, Cart::BOTH), 2));
     }
@@ -230,7 +233,6 @@ final class SurchargeCartLineSpec
         TinyAssert::count(0, self::feeLines());
         TinyAssert::same(self::PRODUCT_GROSS, round((float) $cart->getOrderTotal(true, Cart::BOTH), 2));
 
-        // Deselect again: nothing left to remove, still a clean no-op.
         $removedAgain = $module->syncTwoSurchargeCartLine($cart, false);
         TinyAssert::true($removedAgain['success']);
         TinyAssert::false($removedAgain['changed']);
@@ -247,9 +249,8 @@ final class SurchargeCartLineSpec
         $cart = self::makeCart();
         $module->syncTwoSurchargeCartLine($cart, true);
 
-        // Simulate the browser reloading mid-selection: a NEW module instance
-        // (fresh request state, fresh fee cache) replays the same selection
-        // against the persisted cart.
+        // Browser reload mid-selection: a NEW module instance (fresh request
+        // state, fresh fee cache) replays the selection on the persisted cart.
         $reloadedModule = new class extends TwopaymentTestHarness {
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
@@ -270,7 +271,6 @@ final class SurchargeCartLineSpec
         $module->syncTwoSurchargeCartLine($cart, true);
         TinyAssert::same(5.00, round((float) self::feeLines()[0]['total'], 2));
 
-        // Buyer flips the term chip to 60 days -> higher quoted fee.
         Context::getContext()->cookie->two_payment_term = 60;
         $updated = $module->syncTwoSurchargeCartLine($cart, true);
         TinyAssert::true($updated['changed'], 'stale amount must be corrected');
@@ -280,23 +280,70 @@ final class SurchargeCartLineSpec
         TinyAssert::same(10.00, round((float) $lines[0]['total_wt'], 2)); // 25% on 8.00
     }
 
-    private static function testQuoteFailureRemovesLineAndStaysConsistent(): void
+    /**
+     * TWO-25269: an unavailable quote is a FAILURE, not a deselection -
+     * removing the line instead is a silent undercharge. The cart keeps its
+     * line, success is false, and it is logged. Whole-store causes are caught
+     * earlier by isTwoSurchargeQuotableForCart withholding the payment option;
+     * anything that only fails here reaches the order-create parity gate.
+     */
+    private static function testQuoteFailureKeepsLineAndFailsLoudly(): void
     {
         $module = self::makeModule();
         $cart = self::makeCart();
         $module->syncTwoSurchargeCartLine($cart, true);
         TinyAssert::count(1, self::feeLines());
 
-        // Fee quote becomes unavailable: the Two payload would carry no fee
-        // line, so the cart line must go too (consistency over stickiness).
         $module->forcedFeeResponse = ['http_status' => 500];
         // New quote signature (term change) bypasses the request/session cache.
         Context::getContext()->cookie->two_payment_term = 60;
+        PrestaShopLogger::reset();
         $result = $module->syncTwoSurchargeCartLine($cart, true);
-        TinyAssert::true($result['success']);
-        TinyAssert::true($result['changed']);
-        TinyAssert::false($result['present']);
-        TinyAssert::count(0, self::feeLines());
+
+        TinyAssert::false($result['success'], 'an unavailable quote is a failure, not a silent success');
+        TinyAssert::false($result['changed'], 'nothing may be changed on an unquotable sync');
+        TinyAssert::true($result['present'], 'the caller must be told the existing line is still there');
+        TinyAssert::count(1, self::feeLines(), 'the surcharge line must NOT be removed - removing it is the undercharge');
+
+        $logged = false;
+        foreach (PrestaShopLogger::$logs as $entry) {
+            if (strpos($entry['message'], 'refusing to remove the surcharge line') !== false && $entry['severity'] === 3) {
+                $logged = true;
+            }
+        }
+        TinyAssert::true($logged, 'refusing to remove must be logged at error level');
+    }
+
+    /**
+     * An unrecognised stored method makes the contained read return null.
+     * The sync must never report success on it, and must leave no orphan fee
+     * line behind, since Two is withheld from the payment options on the same
+     * condition. Both entry points.
+     */
+    private static function testUnrecognisedMethodKeepsLineAndFailsLoudly(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::count(1, self::feeLines());
+
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'wat');
+        PrestaShopLogger::reset();
+        $result = $module->syncTwoSurchargeCartLine($cart, true);
+
+        TinyAssert::false($result['success'], 'an unrecognised method is a failure, not a success');
+        TinyAssert::count(0, self::feeLines(), 'no orphan fee line while Two is withheld');
+
+        // The other entry point: no fee product yet (creation lock held), so
+        // the early "nothing to remove" branch decides. A refused read there
+        // reported success without ever looking at the cart.
+        StubStore::reset();
+        Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', 'wat');
+        $cart = self::makeCart();
+        StubStore::$dbLocks['two_surcharge_product_create'] = true;
+        $early = $module->syncTwoSurchargeCartLine($cart, true);
+        unset(StubStore::$dbLocks['two_surcharge_product_create']);
+        TinyAssert::false($early['success'], 'a refused read is never a vacuous success');
     }
 
     /* ---- requirement 2 + 5: single computation path, parity gate ---- */
@@ -306,11 +353,9 @@ final class SurchargeCartLineSpec
         $module = self::makeModule();
         $cart = self::makeCart();
 
-        // Frontend selection first (the normal flow) ...
         $module->syncTwoSurchargeCartLine($cart, true);
         $cartLine = self::feeLines()[0];
 
-        // ... then the order-create payload built from the same cart.
         $payload = $module->getTwoNewOrderData('merchant-attempt-8101', $cart, [
             'merchant_confirmation_url' => 'https://shop.local/confirm',
             'merchant_cancel_order_url' => 'https://shop.local/cancel',
@@ -321,14 +366,14 @@ final class SurchargeCartLineSpec
         ]);
 
         $feeLines = array_values(array_filter($payload['line_items'], static function ($item) {
-            return isset($item['type']) && $item['type'] === 'SERVICE';
+            return isset($item['type']) && $item['type'] === 'BUYER_FEE';
         }));
         TinyAssert::count(1, $feeLines);
         TinyAssert::same(round((float) $cartLine['total'], 2), round((float) $feeLines[0]['net_amount'], 2));
         TinyAssert::same(round((float) $cartLine['total_wt'], 2), round((float) $feeLines[0]['gross_amount'], 2));
         TinyAssert::same('0.25', $feeLines[0]['tax_rate']);
-        // Payload totals equal the cart totals INCLUDING the fee line: the
-        // buyer's PrestaShop total and the Two invoice are the same money.
+        // Payload totals include the fee line: the buyer's PrestaShop total
+        // and the Two invoice are the same money.
         TinyAssert::same('111.75', $payload['gross_amount']);
         TinyAssert::same(
             round((float) $cart->getOrderTotal(true, Cart::BOTH), 2),
@@ -387,6 +432,253 @@ final class SurchargeCartLineSpec
         }, 'Surcharge line mismatch');
     }
 
+    /**
+     * Zero on both sides is not agreement. The payment-options gate
+     * judges the term selected at render; the buyer can switch term inside the
+     * rendered tile, and where the pre-switch term quoted zero there is no
+     * cart line at all - so an unresolvable quote for the term actually being
+     * ordered reads as parity and would book the order with no fee.
+     */
+    private static function testOrderCreateParityGateFailsClosedOnUnavailableQuote(): void
+    {
+        // The rendered term quoted zero, so no surcharge cart line exists.
+        $module = self::makeModule([30 => '0.00', 60 => '8.00']);
+        $cart = self::makeCart();
+        $module->syncTwoSurchargeCartLine($cart, true);
+        TinyAssert::count(0, self::feeLines(), 'a zero quote leaves no cart line');
+
+        // The buyer switches term and pricing is now unreachable.
+        Context::getContext()->cookie->two_payment_term = 60;
+        $module->forcedFeeResponse = ['http_status' => 503];
+
+        TinyAssert::throws(static function () use ($module, $cart) {
+            $module->getTwoNewOrderData('merchant-attempt-8103', $cart, [
+                'merchant_confirmation_url' => 'https://shop.local/confirm',
+                'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                'merchant_edit_order_url' => '',
+                'merchant_order_verification_failed_url' => '',
+                'merchant_invoice_url' => '',
+                'merchant_shipping_document_url' => '',
+            ]);
+        }, 'Surcharge line mismatch');
+    }
+
+    /**
+     * TWO-26274: the fee parity check compares the payload with the cart, so it
+     * is a shop-match check, the module's default handler. The surcharge parity case
+     * above, with a merchant handler on the hook: one that changes nothing owns
+     * the check and the order is built; one that opts back in gets the refusal.
+     * Columns: handler mode (null: none), expected refusal (null: built), description.
+     */
+    private static function testParityGateIsTheDefaultHandlers(): void
+    {
+        $cases = [
+            [null, 'Surcharge line mismatch between cart and Two payload', 'no merchant handler'],
+            ['owns', null, 'a merchant handler that changes nothing'],
+            ['opts_in', 'Surcharge line mismatch between cart and Two payload', 'a merchant handler that opts back in'],
+        ];
+        foreach ($cases as [$mode, $expected, $description]) {
+            $module = self::makeModule([30 => '0.00', 60 => '8.00']);
+            $cart = self::makeCart();
+            $module->syncTwoSurchargeCartLine($cart, true);
+            Context::getContext()->cookie->two_payment_term = 60;
+            $module->forcedFeeResponse = ['http_status' => 503];
+            Hook::$subscribers = [];
+            if ($mode !== null) {
+                Hook::$subscribers[TwoOrderPostprocessing::HOOK]['merchanthandler'] = static function (array $params) use ($mode, $module): void {
+                    if ($mode === 'opts_in') {
+                        $module->runTwoShopMatchChecks($params['payload']);
+                    }
+                };
+            }
+            $error = null;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-8105', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            Hook::$subscribers = [];
+            TinyAssert::same($expected, $error, $description);
+        }
+    }
+
+    /**
+     * TWO-26274: like the checks on single lines, fee parity applies to the
+     * module's fee line while the payload carries it unchanged. On the
+     * divergence case above, a handler that opts back in on the payload it
+     * returns gets the parity refusal while it leaves the fee line, and none
+     * once it removed the line, which makes the fee its own.
+     * Columns: handler mode, expected refusal (null: built), description.
+     */
+    private static function testParityAppliesWhileTheFeeLineIsUnchanged(): void
+    {
+        $cases = [
+            ['keeps', 'Surcharge line mismatch between cart and Two payload', 'the fee line left as built'],
+            ['removes', null, 'the fee line removed'],
+            // The cart-total check leaves the fee line out only while it is the module's: changed, it counts.
+            ['changes', 'Order totals do not reconcile with cart totals: ', 'the fee line changed: parity stands down, the changed line counts against the cart'],
+        ];
+        foreach ($cases as [$mode, $expected, $description]) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $module->syncTwoSurchargeCartLine($cart, true);
+            foreach (StubStore::$cartProducts[self::CART_ID] as $i => $row) {
+                if ((int) $row['id_product'] === (int) Configuration::get('PS_TWO_SURCHARGE_PRODUCT_ID')) {
+                    StubStore::$cartTotals[self::CART_ID][false][Cart::BOTH] = round((float) StubStore::$cartTotals[self::CART_ID][false][Cart::BOTH] + 2.00 - (float) $row['total'], 2);
+                    StubStore::$cartTotals[self::CART_ID][true][Cart::BOTH] = round((float) StubStore::$cartTotals[self::CART_ID][true][Cart::BOTH] + 2.50 - (float) $row['total_wt'], 2);
+                    StubStore::$cartProducts[self::CART_ID][$i]['total'] = 2.00;
+                    StubStore::$cartProducts[self::CART_ID][$i]['total_wt'] = 2.50;
+                }
+            }
+            $gatedModule = new class extends TwopaymentTestHarness {
+                public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
+                {
+                    return ['http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR'];
+                }
+
+                public function syncTwoSurchargeCartLine($cart, $selected, $syncSeq = null)
+                {
+                    return ['success' => false, 'changed' => false, 'present' => true];
+                }
+            };
+            Hook::$subscribers = [];
+            Hook::$subscribers[TwoOrderPostprocessing::HOOK]['merchanthandler'] = static function (array $params) use ($mode, $gatedModule): void {
+                if ($mode === 'removes') {
+                    $params['payload']['line_items'] = array_values(array_filter($params['payload']['line_items'], static function ($line) {
+                        return $line['type'] !== 'BUYER_FEE';
+                    }));
+                    $params['payload'] = $gatedModule->recomputeTwoOrderTotals($params['payload']);
+                }
+                if ($mode === 'changes') {
+                    foreach ($params['payload']['line_items'] as $i => $line) {
+                        if ($line['type'] === 'BUYER_FEE') {
+                            $params['payload']['line_items'][$i]['name'] = 'Invoice fee';
+                        }
+                    }
+                }
+                $gatedModule->runTwoShopMatchChecks($params['payload']);
+            };
+            $error = null;
+            try {
+                $gatedModule->getTwoNewOrderData('merchant-attempt-8106', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $error = $e->getMessage();
+            }
+            Hook::$subscribers = [];
+            TinyAssert::true($expected === null ? $error === null : strpos((string) $error, $expected) === 0, $description . ', got ' . var_export($error, true));
+        }
+    }
+
+    /**
+     * The gate and the line builder share one predicate, so every
+     * shape that prices nothing is skipped by BOTH. Without that, the gate
+     * offered Two and the builder then refused the order over a fee of zero -
+     * after the buyer had approved, which cancels the Two order and shows a
+     * generic cart error.
+     */
+    private static function testOrderCreateCompletesForANonChargingTermDuringAnOutage(): void
+    {
+        $cases = [
+            ['percentage', '0', '0', '', false, 'a term with no percentage and no fixed amount'],
+            ['percentage', '0', '0', '10', false, 'a cap with no percentage behind it'],
+            ['percentage', '1.5', '0', '', true, 'the ordered term is its own reference in fee-difference mode'],
+        ];
+
+        foreach ($cases as $case) {
+            list($type, $pct, $fixed, $cap, $differential, $description) = $case;
+
+            $module = self::makeModule();
+            Configuration::updateValue('PS_TWO_SURCHARGE_TYPE', $type);
+            Configuration::updateValue('PS_TWO_SURCHARGE_PCT_30', $pct);
+            Configuration::updateValue('PS_TWO_SURCHARGE_FIXED_30', $fixed);
+            Configuration::updateValue('PS_TWO_SURCHARGE_CAP_30', $cap);
+            Configuration::updateValue('PS_TWO_SURCHARGE_DIFFERENTIAL', $differential ? 1 : 0);
+            $cart = self::makeCart();
+            // The ordered term is the merchant default, which is what makes it
+            // its own reference in fee-difference mode.
+            Context::getContext()->cookie->two_payment_term = 30;
+            TinyAssert::same(30, (int) $module->getDefaultPaymentTerm(), 'fixture premise: ordered term is the default: ' . $description);
+            $module->forcedFeeResponse = ['http_status' => 503];
+
+            $threw = null;
+            $payload = null;
+            try {
+                $payload = $module->getTwoNewOrderData('merchant-attempt-8104', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $threw = $e->getMessage();
+            }
+
+            TinyAssert::same(null, $threw, 'order create must complete during an outage: ' . $description);
+            $feeLines = array_values(array_filter($payload['line_items'], static function ($item) {
+                return isset($item['type']) && $item['type'] === 'BUYER_FEE';
+            }));
+            TinyAssert::count(0, $feeLines, 'no fee line for a term pricing nothing: ' . $description);
+            TinyAssert::count(0, $module->feeRequests, 'and never quoted, so an outage cannot refuse it: ' . $description);
+        }
+    }
+
+    /**
+     * The admin order-update path never refuses, so an unresolvable
+     * quote there is not a parity event to report - only the enforcing paths
+     * treat it as one.
+     */
+    private static function testNonEnforcingPathStaysQuietOnAnUnavailableQuote(): void
+    {
+        $method = new ReflectionMethod(Twopayment::class, 'buildTwoOrderPricingData');
+        $cases = [
+            [false, false, 'the update path reports nothing and never throws'],
+            [true, true, 'an enforcing path refuses the order'],
+        ];
+
+        foreach ($cases as $case) {
+            list($enforce, $expectThrow, $description) = $case;
+
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $module->forcedFeeResponse = ['http_status' => 503];
+            Context::getContext()->cookie->two_payment_term = 30;
+            PrestaShopLogger::reset();
+
+            $threw = false;
+            try {
+                // The checks run after the hook (TWO-26274), so the build hands them back.
+                $module->runPricingChecksForTest($method->invoke($module, $cart, 'spec context', false, 30, $enforce));
+            } catch (Exception $e) {
+                $threw = strpos($e->getMessage(), 'Surcharge line mismatch') !== false;
+            }
+            TinyAssert::same($expectThrow, $threw, $description);
+
+            $logged = false;
+            foreach (PrestaShopLogger::$logs as $entry) {
+                if (strpos($entry['message'], 'surcharge parity mismatch') !== false) {
+                    $logged = true;
+                }
+            }
+            TinyAssert::same($expectThrow, $logged, 'the parity log follows enforcement: ' . $description);
+        }
+    }
+
     /* ---- requirement 3: stale-line guards ---- */
 
     private static function testStaleGuardRemovesLineForOtherPaymentModuleController(): void
@@ -396,9 +688,8 @@ final class SurchargeCartLineSpec
         $module->syncTwoSurchargeCartLine($cart, true);
         TinyAssert::count(1, self::feeLines());
 
-        // Another payment module's validation controller executes: the fee
-        // must be stripped before that module computes its totals - even
-        // though the session marker is still valid.
+        // Other module's validation controller: fee stripped before that
+        // module computes totals, even though the session marker is valid.
         $otherController = new \stdClass();
         $otherController->module = (object) ['name' => 'ps_wirepayment'];
         $module->hookActionFrontControllerInitAfter(['controller' => $otherController]);
@@ -430,12 +721,67 @@ final class SurchargeCartLineSpec
         $module->hookActionFrontControllerInitAfter(['controller' => $coreController]);
         TinyAssert::count(1, self::feeLines());
 
-        // Own module controller (payment/confirmation/sync endpoint): keep
-        // even without inspecting the marker.
+        // Own module controller: keep even without inspecting the marker.
         $ownController = new \stdClass();
         $ownController->module = (object) ['name' => 'twopayment'];
         $module->hookActionFrontControllerInitAfter(['controller' => $ownController]);
         TinyAssert::count(1, self::feeLines());
+    }
+
+    /**
+     * Every terms on which the stale-guard's own removal may re-stamp the
+     * guest's persisted checkout state (TWO-25763). Its removal moves the
+     * cart's product lines exactly as the buyer-driven sync does, and a guest
+     * who loses step 1 cannot complete it again - it only completes on an
+     * account creation their own email now blocks.
+     *
+     * @return array<int,array{0:string|null,1:bool,2:bool,3:string}>
+     */
+    private static function staleGuardCheckoutStateCases(): array
+    {
+        return [
+            ['matching', true, true, "a line stripped for another module's controller leaves the guest's steps restorable"],
+            ['matching', false, true, 'a line stripped on a lost session marker leaves them restorable too'],
+            ['foreign', true, false, 'drift this module did not cause stays core\'s to invalidate on'],
+            [null, true, false, 'no persisted checkout state means nothing to re-stamp'],
+        ];
+    }
+
+    private static function testStaleGuardLeavesGuestCheckoutStateRestorable(): void
+    {
+        foreach (self::staleGuardCheckoutStateCases() as [$seed, $otherModuleController, $expectRestorable, $why]) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $checksum = new CartChecksum(new AddressChecksum());
+            $module->syncTwoSurchargeCartLine($cart, true);
+
+            unset(StubStore::$checkoutSessionData[self::CART_ID]);
+            if ($seed !== null) {
+                StubStore::$checkoutSessionData[self::CART_ID] = (string) json_encode([
+                    'checkout-personal-information-step' => ['skipped' => false],
+                    'checksum' => $seed === 'matching'
+                        ? $checksum->generateChecksum($cart)
+                        : sha1('a cart this persisted state never described'),
+                ]);
+            }
+
+            $controller = new \stdClass();
+            if ($otherModuleController) {
+                $controller->module = (object) ['name' => 'ps_wirepayment'];
+            } else {
+                Context::getContext()->cookie = new Cookie();
+            }
+
+            $module->hookActionFrontControllerInitAfter(['controller' => $controller]);
+
+            TinyAssert::count(0, self::feeLines(), 'the stale-guard still strips the fee line: ' . $why);
+
+            $stored = json_decode(StubStore::$checkoutSessionData[self::CART_ID] ?? '', true);
+            $restorable = is_array($stored)
+                && isset($stored['checksum'])
+                && $stored['checksum'] === $checksum->generateChecksum($cart);
+            TinyAssert::same($expectRestorable, $restorable, $why);
+        }
     }
 
     /* ---- server-side request-ordering guard (rapid method switches) ---- */
@@ -445,15 +791,15 @@ final class SurchargeCartLineSpec
         $module = self::makeModule();
         $cart = self::makeCart();
 
-        // Buyer clicks: away from Two (seq 100, still in flight), then back
-        // to Two (seq 200). The NEWER request completes first ...
+        // Buyer clicks away (seq 100, still in flight) then back (seq 200);
+        // the NEWER request completes first.
         $newer = $module->syncTwoSurchargeCartLine($cart, true, 200);
         TinyAssert::true($newer['success']);
         TinyAssert::true($newer['present']);
         TinyAssert::count(1, self::feeLines());
 
-        // ... then the OLDER "remove" request lands: it must be a no-op that
-        // reports the CURRENT state, not strip the line the newer click added.
+        // The OLDER "remove" request lands late: no-op reporting the CURRENT
+        // state, not stripping the line the newer click added.
         $older = $module->syncTwoSurchargeCartLine($cart, false, 100);
         TinyAssert::true($older['success']);
         TinyAssert::false($older['changed'], 'stale request must not mutate the cart');
@@ -466,7 +812,6 @@ final class SurchargeCartLineSpec
         TinyAssert::true($replay['success']);
         TinyAssert::false($replay['changed']);
 
-        // A genuinely newer request still applies.
         $newest = $module->syncTwoSurchargeCartLine($cart, false, 300);
         TinyAssert::true($newest['success']);
         TinyAssert::true($newest['changed']);
@@ -478,14 +823,12 @@ final class SurchargeCartLineSpec
         $module = self::makeModule();
         $cart = self::makeCart();
 
-        // Buyer AJAX stored seq 500 and removed the line.
         $module->syncTwoSurchargeCartLine($cart, true, 400);
         $module->syncTwoSurchargeCartLine($cart, false, 500);
         TinyAssert::count(0, self::feeLines());
 
-        // The order-create self-heal (buildTwoOrderPricingData) passes NO
-        // seq: it is the final authoritative sync before charging and must
-        // always apply, whatever the stored sequence says.
+        // The order-create self-heal passes NO seq: final authoritative sync
+        // before charging, must apply whatever the stored sequence says.
         $selfHeal = $module->syncTwoSurchargeCartLine($cart, true);
         TinyAssert::true($selfHeal['success']);
         TinyAssert::true($selfHeal['changed']);
@@ -497,9 +840,8 @@ final class SurchargeCartLineSpec
         $module = self::makeModule();
         $cart = self::makeCart();
 
-        // Another request holds this cart's sync lock: the sequenced call
-        // reports success=false (frontend retries / server gate stays
-        // authoritative) and mutates nothing.
+        // Lock held elsewhere: the sequenced call reports success=false
+        // (frontend retries) and mutates nothing.
         StubStore::$dbLocks['two_surcharge_sync_' . self::CART_ID] = true;
         $result = $module->syncTwoSurchargeCartLine($cart, true, 100);
         TinyAssert::false($result['success']);
@@ -515,20 +857,17 @@ final class SurchargeCartLineSpec
         $module = self::makeModule();
         self::makeCart();
 
-        // Scenario 1: another request holds the creation lock RIGHT NOW.
-        // This request must not create a second product; it backs off (0)
-        // and the next sync retries.
+        // Creation lock held elsewhere: back off (0), the next sync retries.
         StubStore::$dbLocks['two_surcharge_product_create'] = true;
         $productsBefore = count(StubStore::$products);
         TinyAssert::same(0, $module->getTwoSurchargeCartProductId(true));
         TinyAssert::same($productsBefore, count(StubStore::$products), 'lock loser must not create a product');
         unset(StubStore::$dbLocks['two_surcharge_product_create']);
 
-        // Scenario 2: the concurrent winner finished and wrote the id to the
-        // configuration TABLE (this request's Configuration cache is stale -
-        // the stub's shared store stands in for the DB read under the lock).
-        // The double-check under the lock must adopt the winner's product
-        // instead of creating a duplicate.
+        // Concurrent winner wrote the id to the configuration TABLE while this
+        // request's Configuration cache is stale (the stub's shared store
+        // stands in for the DB read under the lock): the double-check must
+        // adopt the winner's product instead of creating a duplicate.
         $winnerId = $module->getTwoSurchargeCartProductId(true);
         TinyAssert::true($winnerId > 0);
         $productsAfterWinner = count(StubStore::$products);
@@ -538,9 +877,8 @@ final class SurchargeCartLineSpec
 
     /**
      * TWO-25071: the module assigns the MERCHANT's selected TaxRulesGroup to
-     * the hidden product's id_tax_rules_group (the same field every real
-     * product uses) and never creates Tax/TaxRulesGroup/TaxRule objects of
-     * its own (the synthetic-graph machinery is gone).
+     * the hidden product's id_tax_rules_group and never creates
+     * Tax/TaxRulesGroup/TaxRule objects of its own.
      */
     private static function testSyncAppliesSelectedTaxRulesGroupToFeeProductAndNeverCreatesTaxObjects(): void
     {
@@ -554,8 +892,8 @@ final class SurchargeCartLineSpec
         TinyAssert::count(1, StubStore::$taxRulesGroups, 'only the merchant-owned fixture group exists');
         TinyAssert::count(0, StubStore::$taxRules, 'module must not create a TaxRule');
 
-        // Merchant re-points the selection in the module config: the next
-        // sync self-heals the product assignment (no new objects, ever).
+        // Re-pointed selection: the next sync self-heals the product
+        // assignment (no new objects, ever).
         StubStore::$taxRulesGroups[401] = ['name' => 'Reduced rate', 'active' => 1];
         StubStore::$taxRuleRates[401] = [self::COUNTRY_FR => 10.0];
         Configuration::updateValue(Twopayment::CONFIG_SURCHARGE_TAX_RULES_GROUP, '401');
@@ -564,8 +902,8 @@ final class SurchargeCartLineSpec
         TinyAssert::same(401, (int) (new Product($productId))->id_tax_rules_group, 'selection change re-points the product on the next sync');
         TinyAssert::count(0, StubStore::$taxes);
         TinyAssert::count(0, StubStore::$taxRules);
-        // And the re-priced line applies the NEW group's FR rate (10%) to
-        // the 60-day quote (8.00 net -> 8.80 gross).
+        // Re-priced line applies the NEW group's FR rate (10%) to the 60-day
+        // quote: 8.00 net -> 8.80 gross.
         $lines = self::feeLines();
         TinyAssert::count(1, $lines);
         TinyAssert::same(8.00, round((float) $lines[0]['total'], 2));
@@ -573,19 +911,16 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * TWO-25071: destination-based rates. The selected group taxes the fee
-     * for a covered destination and zero-rates it for a destination the
-     * group has NO rule for - and the Two payload line resolves the SAME
-     * rate as the PS cart line in both cases (parity by construction),
-     * including a genuine multi-rate stacking destination (6% + 2% -> 8%).
+     * TWO-25071: destination-based rates. Payload line and PS cart line must
+     * resolve the SAME rate for a covered, a stacked (6%+2%) and an uncovered
+     * destination.
      */
     private static function testFeeTaxFollowsDestinationRulesOfSelectedGroup(): void
     {
         $module = self::makeModule();
         $cart = self::makeCart();
 
-        // Group covers FR at 25%, CA-style stacked 6%+2% for country 40,
-        // and has NO rule for country 47 (NO).
+        // Covers FR at 25% and stacked 6%+2% for country 40; NO rule for 47.
         StubStore::$taxRuleRates[self::TAX_GROUP_ID] = [
             self::COUNTRY_FR => 25.0,
             40 => [6.0, 2.0],
@@ -594,14 +929,14 @@ final class SurchargeCartLineSpec
         StubStore::$addresses[8203] = ['id_country' => 40, 'loaded' => true] + StubStore::$addresses[8201];
         StubStore::$addresses[8204] = ['id_country' => 47, 'loaded' => true] + StubStore::$addresses[8201];
 
-        // Covered destination (FR, 25%): 5.00 net -> 6.25 gross.
+        // Covered (FR, 25%): 5.00 net -> 6.25 gross.
         $module->syncTwoSurchargeCartLine($cart, true);
         TinyAssert::same(6.25, round((float) self::feeLines()[0]['total_wt'], 2));
         $payloadLine = $module->buildTwoSurchargeLineItemForCart($cart, self::PRODUCT_GROSS);
         TinyAssert::same('0.25', $payloadLine['tax_rate']);
         TinyAssert::same('6.25', $payloadLine['gross_amount']);
 
-        // Stacking destination (6% + 2% combined = 8%): both sides at 8%.
+        // Stacked (6% + 2% = 8%): both sides at 8%.
         $cart->id_address_invoice = 8203;
         $cart->id_address_delivery = 8203;
         $module->syncTwoSurchargeCartLine($cart, true);
@@ -613,7 +948,7 @@ final class SurchargeCartLineSpec
         TinyAssert::same('0.40', $payloadLine['tax_amount']);
         TinyAssert::same('5.40', $payloadLine['gross_amount'], 'payload gross matches the PS line gross for the stacked destination');
 
-        // Uncovered destination (NO rule): zero-rated on BOTH sides.
+        // Uncovered (no rule): zero-rated on BOTH sides.
         $cart->id_address_invoice = 8204;
         $cart->id_address_delivery = 8204;
         $module->syncTwoSurchargeCartLine($cart, true);
@@ -626,9 +961,8 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * TWO-25071: selecting the "No tax" sentinel (id 0) zeroes the fee tax
-     * for EVERY destination - no special-case code, it is core's own
-     * untaxed-group semantics (live-container verified).
+     * TWO-25071: the "No tax" sentinel (id 0) zeroes the fee tax for EVERY
+     * destination via core's own untaxed-group semantics, no special-case code.
      */
     private static function testNoTaxSentinelZeroesFeeTaxForEveryDestination(): void
     {
@@ -653,25 +987,28 @@ final class SurchargeCartLineSpec
     }
 
     /**
-     * TWO-25071: vatnumber-module B2B exemption. A cross-border business
-     * buyer with a VAT number (management on) is untaxed by core's
-     * Product::priceCalculation on the PS cart line AND by
-     * getTwoSurchargeTaxRateForCart on the Two payload side - both sides of
-     * the SAME cart must agree, exactly like the destination-rules /
-     * multi-rate / no-tax cases above. Guards the hand-replicated exemption
-     * condition in getTwoSurchargeTaxRateForCart against drifting from the
-     * cart-line behaviour.
+     * TWO-25071: vatnumber-module B2B exemption. Guards the hand-replicated
+     * exemption condition in getTwoSurchargeTaxRateForCart against drifting
+     * from core's Product::priceCalculation cart-line behaviour.
      */
     private static function testVatExemptB2BCartUntaxedOnBothCartLineAndPayload(): void
     {
-        // Cross-border B2B: merchant country NO (47), buyer FR with a VAT
-        // number -> exempt. Untaxed on BOTH sides.
+        // Cross-border B2B: merchant NO (47), buyer FR with VAT number -> exempt.
         $module = self::makeModule();
         $cart = self::makeCart();
         Configuration::updateValue('VATNUMBER_MANAGEMENT', 1);
         Configuration::updateValue('VATNUMBER_COUNTRY', 47);
         StubStore::$addresses[8201]['vat_number'] = 'FR999999999';
         StubStore::$addresses[8202]['vat_number'] = 'FR999999999';
+        // Core zeroes the tax on EVERY cart line for an exempt buyer, so the
+        // fixture must report untaxed amounts: the relay fails loud on taxed
+        // amounts under an exempt declaration.
+        StubStore::$cartProducts[self::CART_ID][0]['total_wt'] = self::PRODUCT_NET;
+        StubStore::$cartTotals[self::CART_ID] = [
+            true => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_NET],
+            false => [Cart::ONLY_DISCOUNTS => 0.0, Cart::BOTH => self::PRODUCT_NET],
+            'average_products_tax_rate' => 0.0,
+        ];
 
         $module->syncTwoSurchargeCartLine($cart, true);
         $lines = self::feeLines();
@@ -682,9 +1019,8 @@ final class SurchargeCartLineSpec
         TinyAssert::same('0', $payloadLine['tax_rate'], 'payload side must apply the same B2B exemption as the cart line');
         TinyAssert::same('5.00', $payloadLine['gross_amount'], 'payload gross matches the untaxed PS line gross');
 
-        // Domestic B2B (buyer country == VATNUMBER_COUNTRY): NOT exempt -
-        // both sides tax at the group's FR rate (25%). Fresh fixture so the
-        // re-price cannot be masked by sync idempotency.
+        // Domestic B2B (buyer country == VATNUMBER_COUNTRY): NOT exempt.
+        // Fresh fixture so the re-price cannot be masked by sync idempotency.
         $module = self::makeModule();
         $cart = self::makeCart();
         Configuration::updateValue('VATNUMBER_MANAGEMENT', 1);
@@ -703,11 +1039,12 @@ final class SurchargeCartLineSpec
 
     /* ---- order-level guard: no manual/duplicate fee rows (BO order edit) ---- */
 
-    /** Minimal stand-in for the OrderDetail the hook receives. */
     private static function makeOrderDetailStub(int $productId, int $idOrder): \stdClass
     {
         $orderDetail = new \stdClass();
         $orderDetail->product_id = $productId;
+        // Core copies the product's reference onto the row, as OrderDetail::create does.
+        $orderDetail->product_reference = (string) (new Product($productId))->reference;
         $orderDetail->id_order = $idOrder;
         return $orderDetail;
     }
@@ -718,9 +1055,8 @@ final class SurchargeCartLineSpec
         self::makeCart();
         $feeProductId = $module->getTwoSurchargeCartProductId(true);
 
-        // Back-office order edit: employee finds the hidden product through
-        // the AdminOrders "Add product" search. Must throw - even as the
-        // FIRST row (this product is module-managed only).
+        // Back-office order edit: must throw even as the FIRST row - this
+        // product is module-managed only.
         $adminController = new \stdClass();
         $adminController->controller_type = 'admin';
         Context::getContext()->controller = $adminController;
@@ -743,8 +1079,8 @@ final class SurchargeCartLineSpec
         self::makeCart();
         $feeProductId = $module->getTwoSurchargeCartProductId(true);
 
-        // Front context (order-creation pipeline), but the order ALREADY
-        // carries the fee row: a second one is always a duplicate charge.
+        // Front context, but the order ALREADY carries the fee row: a second
+        // one is always a duplicate charge.
         $frontController = new \stdClass();
         $frontController->controller_type = 'front';
         Context::getContext()->controller = $frontController;
@@ -768,8 +1104,7 @@ final class SurchargeCartLineSpec
         self::makeCart();
         $feeProductId = $module->getTwoSurchargeCartProductId(true);
 
-        // Legitimate path: validateOrder creating the order's FIRST fee row
-        // in a front context - the hook must not interfere.
+        // validateOrder creating the order's FIRST fee row in a front context.
         $frontController = new \stdClass();
         $frontController->controller_type = 'front';
         Context::getContext()->controller = $frontController;
@@ -778,8 +1113,7 @@ final class SurchargeCartLineSpec
             'object' => self::makeOrderDetailStub($feeProductId, 7004),
         ]);
 
-        // And when the hidden product was never created (module never used),
-        // the guard is inert for every product.
+        // Hidden product never created: the guard is inert for every product.
         StubStore::reset();
         $module->hookActionObjectOrderDetailAddBefore([
             'object' => self::makeOrderDetailStub(12345, 7005),
@@ -789,13 +1123,10 @@ final class SurchargeCartLineSpec
     /* ---- DB-level fee-guard trigger (the ACTUAL enforcement layer) ---- */
 
     /**
-     * TESTING-LAYER NOTE: the stub Db has no SQL engine, so these tests can
-     * only assert the DDL the module issues (shape, idempotence, drop). The
-     * trigger's REJECTION semantics - duplicate fee row rejected, fee row on
-     * a fee-less-cart order rejected, legitimate first row and ordinary
-     * products unaffected - CANNOT be exercised by stubs and are verified
-     * against a live PS8 + MariaDB container (real CREATE TRIGGER, real
-     * INSERTs); see the commit message for the verified scenarios.
+     * The stub Db has no SQL engine, so these tests can only assert the DDL
+     * the module issues (shape, idempotence, drop). The trigger's REJECTION
+     * semantics cannot be exercised by stubs and are verified against a live
+     * PS8 + MariaDB container.
      */
     private static function testFeeGuardTriggerDdlInstalledIdempotentlyAndDropped(): void
     {
@@ -810,13 +1141,10 @@ final class SurchargeCartLineSpec
         TinyAssert::true(strpos($ddl, Twopayment::CONFIG_SURCHARGE_PRODUCT_ID) !== false, 'fee product id resolved live from configuration (survives product recreation)');
         TinyAssert::true(strpos($ddl, '`' . _DB_PREFIX_ . 'cart_product`') !== false, 'fee row only accepted for an order whose cart carries the fee line');
 
-        // Idempotent: a second install sees the existing trigger and issues
-        // no DDL at all.
         $executedBefore = count(StubStore::$dbExecuted);
         TinyAssert::true($module->installTwoOrderDetailFeeGuardTrigger());
         TinyAssert::same($executedBefore, count(StubStore::$dbExecuted), 'no duplicate CREATE TRIGGER');
 
-        // Uninstall drops it (via deleteTwoTables -> dropTwoOrderDetailFeeGuardTrigger).
         $drop = new ReflectionMethod($module, 'dropTwoOrderDetailFeeGuardTrigger');
         $drop->setAccessible(true);
         $drop->invoke($module);
@@ -825,8 +1153,8 @@ final class SurchargeCartLineSpec
 
     private static function testFeeGuardTriggerEnsuredLazilyOnCartSync(): void
     {
-        // Upgrade path: install() never re-ran, so the trigger is absent -
-        // the first checkout cart sync must (re)install it.
+        // Upgrade path: install() never re-ran, so the first cart sync must
+        // (re)install the trigger.
         $module = self::makeModule();
         $cart = self::makeCart();
         $triggerName = _DB_PREFIX_ . 'twopayment_fee_guard';
@@ -835,7 +1163,6 @@ final class SurchargeCartLineSpec
         $module->syncTwoSurchargeCartLine($cart, true);
         TinyAssert::true(isset(StubStore::$dbTriggers[$triggerName]), 'lazy ensure installs the trigger on first sync');
 
-        // Once per request only: a second sync issues no further trigger DDL.
         $createCount = static function (): int {
             return count(array_filter(StubStore::$dbExecuted, static function ($sql) {
                 return strpos($sql, 'CREATE TRIGGER') !== false;
@@ -865,6 +1192,8 @@ final class SurchargeCartLineSpec
         TinyAssert::same(1, (int) $product->available_for_order);
         TinyAssert::same(1, (int) $product->out_of_stock);
         TinyAssert::same(Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, (string) $product->reference);
+        // TWO-26280: no stock movement, so core makes no legacy context read that moves the shop context.
+        TinyAssert::same(false, StubStore::$stock[$productId]['add_movement'], 'the fee stock is set without a stock movement');
 
         // Lazy-create is itself idempotent: same id on every subsequent call.
         TinyAssert::same($productId, $module->getTwoSurchargeCartProductId(true));
@@ -876,5 +1205,411 @@ final class SurchargeCartLineSpec
         $recreated = $module->getTwoSurchargeCartProductId(true);
         TinyAssert::notSame(9401, $recreated);
         TinyAssert::true($recreated > 0);
+    }
+
+    /**
+     * TWO-26280: creating the fee product hands the shop context back as it found it, also when the stock call throws.
+     */
+    private static function testFeeProductCreationRestoresTheShopContext(): void
+    {
+        $toAll = static function (): void {
+            Shop::setContext(Shop::CONTEXT_ALL);
+        };
+        $toAllThenThrow = static function (): void {
+            Shop::setContext(Shop::CONTEXT_ALL);
+            throw new RuntimeException('stock write failed');
+        };
+        $cases = [
+            // [context type, context id, setQuantity side effect, created, description]
+            [Shop::CONTEXT_SHOP, 2, $toAll, true, 'shop 2: stock write leaves all shops'],
+            [Shop::CONTEXT_GROUP, 2, $toAll, true, 'group 2: stock write leaves all shops'],
+            [Shop::CONTEXT_SHOP, 1, $toAllThenThrow, false, 'shop 1: stock write leaves all shops, then throws'],
+        ];
+        foreach ($cases as [$type, $id, $sideEffect, $created, $description]) {
+            $module = self::makeModule();
+            self::makeCart();
+            StubStore::$multistore = true;
+            StubStore::$shops = [1 => 1, 2 => 2];
+            Shop::setContext($type, $id);
+            StubStore::$onSetQuantity = $sideEffect;
+
+            $productId = $module->getTwoSurchargeCartProductId(true);
+
+            TinyAssert::same($created, $productId > 0, $description . ': created');
+            $contextId = $type === Shop::CONTEXT_GROUP ? Shop::getContextShopGroupID() : Shop::getContextShopID();
+            TinyAssert::same([$type, $id], [Shop::getContext(), $contextId], $description . ': shop context restored');
+        }
+    }
+
+    /* ---- actionPresentCart: surcharge as its own totals row ---- */
+
+    /**
+     * Real PS8 core rows are ProductListingLazyArray OBJECTS (ArrayAccess),
+     * never plain arrays - PresentedProductRowStub mirrors that shape.
+     */
+    private static function presentedProductsFixture(int $surchargeProductId): array
+    {
+        return [
+            new PresentedProductRowStub(['id_product' => 9401, 'reference' => 'PLAIN-ITEM-REF', 'name' => 'Plain item', 'quantity' => 1]),
+            new PresentedProductRowStub(['id_product' => $surchargeProductId, 'reference' => Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE, 'name' => 'Payment terms fee', 'quantity' => 1]),
+        ];
+    }
+
+    private static function presentedSubtotalsFixture(Cart $cart, bool $includeTaxes, bool $withTaxRow): array
+    {
+        // Fixture cart carries no shipping cost, so Cart::BOTH === products-only here.
+        $productsAmount = round((float) $cart->getOrderTotal($includeTaxes, Cart::BOTH), 2);
+        $subtotals = [
+            'products' => ['type' => 'products', 'label' => 'Subtotal', 'amount' => $productsAmount, 'value' => Tools::displayPrice($productsAmount)],
+            'discounts' => null,
+            'shipping' => ['type' => 'shipping', 'label' => 'Shipping', 'amount' => 0.0, 'value' => 'Free'],
+        ];
+        if ($withTaxRow) {
+            $subtotals['tax'] = ['type' => 'tax', 'label' => 'Taxes', 'amount' => 1.23, 'value' => Tools::displayPrice(1.23)];
+        }
+
+        return $subtotals;
+    }
+
+    /**
+     * The surcharge is a real hidden cart product; CartPresenter would
+     * otherwise render it as an ordinary line item. Table covers both
+     * price-display modes (prestashop-plugin PR #211) crossed with whether the shop's own
+     * tax-breakdown subtotal row is present, since insertion must still
+     * land immediately before 'shipping' either way.
+     */
+    private static function testActionPresentCartMovesSurchargeToOwnRowBeforeShipping(): void
+    {
+        $cases = [
+            ['includeTaxes' => false, 'withTaxRow' => false, 'expectedAmount' => 5.00, 'why' => 'tax-excluded display, no tax row'],
+            ['includeTaxes' => true, 'withTaxRow' => false, 'expectedAmount' => 6.25, 'why' => 'tax-included display, no tax row'],
+            ['includeTaxes' => false, 'withTaxRow' => true, 'expectedAmount' => 5.00, 'why' => 'tax-excluded display, with tax row'],
+            ['includeTaxes' => true, 'withTaxRow' => true, 'expectedAmount' => 6.25, 'why' => 'tax-included display, with tax row'],
+        ];
+
+        foreach ($cases as $case) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            StubStore::$groupPriceDisplayMethods = [1 => $case['includeTaxes'] ? 0 : 1];
+            Context::getContext()->cookie->two_payment_term = 30;
+            $module->syncTwoSurchargeCartLine($cart, true);
+            $surchargeProductId = $module->getTwoSurchargeCartProductId(false);
+
+            $productsBefore = self::presentedProductsFixture($surchargeProductId);
+            $subtotalsBefore = self::presentedSubtotalsFixture($cart, $case['includeTaxes'], $case['withTaxRow']);
+            $presented = new CartLazyArrayStub($cart, ['products' => $productsBefore, 'subtotals' => $subtotalsBefore]);
+
+            $module->hookActionPresentCart(['presentedCart' => $presented]);
+            $data = $presented->getData();
+
+            $remainingProducts = array_values(array_filter($data['products'], static fn (PresentedProductRowStub $row): bool => (string) $row['reference'] === Twopayment::TWO_SURCHARGE_PRODUCT_REFERENCE));
+            TinyAssert::count(0, $remainingProducts, 'surcharge row removed from products: ' . $case['why']);
+            TinyAssert::count(1, $data['products'], 'plain item row untouched: ' . $case['why']);
+
+            $keys = array_keys($data['subtotals']);
+            $feeIndex = array_search('two_surcharge_fee', $keys, true);
+            $shippingIndex = array_search('shipping', $keys, true);
+            TinyAssert::same($shippingIndex - 1, $feeIndex, 'surcharge subtotal sits immediately before shipping: ' . $case['why']);
+
+            $expectedProductsAmount = round($subtotalsBefore['products']['amount'] - $case['expectedAmount'], 2);
+            TinyAssert::same($expectedProductsAmount, $data['subtotals']['products']['amount'], 'Subtotal reduced by exactly the surcharge amount: ' . $case['why']);
+            TinyAssert::same(Tools::displayPrice($expectedProductsAmount), $data['subtotals']['products']['value'], 'Subtotal display value recomputed: ' . $case['why']);
+
+            TinyAssert::same($case['expectedAmount'], $data['subtotals']['two_surcharge_fee']['amount'], 'surcharge row amount carries prestashop-plugin PR #211\'s display value through: ' . $case['why']);
+            TinyAssert::same($module->getTwoSurchargeLineLabel(30), $data['subtotals']['two_surcharge_fee']['label'], 'surcharge row label: ' . $case['why']);
+
+            if ($case['withTaxRow']) {
+                TinyAssert::same(1.23, $data['subtotals']['tax']['amount'], 'untouched sibling subtotal: ' . $case['why']);
+            }
+            TinyAssert::same(null, $data['subtotals']['discounts'], 'untouched sibling subtotal: ' . $case['why']);
+        }
+    }
+
+    private static function testActionPresentCartNoOpsWhenSurchargeNotSelected(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        // Two never selected: no cart line exists to move.
+        $subtotals = self::presentedSubtotalsFixture($cart, false, false);
+        $products = [new PresentedProductRowStub(['id_product' => 9401, 'reference' => 'PLAIN-ITEM-REF', 'name' => 'Plain item', 'quantity' => 1])];
+        $presented = new CartLazyArrayStub($cart, ['products' => $products, 'subtotals' => $subtotals]);
+
+        $module->hookActionPresentCart(['presentedCart' => $presented]);
+
+        TinyAssert::same(['products' => $products, 'subtotals' => $subtotals], $presented->getData());
+    }
+
+    private static function testActionPresentCartNoOpsWhenRowAbsentFromPresentedProducts(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $module->syncTwoSurchargeCartLine($cart, true);
+        // Selected in the cart, but the presented list handed to the hook
+        // never carried the row (e.g. a stale cache read) - nothing to move.
+        $subtotals = self::presentedSubtotalsFixture($cart, false, false);
+        $products = [new PresentedProductRowStub(['id_product' => 9401, 'reference' => 'PLAIN-ITEM-REF', 'name' => 'Plain item', 'quantity' => 1])];
+        $presented = new CartLazyArrayStub($cart, ['products' => $products, 'subtotals' => $subtotals]);
+
+        $module->hookActionPresentCart(['presentedCart' => $presented]);
+
+        TinyAssert::same(['products' => $products, 'subtotals' => $subtotals], $presented->getData());
+    }
+
+    /** install() runs once, so an existing install gets actionPresentCart only from the self-heal. */
+    private static function testActionPresentCartSelfHealsOnExistingInstall(): void
+    {
+        $cases = [
+            [[], 1, 'absent on an existing install - registered'],
+            [['actionPresentCart'], 0, 'already registered - not registered twice'],
+        ];
+
+        foreach ($cases as [$alreadyRegistered, $expectedCalls, $why]) {
+            $module = self::makeModule();
+            StubStore::$registeredHooks = $alreadyRegistered;
+            StubStore::$registerHookCalls = [];
+
+            $module->exposeEnsureRequiredHooksRegistered();
+
+            $calls = array_filter(StubStore::$registerHookCalls, static fn (string $hook): bool => $hook === 'actionPresentCart');
+            TinyAssert::count($expectedCalls, $calls, 'actionPresentCart self-heal: ' . $why);
+        }
+    }
+
+    /* ---- The fee line must not invalidate the buyer's checkout steps ---- */
+
+    /**
+     * OrderController restores the buyer's completed steps only while the
+     * stored checksum still matches the cart's product lines, and re-persists
+     * the collapsed state afterwards. A guest never recovers: step 1 only
+     * completes on an account creation their own email now blocks.
+     */
+    private static function testSurchargeLineLeavesPersistedCheckoutStateRestorable(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $checksum = new CartChecksum(new AddressChecksum());
+        StubStore::$checkoutSessionData[self::CART_ID] = (string) json_encode([
+            'checkout-personal-information-step' => ['skipped' => false],
+            'checksum' => $checksum->generateChecksum($cart),
+        ]);
+
+        TinyAssert::true($module->syncTwoSurchargeCartLine($cart, true)['changed']);
+
+        $stored = json_decode(StubStore::$checkoutSessionData[self::CART_ID], true);
+        TinyAssert::same(
+            $checksum->generateChecksum($cart),
+            (string) $stored['checksum'],
+            'the persisted checkout steps must still restore once the fee line is in the cart'
+        );
+        TinyAssert::same(
+            ['skipped' => false],
+            $stored['checkout-personal-information-step'],
+            'the persisted steps themselves must survive the re-stamp'
+        );
+
+        // Removal moves the lines again, so it needs the same treatment.
+        TinyAssert::true($module->syncTwoSurchargeCartLine($cart, false)['changed']);
+        $stored = json_decode(StubStore::$checkoutSessionData[self::CART_ID], true);
+        TinyAssert::same(
+            $checksum->generateChecksum($cart),
+            (string) $stored['checksum'],
+            'removing the fee line must leave the checkout steps restorable too'
+        );
+    }
+
+    /** Steps the buyer never completed must not be forged into existence. */
+    private static function testUncompletedCheckoutStateIsNotForged(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+
+        TinyAssert::true($module->syncTwoSurchargeCartLine($cart, true)['changed']);
+
+        TinyAssert::false(
+            isset(StubStore::$checkoutSessionData[self::CART_ID]),
+            'no persisted checkout state means nothing to re-stamp'
+        );
+    }
+
+    /* ---- The summary's fee and the charged fee are one decision ---- */
+
+    /**
+     * Every reachable state of the session's order-intent record, and whether a
+     * buyer-driven sync may put the fee in the cart the buyer is looking at.
+     *
+     * @return array<int,array{0:string|null,1:int|null,2:int,3:string}>
+     */
+    private static function intentRecordStates(): array
+    {
+        return [
+            ['1', self::CART_ID, 1, 'an approved intent is the tile offering Two'],
+            ['0', self::CART_ID, 0, 'a declined company is refused a fee line'],
+            [null, null, 1, 'no verdict: the preview is switched off, or has yet to answer'],
+            ['1', 7777, 1, 'an approval given for the cart a previous order consumed'],
+            ['1', null, 1, 'an approval with no cart stamp, from before this gate'],
+            ['0', 7777, 1, 'a refusal given for another cart does not bind this one'],
+            ['0', null, 1, 'a refusal with no cart stamp, from before this gate'],
+        ];
+    }
+
+    /**
+     * Order create self-heals the fee in and the parity gate throws on any
+     * residual divergence, so the buyer's summary has to admit the fee
+     * everywhere an order is still reachable - a shop running with the intent
+     * preview off never records a verdict at all. Only the tile telling this
+     * buyer it is refusing withholds it, and it says so against this cart.
+     * The server decides, not the browser: the gate holds with the JS off.
+     */
+    private static function testBuyerSyncWithholdsTheFeeOnlyWhereThisCartWasRefused(): void
+    {
+        foreach (self::intentRecordStates() as [$intentRecord, $stampedCartId, $expectedLines, $why]) {
+            $module = self::makeModule();
+            self::makeCart();
+            $controller = self::makeSurchargeSyncController($module, $intentRecord, $stampedCartId);
+
+            $controller->ajaxProcessSyncSurchargeLine();
+
+            TinyAssert::count(1, $controller->emitted, 'buyer surcharge sync: ' . $why);
+            TinyAssert::count($expectedLines, self::feeLines(), 'buyer surcharge sync: ' . $why);
+        }
+    }
+
+    /**
+     * The invariant the whole gate exists for: in no state does order create
+     * charge a fee the summary the buyer approved did not show. Where the two
+     * would disagree there is no order at all - the parity gate throws.
+     */
+    private static function testOrderCreateNeverChargesAFeeTheSummaryWithheld(): void
+    {
+        foreach (self::intentRecordStates() as [$intentRecord, $stampedCartId, $expectedLines, $why]) {
+            $module = self::makeModule();
+            $cart = self::makeCart();
+            $controller = self::makeSurchargeSyncController($module, $intentRecord, $stampedCartId);
+            $controller->ajaxProcessSyncSurchargeLine();
+            $summaryLines = count(self::feeLines());
+
+            $threw = false;
+            try {
+                $module->getTwoNewOrderData('merchant-attempt-8101', $cart, [
+                    'merchant_confirmation_url' => 'https://shop.local/confirm',
+                    'merchant_cancel_order_url' => 'https://shop.local/cancel',
+                    'merchant_edit_order_url' => '',
+                    'merchant_order_verification_failed_url' => '',
+                    'merchant_invoice_url' => '',
+                    'merchant_shipping_document_url' => '',
+                ]);
+            } catch (Exception $e) {
+                $threw = true;
+            }
+
+            TinyAssert::count($summaryLines, self::feeLines(), 'order create agrees with the summary: ' . $why);
+            TinyAssert::same($expectedLines === 0, $threw, 'a withheld fee blocks the order instead: ' . $why);
+        }
+    }
+
+    /**
+     * The stamp is what scopes a refusal to the cart it was given for, and the
+     * endpoint that records the verdict is the only thing that writes it.
+     */
+    private static function testRecordedRefusalIsStampedWithItsOwnCart(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $controller = self::makeOrderIntentResultController($module, false);
+
+        $controller->ajaxProcessSaveOrderIntentResult();
+
+        TinyAssert::false($module->isTwoSurchargeAdmissibleForCart($cart), 'this cart was refused');
+
+        $cart->id = self::CART_ID + 1;
+        TinyAssert::true(
+            $module->isTwoSurchargeAdmissibleForCart($cart),
+            'the refusal says nothing about the buyer\'s next cart'
+        );
+    }
+
+    /**
+     * Only drift the fee line itself caused may be re-stamped away. Anything
+     * else - a quantity edited in another tab, a price change - is core's to
+     * invalidate on, and blessing it restores steps core meant to collapse.
+     */
+    private static function testRestampRefusedWhenTheStoredStateAlreadyDrifted(): void
+    {
+        $module = self::makeModule();
+        $cart = self::makeCart();
+        $stale = (string) json_encode([
+            'checkout-personal-information-step' => ['skipped' => false],
+            'checksum' => sha1('a cart this state no longer describes'),
+        ]);
+        StubStore::$checkoutSessionData[self::CART_ID] = $stale;
+
+        TinyAssert::true($module->syncTwoSurchargeCartLine($cart, true)['changed']);
+
+        TinyAssert::same(
+            $stale,
+            StubStore::$checkoutSessionData[self::CART_ID],
+            'pre-existing drift stays core\'s to invalidate on'
+        );
+    }
+
+    /** Records a verdict the way the checkout JS does, through the real endpoint. */
+    private static function makeOrderIntentResultController(Twopayment $module, bool $approved)
+    {
+        Tools::resetTestValues();
+        Tools::setTestValue('ajax', 1);
+        Tools::setTestValue('action', 'saveOrderIntentResult');
+        Tools::setTestValue('token', Tools::getToken(false));
+        Tools::setTestValue('approved', $approved ? 1 : 0);
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+
+        $cookie = Context::getContext()->cookie;
+        unset($cookie->two_order_intent_approved);
+        unset($cookie->two_order_intent_cart_id);
+
+        return self::makeCapturingOrderIntentController($module);
+    }
+
+    /**
+     * @param string|null $intentRecord value of the session's order-intent record, null when absent
+     * @param int|null $stampedCartId cart the record was stamped for, null when unstamped
+     */
+    private static function makeSurchargeSyncController(Twopayment $module, $intentRecord, $stampedCartId = null)
+    {
+        Tools::resetTestValues();
+        Tools::setTestValue('ajax', 1);
+        Tools::setTestValue('action', 'syncSurchargeLine');
+        Tools::setTestValue('token', Tools::getToken(false));
+        Tools::setTestValue('selected', 1);
+        Tools::setTestValue('seq', 1);
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+
+        $cookie = Context::getContext()->cookie;
+        unset($cookie->two_order_intent_approved);
+        unset($cookie->two_order_intent_cart_id);
+        if ($intentRecord !== null) {
+            $cookie->two_order_intent_approved = $intentRecord;
+        }
+        if ($stampedCartId !== null) {
+            $cookie->two_order_intent_cart_id = (string) $stampedCartId;
+        }
+
+        return self::makeCapturingOrderIntentController($module);
+    }
+
+    private static function makeCapturingOrderIntentController(Twopayment $module)
+    {
+        $controller = new class extends TwopaymentOrderintentModuleFrontController {
+            /** @var array<int,array> */
+            public array $emitted = [];
+
+            public function sendJsonResponse($content)
+            {
+                $decoded = json_decode((string) $content, true);
+                $this->emitted[] = is_array($decoded) ? $decoded : ['raw' => $content];
+            }
+        };
+        $controller->module = $module;
+
+        return $controller;
     }
 }
