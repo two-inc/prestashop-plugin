@@ -7,7 +7,9 @@
  * offered sole-trader enrolment, and sent to the signup popup, for the delivery
  * country. The select is now taken only from the core form that saves the
  * invoice address (the invoice form, or the delivery form while the two are
- * one address); otherwise the server-resolved invoice country answers.
+ * one address); otherwise the server-resolved invoice country answers. Only
+ * when the cart has no invoice address yet does the delivery select stand in,
+ * as it does on the server, and the shop's country comes last.
  */
 
 'use strict';
@@ -37,14 +39,22 @@ function build(config) {
  * @param {Object} page
  * @param {?Object} page.step buildAddressesStep() options, or null for a page with no address form
  * @param {boolean} [page.dropSharedAddressControl] remove the `use_same_address`
- *        checkbox, as core does on every pass after the first
+ *        checkbox from the delivery form, as a theme that drops it would; core
+ *        renders it on every delivery form
  * @param {?string} [page.straySelectIso] a country select placed BEFORE the step
  * @param {?string} [page.customFormIso] a theme's own form with no `saveAddress` marker
+ * @param {?string} [page.outerFormIso] wrap the step in an outer form whose own
+ *        country select comes first; the parser drops the nested form, so the
+ *        marker's `form` is the outer one
  */
 function renderPage(page) {
     document.body.innerHTML = '';
     if (page.step) {
         buildAddressesStep(page.step);
+    }
+    if (page.outerFormIso) {
+        document.body.innerHTML = "<form><select name='id_country'><option value='9' data-iso-code='"
+            + page.outerFormIso + "' selected>X</option></select>" + document.body.innerHTML + '</form>';
     }
     if (page.dropSharedAddressControl) {
         document.querySelector("input[name='use_same_address']").remove();
@@ -112,6 +122,12 @@ describe('billingCountry() answers for the invoice address (TWO-27354)', () => {
             description: 'invoice form is read even when another country select comes first on the page'
         },
         {
+            page: { step: { editing: 'invoice', countryId: '8' }, outerFormIso: 'GB' },
+            config: {},
+            expected: 'FR',
+            description: 'invoice form is read from its address block, not the outer form a nested form resolves to'
+        },
+        {
             page: { step: { editing: 'delivery', sameAddress: true, countryId: '1' }, straySelectIso: 'GB' },
             config: {},
             expected: 'DE',
@@ -121,19 +137,31 @@ describe('billingCountry() answers for the invoice address (TWO-27354)', () => {
             page: { step: { editing: 'delivery', sameAddress: false, countryId: '1' }, dropSharedAddressControl: true },
             config: {},
             expected: 'SE',
-            description: 'later pass with no checkbox and an invoice block skips the delivery form'
+            description: 'delivery form with no checkbox and an invoice block skips the delivery form'
         },
         {
             page: { step: { editing: 'delivery', sameAddress: true, invoiceBlock: false, countryId: '1' }, dropSharedAddressControl: true },
             config: {},
             expected: 'DE',
-            description: 'later pass with no checkbox and no invoice block reads the shared delivery form'
+            description: 'delivery form with no checkbox and no invoice block reads the shared delivery form'
         },
         {
             page: { step: { editing: 'delivery', sameAddress: false, countryId: '1' } },
             config: { billingCountry: '' },
-            expected: 'ZZ',
-            description: 'guest with a separate invoice address not yet saved never borrows the delivery country'
+            expected: 'DE',
+            description: 'no invoice address on the cart yet: the delivery select stands in before the shop country'
+        },
+        {
+            page: { step: { editing: 'delivery', sameAddress: false, countryId: '17' } },
+            config: { shopCountry: 'NO', billingCountry: '' },
+            expected: 'GB',
+            description: 'guest cross-border: shop in NO, delivery select GB, no invoice address answers GB'
+        },
+        {
+            page: { step: null },
+            config: { shopCountry: 'NO', billingCountry: '' },
+            expected: 'NO',
+            description: 'no address form and no invoice address falls back to the shop country last'
         },
         {
             page: { step: null, customFormIso: 'GB' },
