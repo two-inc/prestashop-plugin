@@ -221,7 +221,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6a1e265f92087bb6dd18194833fe946b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6a648c4f50d265c66273e34fa2e561d0'] = 'Den momshanteringen lämnar tilläggsavgiften obeskattad i alla länder och är inte längre tillgänglig. Skapa och välj i stället en momsregelgrupp med satsen 0 %.';
 $_MODULE['<{twopayment}prestashop>twopayment_6a980cd176fb2321da4ea77c9b8e1bd4'] = 'Visas momsen som 0 %?';
 $_MODULE['<{twopayment}prestashop>twopayment_6adf97f83acf6453d4a6a4b1070f3754'] = 'Ingen';
-$_MODULE['<{twopayment}prestashop>twopayment_b14d1186a9a5e9343663a48c7940c328'] = 'När köparen behöver slutföra orderverifiering hos %s innan betalningen kan börja behandlas. Standard: Förberedelse pågår';
+$_MODULE['<{twopayment}prestashop>twopayment_49d88f99b49bfcb1348e14bb71cb9c8f'] = 'När köparen behöver slutföra orderverifiering hos %s innan betalningen kan börja behandlas.';
 $_MODULE['<{twopayment}prestashop>twopayment_6457d6776bae6a80a813ae296a14ec52'] = '%s måste godkänna köparen innan ordern kan läggas';
 $_MODULE['<{twopayment}prestashop>twopayment_6c04b086d2a5eed8ae6b2beca8a4221f'] = 'Betalningsleverantören är tillfälligt otillgänglig. Försök igen senare.';
 $_MODULE['<{twopayment}prestashop>twopayment_6c63214370d0302a32c914ebf6f30819'] = 'Ange %d eller fler tecken';
@@ -373,7 +373,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_e1f3e840de378499e19505d283e4601d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_80f19ae48682689fbf4d8d207166b1b1'] = 'Minsta ordervärde måste vara ett icke-negativt tal.';
 $_MODULE['<{twopayment}prestashop>twopayment_e2b7dec8fa4b498156dfee6e4c84b156'] = 'Denna betalningsmetod är inte tillgänglig.';
 $_MODULE['<{twopayment}prestashop>twopayment_e51405b398eb8714f32d50d1e2888a3a'] = 'Plattformens minimum %1$s, %2$s moms. Ett värde här tolkas i butikens standardvaluta på den momsbasis som väljs nedan; det kan inte kontrolleras mot plattformens minimum (ingen omräkningskurs) - båda minimivärdena tillämpas oberoende av varandra.';
-$_MODULE['<{twopayment}prestashop>twopayment_e61238e23786a68590e375f7f52fa879'] = 'Betalningen är verifierad och ordern är klar för handlarens leverans. Handlaren kan nu behandla och skicka ordern. Standard: Förberedelse pågår';
+$_MODULE['<{twopayment}prestashop>twopayment_e21549e9eefc12a5408fc641109190aa'] = 'Betalningen är verifierad och ordern är klar för handlarens leverans. Handlaren kan nu behandla och skicka ordern.';
 $_MODULE['<{twopayment}prestashop>twopayment_145a27912c4a1e7f665336c7099cb4e8'] = 'Avrundning av tillägg';
 $_MODULE['<{twopayment}prestashop>twopayment_8de156561c33cb1a23becce55fdd5c9d'] = 'Betalningsbehandlingen misslyckades. Handlaren bör undersöka och kontakta %ss support om det behövs. Standard: Betalningsfel';
 $_MODULE['<{twopayment}prestashop>twopayment_36a2c5ab38ae4affd5d5a351feb714a8'] = 'Avrundningssteg';

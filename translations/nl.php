@@ -221,7 +221,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_6a1e265f92087bb6dd18194833fe946b'] 
 $_MODULE['<{twopayment}prestashop>twopayment_6a648c4f50d265c66273e34fa2e561d0'] = 'Die btw-behandeling laat de toeslag in elk land onbelast en is niet langer beschikbaar. Maak in plaats daarvan een belastingregelgroep aan met een tarief van 0 procent en selecteer die.';
 $_MODULE['<{twopayment}prestashop>twopayment_6a980cd176fb2321da4ea77c9b8e1bd4'] = 'Btw toont 0 %?';
 $_MODULE['<{twopayment}prestashop>twopayment_6adf97f83acf6453d4a6a4b1070f3754'] = 'Geen';
-$_MODULE['<{twopayment}prestashop>twopayment_b14d1186a9a5e9343663a48c7940c328'] = 'Wanneer de koper de bestelverificatie bij %s moet afronden voordat de betaalverwerking kan starten. Standaard: Bezig met voorbereiden';
+$_MODULE['<{twopayment}prestashop>twopayment_49d88f99b49bfcb1348e14bb71cb9c8f'] = 'Wanneer de koper de bestelverificatie bij %s moet afronden voordat de betaalverwerking kan starten.';
 $_MODULE['<{twopayment}prestashop>twopayment_6457d6776bae6a80a813ae296a14ec52'] = '%s moet de koper goedkeuren voordat de bestelling kan worden geplaatst';
 $_MODULE['<{twopayment}prestashop>twopayment_6c04b086d2a5eed8ae6b2beca8a4221f'] = 'De betaalprovider is tijdelijk niet beschikbaar. Probeer het later opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_6c63214370d0302a32c914ebf6f30819'] = 'Voer %d of meer tekens in';
@@ -373,7 +373,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_e1f3e840de378499e19505d283e4601d'] 
 $_MODULE['<{twopayment}prestashop>twopayment_80f19ae48682689fbf4d8d207166b1b1'] = 'De minimale orderwaarde moet een niet-negatief getal zijn.';
 $_MODULE['<{twopayment}prestashop>twopayment_e2b7dec8fa4b498156dfee6e4c84b156'] = 'Deze betaalmethode is niet beschikbaar.';
 $_MODULE['<{twopayment}prestashop>twopayment_e51405b398eb8714f32d50d1e2888a3a'] = 'Platformminimum %1$s, %2$s btw. Een waarde hier wordt geïnterpreteerd in de standaardvaluta van de winkel op de hieronder gekozen belastinggrondslag; deze kan niet worden getoetst aan het platformminimum (geen omrekenkoers) - beide minimums worden onafhankelijk gehandhaafd.';
-$_MODULE['<{twopayment}prestashop>twopayment_e61238e23786a68590e375f7f52fa879'] = 'De betaling is geverifieerd en de bestelling is klaar om door de merchant te worden uitgeleverd. De merchant kan de bestelling nu verwerken en verzenden. Standaard: Bezig met voorbereiden';
+$_MODULE['<{twopayment}prestashop>twopayment_e21549e9eefc12a5408fc641109190aa'] = 'De betaling is geverifieerd en de bestelling is klaar om door de merchant te worden uitgeleverd. De merchant kan de bestelling nu verwerken en verzenden.';
 $_MODULE['<{twopayment}prestashop>twopayment_145a27912c4a1e7f665336c7099cb4e8'] = 'Afronden van toeslag';
 $_MODULE['<{twopayment}prestashop>twopayment_8de156561c33cb1a23becce55fdd5c9d'] = 'De betaalverwerking is mislukt. De merchant moet dit onderzoeken en indien nodig contact opnemen met %s-support. Standaard: Betaalfout';
 $_MODULE['<{twopayment}prestashop>twopayment_36a2c5ab38ae4affd5d5a351feb714a8'] = 'Afronding';

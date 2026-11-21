@@ -4233,27 +4233,38 @@ final class OrderBuilderSpec
     private static function testLegacyOrderAwaitingVerificationMatchesMappedAndBrandedStates(): void
     {
         // TWO-27329: an order in the mapped Awaiting status or the branded one is still awaiting,
-        // unless that status is also the Verified one.
-        // [awaiting map, verified map, order's current_state, expected, description]
+        // unless that status is also the Verified one or the order is recorded as fulfilling or later.
+        // [awaiting map, verified map, order's current_state, recorded Two state, expected, description]
         $cases = [
-            [902, 911, 902, true, 'the mapped Awaiting status'],
-            [902, 911, 901, true, 'the branded state, from before the mapping changed'],
-            [902, 911, 911, false, 'the Verified status'],
-            [911, 911, 911, false, 'a mapping shared with Verified cannot tell the two apart'],
-            [911, 911, 901, true, 'the branded state while the mapping is shared with Verified'],
-            [902, 911, 950, false, 'an unrelated status'],
+            [902, 911, 902, 'VERIFIED', true, 'the mapped Awaiting status'],
+            [902, 911, 901, 'VERIFIED', true, 'the branded state, from before the mapping changed'],
+            [902, 911, 911, 'VERIFIED', false, 'the Verified status'],
+            [911, 911, 911, 'VERIFIED', false, 'a mapping shared with Verified cannot tell the two apart'],
+            [911, 911, 901, 'VERIFIED', true, 'the branded state while the mapping is shared with Verified'],
+            [902, 911, 950, 'VERIFIED', false, 'an unrelated status'],
+            [902, 911, 902, 'CONFIRMED', true, 'confirmed at Two but left in Awaiting by a confirmation that stopped part way'],
+            [902, 911, 902, 'FULFILLED', false, 'a fulfilled order moved back into the mapped Awaiting status'],
+            [902, 911, 901, 'fulfilling', false, 'a fulfilling order in the branded state, recorded in lower case'],
         ];
-        foreach ($cases as [$awaiting_map, $verified_map, $current, $expected, $description]) {
+        foreach ($cases as [$awaiting_map, $verified_map, $current, $recorded, $expected, $description]) {
             self::reset();
             Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', $awaiting_map);
             Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION', 901);
             Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $verified_map);
             Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', 910);
             StubStore::$orders[77] = ['module' => 'twopayment', 'current_state' => $current];
-            $module = new class () extends TwopaymentTestHarness {
+            $module = new class ($recorded) extends TwopaymentTestHarness {
+                private $recorded;
+
+                public function __construct($recorded)
+                {
+                    parent::__construct();
+                    $this->recorded = $recorded;
+                }
+
                 public function getTwoOrderPaymentData($id_order)
                 {
-                    return ['two_order_id' => 'two-order-77'];
+                    return ['two_order_id' => 'two-order-77', 'two_order_state' => $this->recorded];
                 }
             };
             TinyAssert::same($expected, $module->isTwoLegacyOrderAwaitingVerification(77), 'legacy awaiting: ' . $description);

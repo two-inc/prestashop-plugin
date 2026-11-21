@@ -5005,7 +5005,7 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_AWAITING_VERIFICATION_MAP',
                         'label' => sprintf($this->l('%s: Awaiting Buyer Verification'), $this->getTwoBrandConfig('product_name')),
-                        'desc' => sprintf($this->l('When the buyer needs to complete order verification with %s before payment processing can begin. Default: Preparation in progress'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('When the buyer needs to complete order verification with %s before payment processing can begin.'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStatesAwaitingOnly,
@@ -5017,7 +5017,7 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP',
                         'label' => sprintf($this->l('%s: Verified - Ready for Fulfillment'), $this->getTwoBrandConfig('product_name')),
-                        'desc' => $this->l('Payment is verified and order is ready for merchant fulfillment. Merchant can now process and ship the order. Default: Preparation in progress'),
+                        'desc' => $this->l('Payment is verified and order is ready for merchant fulfillment. Merchant can now process and ship the order.'),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStatesVerifiedOnly,
@@ -24857,7 +24857,8 @@ class Twopayment extends PaymentModule
      *
      * The mapped status and the branded state both count, so an order created before the
      * merchant changed the mapping is still found. A status that is also the verified one
-     * cannot tell the two apart, so it does not count.
+     * cannot tell the two apart, so it does not count. Nor does an order already recorded as
+     * fulfilling or later: it was moved back into that status, and is not waiting (TWO-27329).
      *
      * @param int $id_order
      * @return bool
@@ -24878,8 +24879,12 @@ class Twopayment extends PaymentModule
             return false;
         }
         $payment_data = $this->getTwoOrderPaymentData((int) $id_order);
+        if (!is_array($payment_data) || empty($payment_data['two_order_id'])) {
+            return false;
+        }
+        $recorded = isset($payment_data['two_order_state']) ? strtoupper((string) $payment_data['two_order_state']) : '';
 
-        return is_array($payment_data) && !empty($payment_data['two_order_id']);
+        return !in_array($recorded, array('FULFILLING', 'FULFILLED', 'DELIVERED', 'FULFILMENT_NEEDS_MANUAL_RESOLUTION'), true);
     }
 
     /**
