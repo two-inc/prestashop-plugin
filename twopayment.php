@@ -8208,7 +8208,7 @@ class Twopayment extends PaymentModule
         // path hit the cache instead of fetching inline.
         $this->refreshTwoFxRates();
 
-        // The same `client`/`client_v` pair every server-side call attaches, so
+        // The same `client`/`client_v`/`merchant` params every server-side call attaches, so
         // the browser-side calls to Two can attach a byte-identical one. Read
         // from getTwoClientParams() rather than restated here: the version it
         // reports carries a `+<sha7>` suffix on a deployed build, which a bare
@@ -8310,6 +8310,7 @@ class Twopayment extends PaymentModule
                 'module_dir' => $this->_path,
                 'client' => $client_params['client'],
                 'client_version' => $client_params['client_v'],
+                'merchant' => isset($client_params['merchant']) ? $client_params['merchant'] : '',
                 'countries' => $param_countries,
                 'available_payment_terms' => $this->getAvailablePaymentTerms(),
                 // 0, not a day count, when no term is offered.
@@ -16134,10 +16135,8 @@ class Twopayment extends PaymentModule
         if ($version) {
             $params['v'] = $version;
         }
-        
-        if (!empty($params)) {
-            $pdf_url .= '?' . http_build_query($params);
-        }
+
+        $pdf_url .= '?' . http_build_query(array_merge($this->getTwoClientParams(), $params));
 
         return $pdf_url;
     }
@@ -22915,11 +22914,22 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The identity query params every Two API call carries: `client`, `client_v`
+     * and `merchant`, the merchant short name the saved API key verified as
+     * (TWO-27352). `merchant` is left out until a verified save has stored a
+     * short name, rather than sent empty.
+     *
      * @return array<string, string>
      */
     public function getTwoClientParams()
     {
-        return array('client' => 'PS', 'client_v' => $this->getTwoClientVersion());
+        $params = array('client' => 'PS', 'client_v' => $this->getTwoClientVersion());
+        $merchant = trim((string) $this->merchant_short_name);
+        if ($merchant !== '') {
+            $params['merchant'] = $merchant;
+        }
+
+        return $params;
     }
 
     /**
