@@ -175,6 +175,24 @@ describe('withTwoClientParams (TwoSoleTrader)', () => {
             expect(url).not.toContain('undefined');
         }
     );
+
+    // TWO-27352: the merchant short name rides with the pair once a verified
+    // save has stored one, and is left out rather than sent empty before that.
+    const merchantCases = [
+        ['a published short name is appended', 'acme-ltd', '&merchant=acme-ltd'],
+        ['an empty short name is left out', '', ''],
+        ['a config without the key leaves it out', undefined, '']
+    ];
+
+    test.each(merchantCases)('merchant: %s', (description, merchant, expectedSuffix) => {
+        if (merchant !== undefined) {
+            global.window.twopayment.merchant = merchant;
+        }
+
+        expect(TwoSoleTrader.withTwoClientParams('https://api.example.test/v1/thing')).toBe(
+            'https://api.example.test/v1/thing?client=' + CLIENT + '&client_v=' + CLIENT_VERSION_ENCODED + expectedSuffix
+        );
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -373,6 +391,22 @@ describe('sole-trader autofill carries the client identification and the browser
         expect(autofillCall).toBeDefined();
         expectClientParams(autofillCall.url);
         expect(new URL(autofillCall.url).pathname).toBe('/autofill/v1/buyer/current');
+    });
+
+    test('GET /autofill/v1/buyer/current carries the published merchant short name', async () => {
+        global.window.twopayment.merchant = 'acme-ltd';
+        const calls = [];
+        stubFetchCapturing(calls);
+
+        const instance = makeInstance();
+        instance.tokens = { autofill_token: 'af-token' };
+        instance.getCurrentBuyer();
+        await flushPromises();
+
+        const autofillCall = calls.find((call) => call.url.includes('/autofill/v1/buyer/current'));
+        expect(autofillCall).toBeDefined();
+        expectClientParams(autofillCall.url);
+        expect(new URL(autofillCall.url).searchParams.get('merchant')).toBe('acme-ltd');
     });
 
     async function headersFromAutofillCall() {

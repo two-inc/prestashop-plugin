@@ -320,7 +320,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_b96a0cd4ff2da7a7998fd293c6e2be24'] 
 $_MODULE['<{twopayment}prestashop>twopayment_b9f5c797ebbf55adccdd8539a65a0241'] = 'Uitgeschakeld';
 $_MODULE['<{twopayment}prestashop>twopayment_ba565358a4357911e173c8af649b569e'] = 'exclusief';
 $_MODULE['<{twopayment}prestashop>twopayment_bafd7322c6e97d25b6299b5d6fe8920b'] = 'Nee';
-$_MODULE['<{twopayment}prestashop>twopayment_bb1697a94fe9e88e0c4b2b0dd605eced'] = 'Instelbare betaaltermijnen (7, 15, 20, 30, 45, 60, 90 dagen)';
+$_MODULE['<{twopayment}prestashop>twopayment_02fd79eb2cb7b111e9470a44e8d61a9d'] = 'Instelbare betaaltermijnen (7, 14, 15, 20, 30, 45, 60, 90 dagen)';
 $_MODULE['<{twopayment}prestashop>twopayment_bbe9f9e95ce9e3ed2a173b373b381286'] = 'SSL-verificatie is uitgeschakeld in productie. Schakel deze weer in, tenzij je netwerk een vertrouwde bedrijfsproxy vereist.';
 $_MODULE['<{twopayment}prestashop>twopayment_bc5e69470fb58f31cb12c7e95bede662'] = 'Realtime geschiktheidscheck van de koper (Order Intent) vóór aankoop';
 $_MODULE['<{twopayment}prestashop>twopayment_bcdcf1cfb578d4756265681317cb35e2'] = 'Zoek naar een ander bedrijf';

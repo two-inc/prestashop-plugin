@@ -39,7 +39,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_28c190bc79712b036a783893d4e18059'] 
 $_MODULE['<{twopayment}prestashop>twopayment_2db402469dd03ef70d28a292f12eb8c7'] = 'Búsqueda y validación de empresas en el checkout (autocompletado)';
 $_MODULE['<{twopayment}prestashop>twopayment_bc5e69470fb58f31cb12c7e95bede662'] = 'Comprobación en tiempo real de elegibilidad del comprador (Order Intent) antes de la compra';
 $_MODULE['<{twopayment}prestashop>twopayment_5ea058e4746950c51516f030cae91320'] = 'Cumplimiento automático de pedidos cuando cambia el estado del pedido (configurable)';
-$_MODULE['<{twopayment}prestashop>twopayment_bb1697a94fe9e88e0c4b2b0dd605eced'] = 'Plazos de pago configurables (7, 15, 20, 30, 45, 60, 90 días)';
+$_MODULE['<{twopayment}prestashop>twopayment_02fd79eb2cb7b111e9470a44e8d61a9d'] = 'Plazos de pago configurables (7, 14, 15, 20, 30, 45, 60, 90 días)';
 $_MODULE['<{twopayment}prestashop>twopayment_79581e5bb8de33fe6bcf4f233275c5a8'] = 'Gestionar reembolsos completos desde el administrador de PrestaShop';
 $_MODULE['<{twopayment}prestashop>twopayment_0325614b345f7e82dd2f080cb51f4b65'] = 'Enviar reembolsos parciales (facturas por abono) a %s automáticamente: no los reembolses también en el Portal de Comerciantes';
 $_MODULE['<{twopayment}prestashop>twopayment_a97da5fb422662e859b341dd6f6c9704'] = 'Mostrar información del pedido de %s en la vista de pedidos del administrador';
