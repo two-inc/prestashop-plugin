@@ -1,6 +1,6 @@
 <?php
 /**
- * UPGRADE SCRIPT: Version 2.7.24
+ * UPGRADE SCRIPT: Version 2.7.25
  *
  * New orders now take the Awaiting and Verified statuses mapped in the
  * settings (TWO-27329). Earlier versions stored core's Processing in progress
@@ -27,12 +27,12 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
-function upgrade_module_2_7_24($module)
+function upgrade_module_2_7_25($module)
 {
     try {
         $moved = $module->migrateTwoPreparationStatusMaps();
         PrestaShopLogger::addLog(
-            'Two Payment: Upgraded to version 2.7.24 - moved the Awaiting and Verified status mapping of ' . (int) $moved . ' tier(s) from Processing in progress to the module statuses',
+            'Two Payment: Upgraded to version 2.7.25 - moved the Awaiting and Verified status mapping of ' . (int) $moved . ' tier(s) from Processing in progress to the module statuses',
             1,
             null,
             'Module',
@@ -40,7 +40,7 @@ function upgrade_module_2_7_24($module)
         );
     } catch (Throwable $e) {
         PrestaShopLogger::addLog(
-            'Two Payment: Upgrade to version 2.7.24 could not move every Awaiting and Verified status mapping - ' . $e->getMessage() . '; check the order status settings',
+            'Two Payment: Upgrade to version 2.7.25 could not move every Awaiting and Verified status mapping - ' . $e->getMessage() . '; check the order status settings',
             3,
             null,
             'Module',

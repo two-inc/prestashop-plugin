@@ -4278,10 +4278,10 @@ final class OrderBuilderSpec
 
     private static function testUpgradeMovesOnlyThePreparationDefaultPair(): void
     {
-        // TWO-27329: the 2.7.24 upgrade moves the old Processing in progress (3) default for both
+        // TWO-27329: the 2.7.25 upgrade moves the old Processing in progress (3) default for both
         // mappings to the module's own statuses, and nothing else.
         // [awaiting map, verified map, branded awaiting, branded verified, expected awaiting map, expected verified map, description]
-        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.24.php';
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.25.php';
         $cases = [
             [3, 3, 901, 910, 901, 910, 'the Processing in progress pair moves to the module statuses'],
             [3, 911, 901, 910, 3, 911, 'only Awaiting on Processing in progress is untouched'],
@@ -4299,7 +4299,7 @@ final class OrderBuilderSpec
             Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $brandedVerified);
             Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', $awaiting);
             Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $verified);
-            TinyAssert::true(upgrade_module_2_7_24($module), $description . ': the upgrade succeeds');
+            TinyAssert::true(upgrade_module_2_7_25($module), $description . ': the upgrade succeeds');
             TinyAssert::same($expectedAwaiting, (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP'), $description . ': awaiting map');
             TinyAssert::same($expectedVerified, (int) Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'), $description . ': verified map');
         }

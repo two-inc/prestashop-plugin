@@ -536,7 +536,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.24';
+        $this->version = '2.7.25';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -24823,14 +24823,18 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The one-time move off the old default mapping (TWO-27329), run by upgrade-2.7.24.php. Earlier versions stored
-     * core's Processing in progress as both the Awaiting and the Verified mapping, but created and verified orders in
+     * The one-time move off the old default mapping (TWO-27329), run by upgrade-2.7.25.php. Earlier versions stored
+     * core's Processing in progress as both the Awaiting and the Verified mapping (at install before September 2025,
+     * and in the status repair ensureCustomStatesExist() runs until this version), but created and verified orders in
      * the module's own statuses whatever the mapping said. Now that orders follow the mapping, a tier whose Awaiting
      * and Verified mappings both still name Processing in progress has each moved to the module's own status, so its
-     * orders keep the statuses they had. Any other mapping, or a tier whose own statuses are missing, is left as it is.
+     * orders keep the statuses they had.
      *
      * The global tier and, on a multistore shop, every shop group and shop tier are read as they were before the
-     * upgrade, and only a mapping a tier holds itself is written.
+     * upgrade, and only a mapping a tier holds itself is written. Nothing is written for any other mapping, or for a
+     * tier whose own statuses are missing. A shop or shop group with no value of its own for a mapping inherits it
+     * from the tier above, so it takes the moved value when that tier moves, even where its other mapping does not
+     * name Processing in progress.
      *
      * @return int the number of tiers moved
      * @throws Exception naming the tiers that could not be written, after moving every other tier
