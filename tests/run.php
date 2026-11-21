@@ -120,6 +120,9 @@ final class OrderBuilderSpec
         self::testGetTwoVerifiedPendingFulfillmentStatusIdUsesConfiguredFallbackChain();
         self::testGetTwoInitialAwaitingStatusIdUsesConfiguredFallbackChain();
         self::testLegacyOrderAwaitingVerificationMatchesMappedAndBrandedStates();
+        self::testUpgradeMovesOnlyThePreparationDefaultPair();
+        self::testPreparationDefaultMigrationCoversEveryShopTier();
+        self::testRecreatedStatesMapToTheModuleStatuses();
         self::testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId();
         self::testSyncLocalOrderStatusFromTwoStateCancelsOnlyWhenProviderCancelled();
         self::testIsTwoOrderCancelledResponseRequires2xxAndCancelledState();
@@ -4245,6 +4248,8 @@ final class OrderBuilderSpec
             [902, 911, 902, 'CONFIRMED', true, 'confirmed at Two but left in Awaiting by a confirmation that stopped part way'],
             [902, 911, 902, 'FULFILLED', false, 'a fulfilled order moved back into the mapped Awaiting status'],
             [902, 911, 901, 'fulfilling', false, 'a fulfilling order in the branded state, recorded in lower case'],
+            [902, 911, 902, 'PARTIALLY_FULFILLED', false, 'a partly fulfilled order moved back into the mapped Awaiting status'],
+            [902, 911, 902, 'REFUNDED', false, 'a refunded order moved back into the mapped Awaiting status'],
         ];
         foreach ($cases as [$awaiting_map, $verified_map, $current, $recorded, $expected, $description]) {
             self::reset();
@@ -4269,6 +4274,76 @@ final class OrderBuilderSpec
             };
             TinyAssert::same($expected, $module->isTwoLegacyOrderAwaitingVerification(77), 'legacy awaiting: ' . $description);
         }
+    }
+
+    private static function testUpgradeMovesOnlyThePreparationDefaultPair(): void
+    {
+        // TWO-27329: the 2.7.24 upgrade moves the old Processing in progress (3) default for both
+        // mappings to the module's own statuses, and nothing else.
+        // [awaiting map, verified map, branded awaiting, branded verified, expected awaiting map, expected verified map, description]
+        require_once dirname(__DIR__) . '/upgrade/upgrade-2.7.24.php';
+        $cases = [
+            [3, 3, 901, 910, 901, 910, 'the Processing in progress pair moves to the module statuses'],
+            [3, 911, 901, 910, 3, 911, 'only Awaiting on Processing in progress is untouched'],
+            [902, 3, 901, 910, 902, 3, 'only Verified on Processing in progress is untouched'],
+            [902, 911, 901, 910, 902, 911, 'custom mappings are untouched'],
+            [901, 910, 901, 910, 901, 910, 'mappings already on the module statuses are untouched'],
+            [3, 3, 0, 0, 3, 3, 'missing module statuses leave the pair as it is'],
+            [3, 3, 901, 0, 3, 3, 'a missing Verified module status leaves the pair as it is'],
+        ];
+        foreach ($cases as [$awaiting, $verified, $brandedAwaiting, $brandedVerified, $expectedAwaiting, $expectedVerified, $description]) {
+            self::reset();
+            $module = new TwopaymentTestHarness();
+            Configuration::updateValue('PS_OS_PREPARATION', 3);
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION', $brandedAwaiting);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT', $brandedVerified);
+            Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', $awaiting);
+            Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', $verified);
+            TinyAssert::true(upgrade_module_2_7_24($module), $description . ': the upgrade succeeds');
+            TinyAssert::same($expectedAwaiting, (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP'), $description . ': awaiting map');
+            TinyAssert::same($expectedVerified, (int) Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'), $description . ': verified map');
+        }
+    }
+
+    private static function testPreparationDefaultMigrationCoversEveryShopTier(): void
+    {
+        // TWO-27329: each tier is judged by the pair it reads before the upgrade, and only a mapping
+        // the tier holds itself is written.
+        self::reset();
+        $module = new TwopaymentTestHarness();
+        StubStore::$multistore = true;
+        StubStore::$shops = [1 => 1, 2 => 1, 3 => 2];
+        StubStore::$configuration['PS_OS_PREPARATION'] = 3;
+        StubStore::$configuration['PS_TWO_OS_AWAITING_VERIFICATION'] = 901;
+        StubStore::$configuration['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT'] = 910;
+        StubStore::$configuration['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = 3;
+        StubStore::$configuration['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'] = 3;
+        StubStore::$configurationGroup[2]['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = 3;
+        StubStore::$configurationGroup[2]['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'] = 3;
+        StubStore::$configurationShop[2]['PS_TWO_OS_AWAITING_VERIFICATION_MAP'] = 902;
+
+        TinyAssert::same(2, $module->migrateTwoPreparationStatusMaps(), 'the global and shop group 2 tiers moved');
+        TinyAssert::same(901, StubStore::$configuration['PS_TWO_OS_AWAITING_VERIFICATION_MAP'], 'global awaiting map');
+        TinyAssert::same(910, StubStore::$configuration['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'], 'global verified map');
+        TinyAssert::same(901, StubStore::$configurationGroup[2]['PS_TWO_OS_AWAITING_VERIFICATION_MAP'], 'shop group awaiting map');
+        TinyAssert::same(910, StubStore::$configurationGroup[2]['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'], 'shop group verified map');
+        TinyAssert::same(902, StubStore::$configurationShop[2]['PS_TWO_OS_AWAITING_VERIFICATION_MAP'], 'a shop with its own Awaiting mapping keeps it');
+        TinyAssert::false(isset(StubStore::$configurationShop[2]['PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP']), 'a shop inheriting the Verified mapping gets no copy');
+        TinyAssert::false(isset(StubStore::$configurationShop[1]['PS_TWO_OS_AWAITING_VERIFICATION_MAP']), 'a shop inheriting both mappings gets no copy');
+    }
+
+    private static function testRecreatedStatesMapToTheModuleStatuses(): void
+    {
+        // TWO-27329: a shop with no module statuses has them created with the maps on them, as install() does.
+        self::reset();
+        Configuration::updateValue('PS_OS_PREPARATION', 3);
+        $ensure = new ReflectionMethod(Twopayment::class, 'ensureCustomStatesExist');
+        $ensure->invoke(new TwopaymentTestHarness());
+        $awaiting = (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
+        $verified = (int) Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
+        TinyAssert::true($awaiting > 0 && $verified > 0 && $awaiting !== $verified, 'the module statuses are created');
+        TinyAssert::same($awaiting, (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP'), 'awaiting map on the module status');
+        TinyAssert::same($verified, (int) Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP'), 'verified map on the module status');
     }
 
     private static function testHasTwoProviderOrderMappingRequiresNonEmptyTwoOrderId(): void

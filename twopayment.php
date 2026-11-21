@@ -606,8 +606,9 @@ class Twopayment extends PaymentModule
             
             // Set up default mappings if they don't exist
             if (!Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP')) {
-                Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_OS_PREPARATION'));
-                Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_OS_PREPARATION'));
+                // The module's own statuses, matching install(): orders follow these maps (TWO-27329).
+                Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION'));
+                Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT'));
                 // JSON array, matching install() and the admin form save path - this
                 // recovery path used to write a bare status ID, leaving three
                 // divergent storage formats for one configuration key.
@@ -24822,6 +24823,73 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The one-time move off the old default mapping (TWO-27329), run by upgrade-2.7.24.php. Earlier versions stored
+     * core's Processing in progress as both the Awaiting and the Verified mapping, but created and verified orders in
+     * the module's own statuses whatever the mapping said. Now that orders follow the mapping, a tier whose Awaiting
+     * and Verified mappings both still name Processing in progress has each moved to the module's own status, so its
+     * orders keep the statuses they had. Any other mapping, or a tier whose own statuses are missing, is left as it is.
+     *
+     * The global tier and, on a multistore shop, every shop group and shop tier are read as they were before the
+     * upgrade, and only a mapping a tier holds itself is written.
+     *
+     * @return int the number of tiers moved
+     * @throws Exception naming the tiers that could not be written, after moving every other tier
+     */
+    public function migrateTwoPreparationStatusMaps()
+    {
+        $maps = array(
+            'PS_TWO_OS_AWAITING_VERIFICATION_MAP' => 'PS_TWO_OS_AWAITING_VERIFICATION',
+            'PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP' => 'PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT',
+        );
+        // Loads Configuration's cache, which hasKey() reads, in a context that has not loaded it yet.
+        Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP');
+        $tiers = array('global' => array(0, 0));
+        if (Shop::isFeatureActive()) {
+            foreach (Shop::getShops(false, null, true) as $idShop) {
+                $idShopGroup = (int) Shop::getGroupFromShop((int) $idShop);
+                $tiers['shop group ' . $idShopGroup] = array($idShopGroup, 0);
+                $tiers['shop ' . (int) $idShop] = array($idShopGroup, (int) $idShop);
+            }
+        }
+        $writes = array();
+        foreach ($tiers as $tier => $ids) {
+            list($idShopGroup, $idShop) = $ids;
+            $preparation = (int) Configuration::get('PS_OS_PREPARATION', null, $idShopGroup, $idShop);
+            $own = array();
+            foreach ($maps as $map => $branded) {
+                $brandedId = (int) Configuration::get($branded, null, $idShopGroup, $idShop);
+                if ($preparation <= 0 || (int) Configuration::get($map, null, $idShopGroup, $idShop) !== $preparation
+                    || $brandedId <= 0 || !Validate::isLoadedObject(new OrderState($brandedId))) {
+                    continue 2;
+                }
+                if (Configuration::hasKey($map, null, $idShopGroup, $idShop)) {
+                    $own[$map] = $brandedId;
+                }
+            }
+            if ($own !== array()) {
+                $writes[$tier] = array($idShopGroup, $idShop, $own);
+            }
+        }
+        $failed = array();
+        foreach ($writes as $tier => $write) {
+            list($idShopGroup, $idShop, $own) = $write;
+            foreach ($own as $map => $brandedId) {
+                $written = $tier === 'global'
+                    ? Configuration::updateGlobalValue($map, $brandedId)
+                    : Configuration::updateValue($map, $brandedId, false, $idShopGroup, $idShop);
+                if (!$written) {
+                    $failed[$tier] = $tier;
+                }
+            }
+        }
+        if ($failed !== array()) {
+            throw new Exception('the order status mapping of the ' . implode(', ', $failed) . ' tier could not be written');
+        }
+
+        return count($writes);
+    }
+
+    /**
      * The status a Two order is created in, before it moves to the verified status: the
      * merchant's mapping, then the branded state, then core's Processing in progress (TWO-27329).
      *
@@ -24884,7 +24952,7 @@ class Twopayment extends PaymentModule
         }
         $recorded = isset($payment_data['two_order_state']) ? strtoupper((string) $payment_data['two_order_state']) : '';
 
-        return !in_array($recorded, array('FULFILLING', 'FULFILLED', 'DELIVERED', 'FULFILMENT_NEEDS_MANUAL_RESOLUTION'), true);
+        return !in_array($recorded, array_merge(self::TWO_INVOICED_STATES, array('PARTIALLY_FULFILLED')), true);
     }
 
     /**
