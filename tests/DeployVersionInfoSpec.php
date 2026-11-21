@@ -25,6 +25,7 @@ final class DeployVersionInfoSpec
         self::testGitlinkFileWithoutShaReturnsNull();
         self::testDeployedAtLabelMatchesModuleFileMtime();
         self::testClientVersionHasNoTrailingPlusWithoutSha();
+        self::testClientParamsCarryTheMerchantShortName();
         self::testClientVersionAppendsShaWhenResolved();
         self::testClientParamsAreUrlEncodedWithPercent2B();
         self::testBrowserConfigPublishesTheShaSuffixedVersion();
@@ -348,10 +349,29 @@ final class DeployVersionInfoSpec
     {
         $module = new TwopaymentClientVersionNoShaHarness();
         TinyAssert::same('2.4.0', $module->getTwoClientVersion());
+        $module->merchant_short_name = '';
         TinyAssert::same(
             array('client' => 'PS', 'client_v' => '2.4.0'),
             $module->getTwoClientParams()
         );
+    }
+
+    private static function testClientParamsCarryTheMerchantShortName(): void
+    {
+        // TWO-27352: the merchant short name rides with client/client_v once a
+        // verified save stored one; before that it is left out, never sent empty.
+        $cases = array(
+            array('acme-ltd', array('client' => 'PS', 'client_v' => '2.4.0', 'merchant' => 'acme-ltd'), 'a stored short name is sent'),
+            array(' acme-ltd ', array('client' => 'PS', 'client_v' => '2.4.0', 'merchant' => 'acme-ltd'), 'surrounding whitespace is trimmed'),
+            array('', array('client' => 'PS', 'client_v' => '2.4.0'), 'an empty short name is left out'),
+            array(false, array('client' => 'PS', 'client_v' => '2.4.0'), 'an unset configuration value is left out'),
+        );
+        foreach ($cases as $case) {
+            list($shortName, $expected, $description) = $case;
+            $module = new TwopaymentClientVersionNoShaHarness();
+            $module->merchant_short_name = $shortName;
+            TinyAssert::same($expected, $module->getTwoClientParams(), $description);
+        }
     }
 
     private static function testClientVersionAppendsShaWhenResolved(): void
@@ -367,7 +387,7 @@ final class DeployVersionInfoSpec
         $module = new TwopaymentClientVersionWithShaHarness();
         $query = http_build_query($module->getTwoClientParams());
 
-        TinyAssert::same('client=PS&client_v=2.4.0%2Bfbdc80b', $query);
+        TinyAssert::same('client=PS&client_v=2.4.0%2Bfbdc80b&merchant=merchant', $query);
 
         $parsed = [];
         parse_str($query, $parsed);
