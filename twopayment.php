@@ -536,7 +536,7 @@ class Twopayment extends PaymentModule
     {
         $this->name = 'twopayment';
         $this->tab = 'payments_gateways';
-        $this->version = '2.7.24';
+        $this->version = '2.7.25';
         $this->ps_versions_compliancy = array('min' => '1.7.6.0', 'max' => _PS_VERSION_);
         $this->author = 'Two';
         $this->bootstrap = true;
@@ -606,8 +606,9 @@ class Twopayment extends PaymentModule
             
             // Set up default mappings if they don't exist
             if (!Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP')) {
-                Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_OS_PREPARATION'));
-                Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_OS_PREPARATION'));
+                // The module's own statuses, matching install(): orders follow these maps (TWO-27329).
+                Configuration::updateValue('PS_TWO_OS_AWAITING_VERIFICATION_MAP', Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION'));
+                Configuration::updateValue('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP', Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT'));
                 // JSON array, matching install() and the admin form save path - this
                 // recovery path used to write a bare status ID, leaving three
                 // divergent storage formats for one configuration key.
@@ -5005,7 +5006,7 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_AWAITING_VERIFICATION_MAP',
                         'label' => sprintf($this->l('%s: Awaiting Buyer Verification'), $this->getTwoBrandConfig('product_name')),
-                        'desc' => sprintf($this->l('When the buyer needs to complete order verification with %s before payment processing can begin. Default: Preparation in progress'), $this->getTwoBrandConfig('product_name')),
+                        'desc' => sprintf($this->l('When the buyer needs to complete order verification with %s before payment processing can begin.'), $this->getTwoBrandConfig('product_name')),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStatesAwaitingOnly,
@@ -5017,7 +5018,7 @@ class Twopayment extends PaymentModule
                         'type' => 'select',
                         'name' => 'PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP',
                         'label' => sprintf($this->l('%s: Verified - Ready for Fulfillment'), $this->getTwoBrandConfig('product_name')),
-                        'desc' => $this->l('Payment is verified and order is ready for merchant fulfillment. Merchant can now process and ship the order. Default: Preparation in progress'),
+                        'desc' => $this->l('Payment is verified and order is ready for merchant fulfillment. Merchant can now process and ship the order.'),
                         'required' => true,
                         'options' => array(
                             'query' => $orderStatesVerifiedOnly,
@@ -24822,17 +24823,89 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The status a Two order is created in, before it moves to the verified status.
+     * The one-time move off the old default mapping (TWO-27329), run by upgrade-2.7.25.php. Earlier versions stored
+     * core's Processing in progress as both the Awaiting and the Verified mapping (at install before September 2025,
+     * and in the status repair ensureCustomStatesExist() runs until this version), but created and verified orders in
+     * the module's own statuses whatever the mapping said. Now that orders follow the mapping, a tier whose Awaiting
+     * and Verified mappings both still name Processing in progress has each moved to the module's own status, so its
+     * orders keep the statuses they had.
+     *
+     * The global tier and, on a multistore shop, every shop group and shop tier are read as they were before the
+     * upgrade, and only a mapping a tier holds itself is written. Nothing is written for any other mapping, or for a
+     * tier whose own statuses are missing. A shop or shop group with no value of its own for a mapping inherits it
+     * from the tier above, so it takes the moved value when that tier moves, even where its other mapping does not
+     * name Processing in progress.
+     *
+     * @return int the number of tiers moved
+     * @throws Exception naming the tiers that could not be written, after moving every other tier
+     */
+    public function migrateTwoPreparationStatusMaps()
+    {
+        $maps = array(
+            'PS_TWO_OS_AWAITING_VERIFICATION_MAP' => 'PS_TWO_OS_AWAITING_VERIFICATION',
+            'PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP' => 'PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT',
+        );
+        // Loads Configuration's cache, which hasKey() reads, in a context that has not loaded it yet.
+        Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP');
+        $tiers = array('global' => array(0, 0));
+        if (Shop::isFeatureActive()) {
+            foreach (Shop::getShops(false, null, true) as $idShop) {
+                $idShopGroup = (int) Shop::getGroupFromShop((int) $idShop);
+                $tiers['shop group ' . $idShopGroup] = array($idShopGroup, 0);
+                $tiers['shop ' . (int) $idShop] = array($idShopGroup, (int) $idShop);
+            }
+        }
+        $writes = array();
+        foreach ($tiers as $tier => $ids) {
+            list($idShopGroup, $idShop) = $ids;
+            $preparation = (int) Configuration::get('PS_OS_PREPARATION', null, $idShopGroup, $idShop);
+            $own = array();
+            foreach ($maps as $map => $branded) {
+                $brandedId = (int) Configuration::get($branded, null, $idShopGroup, $idShop);
+                if ($preparation <= 0 || (int) Configuration::get($map, null, $idShopGroup, $idShop) !== $preparation
+                    || $brandedId <= 0 || !Validate::isLoadedObject(new OrderState($brandedId))) {
+                    continue 2;
+                }
+                if (Configuration::hasKey($map, null, $idShopGroup, $idShop)) {
+                    $own[$map] = $brandedId;
+                }
+            }
+            if ($own !== array()) {
+                $writes[$tier] = array($idShopGroup, $idShop, $own);
+            }
+        }
+        $failed = array();
+        foreach ($writes as $tier => $write) {
+            list($idShopGroup, $idShop, $own) = $write;
+            foreach ($own as $map => $brandedId) {
+                $written = $tier === 'global'
+                    ? Configuration::updateGlobalValue($map, $brandedId)
+                    : Configuration::updateValue($map, $brandedId, false, $idShopGroup, $idShop);
+                if (!$written) {
+                    $failed[$tier] = $tier;
+                }
+            }
+        }
+        if ($failed !== array()) {
+            throw new Exception('the order status mapping of the ' . implode(', ', $failed) . ' tier could not be written');
+        }
+
+        return count($writes);
+    }
+
+    /**
+     * The status a Two order is created in, before it moves to the verified status: the
+     * merchant's mapping, then the branded state, then core's Processing in progress (TWO-27329).
      *
      * @return int
      */
     public function getTwoInitialAwaitingStatusId()
     {
-        $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
-        if (!$initial_status) {
-            $initial_status = Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP');
-            if (!$initial_status) {
-                $initial_status = Configuration::get('PS_OS_PREPARATION');
+        $initial_status = (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION_MAP');
+        if ($initial_status <= 0) {
+            $initial_status = (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION');
+            if ($initial_status <= 0) {
+                $initial_status = (int) Configuration::get('PS_OS_PREPARATION');
             }
         }
 
@@ -24840,26 +24913,24 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The status the confirmation moves a verified order to.
+     * The status the confirmation moves a verified order to: the one every other path treats
+     * as verified (TWO-27329).
      *
      * @return int
      */
     public function getTwoVerifiedStatusIdForConfirmation()
     {
-        $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT');
-        if (!$verified_status) {
-            $verified_status = Configuration::get('PS_TWO_OS_VERIFIED_PENDING_FULFILLMENT_MAP');
-            if (!$verified_status) {
-                $verified_status = Configuration::get('PS_OS_PREPARATION');
-            }
-        }
-
-        return (int) $verified_status;
+        return $this->getTwoVerifiedPendingFulfillmentStatusId();
     }
 
     /**
      * A Two order still in the awaiting-verification status it was created in: placed before
      * checkout attempts existed, or left there by a confirmation that stopped part way.
+     *
+     * The mapped status and the branded state both count, so an order created before the
+     * merchant changed the mapping is still found. A status that is also the verified one
+     * cannot tell the two apart, so it does not count. Nor does an order already recorded as
+     * fulfilling or later: it was moved back into that status, and is not waiting (TWO-27329).
      *
      * @param int $id_order
      * @return bool
@@ -24870,13 +24941,22 @@ class Twopayment extends PaymentModule
         if (!Validate::isLoadedObject($order) || (string) $order->module !== $this->name) {
             return false;
         }
-        $awaiting = $this->getTwoInitialAwaitingStatusId();
-        if ($awaiting <= 0 || (int) $order->current_state !== $awaiting) {
+        $current = (int) $order->current_state;
+        $awaiting = array(
+            $this->getTwoInitialAwaitingStatusId(),
+            (int) Configuration::get('PS_TWO_OS_AWAITING_VERIFICATION'),
+        );
+        if ($current <= 0 || !in_array($current, $awaiting, true)
+            || $current === $this->getTwoVerifiedPendingFulfillmentStatusId()) {
             return false;
         }
         $payment_data = $this->getTwoOrderPaymentData((int) $id_order);
+        if (!is_array($payment_data) || empty($payment_data['two_order_id'])) {
+            return false;
+        }
+        $recorded = isset($payment_data['two_order_state']) ? strtoupper((string) $payment_data['two_order_state']) : '';
 
-        return is_array($payment_data) && !empty($payment_data['two_order_id']);
+        return !in_array($recorded, array_merge(self::TWO_INVOICED_STATES, array('PARTIALLY_FULFILLED')), true);
     }
 
     /**
