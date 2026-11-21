@@ -5973,6 +5973,7 @@ require __DIR__ . '/TaxCodeAdminSpec.php';
 require __DIR__ . '/OrderTendersSpec.php';
 require __DIR__ . '/DebugApiLoggingSpec.php';
 require __DIR__ . '/ErrorLogAccessSpec.php';
+require __DIR__ . '/ErrorLogAdminTabSpec.php';
 require __DIR__ . '/ApiRefusalLogSpec.php';
 require __DIR__ . '/OrderTermWireSpec.php';
 require __DIR__ . '/CompanyLookupIdSpec.php';
@@ -6070,6 +6071,7 @@ $tests = [
     'OrderTendersSpec::runAll' => [OrderTendersSpec::class, 'runAll'],
     'DebugApiLoggingSpec::runAll' => [DebugApiLoggingSpec::class, 'runAll'],
     'ErrorLogAccessSpec::runAll' => [ErrorLogAccessSpec::class, 'runAll'],
+    'ErrorLogAdminTabSpec::runAll' => [ErrorLogAdminTabSpec::class, 'runAll'],
     'ApiRefusalLogSpec::runAll' => [ApiRefusalLogSpec::class, 'runAll'],
     'OrderTermWireSpec::runAll' => [OrderTermWireSpec::class, 'runAll'],
     'CompanyLookupIdSpec::runAll' => [CompanyLookupIdSpec::class, 'runAll'],
