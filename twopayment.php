@@ -37,7 +37,7 @@ class Twopayment extends PaymentModule
     
     // Constants for payment terms
     const DEFAULT_PAYMENT_TERM_DAYS = 30; // Default payment term in days
-    const PAYMENT_TERMS_OPTIONS = [7, 15, 20, 30, 45, 60, 90]; // Available payment term options (all > 0: getMerchantDueInDays() treats a cached 0 as "unset")
+    const PAYMENT_TERMS_OPTIONS = [7, 14, 15, 20, 30, 45, 60, 90]; // Available payment term options (all > 0: getMerchantDueInDays() treats a cached 0 as "unset")
     // EOM (End-of-Month) terms are only offerable for these durations.
     const EOM_PAYMENT_TERMS_OPTIONS = [30, 45, 60];
     // The cached GET /v1/merchant record has NO expiry and is never evicted.
@@ -4392,7 +4392,7 @@ class Twopayment extends PaymentModule
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Real-time buyer eligibility check (Order Intent) before purchase') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Automatic order fulfillment when order status changes (configurable)') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Support for standard and end-of-month (EOM) payment terms') . '</li>
-                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Configurable payment terms (7, 15, 20, 30, 45, 60, 90 days)') . '</li>
+                    <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Configurable payment terms (7, 14, 15, 20, 30, 45, 60, 90 days)') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . $this->l('Handle full refunds through PrestaShop admin') . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . sprintf($this->l('Send partial refunds (credit slips) to %s automatically - do not also refund them in the Merchant Portal'), $this->getTwoBrandConfig('product_name')) . '</li>
                     <li style="margin-bottom:8px;"><i class="icon-check text-success"></i> ' . sprintf($this->l('Display %s order information in admin order view'), $this->getTwoBrandConfig('product_name')) . '</li>
