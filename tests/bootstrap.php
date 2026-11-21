@@ -21,18 +21,117 @@ namespace {
     if (!defined('_DB_PREFIX_')) {
         define('_DB_PREFIX_', 'ps_');
     }
+    // Upgrade scripts and ensureTwoPaymentColumns() interpolate this into
+    // their information_schema existence checks, so it has to exist offline for
+    // those paths to be testable at all.
+    if (!defined('_DB_NAME_')) {
+        define('_DB_NAME_', 'prestashop');
+    }
+    // A throwaway shop root: TwoOverrideMigrator::refresh() resolves shop-level override paths against these.
+    if (!defined('_PS_ROOT_DIR_')) {
+        define('_PS_ROOT_DIR_', sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'two-ps-spec-root');
+    }
+    if (!defined('_PS_OVERRIDE_DIR_')) {
+        define('_PS_OVERRIDE_DIR_', _PS_ROOT_DIR_ . DIRECTORY_SEPARATOR . 'override' . DIRECTORY_SEPARATOR);
+    }
 }
 
 namespace PrestaShop\PrestaShop\Core\Payment {
+    /**
+     * Core's fluent payment-option value object, exercised through
+     * getTwoPaymentOption() (TWO-25326). A fluent builder is unusable without
+     * its setters: the first call fatals rather than failing an assertion.
+     *
+     * Records rather than validates - the specs that use this care about what the
+     * module hands the TEMPLATE, and core's own contract for these values is not
+     * something a stub can meaningfully assert.
+     */
     class PaymentOption
     {
+        /** @var array<string, mixed> */
+        public $recorded = [];
+
+        /**
+         * The setters PrestaShop core's PaymentOption actually has. An
+         * allowlist, not a `strpos($name, 'set') === 0` catch-all: a catch-all
+         * records ANY setter and returns $this, so a module change calling a
+         * setter core does NOT have passes every spec here and fatals in
+         * production - which is precisely the class of mismatch a stub of a core
+         * value object exists to catch.
+         *
+         * @var string[]
+         */
+        private const CORE_SETTERS = array(
+            'setCallToActionText',
+            'setAction',
+            'setForm',
+            'setInputs',
+            'setAdditionalInformation',
+            'setLogo',
+            'setModuleName',
+            'setBinary',
+        );
+
+        public function __call($name, $arguments)
+        {
+            if (in_array($name, self::CORE_SETTERS, true)) {
+                $this->recorded[lcfirst(substr($name, 3))] = $arguments[0] ?? null;
+
+                return $this;
+            }
+            if (strpos($name, 'get') === 0) {
+                return $this->recorded[lcfirst(substr($name, 3))] ?? null;
+            }
+
+            throw new \BadMethodCallException(
+                'PaymentOption stub has no ' . $name . '() - if PrestaShop core really does, add it to CORE_SETTERS'
+            );
+        }
     }
 }
 
 namespace {
+    /**
+     * Records what the module assigned, so a spec can assert on a template
+     * variable the rendered output never reveals (the stub does not render).
+     */
+    final class StubSmarty
+    {
+        /** @var array<string, mixed> */
+        public array $assigned = [];
+
+        public function assign($vars): void
+        {
+            if (is_array($vars)) {
+                $this->assigned = array_merge($this->assigned, $vars);
+            }
+        }
+
+        public function fetch($template): string
+        {
+            return '';
+        }
+    }
+
     final class StubStore
     {
+        /** Global Configuration rows; group and shop rows are keyed by their id first. */
         public static array $configuration = [];
+        public static array $configurationGroup = [];
+        public static array $configurationShop = [];
+        /** Per-language Configuration rows, keyed by id_lang then key. */
+        public static array $configurationLang = [];
+        /** Per-language values at a shop's own tier: [id_shop][id_lang][key]. Read only when a shop id is passed. */
+        public static array $configurationLangShop = [];
+        /** What Language::getLanguages() answers, and which ids count as a language id. */
+        public static array $languages = [];
+        /** Shop::isFeatureActive(): the multistore feature on AND more than one shop. */
+        public static bool $multistore = false;
+        /** The fleet as [id_shop => id_shop_group]; Shop::setContext() must name a member. */
+        public static array $shops = [1 => 1];
+        public static int $shopContext = 1;
+        public static ?int $contextShopId = 1;
+        public static ?int $contextShopGroupId = 1;
         public static array $countries = [];
         public static array $states = [];
         public static array $customers = [];
@@ -40,10 +139,72 @@ namespace {
         public static array $addresses = [];
         public static array $carriers = [];
         public static array $cartProducts = [];
+        /**
+         * PrestaShop core's checkout order comment, one row per cart, as
+         * Message::getMessageByCartId() returns it: [id_cart => ['id_message' =>
+         * int, 'message' => string]]. Core stores it htmlentities-encoded.
+         *
+         * @var array<int,array<string,mixed>>
+         */
+        public static array $cartMessages = [];
+        /**
+         * Module instances Module::getInstanceByName() should hand back, keyed
+         * by module name (TWO-25326 - the address-form override asks the module
+         * whether the company search is available at all).
+         *
+         * @var array<string,object>
+         */
+        public static array $moduleInstances = [];
+        /** Hooks core already has the module registered against. */
+        public static array $registeredHooks = [];
+        /** Every registerHook() call, in order, duplicates included. */
+        public static array $registerHookCalls = [];
         public static array $cartTotals = [];
         public static array $cartShipping = [];
         public static array $cartRules = [];
+        /**
+         * Cart::getDeliveryOptionList() fixtures by cart id, core-shaped:
+         *   [id_address => [option_key => ['carrier_list' => [id_carrier => [
+         *       'price_with_tax' => float, 'price_without_tax' => float,
+         *       'instance' => Carrier,
+         *   ]]]]]
+         * The no-available-carrier sentinel is carrier_list = [0 => 0].
+         *
+         * @var array<int,array>
+         */
+        public static array $cartDeliveryOptionLists = [];
+        /**
+         * Cart::getDeliveryOption() overrides by cart id. Unset means the stub
+         * auto-selects the first option per address, like core does.
+         *
+         * @var array<int,array|false>
+         */
+        public static array $cartDeliveryOptions = [];
+        /**
+         * Cart ids whose delivery-option lookup must RAISE instead of
+         * returning. Core's getDeliveryOption()/getDeliveryOptionList() walk
+         * ObjectModel constructors, Db::executeS and third-party carrier
+         * modules, any of which can throw; the value is the message.
+         *
+         * @var array<int,string>
+         */
+        public static array $cartDeliveryOptionListThrows = [];
         public static array $moduleCurrencies = [];
+        /**
+         * `module_country` rows, as PrestaShop's Payment Restrictions screen
+         * writes them: [['id_module' => int, 'id_shop' => int, 'id_country' =>
+         * int], ...]. Read by the Db::getValue() stub, so a spec restricts the
+         * module to a country subset the same way a merchant does.
+         *
+         * NULL (the default) is NOT "the table is empty" - it means no spec has
+         * expressed an opinion, so every country resolves as enabled. That is the
+         * PrestaShop install default: PaymentModule::install() populates a row per
+         * active country. An empty ARRAY is the genuinely-empty table, which core
+         * treats as "no country enabled".
+         *
+         * @var array<int,array<string,int>>|null
+         */
+        public static ?array $moduleCountries = null;
         public static array $productCategories = [];
         public static array $images = [];
         /**
@@ -59,9 +220,81 @@ namespace {
          * @var array<int,float|array<int,float|float[]>>
          */
         public static array $taxRuleRates = [];
+        /**
+         * `price_display_method` by customer group id, as core's
+         * Group::getPriceDisplayMethod() answers it: 0 = PS_TAX_INC,
+         * 1 = PS_TAX_EXC. A group with no row resolves 0, like core's
+         * `(int) Db::getValue(...)` on a missing group.
+         *
+         * @var array<int,int>
+         */
+        public static array $groupPriceDisplayMethods = [];
+        /** Group::getCurrent()->id - the visitor group for a guest cart. */
+        public static int $currentGroupId = 1;
+        /**
+         * Config key names whose NEXT Configuration::updateValue() must answer
+         * `false` WITHOUT throwing, and without writing. That is how core
+         * behaves on a Validate failure or a failed Db::execute - it returns an
+         * accumulated Db result, not an exception - so a caller that discards
+         * the return believes a write landed that did not (TWO-40).
+         *
+         * One-shot: the entry is consumed by the call it fails, so a spec can
+         * pin the retry as well as the failure.
+         *
+         * @var array<string,bool>
+         */
+        public static array $configurationUpdateFailsOnce = [];
+        /**
+         * Config key names whose NEXT Configuration::updateValue() must THROW a
+         * PrestaShopDatabaseException instead of answering. The other real shape
+         * of a failed write (core's Db can raise as well as return an
+         * accumulated result), and the one that skips everything after the call
+         * inside a try - so a caller that records its state inside the try
+         * reports a state the shop is not in (TWO-40).
+         *
+         * One-shot, like $configurationUpdateFailsOnce. Value is the message.
+         *
+         * @var array<string,string>
+         */
+        public static array $configurationUpdateThrowsOnce = [];
+        /**
+         * Same, for Configuration::deleteByName(): the name whose next delete
+         * answers `false` and leaves the row in place.
+         *
+         * @var array<string,bool>
+         */
+        public static array $configurationDeleteFailsOnce = [];
         public static array $dbExecuteSResponses = [];
         public static array $dbLastExecuteS = [];
+        /** @var string[] Every SQL string passed to Db::getValue() */
+        public static array $dbLastGetValue = [];
+        /**
+         * Substring which, when present in a Db::getValue() query, makes the
+         * stub RAISE instead of answering. Core's Db throws
+         * PrestaShopDatabaseException on a failed query, and a gate's behaviour
+         * on an unanswerable lookup is a real branch worth pinning (TWO-25387).
+         *
+         * @var string|null
+         */
+        public static ?string $dbGetValueThrowsOn = null;
+        /**
+         * Substring which, when present in a Db::getValue() query, makes the stub
+         * answer `false` AND report a driver errno - WITHOUT throwing. This is
+         * how a failed query behaves on the module's declared PrestaShop floor
+         * (1.7.6.0: DbPDO::_query() is a bare link->query(), and DbMySQLi's is
+         * unwrapped too), so "false" there means BOTH "no such row" and "the
+         * query failed". Any gate that reads `false` as a verdict without
+         * consulting getNumberError() is wrong on the floor version, and the
+         * throwing fixture above cannot show it (TWO-25387).
+         *
+         * @var string|null
+         */
+        public static ?string $dbGetValueSilentErrorOn = null;
+        /** @var int Driver errno the stub reports for the last query */
+        public static int $dbErrno = 0;
         public static array $orderCarriers = [];
+        /** @var array<int,array{id_order_state:string,name:string}> Override for OrderState::getOrderStates() */
+        public static array $orderStates = [];
         public static array $carts = [];
         /** @var array<string,int> Registered admin tab ids by class name */
         public static array $tabIds = ['AdminTwopaymentInvoice' => 1];
@@ -69,9 +302,7 @@ namespace {
         public static array $tabAddCalls = [];
 
         /**
-         * Resolve a tax rules group's effective rate for a destination
-         * country - the stub twin of core's
-         * TaxManagerFactory::getManager($address, $groupId)
+         * Stub twin of core's TaxManagerFactory::getManager($address, $groupId)
          *     ->getTaxCalculator()->getTotalRate().
          * See $taxRuleRates for the fixture shapes.
          */
@@ -101,6 +332,8 @@ namespace {
         public static array $specificPrices = [];
         /** @var array<int,array> StockAvailable writes by product id */
         public static array $stock = [];
+        /** Run by StockAvailable::setQuantity() after its write: PrestaShop 8 can leave the shop context at all shops there (TWO-26280). */
+        public static ?Closure $onSetQuantity = null;
         /** @var array<int,array> Taxes by id */
         public static array $taxes = [];
         /** @var array<int,array> Tax rules groups by id */
@@ -111,23 +344,89 @@ namespace {
         public static array $dbLocks = [];
         /** @var array<int,int> Last-applied surcharge sync seq by cart id */
         public static array $surchargeSyncSeqs = [];
-        /** @var array<int,array{id_order:int,product_id:int}> order_detail rows */
+        /** twopayment_cart_record rows as [id_cart][id_shop][record] => data (TWO-26094). */
+        public static array $cartRecords = [];
+        /** twopayment_cart_record.updated_at, shaped like $cartRecords. */
+        public static array $cartRecordUpdatedAt = [];
+        /** twopayment_cart_record.id_customer, shaped like $cartRecords. */
+        public static array $cartRecordCustomer = [];
+        /** @var array<int,string> ps_cart.checkout_session_data JSON by cart id */
+        public static array $checkoutSessionData = [];
+        /** @var array<string,array{window_start:int,hit_count:int}> TwoRateLimiter's twopayment_rate_limit rows, by rate_key */
+        public static array $rateLimitRows = [];
+        /** @var array<int,array<string,mixed>> order_detail rows (id_order, product_id, product_reference, totals, tax_rate) */
         public static array $orderDetails = [];
+        /** @var array<int,array<int,array<string,mixed>>> order_carrier cost rows, by id_order */
+        public static array $placedCarriers = [];
+        /** @var array<int,array<int,array<string,mixed>>> order_cart_rule rows, by id_order */
+        public static array $orderCartRules = [];
+        /** @var array<int,array<string,mixed>> cart_rule rows CartRule loads, by id_cart_rule; 'selected' is what checkProductRestrictionsFromCart() returns */
+        public static array $cartRuleRows = [];
+        /** @var array<int,PlacedOrderStub> orders Order::getBrother() finds, by id_order */
+        public static array $placedOrders = [];
+        /** @var array<int,array<int,array<string,mixed>>> order_invoice_tax rows joined to their tax (type, id_tax, rate), by id_order */
+        public static array $orderInvoiceTaxes = [];
         /** @var string[] Every SQL string passed to Db::execute() */
         public static array $dbExecuted = [];
+        /**
+         * Regexes for DDL/DML the stub should REJECT (return false from
+         * Db::execute()) instead of applying. The real Db does fail - a database
+         * user with no ALTER privilege, a locked table - so the suite needs a
+         * way to make it fail on purpose.
+         */
+        public static array $dbFailOn = [];
         /** @var array<int,array> Orders by id (controller specs) */
         public static array $orders = [];
         /** @var array<string,string> Existing DB triggers by name => CREATE sql */
         public static array $dbTriggers = [];
+        /**
+         * Columns the simulated schema has, keyed "table.column". Maintained by
+         * Db::execute() from the DDL the module actually issues (CREATE TABLE and
+         * ALTER TABLE ... ADD), and read back by the information_schema lookups
+         * in the upgrade scripts, so "install, then upgrade, then upgrade again"
+         * is a real round trip rather than three unrelated assertions.
+         *
+         * @var array<string,bool>
+         */
+        public static array $dbColumns = [];
+        /**
+         * Rows of `ps_twopayment`, keyed by id_order - the module's own
+         * order-scoped table, persisted here so setTwoOrderPaymentData() and
+         * getTwoOrderPaymentData() round-trip. Without this, a spec cannot tell
+         * "wrote an empty value" from "left the stored value alone", which is the
+         * entire distinction the presence-conditional write turns on (TWO-40).
+         *
+         * @var array<int,array<string,mixed>>
+         */
+        public static array $twoPaymentRows = [];
+        /**
+         * Every write aimed at `ps_twopayment`, in order, as
+         * ['op' => 'insert'|'update', 'data' => array]. Lets a spec assert on the
+         * COLUMN LIST of a write, not just its outcome.
+         *
+         * @var array<int,array{op:string,data:array}>
+         */
+        public static array $twoPaymentWrites = [];
         /** @var int Shared auto-increment for ObjectModel-style stubs */
         public static int $nextId = 90000;
 
         public static function reset(): void
         {
+            Hook::$subscribers = [];
+            Hook::$subscriberShops = [];
+            Hook::$ids = [];
+            self::$configurationGroup = [];
+            self::$configurationShop = [];
+            self::$configurationLang = [];
+            self::$configurationLangShop = [];
+            self::$languages = [];
+            self::$multistore = false;
+            self::$shops = [1 => 1];
+            Shop::setContext(Shop::CONTEXT_SHOP, 1);
             self::$configuration = [
                 'PS_TWO_DEBUG_MODE' => false,
                 'PS_TWO_PAYMENT_TERM_TYPE' => 'STANDARD',
-                'PS_TWO_ENVIRONMENT' => 'development',
+                'PS_TWO_ENVIRONMENT' => 'staging',
                 'PS_OS_SHIPPING' => 4,
                 'PS_OS_CANCELED' => 6,
                 'PS_TAX' => 1, // core default: taxes enabled shop-wide
@@ -142,9 +441,16 @@ namespace {
             self::$addresses = [];
             self::$carriers = [];
             self::$cartProducts = [];
+            self::$cartMessages = [];
+            self::$moduleInstances = [];
+            self::$registeredHooks = [];
+            self::$registerHookCalls = [];
             self::$cartTotals = [];
             self::$cartShipping = [];
             self::$cartRules = [];
+            self::$cartDeliveryOptionLists = [];
+            self::$cartDeliveryOptions = [];
+            self::$cartDeliveryOptionListThrows = [];
             self::$orderCarriers = [];
             self::$carts = [];
             self::$tabIds = ['AdminTwopaymentInvoice' => 1];
@@ -159,40 +465,58 @@ namespace {
                     ['id_currency' => 978], // EUR
                 ],
             ];
+            self::$moduleCountries = null;
             self::$productCategories = [];
             self::$images = [];
             self::$taxRuleRates = [];
+            self::$groupPriceDisplayMethods = [];
+            self::$currentGroupId = 1;
+            self::$configurationUpdateFailsOnce = [];
+            self::$configurationUpdateThrowsOnce = [];
+            self::$configurationDeleteFailsOnce = [];
             self::$dbExecuteSResponses = [];
             self::$dbLastExecuteS = [];
+            self::$dbLastGetValue = [];
+            self::$dbGetValueThrowsOn = null;
+            self::$dbGetValueSilentErrorOn = null;
+            self::$dbErrno = 0;
             self::$products = [];
             self::$specificPrices = [];
             self::$stock = [];
+            self::$onSetQuantity = null;
             self::$taxes = [];
             self::$taxRulesGroups = [];
             self::$taxRules = [];
             self::$dbLocks = [];
             self::$surchargeSyncSeqs = [];
+            self::$cartRecords = [];
+            self::$cartRecordUpdatedAt = [];
+            self::$cartRecordCustomer = [];
+            self::$checkoutSessionData = [];
+            self::$rateLimitRows = [];
             self::$orderDetails = [];
+            self::$placedCarriers = [];
+            self::$orderCartRules = [];
+            self::$cartRuleRows = [];
+            self::$placedOrders = [];
+            self::$orderInvoiceTaxes = [];
+            self::$orderStates = [];
             self::$dbExecuted = [];
+            self::$dbFailOn = [];
             self::$dbTriggers = [];
+            self::$dbColumns = [];
+            self::$twoPaymentRows = [];
+            self::$twoPaymentWrites = [];
             self::$orders = [];
             self::$nextId = 90000;
 
             $context = Context::getContext();
+            $context->shop = new Shop();
             $context->cookie = new Cookie();
             $context->link = new Link();
             $context->controller = new \stdClass();
             $context->language = (object) ['id' => 1];
-            $context->smarty = new class {
-                public function assign($vars): void
-                {
-                }
-
-                public function fetch($template): string
-                {
-                    return '';
-                }
-            };
+            $context->smarty = new StubSmarty();
 
             if (class_exists('Tools') && method_exists('Tools', 'resetTestValues')) {
                 Tools::resetTestValues();
@@ -205,6 +529,17 @@ namespace {
     }
 
     /**
+     * Core's DB failure type. Present here because the payload-build path walks
+     * core (TaxManagerFactory, Address, Carrier, DB reads), so it is the shape
+     * of "an exception the plugin did NOT raise" reaching the payment
+     * controller's catch — and its message carries SQL text that must never be
+     * relayed to a buyer (TWO-25161).
+     */
+    class PrestaShopDatabaseException extends PrestaShopException
+    {
+    }
+
+    /**
      * Thrown by the front-controller stubs wherever real PrestaShop would
      * redirect-and-exit, so controller specs observe the redirect instead of
      * falling through code the real flow never reaches.
@@ -213,6 +548,11 @@ namespace {
     {
     }
 
+    // Guarded the same way phpstan-stubs.php guards its PrestaShop core
+    // stand-ins: cheap insurance against a "cannot redeclare class" fatal if a
+    // future refactor loads this file alongside another stub source in the same
+    // PHP process.
+    if (!class_exists('ModuleFrontController', false)) {
     class ModuleFrontController
     {
         public $module;
@@ -233,7 +573,9 @@ namespace {
             throw new StubRedirect((string) $url);
         }
     }
+    }
 
+    if (!class_exists('Module', false)) {
     class Module
     {
         public int $id = 1;
@@ -247,17 +589,73 @@ namespace {
         {
             return (string) $name === 'twopayment';
         }
+
+        /** @return array<int,array{name:string}> */
+        public static function getPaymentModules(): array
+        {
+            return [['name' => 'twopayment']];
+        }
+
+        /**
+         * Core's instance lookup, as the address-form override uses it
+         * (TWO-25326). Null unless a spec registers an instance, which is the
+         * override's fail-open path.
+         */
+        public static function getInstanceByName($name)
+        {
+            if (isset(StubStore::$moduleInstances[(string) $name])) {
+                return StubStore::$moduleInstances[(string) $name];
+            }
+            foreach (Hook::$subscribers as $hook => $callbacks) {
+                if (isset($callbacks[(string) $name])) {
+                    return new StubHookSubscriberModule((string) $name);
+                }
+            }
+
+            return null;
+        }
+
+        /** Core's "native module" list, which PS_DISABLE_NON_NATIVE_MODULE keeps. */
+        public static function getNativeModuleList(): array
+        {
+            return ['ps_shoppingcart', 'ps_emailsubscription'];
+        }
+
+        /**
+         * A no-op true lets Twopayment::uninstall()'s OWN gating logic
+         * (TWO-25386, the "clear settings on deactivation" toggle) be
+         * exercised end-to-end without a real core underneath it.
+         */
+        public function uninstall()
+        {
+            return true;
+        }
+
+        public function isRegisteredInHook($hook): bool
+        {
+            return in_array((string) $hook, StubStore::$registeredHooks, true);
+        }
+
+        public function registerHook($hook)
+        {
+            StubStore::$registerHookCalls[] = (string) $hook;
+            StubStore::$registeredHooks[] = (string) $hook;
+
+            return true;
+        }
+    }
     }
 
+    if (!class_exists('PaymentModule', false)) {
     class PaymentModule extends Module
     {
         public string $name = 'twopayment';
         public string $version = '2.4.0';
         public string $displayName = 'Two';
-        public string $merchant_short_name = 'merchant';
-        public string $api_key = 'test-api-key';
+        public $merchant_short_name = 'merchant';
+        public $api_key = 'test-api-key';
         public bool $active = true;
-        public array $languages = [];
+        public $languages = [];
         public $context;
         public int $currentOrder = 0;
 
@@ -295,20 +693,11 @@ namespace {
         {
             $moduleName = property_exists($this, 'name') ? (string) $this->name : '';
             $currencies = StubStore::$moduleCurrencies[$moduleName] ?? [];
-            if ($idCurrency === null) {
-                return $currencies;
-            }
-
-            $idCurrency = (int) $idCurrency;
-            $filtered = [];
-            foreach ($currencies as $currency) {
-                if ((int) ($currency['id_currency'] ?? 0) === $idCurrency) {
-                    $filtered[] = $currency;
-                }
-            }
-
-            return $filtered;
+            // As core's checkbox mode: the id is ignored and the whole
+            // allowlist comes back, so membership is the caller's test.
+            return $currencies;
         }
+    }
     }
 
     class Context
@@ -321,6 +710,17 @@ namespace {
         public $currency;
         public $language;
         public $smarty;
+        // Core has one; the checkout media hook reads its iso_code (TWO-25326).
+        // Declared rather than left to a dynamic property, which PHP 8.2+
+        // deprecates - and a deprecation notice on every suite run is noise the
+        // next real one hides in.
+        public $country;
+        // Core has one on every request; declared for the same reason as
+        // $country above. The module scopes its module_country lookup to the
+        // current shop (TWO-25387).
+        public $shop;
+        // The back office's signed-in employee; read by admin controllers' access checks.
+        public $employee;
 
         private static ?self $instance = null;
 
@@ -328,20 +728,12 @@ namespace {
         {
             if (self::$instance === null) {
                 self::$instance = new self();
+                self::$instance->shop = new Shop();
                 self::$instance->cookie = new Cookie();
                 self::$instance->link = new Link();
                 self::$instance->controller = new \stdClass();
                 self::$instance->language = (object) ['id' => 1];
-                self::$instance->smarty = new class {
-                    public function assign($vars): void
-                    {
-                    }
-
-                    public function fetch($template): string
-                    {
-                        return '';
-                    }
-                };
+                self::$instance->smarty = new StubSmarty();
             }
 
             return self::$instance;
@@ -351,12 +743,66 @@ namespace {
     #[\AllowDynamicProperties]
     class Cookie
     {
+        /**
+         * How many times write() was called. Recorded because at least one
+         * endpoint's correctness depends on writing the cookie explicitly before
+         * it ends the request (TWO-25326: the payment tile renders the sole-trader
+         * toggle from that cookie and never resolves it itself), and a stub that
+         * silently swallows write() cannot tell that apart from not writing.
+         *
+         * @var int
+         */
+        public int $writes = 0;
+
+        /** @var array<string, mixed> */
+        private array $content = [];
+
+        // Core's magic accessors (classes/Cookie.php, 1.7.6 to 9), so a value core would refuse fails here too (TWO-26084).
+        public function __set($key, $value)
+        {
+            if (is_array($value)) {
+                throw new Exception('Cookie value can\'t be an array.');
+            }
+            if (preg_match('/¤|\|/', $key . $value)) {
+                throw new Exception('Forbidden chars in cookie');
+            }
+            $this->content[$key] = $value;
+        }
+
+        public function __get($key)
+        {
+            return isset($this->content[$key]) ? $this->content[$key] : false;
+        }
+
+        public function __isset($key)
+        {
+            return isset($this->content[$key]);
+        }
+
+        public function __unset($key)
+        {
+            unset($this->content[$key]);
+        }
+
         public function setExpire(int $timestamp): void
         {
         }
 
         public function write(): void
         {
+            ++$this->writes;
+        }
+
+        /** Core's size check in encryptAndSetCookie(): name plus hex defuse ciphertext (84 bytes overhead) of write()'s serialisation. */
+        public function coreSetCookieBytes(): int
+        {
+            $serialised = '';
+            foreach ($this->content as $key => $value) {
+                $serialised .= $key . '|' . $value . '¤';
+            }
+            $serialised .= 'checksum|' . hash('sha256', $serialised);
+
+            return strlen('PrestaShop-' . md5('')) + 2 * (84 + strlen($serialised));
         }
     }
 
@@ -370,6 +816,14 @@ namespace {
         public function getProductLink($idProduct): string
         {
             return 'https://shop.local/product/' . $idProduct;
+        }
+
+        /** Core's front-page link builder; the buy button asks it for the cart. */
+        public function getPageLink($controller, $ssl = null, $idLang = null, $request = null): string
+        {
+            $query = is_array($request) ? http_build_query($request) : (string) $request;
+
+            return 'https://shop.local/' . $controller . ($query !== '' ? '?' . $query : '');
         }
 
         public function getModuleLink($module, $controller, $params = [], $ssl = true): string
@@ -399,48 +853,358 @@ namespace {
 
             return true;
         }
+
+        public static function isEmail($email): bool
+        {
+            return is_string($email) && filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+        }
     }
 
+    /**
+     * Core's order-comment storage; core keys exactly one row per cart.
+     */
+    class Message
+    {
+        public static function getMessageByCartId($idCart)
+        {
+            return StubStore::$cartMessages[(int) $idCart] ?? false;
+        }
+    }
+
+    /**
+     * Core Configuration's scope resolution: get() resolves the shop and group ids as core does (the context's, null
+     * outside multistore) then cascades shop -> group -> global, else FALSE; hasKey() reads one bucket; updateValue()
+     * writes one row at the resolved scope and skips a value that already cascades to the same thing.
+     */
     class Configuration
     {
-        public static function get($key, $default = null)
+        /** @return array{0:int,1:int} [id_shop_group, id_shop] */
+        private static function resolveScope($idShopGroup, $idShop): array
         {
-            return array_key_exists($key, StubStore::$configuration) ? StubStore::$configuration[$key] : $default;
+            if ($idShop === null || !Shop::isFeatureActive()) {
+                $idShop = Shop::getContextShopID(true);
+            }
+            if ($idShopGroup === null || !Shop::isFeatureActive()) {
+                $idShopGroup = Shop::getContextShopGroupID(true);
+            }
+
+            return [(int) $idShopGroup, (int) $idShop];
         }
 
-        public static function updateValue($key, $value): bool
+        /** Core's rule: the KEY decides, so a key with a row under any language is per-language. */
+        private static function isLangKey($key): bool
         {
-            StubStore::$configuration[$key] = $value;
+            foreach (StubStore::$configurationLang as $rows) {
+                if (array_key_exists($key, $rows)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Core returns false for a key that was never written. Core's parameter
+        // order: arg 2 is the language id, the fallback is arg 5.
+        public static function get($key, $idLang = null, $idShopGroup = null, $idShop = null, $default = false)
+        {
+            if (self::isLangKey($key)) {
+                // Core reads a shop's own row first, then falls back.
+                if ((int) $idShop > 0 && isset(StubStore::$configurationLangShop[(int) $idShop][(int) $idLang])
+                    && array_key_exists($key, StubStore::$configurationLangShop[(int) $idShop][(int) $idLang])
+                ) {
+                    return StubStore::$configurationLangShop[(int) $idShop][(int) $idLang][$key];
+                }
+
+                return StubStore::$configurationLang[(int) $idLang][$key] ?? $default;
+            }
+
+            list($idShopGroup, $idShop) = self::resolveScope($idShopGroup, $idShop);
+
+            if ($idShop && self::hasKey($key, null, null, $idShop)) {
+                return StubStore::$configurationShop[$idShop][$key];
+            }
+            if ($idShopGroup && self::hasKey($key, null, $idShopGroup)) {
+                return StubStore::$configurationGroup[$idShopGroup][$key];
+            }
+            if (self::hasKey($key)) {
+                return StubStore::$configuration[$key];
+            }
+
+            return $default;
+        }
+
+        public static function updateValue($key, $value, $html = false, $idShopGroup = null, $idShop = null): bool
+        {
+            if (!empty(StubStore::$configurationUpdateThrowsOnce[$key])) {
+                $message = StubStore::$configurationUpdateThrowsOnce[$key];
+                unset(StubStore::$configurationUpdateThrowsOnce[$key]);
+                throw new PrestaShopDatabaseException($message);
+            }
+
+            if (!empty(StubStore::$configurationUpdateFailsOnce[$key])) {
+                unset(StubStore::$configurationUpdateFailsOnce[$key]);
+                return false;
+            }
+
+            // Core's per-language write: an array value is one row per
+            // id_lang, which is how the title/subtitle settings are saved.
+            if (is_array($value)) {
+                foreach ($value as $idLang => $langValue) {
+                    if ((int) $idShop > 0) {
+                        StubStore::$configurationLangShop[(int) $idShop][(int) $idLang][$key] = $langValue;
+                    } else {
+                        StubStore::$configurationLang[(int) $idLang][$key] = $langValue;
+                    }
+                }
+
+                return true;
+            }
+
+            list($idShopGroup, $idShop) = self::resolveScope($idShopGroup, $idShop);
+            $stored = self::get($key, null, $idShopGroup, $idShop);
+            if ((!is_numeric($value) && $value === $stored) || (is_numeric($value) && $value == $stored && self::hasKey($key))) {
+                return true;
+            }
+
+            if ($idShop) {
+                StubStore::$configurationShop[$idShop][$key] = $value;
+            } elseif ($idShopGroup) {
+                StubStore::$configurationGroup[$idShopGroup][$key] = $value;
+            } else {
+                StubStore::$configuration[$key] = $value;
+            }
+
             return true;
+        }
+
+        /** Core's set() only refreshes the in-process cache; the stub's store is the database itself, so there is nothing to do. */
+        public static function set($key, $values, $idShopGroup = null, $idShop = null): void
+        {
+        }
+
+        /** Core passes 0, 0: an explicit "no shop, no group", so the row is global whatever the context. */
+        public static function updateGlobalValue($key, $value, $html = false): bool
+        {
+            return self::updateValue($key, $value, $html, 0, 0);
+        }
+
+        public static function hasKey($key, $idLang = null, $idShopGroup = null, $idShop = null): bool
+        {
+            if ($idLang !== null) {
+                // Exact tier, as core's hasKey(): a shop id asks about that shop's own row.
+                if ((int) $idShop > 0) {
+                    return isset(StubStore::$configurationLangShop[(int) $idShop][(int) $idLang])
+                        && array_key_exists($key, StubStore::$configurationLangShop[(int) $idShop][(int) $idLang]);
+                }
+
+                return isset(StubStore::$configurationLang[(int) $idLang])
+                    && array_key_exists($key, StubStore::$configurationLang[(int) $idLang]);
+            }
+            if ($idShop) {
+                return isset(StubStore::$configurationShop[$idShop]) && array_key_exists($key, StubStore::$configurationShop[$idShop]);
+            }
+            if ($idShopGroup) {
+                return isset(StubStore::$configurationGroup[$idShopGroup]) && array_key_exists($key, StubStore::$configurationGroup[$idShopGroup]);
+            }
+
+            return array_key_exists($key, StubStore::$configuration);
         }
 
         public static function deleteByName($key): bool
         {
+            if (!empty(StubStore::$configurationDeleteFailsOnce[$key])) {
+                unset(StubStore::$configurationDeleteFailsOnce[$key]);
+                return false;
+            }
+
             unset(StubStore::$configuration[$key]);
+            foreach (array_keys(StubStore::$configurationLang) as $idLang) {
+                unset(StubStore::$configurationLang[$idLang][$key]);
+            }
+            foreach (array_keys(StubStore::$configurationGroup) as $idShopGroup) {
+                unset(StubStore::$configurationGroup[$idShopGroup][$key]);
+            }
+            foreach (array_keys(StubStore::$configurationShop) as $idShop) {
+                unset(StubStore::$configurationShop[$idShop][$key]);
+            }
+
             return true;
+        }
+    }
+
+    /** Stands in for the cron controller's die() so a spec can assert on the response. */
+    class StubCronResponded extends Exception
+    {
+    }
+
+    class Hook
+    {
+        /** @var array<string,array<int,array{module:string}>> modules registered per hook */
+        public static array $execLists = [];
+
+        /** @var array<string,array<string,callable>> subscriber callbacks per hook, keyed by module name */
+        public static array $subscribers = [];
+        /**
+         * @var array<string,array<string,int[]>> the shops a subscriber is hooked in, per hook and module; unlisted is
+         * every shop. Core's list reads `hm.id_shop = Context::getContext()->shop->id` (TWO-27200).
+         */
+        public static array $subscriberShops = [];
+        /** @var array<string,int> hook rows by name, as Hook::getIdByName() finds them */
+        public static array $ids = [];
+
+        public $id = 0;
+        public $name = '';
+        public $title = '';
+        public $description = '';
+        public $position = 1;
+
+        public static function getHookModuleExecList($hookName = null)
+        {
+            if (isset(self::$execLists[$hookName])) {
+                return self::$execLists[$hookName];
+            }
+            if (!empty(self::$subscribers[$hookName])) {
+                $idShop = (int) Context::getContext()->shop->id;
+                $modules = array_filter(array_keys(self::$subscribers[$hookName]), static function ($module) use ($hookName, $idShop) {
+                    return !isset(self::$subscriberShops[$hookName][$module]) || in_array($idShop, self::$subscriberShops[$hookName][$module], true);
+                });
+
+                return $modules === [] ? false : array_map(static function ($module) {
+                    return ['module' => $module];
+                }, array_values($modules));
+            }
+
+            return false;
+        }
+
+        /**
+         * Core's call shape: each subscriber gets the args array by value, so only
+         * elements the caller bound by reference travel back. Like core 8 and 9
+         * outside debug mode (Hook::callHookOn()), a subscriber's Exception is
+         * discarded and the hook returns ''.
+         */
+        public static function exec($hookName, $hookArgs = [], $idModule = null, $arrayReturn = false)
+        {
+            foreach (self::getHookModuleExecList($hookName) ?: [] as $row) {
+                $module = Module::getInstanceByName($row['module']);
+                $method = 'hook' . ucfirst($hookName);
+                if (!$module || !is_callable([$module, $method])) {
+                    continue;
+                }
+                try {
+                    $module->{$method}($hookArgs);
+                } catch (Exception $e) {
+                }
+            }
+
+            return '';
+        }
+
+        public static function getIdByName($hookName)
+        {
+            return self::$ids[$hookName] ?? false;
+        }
+
+        public function add(): bool
+        {
+            $this->id = count(self::$ids) + 1;
+            self::$ids[$this->name] = $this->id;
+
+            return true;
+        }
+
+        public static function reset(): void
+        {
+            self::$execLists = [];
+            self::$subscribers = [];
+            self::$ids = [];
+        }
+    }
+
+    /**
+     * A module registered on a hook through Hook::$subscribers: its hook method
+     * runs the spec's callback.
+     */
+    class StubHookSubscriberModule
+    {
+        public $name;
+        public $active = true;
+
+        public function __construct(string $name)
+        {
+            $this->name = $name;
+        }
+
+        public function __call($method, $args)
+        {
+            foreach (Hook::$subscribers as $hook => $callbacks) {
+                if (strcasecmp('hook' . $hook, $method) === 0 && isset($callbacks[$this->name])) {
+                    return $callbacks[$this->name]($args[0]);
+                }
+            }
+
+            return null;
         }
     }
 
     class PrestaShopLogger
     {
-        /** @var array<int,array{message:string,severity:int}> */
+        /** @var array<int,array{message:string,severity:int,object_type:?string,object_id:?int,allow_duplicate:bool}> */
         public static array $logs = [];
+
+        /** @var string|null a pattern: a log whose message or object type matches it throws, as a failing ps_log insert does */
+        public static ?string $failOn = null;
 
         public static function addLog($message, $severity = 1, $errorCode = null, $objectType = null, $objectId = null, $allowDuplicate = false): bool
         {
-            self::$logs[] = ['message' => (string) $message, 'severity' => (int) $severity];
+            if (self::$failOn !== null && preg_match(self::$failOn, $message . "\n" . (string) $objectType)) {
+                throw new RuntimeException('the log is down');
+            }
+            // Core stores the message through pSQL() without html_ok: strip_tags(nl2br()) on 1.7, 8 and 9.
+            $message = strip_tags(str_replace(["\r\n", "\r", "\n"], '<br />', (string) $message));
+            self::$logs[] = ['message' => $message, 'severity' => (int) $severity, 'object_type' => $objectType, 'object_id' => $objectId, 'allow_duplicate' => (bool) $allowDuplicate];
             return true;
         }
 
         public static function reset(): void
         {
             self::$logs = [];
+            self::$failOn = null;
         }
     }
 
     class Tools
     {
         private static array $testValues = [];
+        private static bool $hasMediaServer = false;
+
+        /** Counted so a spec can prove WHICH class-index generator refresh() reached (TWO-25265). */
+        public static int $generateIndexCalls = 0;
+
+        public static function generateIndex(): void
+        {
+            ++self::$generateIndexCalls;
+        }
+
+        /** Mirrors core: decode first unless told the input is already entities. */
+        public static function safeOutput($string, $html_entities = false)
+        {
+            $string = (string) $string;
+            if (!$html_entities) {
+                $string = html_entity_decode($string, ENT_QUOTES, 'UTF-8');
+            }
+            return htmlentities($string, ENT_QUOTES, 'UTF-8');
+        }
+
+        public static function hasMediaServer(): bool
+        {
+            return self::$hasMediaServer;
+        }
+
+        public static function setTestHasMediaServer(bool $value): void
+        {
+            self::$hasMediaServer = $value;
+        }
 
         public static function substr($string, $start, $length = null)
         {
@@ -454,15 +1218,7 @@ namespace {
 
         public static function isEmpty($value): bool
         {
-            if ($value === null) {
-                return true;
-            }
-
-            if (is_string($value)) {
-                return trim($value) === '';
-            }
-
-            return $value === '';
+            return $value === '' || $value === null;
         }
 
         public static function displayPrice($amount): string
@@ -488,11 +1244,17 @@ namespace {
         public static function resetTestValues(): void
         {
             self::$testValues = [];
+            self::$hasMediaServer = false;
         }
 
         public static function getToken($page = false): string
         {
             return 'token';
+        }
+
+        public static function getAdminTokenLite($tab, $context = null): string
+        {
+            return 'admin-token';
         }
 
         public static function redirect($url): void
@@ -517,6 +1279,44 @@ namespace {
         {
             return StubStore::$countries[(int) $id] ?? false;
         }
+
+        /** The country's name; its ISO code stands in, as the stub holds no names. */
+        public static function getNameById($idLang, $id)
+        {
+            return StubStore::$countries[(int) $id] ?? false;
+        }
+
+        /**
+         * @return array<int,array{id_country:int,iso_code:string}>
+         */
+        public static function getCountries($idLang = null, $active = false, $containStates = false, $listStates = true): array
+        {
+            $rows = [];
+            foreach (StubStore::$countries as $id => $iso) {
+                // Keyed by id_country, as core keys it: a stub that keyed
+                // sequentially would let a future caller pass here and fail in
+                // production.
+                $rows[(int) $id] = ['id_country' => (int) $id, 'iso_code' => (string) $iso];
+            }
+
+            return $rows;
+        }
+    }
+
+    class Media
+    {
+        /** @var array<string,mixed> the last payload handed to the browser */
+        public static array $jsDef = [];
+
+        public static function addJsDef($vars): void
+        {
+            self::$jsDef = array_merge(self::$jsDef, (array) $vars);
+        }
+
+        public static function reset(): void
+        {
+            self::$jsDef = [];
+        }
     }
 
     class State
@@ -534,6 +1334,8 @@ namespace {
         public $name = [];
         public $link_rewrite = [];
         public $reference = '';
+        public $description_short = '';
+        public $manufacturer_name = '';
         public $price = 0;
         public $id_tax_rules_group = 0;
         public $active = 0;
@@ -557,6 +1359,17 @@ namespace {
                 $this->id = $id;
                 $this->loaded = true;
             }
+        }
+
+        /** Product+shop scoped; combinations do not carry their own group. */
+        public static function getIdTaxRulesGroupByIdProduct($idProduct, $context = null)
+        {
+            $idProduct = (int) $idProduct;
+            if (isset(StubStore::$products[$idProduct]['id_tax_rules_group'])) {
+                return (int) StubStore::$products[$idProduct]['id_tax_rules_group'];
+            }
+
+            return 0;
         }
 
         public function add(): bool
@@ -647,7 +1460,6 @@ namespace {
             StubStore::$specificPrices[$this->id] = $data;
         }
 
-        /** Core-shape result: rows of ['id_specific_price' => n]. */
         public static function getIdsByProductId($idProduct, $idProductAttribute = false, $idCart = 0): array
         {
             $ids = [];
@@ -673,7 +1485,6 @@ namespace {
             return true;
         }
 
-        /** Net unit price for a cart-scoped row, or null. */
         public static function getCartUnitPrice(int $idCart, int $idProduct): ?float
         {
             foreach (StubStore::$specificPrices as $row) {
@@ -687,9 +1498,13 @@ namespace {
 
     class StockAvailable
     {
-        public static function setQuantity($idProduct, $idProductAttribute, $quantity, $idShop = null): void
+        public static function setQuantity($idProduct, $idProductAttribute, $quantity, $idShop = null, $addMovement = true): void
         {
             StubStore::$stock[(int) $idProduct]['quantity'] = (int) $quantity;
+            StubStore::$stock[(int) $idProduct]['add_movement'] = (bool) $addMovement;
+            if (StubStore::$onSetQuantity !== null) {
+                (StubStore::$onSetQuantity)();
+            }
         }
 
         public static function setProductOutOfStock($idProduct, $outOfStock = false, $idShop = null, $idProductAttribute = 0): void
@@ -764,7 +1579,6 @@ namespace {
             return true;
         }
 
-        /** Core-shape rows: id_tax_rules_group / name / active. */
         public static function getTaxRulesGroups($onlyActive = true): array
         {
             $rows = [];
@@ -900,6 +1714,13 @@ namespace {
         public int $max_delivery_days = 0;
         public int $min_delivery_days = 0;
         private int $taxRulesGroupId = 0;
+        /**
+         * Core's getIdTaxRulesGroup() is a Db::getValue() on
+         * carrier_tax_rules_group_shop behind a Context->shop lookup, so it can
+         * raise rather than return. Set 'tax_rules_group_throws' on the fixture
+         * to drive that.
+         */
+        private string $taxRulesGroupThrows = '';
 
         public function __construct($idCarrier = null, $idLang = null)
         {
@@ -913,11 +1734,16 @@ namespace {
                 $this->max_delivery_days = (int) ($data['max_delivery_days'] ?? 0);
                 $this->min_delivery_days = (int) ($data['min_delivery_days'] ?? 0);
                 $this->taxRulesGroupId = (int) ($data['tax_rules_group_id'] ?? 0);
+                $this->taxRulesGroupThrows = (string) ($data['tax_rules_group_throws'] ?? '');
             }
         }
 
         public function getIdTaxRulesGroup(): int
         {
+            if ($this->taxRulesGroupThrows !== '') {
+                throw new PrestaShopDatabaseException($this->taxRulesGroupThrows);
+            }
+
             return $this->taxRulesGroupId;
         }
     }
@@ -934,6 +1760,7 @@ namespace {
 
         public bool $loaded = false;
         public int $id = 0;
+        public int $id_customer = 0;
         public int $id_country = 0;
         public int $id_state = 0;
         public string $company = '';
@@ -963,6 +1790,53 @@ namespace {
         }
     }
 
+    /**
+     * Stub of the parts of core's AddressFormat the module touches (TWO-25326).
+     *
+     * `$requireFormFieldsList` is seeded with core's real defaults, and
+     * `getFieldsRequired()` merges it with the merchant's `required_field` table
+     * rows (`$fieldsRequiredDatabase`) exactly as core does.
+     */
+    class AddressFormat
+    {
+        /** @var string[] */
+        public static array $requireFormFieldsList = [
+            'firstname',
+            'lastname',
+            'address1',
+            'city',
+            'Country:name',
+        ];
+
+        /** @var string[] The merchant's own Customers > Addresses selections. */
+        public static array $fieldsRequiredDatabase = [];
+
+        public static int $addFieldsRequiredDatabaseCalls = 0;
+
+        /** @return string[] */
+        public static function getFieldsRequired(): array
+        {
+            return array_values(array_unique(array_merge(
+                self::$fieldsRequiredDatabase,
+                self::$requireFormFieldsList
+            )));
+        }
+
+        /**
+         * Core reaches the table through ObjectModel, not through here - this
+         * exists only so a call to it is COUNTABLE rather than silent.
+         *
+         * @param string[] $fields
+         */
+        public static function addFieldsRequiredDatabase(array $fields): bool
+        {
+            ++self::$addFieldsRequiredDatabaseCalls;
+            self::$fieldsRequiredDatabase = $fields;
+
+            return true;
+        }
+    }
+
     class FormField
     {
         private string $name = '';
@@ -972,6 +1846,8 @@ namespace {
         private array $availableValues = [];
         private array $constraints = [];
         private ?int $maxLength = null;
+        private $value = null;
+        private array $errors = [];
 
         public function setName($name): self
         {
@@ -1028,6 +1904,11 @@ namespace {
             return $this->availableValues[(string) $key] ?? null;
         }
 
+        public function getAvailableValues(): array
+        {
+            return $this->availableValues;
+        }
+
         public function addConstraint($constraint): self
         {
             $this->constraints[] = $constraint;
@@ -1039,12 +1920,59 @@ namespace {
             $this->maxLength = (int) $maxLength;
             return $this;
         }
+
+        public function setValue($value): self
+        {
+            $this->value = $value;
+            return $this;
+        }
+
+        public function getValue()
+        {
+            return $this->value;
+        }
+
+        /**
+         * Core's FormField carries the field's submitted value and its own
+         * error list; AbstractForm::validate() reads the first and writes the
+         * second. Modelled here because the phone-required gate (TWO-25326) is
+         * only observable through that pair.
+         */
+        public function addError($error): self
+        {
+            $this->errors[] = (string) $error;
+            return $this;
+        }
+
+        public function getErrors(): array
+        {
+            return $this->errors;
+        }
+    }
+
+    class Group
+    {
+        public int $id = 0;
+
+        public static function getCurrent(): Group
+        {
+            $group = new Group();
+            $group->id = StubStore::$currentGroupId;
+
+            return $group;
+        }
+
+        public static function getPriceDisplayMethod($idGroup): int
+        {
+            return (int) (StubStore::$groupPriceDisplayMethods[(int) $idGroup] ?? 0);
+        }
     }
 
     class Customer
     {
         public bool $loaded = false;
         public int $id = 0;
+        public int $id_default_group = 0;
         public string $email = '';
         public string $firstname = '';
         public string $lastname = '';
@@ -1060,6 +1988,19 @@ namespace {
                 $this->id = $id;
                 $this->loaded = true;
             }
+        }
+
+        /** @return array<int,array{id_customer:string}> */
+        public static function getCustomersByEmail($email): array
+        {
+            $rows = [];
+            foreach (StubStore::$customers as $id => $customer) {
+                if (($customer['email'] ?? '') === $email) {
+                    $rows[] = ['id_customer' => (string) $id];
+                }
+            }
+
+            return $rows;
         }
     }
 
@@ -1085,6 +2026,25 @@ namespace {
             }
         }
 
+        /**
+         * As core: the shop's currencies as rows. $active is honoured through
+         * an `active` key on the fixture, defaulting to enabled.
+         *
+         * @return array<int, array<string, mixed>>
+         */
+        public static function getCurrencies($object = false, $active = true, $group_by = false)
+        {
+            $rows = [];
+            foreach (StubStore::$currencies as $id => $props) {
+                if ($active && array_key_exists('active', $props) && !$props['active']) {
+                    continue;
+                }
+                $rows[] = ['id_currency' => (int) $id] + $props;
+            }
+
+            return $rows;
+        }
+
         public static function getIdByIsoCode($isoCode, $idShop = 0)
         {
             foreach (StubStore::$currencies as $id => $props) {
@@ -1093,6 +2053,96 @@ namespace {
                 }
             }
             return 0;
+        }
+    }
+
+    /**
+     * Core's cart-line fingerprint (classes/checkout/CartChecksum.php). Kept
+     * faithful in the part that matters here - it hashes every cart line's
+     * id, quantity and total_wt, which is why adding the surcharge line
+     * invalidates the buyer's persisted checkout steps.
+     */
+    class AddressChecksum
+    {
+        public function generateChecksum($address)
+        {
+            if (empty($address->id)) {
+                return sha1('No address set');
+            }
+
+            return sha1(implode('_', array_map('strval', get_object_vars($address))));
+        }
+    }
+
+    class CartChecksum
+    {
+        private $addressChecksum;
+
+        public function __construct(AddressChecksum $addressChecksum)
+        {
+            $this->addressChecksum = $addressChecksum;
+        }
+
+        public function generateChecksum($cart)
+        {
+            $uniqId = implode('_', [
+                $cart->id_shop,
+                $cart->id_customer,
+                $cart->id_guest,
+                $cart->id_currency,
+                $cart->id_lang,
+                $this->addressChecksum->generateChecksum(new Address($cart->id_address_delivery)),
+                $this->addressChecksum->generateChecksum(new Address($cart->id_address_invoice)),
+            ]);
+            foreach ($cart->getProducts(true) as $product) {
+                $uniqId .= '_' . implode('-', [
+                    $product['id_shop'] ?? 1,
+                    $product['id_product'],
+                    $product['id_product_attribute'] ?? 0,
+                    $product['cart_quantity'],
+                    $product['total_wt'],
+                ]);
+            }
+
+            return sha1($uniqId);
+        }
+    }
+
+    /**
+     * Core's cart rule: the fields a rule's shape is read from (TWO-27129). A rule absent from the store is deleted.
+     */
+    class CartRule
+    {
+        public bool $loaded = false;
+        public int $id = 0;
+        public bool $free_shipping = false;
+        public float $reduction_percent = 0.0;
+        public float $reduction_amount = 0.0;
+        public int $reduction_tax = 0;
+        public int $reduction_product = 0;
+        public int $reduction_exclude_special = 0;
+        public int $gift_product = 0;
+        public int $gift_product_attribute = 0;
+        public int $product_restriction = 0;
+
+        public function __construct($id = null)
+        {
+            $row = StubStore::$cartRuleRows[(int) $id] ?? null;
+            if ($row === null) {
+                return;
+            }
+            $this->loaded = true;
+            $this->id = (int) $id;
+            foreach ($row as $field => $value) {
+                if ($field !== 'selected') {
+                    $this->$field = $value;
+                }
+            }
+        }
+
+        public function checkProductRestrictionsFromCart($cart, $returnProducts = false, $displayError = true, $alreadyInCart = false)
+        {
+            return StubStore::$cartRuleRows[$this->id]['selected'] ?? [];
         }
     }
 
@@ -1105,6 +2155,9 @@ namespace {
 
         public bool $loaded = true;
         public int $id = 0;
+        public int $id_shop = 1;
+        public int $id_shop_group = 1;
+        public int $id_guest = 0;
         public int $id_customer = 0;
         public int $id_currency = 0;
         public int $id_address_invoice = 0;
@@ -1117,11 +2170,21 @@ namespace {
             $id = (int) $id;
             if ($id > 0) {
                 $this->id = $id;
-                // Hydrate by id so code that constructs its own Cart from
-                // an order (getTwoUpdateOrderData) sees the fixture.
                 foreach (StubStore::$carts[$id] ?? [] as $property => $value) {
                     $this->$property = $value;
                 }
+
+                return;
+            }
+
+            if (func_num_args() > 0) {
+                // A cart constructed FROM an id that is not a saved cart id is a
+                // fresh unsaved cart - `new Cart(0)`, the shape the front office
+                // hands the module before the buyer has added anything - and core
+                // would not report that as a loaded object. `new Cart()` with no
+                // argument keeps $loaded true: specs build one that way and fill
+                // its fields in by hand.
+                $this->loaded = false;
             }
         }
 
@@ -1146,11 +2209,11 @@ namespace {
         }
 
         /**
-         * Minimal core-faithful updateQty: prices a NEW line from the
-         * cart-scoped SpecificPrice (net) and the product's tax rules group
-         * rate (gross), mirroring what PS core computes for the hidden
-         * surcharge product. Repeat 'up' calls INCREMENT quantity - exactly
-         * like core - so idempotency must come from the module, not the stub.
+         * Prices a NEW line from the cart-scoped SpecificPrice (net) and the
+         * product's tax rules group rate (gross), mirroring what PS core
+         * computes for the hidden surcharge product. Repeat 'up' calls
+         * INCREMENT quantity - exactly like core - so idempotency must come
+         * from the module, not the stub.
          */
         public function updateQty($quantity, $idProduct, $idProductAttribute = null, $idCustomization = false, $operator = 'up')
         {
@@ -1225,6 +2288,7 @@ namespace {
                     'total_wt' => round($net * $quantity * (1 + $rate / 100), 2),
                     'rate' => $rate,
                     'reduction' => 0,
+                    'reference' => $product->loaded ? (string) $product->reference : '',
                     'is_virtual' => $product->loaded ? (int) $product->is_virtual : 0,
                 ];
                 $rows[] = $row;
@@ -1287,9 +2351,134 @@ namespace {
             return StubStore::$cartRules[$this->id] ?? [];
         }
 
+        public function getDeliveryOptionList($defaultCountry = null, $flush = false): array
+        {
+            if (isset(StubStore::$cartDeliveryOptionListThrows[$this->id])) {
+                throw new PrestaShopDatabaseException(StubStore::$cartDeliveryOptionListThrows[$this->id]);
+            }
+
+            return StubStore::$cartDeliveryOptionLists[$this->id] ?? [];
+        }
+
+        /**
+         * Core-faithful enough for the plugin's use: an explicit fixture wins,
+         * otherwise auto-select the first option for each address, which is
+         * what core falls back to when nothing is selected or the selection no
+         * longer validates.
+         *
+         * @return array<int,string>|false
+         */
+        public function getDeliveryOption($defaultCountry = null, $dontAutoSelectOptions = false, $useCache = true)
+        {
+            // Core-faithful: getDeliveryOption() calls getDeliveryOptionList()
+            // first, so a raise from the list build surfaces here too.
+            if (isset(StubStore::$cartDeliveryOptionListThrows[$this->id])) {
+                throw new PrestaShopDatabaseException(StubStore::$cartDeliveryOptionListThrows[$this->id]);
+            }
+
+            if (array_key_exists($this->id, StubStore::$cartDeliveryOptions)) {
+                return StubStore::$cartDeliveryOptions[$this->id];
+            }
+
+            $selected = [];
+            foreach (StubStore::$cartDeliveryOptionLists[$this->id] ?? [] as $idAddress => $options) {
+                $keys = array_keys((array) $options);
+                if ($keys !== []) {
+                    $selected[(int) $idAddress] = (string) $keys[0];
+                }
+            }
+
+            return $selected;
+        }
+
         public function getAverageProductsTaxRate(): float
         {
             return (float) (StubStore::$cartTotals[$this->id]['average_products_tax_rate'] ?? 0.0);
+        }
+    }
+
+    /**
+     * Minimal stand-in for core's CartLazyArray (PS8:
+     * src/Adapter/Presenter/Cart/CartLazyArray.php) - an ArrayAccess wrapping
+     * 'products'/'subtotals' plus the Cart that built them, carried as a
+     * private, unexposed property exactly like core's, so a spec exercises
+     * the SAME reflection path hookActionPresentCart uses in production.
+     */
+    class CartLazyArrayStub implements \ArrayAccess
+    {
+        private Cart $cart;
+        private array $data;
+
+        public function __construct(Cart $cart, array $data)
+        {
+            $this->cart = $cart;
+            $this->data = $data;
+        }
+
+        public function offsetExists($offset): bool
+        {
+            return array_key_exists($offset, $this->data);
+        }
+
+        public function offsetGet($offset): mixed
+        {
+            return $this->data[$offset] ?? null;
+        }
+
+        public function offsetSet($offset, $value): void
+        {
+            $this->data[$offset] = $value;
+        }
+
+        public function offsetUnset($offset): void
+        {
+            unset($this->data[$offset]);
+        }
+
+        public function getData(): array
+        {
+            return $this->data;
+        }
+    }
+
+    /**
+     * Core's presented product rows are ProductListingLazyArray OBJECTS
+     * (ArrayAccess), never plain arrays - this stub exists so a spec catches
+     * code that does `is_array($row)` on a presented row (real PS8 core:
+     * CartLazyArray::presentProduct() returns a ProductListingLazyArray).
+     */
+    class PresentedProductRowStub implements \ArrayAccess
+    {
+        private array $data;
+
+        public function __construct(array $data)
+        {
+            $this->data = $data;
+        }
+
+        public function offsetExists($offset): bool
+        {
+            return array_key_exists($offset, $this->data);
+        }
+
+        public function offsetGet($offset): mixed
+        {
+            return $this->data[$offset] ?? null;
+        }
+
+        public function offsetSet($offset, $value): void
+        {
+            $this->data[$offset] = $value;
+        }
+
+        public function offsetUnset($offset): void
+        {
+            unset($this->data[$offset]);
+        }
+
+        public function toArray(): array
+        {
+            return $this->data;
         }
     }
 
@@ -1297,21 +2486,112 @@ namespace {
     {
         public static function getLanguages($active = false): array
         {
-            return [];
+            return StubStore::$languages;
         }
     }
 
+    /** Core's shop context. */
     class Shop
     {
-        public const CONTEXT_ALL = 1;
+        public const CONTEXT_SHOP = 1;
+        public const CONTEXT_GROUP = 2;
+        public const CONTEXT_ALL = 4;
+
+        /** Core's per-shop id; 1 is the default single-shop install. */
+        public int $id = 1;
+        public bool $loaded = true;
+
+        /** Core loads the row; here a shop loads when it is in StubStore::$shops. */
+        public function __construct($id = null)
+        {
+            if ($id !== null) {
+                $this->id = (int) $id;
+                $this->loaded = isset(StubStore::$shops[(int) $id]);
+            }
+        }
 
         public static function isFeatureActive(): bool
         {
-            return false;
+            return StubStore::$multistore;
         }
 
-        public static function setContext($context): void
+        public static function getContext(): int
         {
+            return StubStore::$shopContext;
+        }
+
+        public static function setContext($type, $id = null): void
+        {
+            switch ((int) $type) {
+                case self::CONTEXT_ALL:
+                    StubStore::$contextShopId = null;
+                    StubStore::$contextShopGroupId = null;
+                    break;
+                case self::CONTEXT_GROUP:
+                    StubStore::$contextShopId = null;
+                    StubStore::$contextShopGroupId = (int) $id;
+                    break;
+                case self::CONTEXT_SHOP:
+                    if (!isset(StubStore::$shops[(int) $id])) {
+                        throw new PrestaShopException('Shop ' . (int) $id . ' is not in StubStore::$shops');
+                    }
+                    StubStore::$contextShopId = (int) $id;
+                    StubStore::$contextShopGroupId = self::getGroupFromShop($id);
+                    break;
+                default:
+                    throw new PrestaShopException('Unknown context for shop');
+            }
+            StubStore::$shopContext = (int) $type;
+        }
+
+        public static function getContextShopID($null_value_without_multishop = false): ?int
+        {
+            if ($null_value_without_multishop && !self::isFeatureActive()) {
+                return null;
+            }
+
+            return StubStore::$contextShopId;
+        }
+
+        public static function getContextShopGroupID($null_value_without_multishop = false): ?int
+        {
+            if ($null_value_without_multishop && !self::isFeatureActive()) {
+                return null;
+            }
+
+            return StubStore::$contextShopGroupId;
+        }
+
+        /** @return int|false */
+        public static function getGroupFromShop($shop_id, $as_id = true)
+        {
+            return isset(StubStore::$shops[(int) $shop_id]) ? StubStore::$shops[(int) $shop_id] : false;
+        }
+
+        /** @return int[] */
+        public static function getShops($active = true, $id_shop_group = null, $get_as_list_id = false): array
+        {
+            $ids = [];
+            foreach (StubStore::$shops as $idShop => $idShopGroup) {
+                if ($id_shop_group === null || (int) $id_shop_group === (int) $idShopGroup) {
+                    $ids[] = (int) $idShop;
+                }
+            }
+
+            return $ids;
+        }
+
+        /** @return int[] */
+        public static function getContextListShopID($share = false): array
+        {
+            if (self::getContext() == self::CONTEXT_SHOP) {
+                return [(int) self::getContextShopID()];
+            }
+            if (self::getContext() == self::CONTEXT_GROUP) {
+                return self::getShops(true, self::getContextShopGroupID(), true);
+            }
+
+            return self::getShops(true, null, true);
         }
     }
 
@@ -1326,8 +2606,74 @@ namespace {
         {
             $sql = (string) $sql;
             StubStore::$dbExecuted[] = $sql;
+            // Injected failure, checked before any SCHEMA bookkeeping: a statement
+            // the real database refused changed nothing, so the simulated schema must
+            // not record it. It IS still appended to $dbExecuted above, deliberately -
+            // that list is an attempt log.
+            foreach (StubStore::$dbFailOn as $failPattern) {
+                if (preg_match($failPattern, $sql)) {
+                    return false;
+                }
+            }
+            if (preg_match('/UPDATE `ps_cart` SET checkout_session_data = "(.*)" WHERE id_cart = (\d+)$/s', $sql, $m)) {
+                StubStore::$checkoutSessionData[(int) $m[2]] = stripslashes($m[1]);
+            }
             if (preg_match('/REPLACE INTO `ps_twopayment_surcharge_sync` \(`id_cart`, `seq`, `updated_at`\) VALUES \((\d+), (\d+)/', $sql, $m)) {
                 StubStore::$surchargeSyncSeqs[(int) $m[1]] = (int) $m[2];
+            }
+            if (preg_match(
+                '/^REPLACE INTO `ps_twopayment_cart_record` \(`id_cart`, `id_shop`, `id_customer`, `record`, `data`, `updated_at`\) VALUES \((\d+), (\d+), (\d+), "(\w+)", "(.*)", "([^"]*)"\)$/s',
+                $sql,
+                $m
+            )) {
+                StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[4]] = stripslashes($m[5]);
+                StubStore::$cartRecordUpdatedAt[(int) $m[1]][(int) $m[2]][$m[4]] = $m[6];
+                StubStore::$cartRecordCustomer[(int) $m[1]][(int) $m[2]][$m[4]] = (int) $m[3];
+            }
+            if (preg_match('/^UPDATE `ps_twopayment_cart_record` SET `id_customer` = (\d+) WHERE `id_cart` = (\d+) AND `id_customer` = 0$/', $sql, $m)) {
+                foreach (StubStore::$cartRecordCustomer[(int) $m[2]] ?? [] as $shopId => $customers) {
+                    foreach ($customers as $record => $customerId) {
+                        if ($customerId === 0) {
+                            StubStore::$cartRecordCustomer[(int) $m[2]][$shopId][$record] = (int) $m[1];
+                        }
+                    }
+                }
+            }
+            if (preg_match('/^DELETE FROM `ps_twopayment_cart_record` WHERE `updated_at` < "([^"]+)"$/', $sql, $m)) {
+                foreach (StubStore::$cartRecordUpdatedAt as $cartId => $shops) {
+                    foreach ($shops as $shopId => $times) {
+                        foreach ($times as $record => $updatedAt) {
+                            if ($updatedAt < $m[1]) {
+                                unset(StubStore::$cartRecords[$cartId][$shopId][$record]);
+                            }
+                        }
+                    }
+                }
+            }
+            if ($sql === 'DELETE `cr` FROM `ps_twopayment_cart_record` `cr` INNER JOIN `ps_orders` `o` ON `o`.`id_cart` = `cr`.`id_cart` AND `o`.`id_shop` = `cr`.`id_shop`') {
+                foreach (StubStore::$orders as $order) {
+                    unset(StubStore::$cartRecords[(int) ($order['id_cart'] ?? 0)][(int) ($order['id_shop'] ?? 0)]);
+                }
+            }
+            if (preg_match('/^DELETE FROM `ps_twopayment_cart_record`' . self::CUSTOMER_WHERE . '$/', $sql, $m)) {
+                foreach (self::customerRecords($m[1]) as [$cartId, $shopId, $record]) {
+                    unset(StubStore::$cartRecords[$cartId][$shopId][$record]);
+                }
+            }
+            if (preg_match('/^DELETE FROM `ps_twopayment_cart_record` WHERE `id_cart` = (\d+)(?: AND `id_shop` = (\d+) AND `record` = "(\w+)")?$/', $sql, $m)) {
+                if (isset($m[3])) {
+                    unset(StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[3]]);
+                } else {
+                    unset(StubStore::$cartRecords[(int) $m[1]]);
+                }
+            }
+            if (preg_match(
+                '/REPLACE INTO `ps_twopayment_rate_limit` \(`rate_key`, `window_start`, `hit_count`\) VALUES'
+                . ' \("([^"]+)", (\d+), (\d+)\)/',
+                $sql,
+                $m
+            )) {
+                StubStore::$rateLimitRows[$m[1]] = ['window_start' => (int) $m[2], 'hit_count' => (int) $m[3]];
             }
             // Trigger bookkeeping so specs can assert the DB-enforcement DDL
             // is issued. The stub CANNOT evaluate trigger semantics (no SQL
@@ -1338,7 +2684,31 @@ namespace {
             if (preg_match('/^\s*DROP TRIGGER IF EXISTS `([^`]+)`/', $sql, $m)) {
                 unset(StubStore::$dbTriggers[$m[1]]);
             }
+            self::recordSchema($sql);
             return true;
+        }
+
+        /**
+         * Track which columns the simulated schema has, from the DDL the module
+         * issues. Only the two shapes this module ever writes are recognised -
+         * `CREATE TABLE ... (...)` and `ALTER TABLE ... ADD \`col\``; anything
+         * else is ignored rather than half-parsed.
+         */
+        private static function recordSchema(string $sql): void
+        {
+            if (preg_match('/CREATE TABLE (?:IF NOT EXISTS )?`([^`]+)`\s*\((.*)\)\s*ENGINE/is', $sql, $m)) {
+                foreach ((array) preg_split('/,\s*\n/', $m[2]) as $definition) {
+                    if (preg_match('/^\s*`([^`]+)`\s+\S/', (string) $definition, $c)) {
+                        StubStore::$dbColumns[$m[1] . '.' . $c[1]] = true;
+                    }
+                }
+
+                return;
+            }
+
+            if (preg_match('/ALTER TABLE `([^`]+)`\s+ADD\s+`([^`]+)`/i', $sql, $m)) {
+                StubStore::$dbColumns[$m[1] . '.' . $m[2]] = true;
+            }
         }
 
         /**
@@ -1348,6 +2718,29 @@ namespace {
         public function getValue($sql)
         {
             $sql = (string) $sql;
+            StubStore::$dbLastGetValue[] = $sql;
+            // Core's Db::getValue() delegates to getRow(), which appends its OWN
+            // ' LIMIT 1' - its docblock documents the argument as "the select
+            // query (without LIMIT 1)". A caller that supplies one produces
+            // `LIMIT 1 LIMIT 1` and a real MariaDB syntax error (TWO-25387),
+            // reproduced here rather than left to a live-shop e2e run.
+            if (preg_match('/\bLIMIT\s+\d+\s*(?:,\s*\d+\s*)?;?\s*$/i', $sql)) {
+                throw new PrestaShopDatabaseException(
+                    'Db::getValue() appends its own LIMIT 1 - the query must not carry one: ' . $sql
+                );
+            }
+            StubStore::$dbErrno = 0;
+            if (StubStore::$dbGetValueThrowsOn !== null
+                && strpos($sql, StubStore::$dbGetValueThrowsOn) !== false
+            ) {
+                throw new PrestaShopDatabaseException('stubbed query failure');
+            }
+            if (StubStore::$dbGetValueSilentErrorOn !== null
+                && strpos($sql, StubStore::$dbGetValueSilentErrorOn) !== false
+            ) {
+                StubStore::$dbErrno = 1064;
+                return false;
+            }
             if (preg_match("/GET_LOCK\\('([^']+)'/", $sql, $m)) {
                 if (!empty(StubStore::$dbLocks[$m[1]])) {
                     return '0'; // held by a simulated concurrent request
@@ -1358,6 +2751,12 @@ namespace {
             if (preg_match("/RELEASE_LOCK\\('([^']+)'/", $sql, $m)) {
                 unset(StubStore::$dbLocks[$m[1]]);
                 return '1';
+            }
+            if (preg_match('/SELECT checkout_session_data FROM `ps_cart` WHERE id_cart = (\d+)/', $sql, $m)) {
+                return StubStore::$checkoutSessionData[(int) $m[1]] ?? false;
+            }
+            if (preg_match('/SELECT `data` FROM `ps_twopayment_cart_record` WHERE `id_cart` = (\d+) AND `id_shop` = (\d+) AND `record` = "(\w+)"$/', $sql, $m)) {
+                return StubStore::$cartRecords[(int) $m[1]][(int) $m[2]][$m[3]] ?? false;
             }
             if (preg_match('/SELECT `seq` FROM `ps_twopayment_surcharge_sync` WHERE `id_cart` = (\d+)/', $sql, $m)) {
                 return StubStore::$surchargeSyncSeqs[(int) $m[1]] ?? false;
@@ -1377,26 +2776,297 @@ namespace {
             if (preg_match("/FROM information_schema\.TRIGGERS.*TRIGGER_NAME = '([^']+)'/s", $sql, $m)) {
                 return isset(StubStore::$dbTriggers[$m[1]]) ? '1' : '0';
             }
+            // Column existence, as the upgrade scripts and
+            // ensureTwoPaymentColumns() ask it. Answered from the schema
+            // Db::execute() has recorded, so an already-added column reads as
+            // present and the guarded ALTER is genuinely skipped.
+            if (preg_match(
+                "/FROM INFORMATION_SCHEMA\.COLUMNS.*TABLE_NAME = '([^']+)'.*COLUMN_NAME = '([^']+)'/is",
+                $sql,
+                $m
+            )) {
+                return isset(StubStore::$dbColumns[$m[1] . '.' . $m[2]]) ? '1' : '0';
+            }
+            // Whether ANY country is enabled for the module and shop.
+            if (preg_match(
+                '/SELECT COUNT\(\*\) FROM `' . _DB_PREFIX_ . 'module_country`'
+                . ' WHERE `id_module` = (\d+) AND `id_shop` = (\d+)/',
+                $sql,
+                $m
+            )) {
+                if (StubStore::$moduleCountries === null) {
+                    return '1'; // unrestricted - see StubStore::$moduleCountries
+                }
+                $count = 0;
+                foreach (StubStore::$moduleCountries as $row) {
+                    if ((int) ($row['id_module'] ?? 0) === (int) $m[1]
+                        && (int) ($row['id_shop'] ?? 0) === (int) $m[2]
+                    ) {
+                        $count++;
+                    }
+                }
+                return (string) $count;
+            }
+            // Native per-module payment restrictions (TWO-25387). Core returns the
+            // matched id_country, or false when no row matches.
+            if (preg_match(
+                '/SELECT `id_country` FROM `' . _DB_PREFIX_ . 'module_country`'
+                . ' WHERE `id_module` = (\d+) AND `id_country` = (\d+) AND `id_shop` = (\d+)/',
+                $sql,
+                $m
+            )) {
+                if (StubStore::$moduleCountries === null) {
+                    return $m[2]; // unrestricted - see StubStore::$moduleCountries
+                }
+                foreach (StubStore::$moduleCountries as $row) {
+                    if ((int) ($row['id_module'] ?? 0) === (int) $m[1]
+                        && (int) ($row['id_country'] ?? 0) === (int) $m[2]
+                        && (int) ($row['id_shop'] ?? 0) === (int) $m[3]
+                    ) {
+                        return $m[2];
+                    }
+                }
+                return false;
+            }
             return false;
+        }
+
+        /** The module's GDPR customer filter, capturing the id_customer list. */
+        private const CUSTOMER_WHERE = ' WHERE `id_customer` IN \\(([\\d,]+)\\)';
+
+        /** @return array<int,array{int,int,string}> [id_cart, id_shop, record] of every stubbed row owned by the listed customers */
+        private static function customerRecords(string $customerIds): array
+        {
+            $ids = array_map('intval', explode(',', $customerIds));
+            $matches = [];
+            foreach (StubStore::$cartRecordCustomer as $cartId => $shops) {
+                foreach ($shops as $shopId => $customers) {
+                    foreach ($customers as $record => $customerId) {
+                        if (in_array($customerId, $ids, true) && isset(StubStore::$cartRecords[$cartId][$shopId][$record])) {
+                            $matches[] = [(int) $cartId, (int) $shopId, (string) $record];
+                        }
+                    }
+                }
+            }
+
+            return $matches;
+        }
+
+        /**
+         * Sort rows by the statement's own ORDER BY (`tr.`col` [ASC|DESC]`, ...), so a test exercises the order the
+         * module asks for: ids and states compare as numbers, postcodes as the strings their varchar columns hold.
+         */
+        private static function orderBy(array $rows, string $sql): array
+        {
+            if (!preg_match('/ORDER BY (.+)$/s', $sql, $m)) {
+                return $rows;
+            }
+            $terms = [];
+            foreach (explode(',', $m[1]) as $term) {
+                if (preg_match('/`(\w+)`\s*(ASC|DESC)?/i', $term, $t)) {
+                    $terms[] = [$t[1], strtoupper($t[2] ?? 'ASC') === 'DESC' ? -1 : 1];
+                }
+            }
+            usort($rows, static function ($a, $b) use ($terms) {
+                foreach ($terms as [$column, $direction]) {
+                    $x = $a[$column] ?? '';
+                    $y = $b[$column] ?? '';
+                    $cmp = strpos($column, 'zipcode') === 0 ? strcmp((string) $x, (string) $y) : ((int) $x <=> (int) $y);
+                    if ($cmp !== 0) {
+                        return $cmp * $direction;
+                    }
+                }
+
+                return 0;
+            });
+
+            return $rows;
         }
 
         public function executeS($sql): array
         {
             StubStore::$dbLastExecuteS[] = (string) $sql;
+            // Every tier's row of one configuration key, as the 2.7.8 upgrade reads them.
+            if (preg_match("/^SELECT `id_shop_group`, `id_shop`, `value` FROM `ps_configuration` WHERE `name` = '([A-Za-z0-9_]+)'$/", (string) $sql, $m)) {
+                $rows = [];
+                if (array_key_exists($m[1], StubStore::$configuration)) {
+                    $rows[] = ['id_shop_group' => null, 'id_shop' => null, 'value' => StubStore::$configuration[$m[1]]];
+                }
+                foreach (StubStore::$configurationGroup as $group => $values) {
+                    if (array_key_exists($m[1], $values)) {
+                        $rows[] = ['id_shop_group' => (string) $group, 'id_shop' => null, 'value' => $values[$m[1]]];
+                    }
+                }
+                foreach (StubStore::$configurationShop as $shop => $values) {
+                    if (array_key_exists($m[1], $values)) {
+                        $rows[] = ['id_shop_group' => null, 'id_shop' => (string) $shop, 'value' => $values[$m[1]]];
+                    }
+                }
+
+                return $rows;
+            }
+            if (preg_match('/^SELECT `id_cart`, `record`, `data`, `updated_at` FROM `ps_twopayment_cart_record`' . self::CUSTOMER_WHERE . '$/', (string) $sql, $m)) {
+                $rows = [];
+                foreach (self::customerRecords($m[1]) as [$cartId, $shopId, $record]) {
+                    $rows[] = ['id_cart' => (string) $cartId, 'record' => $record, 'data' => StubStore::$cartRecords[$cartId][$shopId][$record], 'updated_at' => StubStore::$cartRecordUpdatedAt[$cartId][$shopId][$record] ?? ''];
+                }
+
+                return $rows;
+            }
+            // Core's tax rule selection (TaxRulesTaxManager), as the module runs it for a 0% line's tax code
+            // (TWO-26153): the group's active rules for the country, state 0 or the address's, postcode in range or
+            // open, most specific first. Postcodes compare as strings, as the varchar columns do.
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "tax_rule` tr JOIN .* trg\\.`active` = 1 AND tr\\.`id_country` = (\\d+) AND tr\\.`id_tax_rules_group` = (\\d+) AND tr\\.`id_state` IN \\(0, (\\d+)\\) AND \\('([^']*)' BETWEEN/", (string) $sql, $m)) {
+                if (empty(StubStore::$taxRulesGroups[(int) $m[2]]['active'])) {
+                    return [];
+                }
+                $rows = [];
+                foreach (StubStore::$taxRules as $id => $rule) {
+                    $from = (string) ($rule['zipcode_from'] ?? '0');
+                    $to = (string) ($rule['zipcode_to'] ?? '0');
+                    $open = in_array($to, ['', '0'], true) && in_array($from, ['', '0', $m[4]], true);
+                    if ((int) $rule['id_tax_rules_group'] === (int) $m[2] && (int) $rule['id_country'] === (int) $m[1]
+                        && in_array((int) ($rule['id_state'] ?? 0), [0, (int) $m[3]], true)
+                        && ($open || (strcmp($m[4], $from) >= 0 && strcmp($m[4], $to) <= 0))) {
+                        $rows[] = ['id_tax_rule' => (string) $id, 'id_tax' => (string) $rule['id_tax'], 'zipcode_from' => $from, 'zipcode_to' => $to, 'id_state' => (int) ($rule['id_state'] ?? 0), 'id_country' => (int) $rule['id_country']];
+                    }
+                }
+
+                return self::orderBy($rows, (string) $sql);
+            }
+            // Every rule of a tax rules group, for the tax code mapping's rows (TWO-26153).
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "tax_rule` WHERE `id_tax_rules_group` = (\\d+) ORDER BY/", (string) $sql, $m)) {
+                $rows = [];
+                foreach (StubStore::$taxRules as $id => $rule) {
+                    if ((int) $rule['id_tax_rules_group'] === (int) $m[1]) {
+                        $rows[] = ['id_tax_rule' => (string) $id] + $rule + ['id_state' => 0, 'zipcode_from' => '0', 'zipcode_to' => '0', 'description' => ''];
+                    }
+                }
+                return self::orderBy($rows, (string) $sql);
+            }
             if (!empty(StubStore::$dbExecuteSResponses)) {
                 $next = array_shift(StubStore::$dbExecuteSResponses);
                 return is_array($next) ? $next : [];
             }
+            // Every id the fee reference was ever sold under, for the retired-id seed.
+            if (preg_match("/SELECT DISTINCT `product_id` FROM `" . _DB_PREFIX_ . "order_detail` WHERE `product_reference` = '([^']*)'$/", (string) $sql, $m)) {
+                $ids = [];
+                foreach (StubStore::$orderDetails as $row) {
+                    if (($row['product_reference'] ?? '') === $m[1]) {
+                        $ids[(int) $row['product_id']] = ['product_id' => (string) $row['product_id']];
+                    }
+                }
+                return array_values($ids);
+            }
+            // The order's rows, each with its order_detail_tax rates listed as `placed_rates`.
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "order_detail` od WHERE od\\.`id_order` = (\\d+)( ORDER BY .*)?$/", (string) $sql, $m)) {
+                $rows = [];
+                foreach (StubStore::$orderDetails as $row) {
+                    if ((int) $row['id_order'] === (int) $m[1]) {
+                        $rows[] = $row + [
+                            'placed_rates' => implode(',', $row['odt'] ?? []), 'tax_computation_method' => '0', 'product_reference' => '', 'product_ean13' => '',
+                            'product_upc' => '', 'product_quantity' => 1, 'unit_price_tax_excl' => $row['total_price_tax_excl'] ?? 0,
+                            'ecotax' => '0.000000', 'ecotax_tax_rate' => '0.000',
+                        ];
+                    }
+                }
+                return $rows;
+            }
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "order_carrier` WHERE `id_order` = (\\d+)/", (string) $sql, $m)) {
+                return StubStore::$placedCarriers[(int) $m[1]] ?? [];
+            }
+            if (preg_match("/FROM `" . _DB_PREFIX_ . "order_cart_rule` WHERE `id_order` = (\\d+)/", (string) $sql, $m)) {
+                return StubStore::$orderCartRules[(int) $m[1]] ?? [];
+            }
+            if (preg_match("/`" . _DB_PREFIX_ . "order_invoice_tax`.* oit\\.`type` = '(\\w+)' AND oi\\.`id_order` IN \\(([\\d, ]+)\\)/", (string) $sql, $m)) {
+                $rows = [];
+                foreach (array_map('intval', explode(',', $m[2])) as $idOrder) {
+                    foreach (StubStore::$orderInvoiceTaxes[$idOrder] ?? [] as $row) {
+                        if ($row['type'] === $m[1]) {
+                            $invoice = $row['id_order_invoice'] ?? $idOrder;
+                            $rows[$invoice . '-' . $row['id_tax']] = ['id_order_invoice' => $invoice, 'id_tax' => $row['id_tax'], 'rate' => $row['rate']];
+                        }
+                    }
+                }
+                return array_values($rows);
+            }
             return [];
         }
 
-        public function insert($table, $data): bool
+        /** Core's driver errno for the LAST query; 0 when it succeeded. */
+        public function getNumberError(): int
         {
+            return StubStore::$dbErrno;
+        }
+
+        public function getMsgError($query = false): string
+        {
+            return StubStore::$dbErrno === 0 ? '' : 'stubbed driver error ' . StubStore::$dbErrno;
+        }
+
+        /**
+         * Only the module's own order-scoped table is modelled; every other
+         * query answers false, exactly as core does on an empty result.
+         */
+        public function getRow($sql, $useCache = true)
+        {
+            $sql = (string) $sql;
+            StubStore::$dbLastGetValue[] = $sql;
+
+            if (preg_match(
+                '/SELECT \* FROM `' . _DB_PREFIX_ . 'twopayment` WHERE `id_order` = (\d+)/',
+                $sql,
+                $m
+            )) {
+                return StubStore::$twoPaymentRows[(int) $m[1]] ?? false;
+            }
+
+            if (preg_match(
+                '/SELECT `window_start`, `hit_count` FROM `ps_twopayment_rate_limit` WHERE `rate_key` = "([^"]+)"/',
+                $sql,
+                $m
+            )) {
+                return StubStore::$rateLimitRows[$m[1]] ?? false;
+            }
+
+            return false;
+        }
+
+        public function insert($table, $data, $nullValues = false): bool
+        {
+            if ((string) $table === 'configuration') {
+                if (!empty($data['id_shop'])) {
+                    StubStore::$configurationShop[(int) $data['id_shop']][$data['name']] = $data['value'];
+                } elseif (!empty($data['id_shop_group'])) {
+                    StubStore::$configurationGroup[(int) $data['id_shop_group']][$data['name']] = $data['value'];
+                } else {
+                    StubStore::$configuration[$data['name']] = $data['value'];
+                }
+            }
+            if ((string) $table === 'twopayment') {
+                StubStore::$twoPaymentWrites[] = ['op' => 'insert', 'data' => $data];
+                StubStore::$twoPaymentRows[(int) $data['id_order']] = $data;
+            }
+
             return true;
         }
 
         public function update($table, $data, $where): bool
         {
+            if ((string) $table === 'twopayment'
+                && preg_match('/id_order = (\d+)/', (string) $where, $m)
+            ) {
+                StubStore::$twoPaymentWrites[] = ['op' => 'update', 'data' => $data];
+                // MERGED, not replaced - a real UPDATE only touches the columns
+                // it names, and that is the whole property the
+                // presence-conditional write depends on.
+                $id_order = (int) $m[1];
+                StubStore::$twoPaymentRows[$id_order] = array_merge(
+                    StubStore::$twoPaymentRows[$id_order] ?? [],
+                    $data
+                );
+            }
+
             return true;
         }
     }
@@ -1406,7 +3076,13 @@ namespace {
         public $id = 0;
         public $id_cart = 0;
         public $id_customer = 0;
+        public $id_carrier = 0;
+        public $id_lang = 1;
+        public $module = '';
         public $total_paid = 0.0;
+        /** Core's is null until the order loads. */
+        public $id_shop = null;
+        public $current_state = 0;
         public bool $loaded = false;
 
         public function __construct($id = 0)
@@ -1416,18 +3092,131 @@ namespace {
                 $row = StubStore::$orders[$id];
                 $this->id = $id;
                 $this->loaded = true;
+                $this->id_shop = (int) ($row['id_shop'] ?? 1);
+                $this->current_state = (int) ($row['current_state'] ?? 0);
+                $this->module = (string) ($row['module'] ?? '');
                 $this->id_cart = (int) ($row['id_cart'] ?? 0);
                 $this->id_customer = (int) ($row['id_customer'] ?? 0);
+                $this->id_carrier = (int) ($row['id_carrier'] ?? 0);
                 $this->total_paid = (float) ($row['total_paid'] ?? 0.0);
             }
         }
     }
 
+    /**
+     * The placed-order members the update payload reads (TWO-26085). fromCart() places a stubbed cart as core
+     * would: one order_detail row per cart row at the row's `rate`, its shipping as an order_carrier row, its totals.
+     */
+    #[\AllowDynamicProperties]
+    class PlacedOrderStub
+    {
+        public bool $loaded = true;
+        public $id = 0;
+        public $id_cart = 0;
+        public $id_carrier = 0;
+        public $id_currency = 0;
+        public $id_customer = 0;
+        public $id_address_invoice = 0;
+        public $id_address_delivery = 0;
+        public $id_lang = 1;
+        public $module = 'twopayment';
+        public $shipping_number = '';
+        public $reference = '';
+        public $payment = 'Two';
+        public $carrier_tax_rate = 0.0;
+        public $total_shipping_tax_incl = 0.0;
+        public $total_shipping_tax_excl = 0.0;
+        public $total_paid_tax_incl = 0.0;
+        public $total_paid_tax_excl = 0.0;
+        public $total_wrapping_tax_incl = 0.0;
+        public $total_wrapping_tax_excl = 0.0;
+        public $total_discounts_tax_incl = 0.0;
+        public int $idOrderCarrier = 0;
+        public array $payments = [];
+
+        public function getIdOrderCarrier(): int
+        {
+            return $this->idOrderCarrier;
+        }
+
+        public function getOrderPaymentCollection(): array
+        {
+            return $this->payments;
+        }
+
+        /** The product and discount totals core keeps on the order, as its order_detail and order_cart_rule rows add up. */
+        public function __get(string $name)
+        {
+            $sum = function (array $rows, string $field): float {
+                return round(array_sum(array_map(fn ($row) => (float) $row[$field], $rows)), 2);
+            };
+            $details = array_filter(StubStore::$orderDetails, fn ($row) => (int) $row['id_order'] === (int) $this->id);
+            switch ($name) {
+                case 'total_products':
+                    return $sum($details, 'total_price_tax_excl');
+                case 'total_products_wt':
+                    return $sum($details, 'total_price_tax_incl');
+                case 'total_discounts_tax_excl':
+                    return $sum(StubStore::$orderCartRules[$this->id] ?? [], 'value_tax_excl');
+            }
+            throw new LogicException('PlacedOrderStub has no ' . $name);
+        }
+
+        /** As core: the other orders placed from the same cart under the same reference. */
+        public function getBrother(): array
+        {
+            return array_values(array_filter(
+                StubStore::$placedOrders,
+                fn ($o) => $o->reference === $this->reference && $o->id_cart === $this->id_cart && $o->id !== $this->id
+            ));
+        }
+
+        public static function fromCart(int $orderId, int $cartId): self
+        {
+            $order = new self();
+            $order->id = $orderId;
+            $order->id_cart = $cartId;
+            $cart = StubStore::$carts[$cartId] ?? [];
+            foreach (['id_carrier', 'id_currency', 'id_customer', 'id_address_invoice', 'id_address_delivery'] as $field) {
+                $order->$field = (int) ($cart[$field] ?? 0);
+            }
+            StubStore::$orderDetails = array_values(array_filter(StubStore::$orderDetails, fn ($row) => (int) $row['id_order'] !== $orderId));
+            foreach (StubStore::$cartProducts[$cartId] ?? [] as $row) {
+                StubStore::$products[$row['id_product']] = (StubStore::$products[$row['id_product']] ?? []) + [
+                    'link_rewrite' => $row['link_rewrite'] ?? '', 'description_short' => $row['description_short'] ?? '',
+                    'manufacturer_name' => $row['manufacturer_name'] ?? '',
+                ];
+                StubStore::$orderDetails[] = [
+                    'id_order' => $orderId, 'id_order_detail' => count(StubStore::$orderDetails) + 1,
+                    'product_id' => $row['id_product'], 'product_name' => $row['name'], 'product_quantity' => $row['cart_quantity'],
+                    'unit_price_tax_excl' => $row['price'], 'total_price_tax_excl' => $row['total'], 'total_price_tax_incl' => $row['total_wt'],
+                    'odt' => [(float) ($row['rate'] ?? 0)],
+                ];
+            }
+            $totals = StubStore::$cartTotals[$cartId] ?? [];
+            $shippingNet = (float) ($totals[false][Cart::ONLY_SHIPPING] ?? 0);
+            $shippingGross = (float) ($totals[true][Cart::ONLY_SHIPPING] ?? 0);
+            if ($shippingGross > 0) {
+                StubStore::$placedCarriers[$orderId] = [['shipping_cost_tax_excl' => $shippingNet, 'shipping_cost_tax_incl' => $shippingGross]];
+                $order->total_shipping_tax_excl = $shippingNet;
+                $order->total_shipping_tax_incl = $shippingGross;
+                $order->carrier_tax_rate = round(($shippingGross - $shippingNet) / $shippingNet * 100, 3);
+            }
+            $order->total_paid_tax_incl = (float) ($totals[true][Cart::BOTH] ?? 0);
+            $order->total_paid_tax_excl = (float) ($totals[false][Cart::BOTH] ?? 0);
+            $order->total_discounts_tax_incl = (float) ($totals[true][Cart::ONLY_DISCOUNTS] ?? 0);
+
+            return $order;
+        }
+    }
+
+    #[\AllowDynamicProperties]
     class OrderState
     {
         public bool $loaded = true;
         public int $id = 1;
-        public $name = '';
+        /** @var string|array<int,string> String once loaded by id; array<id_lang,string> while being built. */
+        public $name = [];
         public int $invoice = 0;
         public int $delivery = 0;
         public int $shipped = 0;
@@ -1467,7 +3256,32 @@ namespace {
 
         public function add(): bool
         {
+            // Core assigns a fresh auto-increment id on insert. Returning a
+            // distinct id per insert matters for createTwoOrderState(), which
+            // creates six states in one pass and stores each id in configuration.
+            $this->id = StubStore::$nextId++;
+
             return true;
+        }
+
+        /**
+         * Mirrors OrderStateCore::getOrderStates(): id_order_state comes back from
+         * the database as a string, which matters for pre-selection comparisons.
+         *
+         * @return array<int,array{id_order_state:string,name:string}>
+         */
+        public static function getOrderStates($idLang = null): array
+        {
+            if (!empty(StubStore::$orderStates)) {
+                return StubStore::$orderStates;
+            }
+
+            return [
+                ['id_order_state' => '2', 'name' => 'Payment accepted'],
+                ['id_order_state' => '3', 'name' => 'Processing in progress'],
+                ['id_order_state' => '4', 'name' => 'Shipped'],
+                ['id_order_state' => '5', 'name' => 'Delivered'],
+            ];
         }
     }
 
@@ -1515,6 +3329,56 @@ namespace {
         }
     }
 
+    /** Core's profile permissions: a role is granted to a profile only when listed here. */
+    class Access
+    {
+        /** @var array<int,array<string,bool>> id_profile => role => granted */
+        public static array $granted = [];
+
+        public static function isGranted($role, $idProfile): bool
+        {
+            foreach ((array) $role as $currentRole) {
+                if (!empty(self::$granted[(int) $idProfile][(string) $currentRole])) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /** Core's access(): the controller's own tab role for the action, asked of the employee's profile. */
+    class ModuleAdminController
+    {
+        public $module;
+        public $context;
+        public $bootstrap = false;
+        public $content = '';
+        public $controller_name = '';
+
+        public function __construct()
+        {
+            $this->context = Context::getContext();
+        }
+
+        public function getTabSlug()
+        {
+            return 'ROLE_MOD_TAB_' . strtoupper($this->controller_name) . '_';
+        }
+
+        public function access($action, $disable = false)
+        {
+            $suffix = ['view' => 'READ', 'add' => 'CREATE', 'edit' => 'UPDATE', 'delete' => 'DELETE'][$action];
+
+            return Access::isGranted($this->getTabSlug() . $suffix, (int) $this->context->employee->id_profile);
+        }
+
+        public function viewAccess($disable = false)
+        {
+            return $this->access('view', $disable);
+        }
+    }
+
     require_once dirname(__DIR__) . '/twopayment.php';
 
     class OrderCarrier
@@ -1533,8 +3397,28 @@ namespace {
         }
     }
 
+    /**
+     * For a harness stub that replaces getTwoUpdateOrderData() with a canned body and is handed an order with no
+     * addresses: the edit hash reads the buyer company from the order (ABN-621), not from that body, so the stub
+     * supplies one too.
+     */
+    trait StubbedTwoUpdateBuyerCompany
+    {
+        public function getTwoUpdateBuyerCompany($order, $orderpaymentdata)
+        {
+            return ['company_name' => 'Stub Co', 'organization_number' => 'STUB-1', 'country_iso' => 'ES'];
+        }
+    }
+
+    #[\AllowDynamicProperties]
     class TwopaymentTestHarness extends Twopayment
     {
+        /** The once-per-render log guard is request state; tests share a process. */
+        public static function resetSurchargeTypeLog(): void
+        {
+            static::$twoSurchargeTypeFailureLogged = [];
+        }
+
         public function __construct()
         {
             $this->context = Context::getContext();
@@ -1544,11 +3428,195 @@ namespace {
             $this->api_key = 'test-api-key';
             $this->languages = [['id_lang' => 1]];
             $this->active = true;
+            // Mirrors PrestaShop's real Module::$local_path: absolute path to
+            // this module's own directory, trailing slash included. Used by
+            // getTwoVersionedAssetPath() to filemtime() the real asset files.
+            $this->local_path = dirname(__DIR__) . '/';
+            // A verified API key by default (TWO-25326). Every checkout gate
+            // now consults that verdict, and a harness without one would
+            // either take the whole suite to the network on a cache miss or
+            // silently hide the payment option from every unrelated spec.
+            // ApiKeyVerificationSpec drives the real thing by clearing this
+            // and stubbing the wire call.
+            $this->primeTwoApiKeyStatus(Twopayment::API_KEY_STATUS_OK, 200);
+            // A resolved backend term cache by default (TWO-25503), else the
+            // gate hides Two from every unrelated spec. Skipped if a spec
+            // already primed the cache before constructing the harness.
+            if (!Configuration::hasKey(Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS)) {
+                $this->primeTwoAvailableTerms(Twopayment::PAYMENT_TERMS_OPTIONS);
+            }
+        }
+
+        /**
+         * The key verifies as the stored merchant by default, so a merchant record
+         * refresh (which resolves its id from the key) stays off the network and
+         * fetches the id the spec seeded. Specs that drive verification override this.
+         */
+        protected function requestTwoApiKeyVerification($apiKey, $environment, $timeout = null)
+        {
+            return array(
+                'response' => json_encode(array('id' => (string) Configuration::get('PS_TWO_MERCHANT_ID'), 'short_name' => 'merchant')),
+                'code' => 200,
+                'error' => '',
+            );
+        }
+
+        /**
+         * Sets (or, with null, clears) the request-scoped verification memo the
+         * checkout gates read, without going near the network.
+         *
+         * @param string|null $status
+         * @param int|null    $code
+         */
+        public function primeTwoApiKeyStatus($status, $code = null): void
+        {
+            $this->twoApiKeyStatusMemo = $status === null
+                ? null
+                : array('status' => (string) $status, 'code' => $code);
+        }
+
+        /** The admin "Current configuration health" panel HTML. */
+        public function exposeTwoPluginHealthChecklist(): string
+        {
+            return $this->renderTwoPluginHealthChecklist();
+        }
+
+        /** The checkout tile's call-to-action text, without the offerability gates hookPaymentOptions applies first. */
+        public function exposeTwoPaymentOptionTitle(): string
+        {
+            return (string) $this->getTwoPaymentOption()->getCallToActionText();
+        }
+
+        /**
+         * A var the tile template receives, as it receives it (TWO-25711).
+         *
+         * @return mixed
+         */
+        public function exposeTwoPaymentOptionAssigned(string $key)
+        {
+            $this->getTwoPaymentOption();
+
+            return $this->context->smarty->assigned[$key];
+        }
+
+        /** This harness skips the constructor, which is what runs the self-heal in production. */
+        public function exposeEnsureRequiredHooksRegistered(): void
+        {
+            $this->ensureRequiredHooksRegistered();
+        }
+
+        /**
+         * Sets (or, with an empty array, clears) the cached backend
+         * available-terms the term-discovery gate reads.
+         *
+         * @param int[] $terms
+         */
+        public function primeTwoAvailableTerms(array $terms): void
+        {
+            Configuration::updateValue(
+                Twopayment::CONFIG_MERCHANT_AVAILABLE_TERMS,
+                empty($terms) ? '' : json_encode(array_values($terms))
+            );
         }
 
         public function l($string)
         {
             return $string;
+        }
+
+        /** getConfigurableTermSet() is protected; the specs assert it beside the buyer-facing set. */
+        public function configurableTermSetForTest(): array
+        {
+            return $this->getConfigurableTermSet();
+        }
+
+        /** The identity the production write path stamps a merchant record with. */
+        public static function recordKeyStampForTest(string $apiKey): string
+        {
+            return static::verificationSlotKey($apiKey);
+        }
+
+        /**
+         * Run a pricing build's shop-match checks (TWO-26274) on the payload it describes, as postprocessOrderRequest()
+         * does after the hook: every one with no merchant handler, none with one (TWO-26283).
+         */
+        public function runPricingChecksForTest(array $pricing, bool $shopMatch = true): void
+        {
+            $payload = [
+                'gross_amount' => $this->getTwoRoundAmount($pricing['gross_amount']),
+                'net_amount' => $this->getTwoRoundAmount($pricing['net_amount']),
+                'tax_amount' => $this->getTwoRoundAmount($pricing['tax_amount']),
+                'line_items' => $pricing['line_items'],
+            ];
+            $method = new ReflectionMethod(Twopayment::class, 'runTwoOrderChecks');
+            $method->invoke($this, $pricing['checks'], $payload, $payload, $shopMatch);
+        }
+    }
+
+    /**
+     * Field-level view of the company and mirror-write rows in the module's cart
+     * record table (TWO-26094), so a spec can seed or inspect one field. 'cart' is
+     * the cart the row is stored under; a row never given one sits under cart 0,
+     * which the module never reads.
+     */
+    final class TwoSessionRecord
+    {
+        public static function get(string $record, string $field): ?string
+        {
+            $cartId = self::cartOf($record);
+            if ($cartId === null) {
+                return null;
+            }
+            if ($field === 'cart') {
+                return (string) $cartId;
+            }
+            $data = json_decode(StubStore::$cartRecords[$cartId][self::shop()][$record], true);
+
+            return isset($data[$field]) ? (string) $data[$field] : null;
+        }
+
+        public static function has(string $record, string $field): bool
+        {
+            return self::get($record, $field) !== null;
+        }
+
+        public static function set(string $record, string $field, ?string $value): void
+        {
+            $cartId = self::cartOf($record);
+            $data = $cartId === null ? [] : (array) json_decode(StubStore::$cartRecords[$cartId][self::shop()][$record], true);
+            if ($cartId !== null) {
+                unset(StubStore::$cartRecords[$cartId][self::shop()][$record]);
+            }
+            if ($field === 'cart') {
+                $cartId = (int) $value;
+            } elseif ($value === null) {
+                unset($data[$field]);
+            } else {
+                $data[$field] = $value;
+            }
+            StubStore::$cartRecords[(int) $cartId][self::shop()][$record] = (string) json_encode($data);
+        }
+
+        /** Removing 'cart' moves the row to cart 0, where the module cannot read it. */
+        public static function remove(string $record, string $field): void
+        {
+            self::set($record, $field, $field === 'cart' ? '0' : null);
+        }
+
+        private static function cartOf(string $record): ?int
+        {
+            foreach (StubStore::$cartRecords as $cartId => $shops) {
+                if (isset($shops[self::shop()][$record])) {
+                    return (int) $cartId;
+                }
+            }
+
+            return null;
+        }
+
+        private static function shop(): int
+        {
+            return (int) Context::getContext()->shop->id;
         }
     }
 

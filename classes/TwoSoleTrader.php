@@ -10,11 +10,13 @@
  * Matches the Magento/WooCommerce plugins' model: there is NO account-type
  * selector on the address form (B2B checkout - the company field is
  * always present). Instead the payment step shows a Business / Sole
- * trader TOGGLE, gated by two layers that both must pass:
- *  - country-level legal truth from the registry endpoint
- *    GET /registry/v1/supported-company-types/<ISO> (TWO-24753) - GB/US
- *    currently, NO/SE not, and
- *  - the merchant's PS_TWO_ENABLE_SOLE_TRADER admin toggle (default off).
+ * trader TOGGLE, gated on ONE thing only: country-level legal truth from
+ * the registry endpoint GET /registry/v1/supported-company-types/<ISO>
+ * (TWO-24753) - GB/US currently, NO/SE not. There is deliberately no
+ * merchant admin toggle (the former PS_TWO_ENABLE_SOLE_TRADER was removed
+ * in TWO-25166): whether a buyer in a country can be a sole trader is
+ * Two's registry answer, not a merchant preference, and Magento's
+ * toggle-less behaviour is the cross-plugin target state (TWO-25163).
  *
  * Picking Sole Trader mints two delegated-authority tokens server-side
  * with the merchant API key, the buyer registers or logs in through
@@ -25,9 +27,9 @@
  * organization number (TWO:ST…) their registration minted carries the
  * semantics, and the backend derives the company type from it
  * (TWO-24749 spike). There is no account-type security gate on the
- * order-intent path either - a company name plus a verified org number
- * is the business guard, and both a registered business and an enrolled
- * sole trader arrive with that pair.
+ * order-intent path either - an org number is the business guard, and
+ * both a registered business and an enrolled sole trader arrive with
+ * one.
  */
 
 if (!defined('_PS_VERSION_')) {
@@ -59,36 +61,45 @@ class TwoSoleTrader
     /** @var array<string, string[]> request-scoped cache, keyed by country */
     private static $types_cache = array();
 
+    /**
+     * Countries whose lookup FAILED during this request, so it is attempted
+     * at most once per request per country (TWO-25326).
+     *
+     * Deliberately separate from $types_cache: a failure must never be stored
+     * as an ANSWER (a registry blip would then read as a cached "business-only
+     * country") and must not survive past the request (that's what the cookie
+     * is for, and it never records a failure either).
+     *
+     * @var array<string, bool>
+     */
+    private static $failed_lookups = array();
+
     /** @var callable|null test seam for postCapturingHeaders */
     public static $transport = null;
 
     /**
      * Explicit environment -> checkout-page host map for Two's hosted
      * sole-trader signup page (the checkout-page app, not the API).
-     * Mirrors Twopayment::ENVIRONMENT_HOSTS: anything not in the map
-     * (legacy 'development', empty/unset) falls back to sandbox.
+     * Mirrors Twopayment::ENVIRONMENT_HOSTS and is resolved through
+     * Twopayment::normaliseTwoEnvironment(), so every value has an entry. In dev mode
+     * only, TWO_CHECKOUT_BASE_URL takes precedence over this map — see
+     * getSignupPageUrl().
      *
      * @var array<string, string>
      */
     private static $signup_hosts = array(
         'production' => 'https://checkout.two.inc',
+        'sandbox' => 'https://checkout.sandbox.two.inc',
         'staging' => 'https://checkout.staging.two.inc',
     );
 
     /**
-     * Whether the merchant has opted into sole trader checkout at all.
-     * The toggle is the ONLY gate on the merchant side - there is no
-     * account-type mode to also satisfy (that selector feature has been
-     * removed; TWO-24755 rework).
-     */
-    public static function isEnabled()
-    {
-        return (int) Configuration::get('PS_TWO_ENABLE_SOLE_TRADER') === 1;
-    }
-
-    /**
      * Whether the Sole Trader toggle should be offered for a billing
-     * country: merchant toggle on AND the country legally supports it.
+     * country. The registry's answer for that country is the ONLY gate
+     * (TWO-25166) - and it is a CHIP-VISIBILITY gate only, deliberately with
+     * no bearing on minting (TWO-40 follow-up): the token mint endpoint
+     * mints unconditionally once a country resolves, so this method has
+     * exactly one caller left, the chip.
      *
      * @param Twopayment $module
      * @param string $countryIso
@@ -97,36 +108,62 @@ class TwoSoleTrader
      */
     public static function isAvailable($module, $countryIso)
     {
-        return self::isEnabled()
-            && in_array(self::SOLE_TRADER, self::getSupportedCompanyTypes($module, $countryIso), true);
+        return in_array(self::SOLE_TRADER, self::getSupportedCompanyTypes($module, $countryIso), true);
     }
 
     /**
-     * The buyer company types the Two registry supports for a country,
-     * from GET /registry/v1/supported-company-types/<ISO> — only the
-     * types that need registry enrollment before they can buy (sole
-     * traders). Registered businesses need no enrollment and are always
-     * supported, so the endpoint deliberately omits them: an empty list
-     * is a legitimate answer meaning business-only checkout for that
-     * country. Cached in the context cookie for the endpoint's own
-     * max-age (single slot - see COOKIE_KEY). A fetch ERROR (network,
-     * non-200, malformed body) is fail-soft for the current lookup
-     * (resolves to an empty list, checkout never blocks) but is
-     * deliberately NOT cached, so a transient registry blip does not
-     * suppress the toggle for the rest of the TTL window.
+     * The same three-state answer, but ONLY if it is already known - never a
+     * network call (TWO-25326). This is what the payment tile renders from: a
+     * render-path network call would pay a registry timeout on every
+     * payment-step render for a shop that can't reach the registry, which is
+     * buyer-visible latency a rendering nicety doesn't justify.
      *
-     * @param Twopayment $module
+     * An unknown answer renders as no answer; the browser's own availability
+     * request resolves it and writes the cookie, so the first payment-step
+     * render of a session shows no toggle and every render after it shows the
+     * real answer. Where the cookie can't be stored, or the registry keeps
+     * failing, every render answers "unknown" and the toggle is client-rendered
+     * as it was pre-ticket.
+     *
      * @param string $countryIso
      *
-     * @return string[]
+     * @return bool|null null = not known yet (or known to have failed)
      */
-    public static function getSupportedCompanyTypes($module, $countryIso)
+    public static function resolveAvailabilityFromCache($countryIso)
     {
         $countryIso = strtoupper(trim((string) $countryIso));
         if (!preg_match('/^[A-Z]{2}$/', $countryIso)) {
-            return array();
+            return null;
         }
 
+        $types = self::readCachedTypes($countryIso);
+        if ($types === null) {
+            return null;
+        }
+
+        return in_array(self::SOLE_TRADER, $types, true);
+    }
+
+    /**
+     * The already-known answer for a country, or null if there is none.
+     *
+     * ONE reader for both callers: keeps COOKIE_KEY, CACHE_TTL_SECONDS and
+     * the stored JSON shape defined in one place instead of two
+     * independently-maintained copies.
+     *
+     * Request memo first, then the cookie: the memo is only ever populated from a
+     * fresh answer, so it cannot be staler than the cookie it shadows.
+     *
+     * Deliberately does NOT consult $failed_lookups. A failure is not an answer,
+     * and both this and "no cached answer" resolve to the same null for every
+     * caller - reading it would add a branch that cannot change an outcome.
+     *
+     * @param string $countryIso already normalised and validated by the caller
+     *
+     * @return string[]|null
+     */
+    private static function readCachedTypes($countryIso)
+    {
         if (array_key_exists($countryIso, self::$types_cache)) {
             return self::$types_cache[$countryIso];
         }
@@ -145,16 +182,81 @@ class TwoSoleTrader
             }
         }
 
-        $types = self::fetchSupportedCompanyTypes($module, $countryIso);
+        return null;
+    }
 
-        if ($cookie && $types !== null) {
+    /**
+     * The buyer company types the Two registry supports for a country,
+     * from GET /registry/v1/supported-company-types/<ISO> — only the
+     * types that need registry enrollment before they can buy (sole
+     * traders). Registered businesses need no enrollment and are always
+     * supported, so the endpoint deliberately omits them: an empty list
+     * is a legitimate answer meaning business-only checkout for that
+     * country. Cached in the context cookie for the endpoint's own
+     * max-age (single slot - see COOKIE_KEY). A fetch ERROR (network,
+     * non-200, malformed body) is fail-soft for the current lookup
+     * (resolves to an empty list, checkout never blocks) and is never written to
+     * the COOKIE, so a transient registry blip does not suppress the toggle for
+     * the rest of the TTL window. It IS remembered for the rest of the REQUEST,
+     * as a failure rather than as an answer - see $failed_lookups.
+     *
+     * @param Twopayment $module
+     * @param string $countryIso
+     *
+     * @return string[]
+     */
+    public static function getSupportedCompanyTypes($module, $countryIso)
+    {
+        return self::getSupportedCompanyTypesOrNull($module, $countryIso) ?? array();
+    }
+
+    /**
+     * @see getSupportedCompanyTypes() - identical, except that a registry FAILURE
+     *   is reported as null instead of being flattened into the empty list that a
+     *   business-only country legitimately returns. Split out for
+     *   getSupportedCompanyTypes()'s callers, which must fail closed, from the
+     *   payment tile, which must be able to say "unknown" rather than "no" -
+     *   see resolveAvailabilityFromCache().
+     *
+     * @param Twopayment $module
+     * @param string $countryIso
+     *
+     * @return string[]|null
+     */
+    public static function getSupportedCompanyTypesOrNull($module, $countryIso)
+    {
+        $countryIso = strtoupper(trim((string) $countryIso));
+        if (!preg_match('/^[A-Z]{2}$/', $countryIso)) {
+            return array();
+        }
+
+        $cached = self::readCachedTypes($countryIso);
+        if ($cached !== null) {
+            return $cached;
+        }
+        if (isset(self::$failed_lookups[$countryIso])) {
+            return null;
+        }
+
+        $types = self::fetchSupportedCompanyTypes($module, $countryIso);
+        if ($types === null) {
+            // Recorded as a FAILURE, not as an answer (TWO-25326): caller is
+            // told "unresolved" rather than caching a blip as a definite
+            // "business-only country". See $failed_lookups.
+            self::$failed_lookups[$countryIso] = true;
+
+            return null;
+        }
+
+        $cookie = Context::getContext()->cookie;
+        if ($cookie) {
             $cookie->{self::COOKIE_KEY} = json_encode(array(
                 'country' => $countryIso,
                 'types' => $types,
                 'fetched_at' => time(),
             ));
         }
-        return self::$types_cache[$countryIso] = ($types ?? array());
+        return self::$types_cache[$countryIso] = $types;
     }
 
     /**
@@ -171,7 +273,17 @@ class TwoSoleTrader
         $response = $module->setTwoPaymentRequest(
             '/registry/v1/supported-company-types/' . $countryIso,
             null,
-            'GET'
+            'GET',
+            array(),
+            // Tight timeout rather than setTwoPaymentRequest()'s 60s default
+            // (API_TIMEOUT_LONG), which is sized for file uploads. This
+            // lookup is reached from the module's own AJAX controller while a
+            // buyer waits on the checkout for the toggle to appear, so a
+            // minute is the wrong bound for it whichever side of the page it
+            // runs on. The payment tile deliberately does NOT reach this
+            // method - it reads resolveAvailabilityFromCache() so the
+            // checkout render makes no call at all.
+            Twopayment::API_TIMEOUT_STATE_CHECK
         );
         if (
             !is_array($response)
@@ -232,6 +344,47 @@ class TwoSoleTrader
     }
 
     /**
+     * Same client/client_v query string every other Two API call carries
+     * (Twopayment::getTwoClientParams()) - this call site used to build its
+     * URL with no query string at all.
+     *
+     * @param Twopayment $module
+     * @param string     $endpoint
+     *
+     * @return string
+     */
+    private static function buildTokenMintUrl($module, $endpoint)
+    {
+        return $module->getTwoCheckoutHostUrl() . $endpoint . '?' . http_build_query($module->getTwoClientParams());
+    }
+
+    /**
+     * Same shared header set every other Two API call carries (X-API-Key,
+     * X-Vendor-Name, custom headers) - this call site used to hand-roll its
+     * own, silently missing all three - plus the mint's idempotency key
+     * (TWO-26658). A mint has no record of its own, so the key names the
+     * token and the cart it is minted for: `<service>_delegation_<cart id>`.
+     * With no cart there is nothing to scope it to, so no key is sent rather
+     * than one every cartless buyer would share.
+     *
+     * @param Twopayment $module
+     * @param string     $endpoint
+     *
+     * @return string[]
+     */
+    private static function buildTokenMintHeaders($module, $endpoint)
+    {
+        $headers = $module->getTwoRequestHeaders($endpoint);
+        $cart = Context::getContext()->cart;
+        if ($cart && (int) $cart->id > 0) {
+            $operation = str_replace('/v1/', '_', trim((string) $endpoint, '/'));
+            $headers[] = Twopayment::buildTwoIdempotencyHeader(Twopayment::buildTwoIdempotencyKey($operation, array((int) $cart->id)));
+        }
+
+        return $headers;
+    }
+
+    /**
      * POST to the Two API capturing response headers (lower-cased keys).
      * Seam for tests: overridable transport via the static $transport hook.
      *
@@ -243,8 +396,10 @@ class TwoSoleTrader
             return call_user_func(self::$transport, $endpoint, $payload);
         }
 
-        $url = $module->getTwoCheckoutHostUrl() . $endpoint . '?' . http_build_query($module->getTwoApiIdentityParams());
+        $url = self::buildTokenMintUrl($module, $endpoint);
         $responseHeaders = array();
+
+        $requestHeaders = self::buildTokenMintHeaders($module, $endpoint);
 
         $ch = curl_init();
         curl_setopt_array($ch, array(
@@ -253,10 +408,7 @@ class TwoSoleTrader
             CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 10,
-            CURLOPT_HTTPHEADER => array(
-                'Content-Type: application/json',
-                'X-API-Key: ' . Configuration::get('PS_TWO_MERCHANT_API_KEY'),
-            ),
+            CURLOPT_HTTPHEADER => $requestHeaders,
             CURLOPT_HEADERFUNCTION => function ($ch, $header) use (&$responseHeaders) {
                 $parts = explode(':', $header, 2);
                 if (count($parts) === 2) {
@@ -285,15 +437,24 @@ class TwoSoleTrader
      * Full URL of Two's hosted sole-trader signup page for the configured
      * environment.
      *
+     * TWO_CHECKOUT_BASE_URL overrides the host when the shop is in dev mode
+     * (_PS_MODE_DEV_), independently of the API override, so a dev
+     * can mix a staging API with a locally-served checkout-page. The gate lives
+     * in Twopayment::getDevModeEnvOverride() — one implementation shared with
+     * TWO_API_BASE_URL, never honoured off dev mode.
+     *
      * @return string
      */
     public static function getSignupPageUrl()
     {
-        $env = strtolower((string) Configuration::get('PS_TWO_ENVIRONMENT'));
-        $host = isset(self::$signup_hosts[$env])
-            ? self::$signup_hosts[$env]
-            : 'https://checkout.sandbox.two.inc';
-        return $host . '/soletrader/signup';
+        $override = Twopayment::getDevModeEnvOverride('TWO_CHECKOUT_BASE_URL');
+        if ($override !== null) {
+            // The map values carry no trailing slash; an env var supplied by
+            // hand may, and '<host>//soletrader/signup' is not the same path.
+            return rtrim($override, '/') . '/soletrader/signup';
+        }
+        $env = Twopayment::normaliseTwoEnvironment(Configuration::get('PS_TWO_ENVIRONMENT'));
+        return self::$signup_hosts[$env] . '/soletrader/signup';
     }
 
     /**
@@ -302,6 +463,7 @@ class TwoSoleTrader
     public static function resetCache()
     {
         self::$types_cache = array();
+        self::$failed_lookups = array();
         self::$transport = null;
     }
 }

@@ -7,6 +7,8 @@
 
 class TwopaymentCancelModuleFrontController extends ModuleFrontController
 {
+    /** @var string|null The cart lock this request holds, if any (TWO-27356). */
+    private $held_lock = null;
 
     public function __construct()
     {
@@ -54,6 +56,54 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
+        // The cart lock placement holds from before validateOrder() until the attempt is linked
+        // (TWO-27356), so a cancel never runs while this attempt's order is being placed.
+        $lock = TwoPendingRecovery::lockName($attempt, $attempt_token);
+        if (!$this->module->acquireTwoAttemptLock($lock, TwoPendingRecovery::LOCK_WAIT_SECONDS)) {
+            $this->redirectAfterBusyCancel($attempt_token);
+        }
+        $this->held_lock = $lock;
+        try {
+            $this->cancelAttemptLocked($attempt_token);
+        } finally {
+            $this->releaseHeldLock();
+        }
+    }
+
+    /**
+     * Another request holds the cart lock and did not finish within the wait. Nothing is sent to
+     * Two and nothing is written: the buyer is told the attempt is cancelled if it already is,
+     * and otherwise that it was not cancelled and to check their order history shortly.
+     *
+     * @param string $attempt_token
+     * @return void
+     */
+    private function redirectAfterBusyCancel($attempt_token)
+    {
+        $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        $status = is_array($attempt) && isset($attempt['status']) ? strtoupper((string)$attempt['status']) : '';
+        $this->errors[] = $status === 'CANCELLED'
+            ? $this->module->l('Your order is cancelled.')
+            : $this->module->l('This payment is still being processed, so it was not cancelled. Check your order history in a moment.');
+        $this->redirectWithNotifications('index.php?controller=order');
+    }
+
+    /**
+     * Runs under the cart lock, on the attempt as it stands once the lock is held: a placement
+     * that finished while this request waited has linked its order by then.
+     *
+     * @param string $attempt_token
+     * @return void
+     */
+    private function cancelAttemptLocked($attempt_token)
+    {
+        $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        if (!$attempt) {
+            $message = $this->module->l('Unable to find the requested payment attempt.');
+            $this->errors[] = $message;
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
+
         $attempt_order_id = (int)$this->module->resolveTwoAttemptOrderIdForCancellation($attempt);
         if ($attempt_order_id > 0) {
             // Safety: if the attempt is already linked to a local order, reuse legacy cancellation behavior.
@@ -67,12 +117,12 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         $extra_data = array();
         if (!empty($attempt['two_order_id'])) {
             $two_order_id = $attempt['two_order_id'];
-            $cancel_response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
+            $cancel_response = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', new Cart((int) $attempt['id_cart']));
             $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
             if ($cancel_http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST) {
                 PrestaShopLogger::addLog(
                     'TwoPayment: Attempt cancel failed for token ' . $attempt_token . ', Two order ' . $two_order_id .
-                    ', HTTP ' . $cancel_http_status,
+                    ' - ' . $this->module->getTwoApiErrorDetail($cancel_response),
                     2
                 );
             }
@@ -146,15 +196,14 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
                 '. Local cancellation aborted to preserve provider-first consistency.',
                 3
             );
-            $message = sprintf($this->module->l('Could not update status to cancelled, please check with Two admin for id %s'), (string)$order->id);
+            $message = sprintf($this->module->l('Could not update status to cancelled, please check with %1$s admin for id %2$s'), $this->module->getTwoBrandConfig('product_name'), (string)$order->id);
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
         $two_order_id = (string)$orderpaymentdata['two_order_id'];
 
-        $cancel_response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id . '/cancel', [], 'POST');
-        $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
+        $cancel_response = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', null, $order);
 
         $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
         $response_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
@@ -180,34 +229,47 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             PrestaShopLogger::addLog(
                 'TwoPayment: Legacy cancel callback could not confirm CANCELLED provider state for order ' . (int)$order->id .
                 ', Two order ' . $two_order_id .
-                ', cancel_http=' . $cancel_http_status .
+                ', cancel: ' . $this->module->getTwoApiErrorDetail($cancel_response) .
                 ', fetch_http=' . $response_http_status .
                 ', provider_state=' . (isset($response['state']) ? (string)$response['state'] : 'unknown'),
                 2
             );
-            $message = sprintf($this->module->l('Could not update status to cancelled, please check with Two admin for id %s'), $two_order_id);
+            $message = sprintf($this->module->l('Could not update status to cancelled, please check with %1$s admin for id %2$s'), $this->module->getTwoBrandConfig('product_name'), $two_order_id);
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
         $this->module->restoreDuplicateCart($order->id, $order->id_customer);
-        $this->module->changeOrderStatus($order->id, $this->getCancelledStatus());
+        $this->module->changeOrderStatus($order->id, $this->module->getTwoCancelledOrderStatusId());
 
         $message = $this->module->l('Your order is cancelled.');
         $this->errors[] = $message;
         $this->redirectWithNotifications('index.php?controller=order');
     }
 
-    private function getCancelledStatus()
+    /**
+     * A redirect ends the request with exit, which skips finally blocks, so the cart lock is
+     * released here before any redirect leaves the controller.
+     *
+     * @param mixed ...$args
+     * @return mixed
+     */
+    public function redirectWithNotifications(...$args)
     {
-        $cancelled_status = Configuration::get('PS_TWO_OS_CANCELLED');
-        if (!$cancelled_status) {
-            $cancelled_status = Configuration::get('PS_TWO_OS_CANCELLED_MAP');
-            if (!$cancelled_status) {
-                $cancelled_status = Configuration::get('PS_OS_CANCELED');
-            }
+        $this->releaseHeldLock();
+
+        return parent::redirectWithNotifications(...$args);
+    }
+
+    /**
+     * @return void
+     */
+    private function releaseHeldLock()
+    {
+        if ($this->held_lock !== null) {
+            $this->module->releaseTwoAttemptLock($this->held_lock);
+            $this->held_lock = null;
         }
-        return (int)$cancelled_status;
     }
 
     /**

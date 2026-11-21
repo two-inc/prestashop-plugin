@@ -22,7 +22,6 @@ echo "merchant_short_name='" . $mod->merchant_short_name . "'\n";
 echo "api_key_empty=" . (empty($mod->api_key) ? 'YES' : 'no') . "\n";
 echo "cart id_address_invoice=" . $cart->id_address_invoice . "\n";
 echo "cart id_carrier=" . $cart->id_carrier . "\n";
-echo "PS_TWO_ENABLE_SOLE_TRADER=" . Configuration::get('PS_TWO_ENABLE_SOLE_TRADER') . "\n";
 if ($cart->id_address_invoice) {
     $addr = new Address($cart->id_address_invoice);
     echo "billing address loaded: " . (Validate::isLoadedObject($addr) ? 'yes' : 'NO') . "\n";

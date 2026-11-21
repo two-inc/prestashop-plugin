@@ -1,0 +1,181 @@
+name: E2E (Playwright checkout flow)
+
+# PrestaShop x PHP matrix (TWO-27173), discovered from upstream on every run
+# by dev/support-matrix.sh, whose header states the window and the sources:
+# the newest release of every PrestaShop minor upstream still supports (today
+# the newest minor of the two newest majors), times every PHP minor from the
+# module's declared floor (7.2) to the newest php.net supports that the release
+# declares and prestashop/prestashop publishes an image for. A PHP minor above
+# the release's declared ceiling runs non-blocking when an image exists. Plus
+# one named exception (TWO-26083): PrestaShop 1.7.6.5 on PHP 7.2, the module's
+# declared floors, which a live merchant runs although it is past PrestaShop's
+# own support window. Every leg checks the PHP inside its shop against
+# php.net's newest patch for that minor: a warning when behind, never a
+# failure.
+#
+# Scope (see tests/e2e/pages/checkout.ts and the spec file for the full
+# reasoning): this suite drives a real guest checkout — cart, address,
+# delivery, payment — against an ephemeral, hermetically-configured PS
+# container (dev/ci/seed-two-config.sh plus dev/ci/start-two-api-stub.sh,
+# no live Two credentials, matching this repo's existing no-secrets CI
+# convention). It asserts the Two payment option renders correctly, and that
+# attempting to place an order without a company verified through Two's live
+# search widget is declined gracefully (no fatal, no order silently created).
+# That decline is deterministic and secret-free because the module refuses the
+# submission LOCALLY when no company was resolved through the search widget —
+# controllers/front/orderintent.php answers `incomplete_company` before building
+# any request, and controllers/front/payment.php refuses on the same condition if
+# the click wins the race — so no Two call is reached at all. It is in particular
+# not attributable to the dummy key being unverified: the stub verifies any key. It does not exercise a real
+# approved order end to end; that needs live Two sandbox credentials, which this
+# repo does not wire into CI for any job.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  # Skipped and non-blocking combinations get their ::warning:: here, once;
+  # integration.yml runs the same combinations and only writes its summary.
+  discover:
+    name: Discover
+    uses: ./.github/workflows/support-matrix.yml
+    with:
+      scope: all
+      table: e2e
+
+  e2e:
+    name: E2E (PrestaShop ${{ matrix.combo.ps }}, PHP ${{ matrix.combo.php }})
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # A PHP minor above the release's declared ceiling is exercised but
+    # cannot block (see dev/support-matrix.sh).
+    continue-on-error: ${{ matrix.combo.provisional }}
+    strategy:
+      fail-fast: false
+      # No max-parallel: these legs talk only to the in-container Two API stub
+      # (company search is relayed through the module's own controller, which
+      # follows TWO_API_BASE_URL), never to Two staging or sandbox.
+      #
+      # Each combination carries its own host port (not a shared literal):
+      # keeps the collision-avoidance invariant every other resource in this
+      # harness follows (container/network names are namespaced by $SFX for
+      # the same reason) in case this workflow ever moves off isolated
+      # per-matrix-leg GitHub-hosted VMs.
+      matrix:
+        combo: ${{ fromJSON(needs.discover.outputs.matrix).e2e }}
+    env:
+      SFX: e2e-${{ matrix.combo.ps }}-${{ matrix.combo.php }}-${{ github.run_id }}
+      PS_IMAGE: ${{ matrix.combo.image }}
+      PS_HOST_PORT: ${{ matrix.combo.port }}
+      # Points the module at an in-container stub (dev/ci/two-api-stub.php,
+      # started below) rather than at Two's real sandbox: this repo is public
+      # and its CI holds no merchant key. The stub answers
+      # /v1/merchant/verify_api_key - which the module now requires before it
+      # will offer Two at all (TWO-25326) - and GET /v1/merchant/{id}, which
+      # the checkout-media priming call needs to populate the available_terms
+      # cache (TWO-25503: hookPaymentOptions withholds Two when that cache is
+      # empty). Everything else still refuses fast, now as an HTTP 503 rather
+      # than the transport failure a dead port produced, a difference
+      # dev/ci/two-api-stub.php spells out.
+      # One source for the port: the stub script requires this variable and
+      # refuses to default it, so the URL below and the listener cannot drift.
+      TWO_API_STUB_PORT: "8099"
+      TWO_API_BASE_URL: "http://127.0.0.1:8099"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Boot PrestaShop
+        run: dev/ci/boot-prestashop.sh
+
+      # The PHP inside the shop must be this leg's minor (a failure if not),
+      # and is checked against php.net's newest patch of it (behind, however
+      # long: a warning, never a failure).
+      - name: PHP is this leg's minor, latest patch
+        env:
+          LEG_PHP: ${{ matrix.combo.php }}
+        run: |
+          running=$(docker exec "ps-$SFX" php -r 'echo PHP_VERSION;')
+          bash dev/ci/check-php-patch.sh "$PS_IMAGE" "$running" "$LEG_PHP"
+
+      - name: Stage HEAD module source
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/head-module
+          git ls-files -z | tar --null -cf - -T - | tar -xf - -C /tmp/head-module
+
+      # The specs check out with a US address. PS 1.7's installer activates
+      # only the shop country, and a payment module's install restricts it to
+      # the countries active at that moment, so this has to precede the install.
+      # A no-op on 8 and 9, which install with the US already active.
+      - name: Activate the buyer country (US)
+        run: |
+          docker exec -u www-data "ps-$SFX" php -d memory_limit=512M -r '
+            require "/var/www/html/config/config.inc.php";
+            $country = new Country((int) Country::getByIso("US"));
+            if (!Validate::isLoadedObject($country)) {
+              fwrite(STDERR, "country US does not exist\n");
+              exit(1);
+            }
+            $country->active = true;
+            exit($country->update() ? 0 : 1);
+          '
+
+      - name: Install module from HEAD
+        run: dev/ci/install-module.sh /tmp/head-module
+
+      - name: Start hermetic Two API stub
+        run: dev/ci/start-two-api-stub.sh
+
+      - name: Seed Two config (hermetic — no live merchant key)
+        run: dev/ci/seed-two-config.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install e2e dependencies
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: Install Playwright browser (retry — CDN download flakes like Docker Hub pulls)
+        working-directory: tests/e2e
+        run: |
+          n=0
+          until npx playwright install --with-deps chromium; do
+            n=$((n + 1))
+            if [ "$n" -ge 3 ]; then
+              echo "::error::playwright install failed after 3 attempts"
+              exit 1
+            fi
+            sleep $((n * 10))
+          done
+
+      - name: Run Playwright e2e
+        working-directory: tests/e2e
+        env:
+          STORE_URL: http://localhost:${{ env.PS_HOST_PORT }}
+        run: npx playwright test
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-ps${{ matrix.combo.ps }}-php${{ matrix.combo.php }}
+          path: tests/e2e/test-results/
+          retention-days: 7
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f "ps-$SFX" "psdb-$SFX" 2>/dev/null || true
+          docker network rm "psnet-$SFX" 2>/dev/null || true
