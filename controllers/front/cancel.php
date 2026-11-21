@@ -7,6 +7,8 @@
 
 class TwopaymentCancelModuleFrontController extends ModuleFrontController
 {
+    /** @var string|null The cart lock this request holds, if any (TWO-27356). */
+    private $held_lock = null;
 
     public function __construct()
     {
@@ -50,6 +52,54 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
                 3
             );
             $message = $this->module->l('Unable to validate this cancellation callback. Please retry checkout.');
+            $this->errors[] = $message;
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
+
+        // The cart lock placement holds from before validateOrder() until the attempt is linked
+        // (TWO-27356), so a cancel never runs while this attempt's order is being placed.
+        $lock = TwoPendingRecovery::lockName($attempt, $attempt_token);
+        if (!$this->module->acquireTwoAttemptLock($lock, TwoPendingRecovery::LOCK_WAIT_SECONDS)) {
+            $this->redirectAfterBusyCancel($attempt_token);
+        }
+        $this->held_lock = $lock;
+        try {
+            $this->cancelAttemptLocked($attempt_token);
+        } finally {
+            $this->releaseHeldLock();
+        }
+    }
+
+    /**
+     * Another request holds the cart lock and did not finish within the wait. Nothing is sent to
+     * Two and nothing is written: the buyer is told the outcome if it is already known, and
+     * otherwise asked to reload, which retries the cancel.
+     *
+     * @param string $attempt_token
+     * @return void
+     */
+    private function redirectAfterBusyCancel($attempt_token)
+    {
+        $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        $status = is_array($attempt) && isset($attempt['status']) ? strtoupper((string)$attempt['status']) : '';
+        $this->errors[] = $status === 'CANCELLED'
+            ? $this->module->l('Your order is cancelled.')
+            : $this->module->l('Your payment is still being processed. Please reload this page in a moment.');
+        $this->redirectWithNotifications('index.php?controller=order');
+    }
+
+    /**
+     * Runs under the cart lock, on the attempt as it stands once the lock is held: a placement
+     * that finished while this request waited has linked its order by then.
+     *
+     * @param string $attempt_token
+     * @return void
+     */
+    private function cancelAttemptLocked($attempt_token)
+    {
+        $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        if (!$attempt) {
+            $message = $this->module->l('Unable to find the requested payment attempt.');
             $this->errors[] = $message;
             $this->redirectWithNotifications('index.php?controller=order');
         }
@@ -195,6 +245,31 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         $message = $this->module->l('Your order is cancelled.');
         $this->errors[] = $message;
         $this->redirectWithNotifications('index.php?controller=order');
+    }
+
+    /**
+     * A redirect ends the request with exit, which skips finally blocks, so the cart lock is
+     * released here before any redirect leaves the controller.
+     *
+     * @param mixed ...$args
+     * @return mixed
+     */
+    public function redirectWithNotifications(...$args)
+    {
+        $this->releaseHeldLock();
+
+        return parent::redirectWithNotifications(...$args);
+    }
+
+    /**
+     * @return void
+     */
+    private function releaseHeldLock()
+    {
+        if ($this->held_lock !== null) {
+            $this->module->releaseTwoAttemptLock($this->held_lock);
+            $this->held_lock = null;
+        }
     }
 
     /**
