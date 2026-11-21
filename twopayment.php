@@ -24991,6 +24991,13 @@ class Twopayment extends PaymentModule
     /**
      * Prefers direct attempt linkage and falls back to cart lookup for race windows.
      *
+     * The cart's order is used only when it carries this attempt's own Two order
+     * (TWO-27356): the confirm callback stores the Two order id on the order before
+     * it links the attempt, so a matching id is that race window. A buyer who opened
+     * Two checkout twice for one cart and completed the other attempt has a cart
+     * order holding a different Two order, and cancelling this attempt must not
+     * cancel that one.
+     *
      * @param array $attempt
      * @return int
      */
@@ -25006,11 +25013,22 @@ class Twopayment extends PaymentModule
         }
 
         $attempt_cart_id = isset($attempt['id_cart']) ? (int)$attempt['id_cart'] : 0;
-        if ($attempt_cart_id <= 0) {
+        $attempt_two_order_id = isset($attempt['two_order_id']) ? trim((string)$attempt['two_order_id']) : '';
+        if ($attempt_cart_id <= 0 || $attempt_two_order_id === '') {
             return 0;
         }
 
-        return (int)$this->getTwoOrderIdByCart($attempt_cart_id);
+        $cart_order_id = (int)$this->getTwoOrderIdByCart($attempt_cart_id);
+        if ($cart_order_id <= 0) {
+            return 0;
+        }
+
+        $payment_data = $this->getTwoOrderPaymentData($cart_order_id);
+        $order_two_order_id = is_array($payment_data) && isset($payment_data['two_order_id'])
+            ? trim((string)$payment_data['two_order_id'])
+            : '';
+
+        return $order_two_order_id !== '' && hash_equals($order_two_order_id, $attempt_two_order_id) ? $cart_order_id : 0;
     }
 
     /**
