@@ -675,6 +675,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_afa348051b3db9dbea37e9bd21a6daad'] 
 $_MODULE['<{twopayment}prestashop>twopayment_8e9eb5c4e3764729576c07956a396a7b'] = 'Betalningen kunde inte kontrolleras; se modulloggen.';
 $_MODULE['<{twopayment}prestashop>twopayment_1a19223c0bd8f600162289cad47218f1'] = '%s rapporterar den här beställningen som avbruten. Avbruten här också.';
 $_MODULE['<{twopayment}prestashop>twopayment_02ac6e209bba0511312c37874e6e0711'] = 'Din betalning behandlas fortfarande. Ladda om sidan om en stund.';
+$_MODULE['<{twopayment}prestashop>twopayment_8f4154374099bb5a9f26cfd61a665d30'] = 'Den här betalningen behandlas fortfarande, så den avbröts inte. Kontrollera din orderhistorik om en stund.';
 $_MODULE['<{twopayment}prestashop>twopayment_07b965e3dc0d35491751e9db54ed2bd9'] = 'Väntande %s-betalningar';
 $_MODULE['<{twopayment}prestashop>twopayment_720cfb7ea5cbe4695b5681fa51aff7db'] = 'Väntande betalningar visas per butik. Byt till en enskild butik för att se dem.';
 $_MODULE['<{twopayment}prestashop>twopayment_50e9c6e990542a1da4eecbc0b4ea5a33'] = 'Betalningar skickade till %s där köparen inte har kommit tillbaka till butiken. PrestaShop skapar ingen beställning förrän köparen återvänder, eller förrän en kontroll hittar betalningen verifierad och lägger den. Den schemalagda uppdaterings-URL:en kontrollerar dem var 15:e minut; använd knappen för att kontrollera en nu.';

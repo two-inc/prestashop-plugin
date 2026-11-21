@@ -112,8 +112,6 @@ final class OrderBuilderSpec
         self::testIsTwoAttemptCallbackAuthorizedRejectsMismatchedKeys();
         self::testNoPortalLinksAreRendered();
         self::testAdminHelpTextTypos();
-        self::testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId();
-        self::testResolveTwoAttemptOrderIdForCancellationFallsBackToCartOrderId();
         self::testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled();
         self::testIsTwoAttemptStatusTerminalMatchesCancelledGuard();
         self::testGetTwoCancelledOrderStatusIdUsesConfiguredFallbackChain();
@@ -4120,42 +4118,6 @@ final class OrderBuilderSpec
         }
     }
 
-    private static function testResolveTwoAttemptOrderIdForCancellationPrefersAttemptOrderId(): void
-    {
-        self::reset();
-        $module = new class extends TwopaymentTestHarness {
-            public function getTwoOrderIdByCart($id_cart)
-            {
-                return 777;
-            }
-        };
-
-        $attempt = [
-            'id_order' => 321,
-            'id_cart' => 123,
-        ];
-
-        TinyAssert::same(321, $module->resolveTwoAttemptOrderIdForCancellation($attempt));
-    }
-
-    private static function testResolveTwoAttemptOrderIdForCancellationFallsBackToCartOrderId(): void
-    {
-        self::reset();
-        $module = new class extends TwopaymentTestHarness {
-            public function getTwoOrderIdByCart($id_cart)
-            {
-                return ((int)$id_cart === 123) ? 654 : 0;
-            }
-        };
-
-        $attempt = [
-            'id_order' => 0,
-            'id_cart' => 123,
-        ];
-
-        TinyAssert::same(654, $module->resolveTwoAttemptOrderIdForCancellation($attempt));
-    }
-
     private static function testShouldBlockTwoAttemptConfirmationByStatusOnlyForCancelled(): void
     {
         self::reset();
@@ -5977,6 +5939,7 @@ require __DIR__ . '/ErrorLogAdminTabSpec.php';
 require __DIR__ . '/ApiRefusalLogSpec.php';
 require __DIR__ . '/OrderTermWireSpec.php';
 require __DIR__ . '/CompanyLookupIdSpec.php';
+require __DIR__ . '/CancelAttemptOrderMatchSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -6075,6 +6038,7 @@ $tests = [
     'ApiRefusalLogSpec::runAll' => [ApiRefusalLogSpec::class, 'runAll'],
     'OrderTermWireSpec::runAll' => [OrderTermWireSpec::class, 'runAll'],
     'CompanyLookupIdSpec::runAll' => [CompanyLookupIdSpec::class, 'runAll'],
+    'CancelAttemptOrderMatchSpec::runAll' => [CancelAttemptOrderMatchSpec::class, 'runAll'],
 ];
 
 $failed = 0;
