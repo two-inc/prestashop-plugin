@@ -303,9 +303,25 @@ final class CheckoutWithholdReasonSpec
             [
                 static function ($module): void {
                     Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '["NO","GB"]');
+                    StubStore::$countries[578] = 'NO';
+                    StubStore::$moduleCountries[] = ['id_module' => (int) $module->id, 'id_shop' => (int) $module->context->shop->id, 'id_country' => 578];
                 },
                 'offered only to buyers in GB, NO',
                 'a populated allowlist withholds from every other buyer, which no local field explains',
+            ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '["NO","GB","SE"]');
+                },
+                'offered only to buyers in GB</span>',
+                'TWO-27370: the list is narrowed to the countries enabled for the module',
+            ],
+            [
+                static function ($module): void {
+                    Configuration::updateValue(Twopayment::CONFIG_MERCHANT_BUYER_COUNTRIES, '["NO","SE"]');
+                },
+                'Not shown at checkout - none of the countries enabled for this module under Payment > Preferences is a buyer country on your account.',
+                'TWO-27370: no overlap between the two lists withholds the method for every buyer',
             ],
             [
                 static function ($module): void {

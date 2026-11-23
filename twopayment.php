@@ -157,6 +157,10 @@ class Twopayment extends PaymentModule
     const FEE_RATES_ERROR_REJECTED = 'rejected';
     const FEE_RATES_ERROR_NO_TERMS = 'no_terms';
 
+    // The module's admin AJAX actions, each an ajaxProcess<Action>() method
+    // here, reached through getTwoAdminAjaxUrl().
+    const ADMIN_AJAX_ACTIONS = array('FetchMerchantFeeRates', 'VerifyApiKeyLive', 'RefreshMerchantRecord');
+
     // Cached, categorised outcome of GET /v1/merchant/verify_api_key for the
     // STORED key (TWO-25326): JSON {status, code, key_hash, claim}.
     // Shop scoping is Configuration's own, exactly as for the FX table and the
@@ -1296,6 +1300,14 @@ class Twopayment extends PaymentModule
 
     public function getContent()
     {
+        // PrestaShop 9 serves the configure page from Symfony, which calls
+        // getContent() for every request to it, the admin AJAX calls
+        // included (TWO-27370). Each handler answers and ends the request.
+        $ajax_action = (string) Tools::getValue('action');
+        if (Tools::getValue('ajax') && in_array($ajax_action, self::ADMIN_AJAX_ACTIONS, true)) {
+            $this->{'ajaxProcess' . $ajax_action}();
+        }
+
         // Five-section admin scheme: A. General, B. Checkout Fields
         // (company lookup folded in as its own form at the end of this
         // tab), C. Payment Terms, D. Order Management, E. Diagnostics.
@@ -1450,22 +1462,12 @@ class Twopayment extends PaymentModule
                 'two_merchant_id' => Configuration::get('PS_TWO_MERCHANT_ID'),
                 'two_merchant_short_name' => Configuration::get('PS_TWO_MERCHANT_SHORT_NAME'),
                 'two_env' => Configuration::get('PS_TWO_ENVIRONMENT'),
-                // Module admin AJAX endpoint for the inline merchant-fee
-                // display beside each payment-term checkbox. Dispatched by
-                // AdminController::postProcess() to
-                // ajaxProcessFetchMerchantFeeRates() on this module.
-                'two_fee_rates_url' => $this->context->link->getAdminLink('AdminModules', false)
-                    . '&configure=' . $this->name
-                    . '&token=' . Tools::getAdminTokenLite('AdminModules')
-                    . '&ajax=1&action=FetchMerchantFeeRates',
-                // Module admin AJAX endpoint for the General tab's inline
-                // API-key check, fired on blur and on a debounced keystroke
-                // (TWO-25386). Dispatched by AdminController::postProcess()
-                // to ajaxProcessVerifyApiKeyLive() on this module.
-                'two_verify_api_key_url' => $this->context->link->getAdminLink('AdminModules', false)
-                    . '&configure=' . $this->name
-                    . '&token=' . Tools::getAdminTokenLite('AdminModules')
-                    . '&ajax=1&action=VerifyApiKeyLive',
+                // Inline merchant-fee display beside each payment-term
+                // checkbox (see getTwoAdminAjaxUrl()).
+                'two_fee_rates_url' => $this->getTwoAdminAjaxUrl('FetchMerchantFeeRates'),
+                // The General tab's inline API-key check, fired on blur and
+                // on a debounced keystroke (TWO-25386).
+                'two_verify_api_key_url' => $this->getTwoAdminAjaxUrl('VerifyApiKeyLive'),
                 // Core's checkbox template drops the per-option class, so a
                 // checkbox's term type is unreadable from the rendered input.
                 'two_eom_term_days' => json_encode(array_map('intval', self::EOM_PAYMENT_TERMS_OPTIONS)),
@@ -1475,11 +1477,7 @@ class Twopayment extends PaymentModule
                 // getConfigurableTermSet()'s substitute for an empty
                 // narrowing (TWO-25705).
                 'two_fallback_term_days' => (int) self::DEFAULT_PAYMENT_TERM_DAYS,
-                // Dispatched to ajaxProcessRefreshMerchantRecord() by AdminController::postProcess().
-                'two_refresh_merchant_url' => $this->context->link->getAdminLink('AdminModules', false)
-                    . '&configure=' . $this->name
-                    . '&token=' . Tools::getAdminTokenLite('AdminModules')
-                    . '&ajax=1&action=RefreshMerchantRecord',
+                'two_refresh_merchant_url' => $this->getTwoAdminAjaxUrl('RefreshMerchantRecord'),
             )
         );
 
@@ -4662,6 +4660,9 @@ class Twopayment extends PaymentModule
         if ($reason === null && $this->twoNativeCountryRestrictionAllowsNothing()) {
             $reason = $this->l('no country is enabled for this module under Payment > Preferences.');
         }
+        if ($reason === null && $this->getTwoOfferableBuyerCountries() === array()) {
+            $reason = $this->l('none of the countries enabled for this module under Payment > Preferences is a buyer country on your account.');
+        }
         if ($reason === null) {
             $currencyReason = $this->twoDefaultCurrencyReason();
             if ($currencyReason !== null) {
@@ -4696,7 +4697,7 @@ class Twopayment extends PaymentModule
                 $this->describeTwoMinimumFloor($floors[1])
             );
         }
-        $allowed = $this->getMerchantBuyerCountries();
+        $allowed = $this->getTwoOfferableBuyerCountries();
         if (is_array($allowed) && $allowed) {
             $clauses[] = sprintf(
                 $this->l('offered only to buyers in %s'),
@@ -4850,6 +4851,44 @@ class Twopayment extends PaymentModule
         }
 
         return $refused;
+    }
+
+    /**
+     * The buyer countries Two can be offered to on this shop (TWO-27370): the
+     * account's buyer countries, narrowed to the countries enabled for this
+     * module under Payment > Preferences. Null when the account names none
+     * (unrestricted) or its list is empty or unreadable, which the checklist
+     * reports on its own. The account's list alone when the shop's
+     * restriction cannot be read, as checkCountry() fails open.
+     *
+     * @return string[]|null Uppercase alpha-2 codes, sorted.
+     */
+    protected function getTwoOfferableBuyerCountries()
+    {
+        $allowed = $this->getMerchantBuyerCountries();
+        if (!is_array($allowed) || !$allowed) {
+            return null;
+        }
+        $sql = 'SELECT `id_country` FROM `' . _DB_PREFIX_ . 'module_country`'
+            . ' WHERE `id_module` = ' . (int) $this->id
+            . ' AND `id_shop` = ' . (isset($this->context->shop->id) ? (int) $this->context->shop->id : 0);
+        try {
+            $rows = Db::getInstance()->executeS($sql);
+        } catch (Exception $e) {
+            $rows = false;
+        }
+        if (!is_array($rows)) {
+            return $allowed;
+        }
+        $enabled = array();
+        foreach ($rows as $row) {
+            $iso = Country::getIsoById((int) $row['id_country']);
+            if (is_string($iso) && $iso !== '') {
+                $enabled[] = strtoupper($iso);
+            }
+        }
+
+        return array_values(array_intersect($allowed, $enabled));
     }
 
     /**
@@ -17824,12 +17863,32 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * Admin AJAX entry point for the inline term-fee display. PrestaShop's
-     * AdminController::postProcess() dispatches
-     * index.php?controller=AdminModules&configure=twopayment&ajax=1&action=FetchMerchantFeeRates
-     * to this module method (core dispatches ajax actions to the configured
-     * module on the AdminModules controller; present in 1.7.x and 8.x). The
-     * admin token is validated by the controller before postProcess runs.
+     * URL of one of the module's admin AJAX actions (ADMIN_AJAX_ACTIONS).
+     *
+     * The configure page's own link, with the action appended after
+     * getAdminLink() has built it. On PrestaShop 1.7 and 8 that is the legacy
+     * AdminModules URL, whose controller hands an `ajax` request's action to
+     * the configured module. PrestaShop 9 has no legacy AdminModules
+     * controller: the link is the Symfony configure route, which runs
+     * getContent(), and getContent() dispatches the action. Passing the action
+     * to getAdminLink() instead would make PrestaShop 9 look for a route
+     * named after it, find none, and fall back to the legacy URL, which ends
+     * on its "page not found" controller (TWO-27370).
+     *
+     * @param string $action
+     * @return string
+     */
+    protected function getTwoAdminAjaxUrl($action)
+    {
+        $url = $this->context->link->getAdminLink('AdminModules', true, array(), array('configure' => $this->name));
+
+        return $url . (strpos($url, '?') === false ? '?' : '&') . 'ajax=1&action=' . rawurlencode($action);
+    }
+
+    /**
+     * Admin AJAX entry point for the inline term-fee display, reached
+     * through getTwoAdminAjaxUrl(). The admin token is validated by core
+     * before this runs.
      *
      * Reads a JSON-encoded `terms` array from the request and echoes the
      * normalised fee payload. Always responds 200; a payload carrying
@@ -23186,7 +23245,7 @@ class Twopayment extends PaymentModule
             )
             . ' '
             . htmlspecialchars(
-                $this->l("Tick \"Also send from browser\" only where your IT administrator requires the header on calls from the buyer's browser as well: that header's value will be published to the buyer's brower and may be read by anyone."),
+                $this->l("Tick Also send from browser only where your IT administrator requires the header on calls from the buyer's browser as well: that header's value will be published to the buyer's browser and may be read by anyone."),
                 ENT_QUOTES,
                 'UTF-8'
             )

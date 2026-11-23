@@ -268,7 +268,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_689202409e48743b914713f96d93947c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_92f6bf9f0c21d0ce58d406b8b2782adf'] = 'Enviar también desde el navegador';
 $_MODULE['<{twopayment}prestashop>twopayment_1e0bf2fd8c2dc505dc11f1cbf7b2172e'] = 'Añadir cabecera';
 $_MODULE['<{twopayment}prestashop>twopayment_4009e05973e240e0ae89bfb77b847115'] = 'Cabeceras que su administrador de TI le pide añadir. Cada una se envía en todas las llamadas que esta tienda hace a la API de %s desde su servidor.';
-$_MODULE['<{twopayment}prestashop>twopayment_b42b57d56d7d5c1b63351f4d87e396c0'] = 'Marque "Enviar también desde el navegador" solo cuando su administrador de TI requiera la cabecera también para las llamadas desde el navegador del comprador: el valor de esa cabecera se publicará en el navegador del comprador y cualquiera podrá leerlo.';
+$_MODULE['<{twopayment}prestashop>twopayment_e257e171c995b5be5f3e50a0bb0e8bdf'] = 'Marque Enviar también desde el navegador solo cuando su administrador de TI requiera la cabecera también para las llamadas desde el navegador del comprador: el valor de esa cabecera se publicará en el navegador del comprador y cualquiera podrá leerlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_1063e38cb53d94d386f21227fcd84717'] = 'Eliminar';
 $_MODULE['<{twopayment}prestashop>twopayment_404c493aff65500a37b1f0d09ffa29ae'] = 'Método de recargo no reconocido: %1$s. Elija uno de: %2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_1a4b2efd8f0a1e7960d1a59d50cdb257'] = 'Perfil del comercio';
@@ -286,9 +286,9 @@ $_MODULE['<{twopayment}prestashop>twopayment_6557be116e9f62c4110552f88d39f1e6'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9f905bcc5461127a899ff4ce36c799cb'] = 'El perfil en caché pertenece a una sola tienda. Cambie a una tienda concreta para actualizarlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_5dd7ccd26117639f0edc6fe75d6625e9'] = 'Cada tienda tiene su propia URL de actualización. Cambie a una tienda concreta para verla.';
 $_MODULE['<{twopayment}prestashop>twopayment_133bfd505abc3c26cf41129256a3c1ec'] = 'El perfil en caché se obtuvo para otra clave de API, por lo que no se usa. Se conserva hasta que una actualización con esta clave tenga éxito.';
-$_MODULE['<{twopayment}prestashop>configuration_06df3dcf3281499cc51356b8ea10c05b'] = 'No se han podido cargar las comisiones porque no se ha podido contactar con el servicio de precios. Las cifras junto a cada plazo faltan, no son cero.';
-$_MODULE['<{twopayment}prestashop>configuration_d0673ce8fdb507e4cbe0050e47d7e0ac'] = 'No se han podido cargar las comisiones. El servicio de precios ha rechazado la solicitud con HTTP %1$s: %2$s. Las cifras junto a cada plazo faltan, no son cero.';
-$_MODULE['<{twopayment}prestashop>configuration_67c32ee7d80c75397fa741d4f001b282'] = 'No se han podido cargar las comisiones. El servicio de precios ha rechazado la solicitud con HTTP %s. Las cifras junto a cada plazo faltan, no son cero.';
+$_MODULE['<{twopayment}prestashop>configuration_f0396eae62e5b9ffca705ca649be030e'] = 'No se han podido cargar las comisiones porque no se ha podido contactar con el servicio de precios.';
+$_MODULE['<{twopayment}prestashop>configuration_fc42b349c44b2eb39e8622b3fe1b2fc4'] = 'No se han podido cargar las comisiones. El servicio de precios ha rechazado la solicitud con HTTP %1$s: %2$s.';
+$_MODULE['<{twopayment}prestashop>configuration_8670794aaf13aef50fcb8cbe377cf4b0'] = 'No se han podido cargar las comisiones. El servicio de precios ha rechazado la solicitud con HTTP %s.';
 $_MODULE['<{twopayment}prestashop>configuration_b6e5f9691bbc313eb24bcf951b2af1b7'] = 'El servicio de precios ha rechazado la solicitud con HTTP %1$s: %2$s.';
 $_MODULE['<{twopayment}prestashop>configuration_d2fac371a0f75be5bb31b1201b49988b'] = 'El servicio de precios ha rechazado la solicitud con HTTP %s.';
 $_MODULE['<{twopayment}prestashop>configuration_0db377921f4ce762c62526131097968f'] = 'General';
@@ -434,6 +434,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_72e23745fd11fd7237b51dd1771a1f27'] 
 $_MODULE['<{twopayment}prestashop>twopayment_735f64135df19b777f5b57aefbda2f2f'] = 'El paso de redondeo debe ser uno de los valores ofrecidos.';
 $_MODULE['<{twopayment}prestashop>twopayment_740ac829af0e2bbb2816a70b724c851d'] = 'Nombre del proveedor (opcional)';
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'no hay ningún país habilitado para este módulo en Pago > Preferencias.';
+$_MODULE['<{twopayment}prestashop>twopayment_36412edc0c8a6ad38da91c0eac11938a'] = 'ninguno de los países habilitados para este módulo en Pago > Preferencias es un país de comprador de su cuenta.';
 $_MODULE['<{twopayment}prestashop>twopayment_76e82d43a9fa16985ea42045a7bcd83b'] = 'Estado actual de la configuración';
 $_MODULE['<{twopayment}prestashop>twopayment_77e2ed15a93333cc525d628f5ea7f4ef'] = '%s no está disponible para este pedido de %%s (%%s)';
 $_MODULE['<{twopayment}prestashop>twopayment_1b035ec3e94516c3bcb0e9cd5855abd5'] = 'Asignación de estados';

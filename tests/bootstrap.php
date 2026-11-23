@@ -2886,6 +2886,30 @@ namespace {
         public function executeS($sql): array
         {
             StubStore::$dbLastExecuteS[] = (string) $sql;
+            // Every country enabled for the module and shop (TWO-27370).
+            if (preg_match(
+                '/^SELECT `id_country` FROM `' . _DB_PREFIX_ . 'module_country`'
+                . ' WHERE `id_module` = (\d+) AND `id_shop` = (\d+)$/',
+                (string) $sql,
+                $m
+            )) {
+                if (StubStore::$moduleCountries === null) {
+                    // unrestricted - see StubStore::$moduleCountries
+                    return array_map(static function ($id) {
+                        return ['id_country' => (string) $id];
+                    }, array_keys(StubStore::$countries));
+                }
+                $rows = [];
+                foreach (StubStore::$moduleCountries as $row) {
+                    if ((int) ($row['id_module'] ?? 0) === (int) $m[1]
+                        && (int) ($row['id_shop'] ?? 0) === (int) $m[2]
+                    ) {
+                        $rows[] = ['id_country' => (string) $row['id_country']];
+                    }
+                }
+
+                return $rows;
+            }
             // Every tier's row of one configuration key, as the 2.7.8 upgrade reads them.
             if (preg_match("/^SELECT `id_shop_group`, `id_shop`, `value` FROM `ps_configuration` WHERE `name` = '([A-Za-z0-9_]+)'$/", (string) $sql, $m)) {
                 $rows = [];
