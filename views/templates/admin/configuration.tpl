@@ -73,9 +73,9 @@
     var twoRefreshMerchantFailedText = '{l s='Could not reach the server. Try again.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesStaleText = '{l s='Fees could not be refreshed, so the figures last retrieved are shown.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesStaleDatedText = '{l s='Fees could not be refreshed, so the figures retrieved on %s are shown.' mod='twopayment'|escape:'javascript':'UTF-8'}';
-    var twoFeesUnavailableText = '{l s='Fees could not be loaded because the pricing service could not be reached. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
-    var twoFeesRejectedText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %1$s: %2$s. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
-    var twoFeesRejectedBareText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %s. The figures beside each term are missing, not zero.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesUnavailableText = '{l s='Fees could not be loaded because the pricing service could not be reached.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesRejectedText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %1$s: %2$s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesRejectedBareText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesStaleRejectedText = '{l s='The pricing service refused the request with HTTP %1$s: %2$s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesStaleRejectedBareText = '{l s='The pricing service refused the request with HTTP %s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
     var twoFeesNoApiKeyText = '{l s='Fees cannot be shown until an API key is saved on the General tab.' mod='twopayment'|escape:'javascript':'UTF-8'}';

@@ -154,9 +154,18 @@ final class AdminFirewallRateLimitFieldsSpec
         TinyAssert::true(
             strpos(
                 $inputs[Twopayment::CONFIG_CUSTOM_HEADERS]['html_content'],
-                'will be published to the buyer&#039;s brower and may be read by anyone'
+                'will be published to the buyer&#039;s browser and may be read by anyone'
             ) !== false,
             'the table must still warn that a browser-ticked header is readable by anyone'
+        );
+        // Unquoted (TWO-27370): l() already escapes a double quote, so a
+        // quoted label here rendered as a literal &quot;.
+        TinyAssert::true(
+            strpos(
+                $inputs[Twopayment::CONFIG_CUSTOM_HEADERS]['html_content'],
+                'Tick Also send from browser only where'
+            ) !== false,
+            'the help names the column without quotation marks'
         );
     }
 

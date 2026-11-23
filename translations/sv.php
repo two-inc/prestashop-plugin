@@ -483,7 +483,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_689202409e48743b914713f96d93947c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_92f6bf9f0c21d0ce58d406b8b2782adf'] = 'Skicka även från webbläsaren';
 $_MODULE['<{twopayment}prestashop>twopayment_1e0bf2fd8c2dc505dc11f1cbf7b2172e'] = 'Lägg till header';
 $_MODULE['<{twopayment}prestashop>twopayment_4009e05973e240e0ae89bfb77b847115'] = 'Headers som din IT-administratör ber dig lägga till. Var och en skickas i alla anrop denna butik gör till %s-API:et från din server.';
-$_MODULE['<{twopayment}prestashop>twopayment_b42b57d56d7d5c1b63351f4d87e396c0'] = 'Markera "Skicka även från webbläsaren" endast där din IT-administratör kräver headern även för anrop från köparens webbläsare: värdet för den headern publiceras till köparens webbläsare och kan läsas av vem som helst.';
+$_MODULE['<{twopayment}prestashop>twopayment_e257e171c995b5be5f3e50a0bb0e8bdf'] = 'Markera Skicka även från webbläsaren endast där din IT-administratör kräver headern även för anrop från köparens webbläsare: värdet för den headern publiceras till köparens webbläsare och kan läsas av vem som helst.';
 $_MODULE['<{twopayment}prestashop>twopayment_1063e38cb53d94d386f21227fcd84717'] = 'Ta bort';
 $_MODULE['<{twopayment}prestashop>twopayment_404c493aff65500a37b1f0d09ffa29ae'] = 'Okänd tilläggsmetod: %1$s. Välj en av: %2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b1434efcff57bf2bd531c5b528feeab9'] = 'Anpassade betalningsvillkor (dagar) kan endast tas bort, inte ändras.';
@@ -504,9 +504,9 @@ $_MODULE['<{twopayment}prestashop>configuration_5c123dffc87233456030f3762f15c3f2
 $_MODULE['<{twopayment}prestashop>configuration_0a3ec356996cae21088be407cab8ec8c'] = 'Kunde inte nå servern. Försök igen.';
 $_MODULE['<{twopayment}prestashop>configuration_50176febc840de876892956d58f9f60b'] = 'Avgifterna kunde inte uppdateras, så de senast hämtade beloppen visas.';
 $_MODULE['<{twopayment}prestashop>configuration_9ab5e860e0e28be037094acd09e148f2'] = 'Avgifterna kunde inte uppdateras, så beloppen som hämtades %s visas.';
-$_MODULE['<{twopayment}prestashop>configuration_06df3dcf3281499cc51356b8ea10c05b'] = 'Avgifterna kunde inte läsas in eftersom pristjänsten inte kunde nås. Beloppen vid varje betalningsvillkor saknas, de är inte noll.';
-$_MODULE['<{twopayment}prestashop>configuration_d0673ce8fdb507e4cbe0050e47d7e0ac'] = 'Avgifterna kunde inte läsas in. Pristjänsten avvisade begäran med HTTP %1$s: %2$s. Beloppen vid varje betalningsvillkor saknas, de är inte noll.';
-$_MODULE['<{twopayment}prestashop>configuration_67c32ee7d80c75397fa741d4f001b282'] = 'Avgifterna kunde inte läsas in. Pristjänsten avvisade begäran med HTTP %s. Beloppen vid varje betalningsvillkor saknas, de är inte noll.';
+$_MODULE['<{twopayment}prestashop>configuration_f0396eae62e5b9ffca705ca649be030e'] = 'Avgifterna kunde inte läsas in eftersom pristjänsten inte kunde nås.';
+$_MODULE['<{twopayment}prestashop>configuration_fc42b349c44b2eb39e8622b3fe1b2fc4'] = 'Avgifterna kunde inte läsas in. Pristjänsten avvisade begäran med HTTP %1$s: %2$s.';
+$_MODULE['<{twopayment}prestashop>configuration_8670794aaf13aef50fcb8cbe377cf4b0'] = 'Avgifterna kunde inte läsas in. Pristjänsten avvisade begäran med HTTP %s.';
 $_MODULE['<{twopayment}prestashop>configuration_b6e5f9691bbc313eb24bcf951b2af1b7'] = 'Pristjänsten avvisade begäran med HTTP %1$s: %2$s.';
 $_MODULE['<{twopayment}prestashop>configuration_d2fac371a0f75be5bb31b1201b49988b'] = 'Pristjänsten avvisade begäran med HTTP %s.';
 $_MODULE['<{twopayment}prestashop>configuration_ee619aca6b3894beb307b1b40c63d27d'] = 'Avgifter kan inte visas förrän en API-nyckel har sparats på fliken Allmänt.';
@@ -530,6 +530,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_d4fe0eb19234f23b3535a03a5801fcae'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9ab50399962b7caddac63a16a9ed9fe8'] = 'köparländerna på ditt konto kunde inte läsas. Kontakta %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] = 'lägsta ordervärde är inte känt förrän din profil uppdateras';
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'inget land är aktiverat för den här modulen under Betalning > Inställningar.';
+$_MODULE['<{twopayment}prestashop>twopayment_36412edc0c8a6ad38da91c0eac11938a'] = 'inget av länderna som är aktiverade för den här modulen under Betalning > Inställningar är ett köparland för ditt konto.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'ingen valuta är aktiverad för den här modulen under Betalning > Inställningar.';
 $_MODULE['<{twopayment}prestashop>twopayment_65a3ef692e6a51f50564d0b7bf51c9b9'] = 'ditt merchant-konto har ännu inte identifierats. Spara %s för att verifiera API-nyckeln.';
 $_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] = 'döljs för varukorgar i en valuta som köpartillägget inte kan prissättas i';

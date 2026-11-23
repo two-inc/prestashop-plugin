@@ -483,7 +483,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_689202409e48743b914713f96d93947c'] 
 $_MODULE['<{twopayment}prestashop>twopayment_92f6bf9f0c21d0ce58d406b8b2782adf'] = 'Ook vanuit de browser verzenden';
 $_MODULE['<{twopayment}prestashop>twopayment_1e0bf2fd8c2dc505dc11f1cbf7b2172e'] = 'Header toevoegen';
 $_MODULE['<{twopayment}prestashop>twopayment_4009e05973e240e0ae89bfb77b847115'] = 'Headers die uw IT-beheerder u vraagt toe te voegen. Elke header wordt verzonden bij alle aanroepen die deze winkel vanaf uw server naar de %s API doet.';
-$_MODULE['<{twopayment}prestashop>twopayment_b42b57d56d7d5c1b63351f4d87e396c0'] = 'Vink "Ook vanuit de browser verzenden" alleen aan waar uw IT-beheerder de header ook vereist voor aanroepen vanuit de browser van de koper: de waarde van die header wordt gepubliceerd naar de browser van de koper en kan door iedereen worden gelezen.';
+$_MODULE['<{twopayment}prestashop>twopayment_e257e171c995b5be5f3e50a0bb0e8bdf'] = 'Vink Ook vanuit de browser verzenden alleen aan waar uw IT-beheerder de header ook vereist voor aanroepen vanuit de browser van de koper: de waarde van die header wordt gepubliceerd naar de browser van de koper en kan door iedereen worden gelezen.';
 $_MODULE['<{twopayment}prestashop>twopayment_1063e38cb53d94d386f21227fcd84717'] = 'Verwijderen';
 $_MODULE['<{twopayment}prestashop>twopayment_404c493aff65500a37b1f0d09ffa29ae'] = 'Onbekende toeslagmethode: %1$s. Kies een van: %2$s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b1434efcff57bf2bd531c5b528feeab9'] = 'Aangepaste betaaltermijnen (dagen) kunnen alleen worden verwijderd, niet gewijzigd.';
@@ -504,9 +504,9 @@ $_MODULE['<{twopayment}prestashop>configuration_5c123dffc87233456030f3762f15c3f2
 $_MODULE['<{twopayment}prestashop>configuration_0a3ec356996cae21088be407cab8ec8c'] = 'Kon de server niet bereiken. Probeer het opnieuw.';
 $_MODULE['<{twopayment}prestashop>configuration_50176febc840de876892956d58f9f60b'] = 'De kosten konden niet worden vernieuwd, dus de laatst opgehaalde bedragen worden weergegeven.';
 $_MODULE['<{twopayment}prestashop>configuration_9ab5e860e0e28be037094acd09e148f2'] = 'De kosten konden niet worden vernieuwd, dus de bedragen die op %s zijn opgehaald worden weergegeven.';
-$_MODULE['<{twopayment}prestashop>configuration_06df3dcf3281499cc51356b8ea10c05b'] = 'De kosten konden niet worden geladen omdat de prijsservice niet bereikbaar was. De bedragen naast elke termijn ontbreken, ze zijn niet nul.';
-$_MODULE['<{twopayment}prestashop>configuration_d0673ce8fdb507e4cbe0050e47d7e0ac'] = 'De kosten konden niet worden geladen. De prijsservice heeft het verzoek geweigerd met HTTP %1$s: %2$s. De bedragen naast elke termijn ontbreken, ze zijn niet nul.';
-$_MODULE['<{twopayment}prestashop>configuration_67c32ee7d80c75397fa741d4f001b282'] = 'De kosten konden niet worden geladen. De prijsservice heeft het verzoek geweigerd met HTTP %s. De bedragen naast elke termijn ontbreken, ze zijn niet nul.';
+$_MODULE['<{twopayment}prestashop>configuration_f0396eae62e5b9ffca705ca649be030e'] = 'De kosten konden niet worden geladen omdat de prijsservice niet bereikbaar was.';
+$_MODULE['<{twopayment}prestashop>configuration_fc42b349c44b2eb39e8622b3fe1b2fc4'] = 'De kosten konden niet worden geladen. De prijsservice heeft het verzoek geweigerd met HTTP %1$s: %2$s.';
+$_MODULE['<{twopayment}prestashop>configuration_8670794aaf13aef50fcb8cbe377cf4b0'] = 'De kosten konden niet worden geladen. De prijsservice heeft het verzoek geweigerd met HTTP %s.';
 $_MODULE['<{twopayment}prestashop>configuration_b6e5f9691bbc313eb24bcf951b2af1b7'] = 'De prijsservice heeft het verzoek geweigerd met HTTP %1$s: %2$s.';
 $_MODULE['<{twopayment}prestashop>configuration_d2fac371a0f75be5bb31b1201b49988b'] = 'De prijsservice heeft het verzoek geweigerd met HTTP %s.';
 $_MODULE['<{twopayment}prestashop>configuration_ee619aca6b3894beb307b1b40c63d27d'] = 'Kosten kunnen niet worden weergegeven totdat er een API-sleutel is opgeslagen op het tabblad Algemeen.';
@@ -530,6 +530,7 @@ $_MODULE['<{twopayment}prestashop>twopayment_d4fe0eb19234f23b3535a03a5801fcae'] 
 $_MODULE['<{twopayment}prestashop>twopayment_9ab50399962b7caddac63a16a9ed9fe8'] = 'de landen van de koper op uw account konden niet worden gelezen. Neem contact op met %s.';
 $_MODULE['<{twopayment}prestashop>twopayment_b5e58fbf6154d758ac6d58abaee7af89'] = 'minimumbestelwaarde nog niet bekend totdat uw profiel is vernieuwd';
 $_MODULE['<{twopayment}prestashop>twopayment_75a684ad08df981cea14b17997ff3150'] = 'er is geen land geactiveerd voor deze module onder Betaling > Voorkeuren.';
+$_MODULE['<{twopayment}prestashop>twopayment_36412edc0c8a6ad38da91c0eac11938a'] = 'geen van de landen die voor deze module zijn geactiveerd onder Betaling > Voorkeuren is een land van de koper voor uw account.';
 $_MODULE['<{twopayment}prestashop>twopayment_d4e031ca3336998c6f967b1f15aa03d6'] = 'er is geen valuta geactiveerd voor deze module onder Betaling > Voorkeuren.';
 $_MODULE['<{twopayment}prestashop>twopayment_65a3ef692e6a51f50564d0b7bf51c9b9'] = 'uw merchant-account is nog niet geïdentificeerd. Sla %s op om de API-sleutel te verifiëren.';
 $_MODULE['<{twopayment}prestashop>twopayment_1df02a5370621086c31f49acd3123280'] = 'verborgen voor winkelwagens in een valuta waarin de toeslag voor de koper niet kan worden berekend';
