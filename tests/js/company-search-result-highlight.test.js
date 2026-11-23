@@ -103,6 +103,24 @@ describe('the matched substring is the only markup a result row keeps', () => {
             description: 'markup inside the company name reaches the buyer as text'
         },
         {
+            items: [company('Example & Co Ltd', '<b>Exam</b>ple &amp; Co Ltd')],
+            marked: ['Exam'],
+            text: 'Example & Co Ltd (11111111)',
+            description: 'TWO-27368: an escaped ampersand reads as one'
+        },
+        {
+            items: [company('Example & Co Ltd', '<b>Exam</b>ple & Co Ltd')],
+            marked: ['Exam'],
+            text: 'Example & Co Ltd (11111111)',
+            description: 'TWO-27368: a raw ampersand stays as it is'
+        },
+        {
+            items: [company('Example <b> Ltd', '<b>Exam</b>ple &lt;b&gt; Ltd')],
+            marked: ['Exam'],
+            text: 'Example <b> Ltd (11111111)',
+            description: 'TWO-27368: an escaped tag is decoded to text, never to an element'
+        },
+        {
             items: [company('Example Trading Ltd', '')],
             marked: [],
             text: 'Example Trading Ltd (11111111)',
