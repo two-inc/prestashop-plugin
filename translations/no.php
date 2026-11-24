@@ -699,3 +699,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_c6332feeb2de92843b7da5256da75803'] 
 $_MODULE['<{twopayment}prestashop>twopayment_f45eeca8a2b66a467c04d061463e23af'] = 'Bytt til butikken bestillingen hører til for å sjekke den.';
 $_MODULE['<{twopayment}prestashop>twopayment_adfb270be8c126186be33b615f3d347e'] = '%s kunne ikke godkjenne dette kjøpet. Velg en annen betalingsmåte.';
 $_MODULE['<{twopayment}prestashop>twopayment_f59b749aa926024a5ec256afbbaf7a97'] = 'Takk. Denne bestillingen er lagt inn, og bekreftelsen sendes på e-post til kjøperen.';
+$_MODULE['<{twopayment}prestashop>twopayment_a823e87ae8dea986346a29c9756038e2'] = 'Denne bestillingen kan bare vises i nettleseren den ble lagt inn fra.';

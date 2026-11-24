@@ -105,8 +105,9 @@ test.describe("Payments the buyer verified but never returned from", () => {
     expect(back.status(), "the late return redirects").toBe(302);
     const location = back.headers()["location"] ?? "";
     expect(location, "never to the order or an error").not.toMatch(/order-confirmation|id_order|controller=order/);
-    // Core rewrites a bare index.php to the shop's base URL.
-    expect(location, "to the home page").toMatch(/\/(index\.php)?$/);
+    // The home page link: the shop's base URL, with a language segment or as index.php when URL
+    // rewriting is off.
+    expect(location, "to the home page").toMatch(/^https?:\/\/[^/]+\/([a-z]{2}\/)?(index\.php(\?controller=index[^#]*)?)?$/);
     state = helper<State>("state", seeded.token);
     expect(state.orders_for_cart, "still one order for the cart").toBe(1);
     expect(requestsTo(seeded.two_order_id, "/confirm"), "still one confirm request").toHaveLength(1);

@@ -69,6 +69,9 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 $this->redirectToPlacedOrder($order, $own_session);
             }
         }
+        if (!$own_session && in_array($result['outcome'], array(TwoPendingRecovery::OUTCOME_CANCELLED, TwoPendingRecovery::OUTCOME_DECLINED), true)) {
+            $this->redirectHomeWithoutOrder();
+        }
 
         $this->errors[] = $result['message'] !== ''
             ? $result['message']
@@ -78,8 +81,9 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
 
     /**
      * Another check holds this attempt and did not finish within the wait. A placed order goes to
-     * its confirmation page, a cancelled one says so, and anything else asks the buyer to reload:
-     * the buyer is never shown a success page for an order that is not placed.
+     * its confirmation page, a cancelled one says so to the buyer's own session, and anything else
+     * asks the buyer to reload: the buyer is never shown a success page for an order that is not
+     * placed.
      *
      * @param string $attempt_token
      * @param bool $own_session
@@ -95,6 +99,9 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             if (Validate::isLoadedObject($order)) {
                 $this->redirectToPlacedOrder($order, $own_session);
             }
+        }
+        if ($status === 'CANCELLED' && !$own_session) {
+            $this->redirectHomeWithoutOrder();
         }
         $this->errors[] = $status === 'CANCELLED'
             ? $this->module->l('Your order is cancelled.')
@@ -162,7 +169,10 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
             $two_err = $this->module->getTwoErrorMessage($response);
             if ($two_err) {
-                $this->module->restoreDuplicateCart($order->id, $customer->id);
+                // Only the buyer's own session gets a copy of the cart back (TWO-27393).
+                if (TwoPendingRecovery::isSessionCustomer((int) $customer->id, $this->context)) {
+                    $this->module->restoreDuplicateCart($order->id, $customer->id);
+                }
                 $this->module->changeOrderStatus($order->id, Configuration::get('PS_TWO_OS_PAYMENT_ERROR_MAP'));
                 // Two's reason is for the merchant, never the buyer (TWO-26611).
                 $this->logTwoOrderLookupFailure(
@@ -274,7 +284,19 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $this->redirectToOrderConfirmation($order, new Customer((int) $order->id_customer));
         }
         $this->success[] = $this->module->l('Thank you. This order has been placed, and its confirmation will be emailed to the buyer.');
-        $this->redirectWithNotifications('index.php');
+        $this->redirectWithNotifications($this->context->link->getPageLink('index', true));
+    }
+
+    /**
+     * A session that is not the buyer's is not told what became of an order that was not placed
+     * (TWO-27393).
+     *
+     * @return void
+     */
+    private function redirectHomeWithoutOrder()
+    {
+        $this->info[] = $this->module->l('This order can only be shown in the browser it was placed from.');
+        $this->redirectWithNotifications($this->context->link->getPageLink('index', true));
     }
 
     private function redirectToOrderConfirmation($order, $customer)

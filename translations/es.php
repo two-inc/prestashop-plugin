@@ -699,3 +699,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_c6332feeb2de92843b7da5256da75803'] 
 $_MODULE['<{twopayment}prestashop>twopayment_f45eeca8a2b66a467c04d061463e23af'] = 'Cambie a la tienda del pedido para comprobarlo.';
 $_MODULE['<{twopayment}prestashop>twopayment_adfb270be8c126186be33b615f3d347e'] = '%s no ha podido aprobar esta compra. Por favor, elige otro método de pago.';
 $_MODULE['<{twopayment}prestashop>twopayment_f59b749aa926024a5ec256afbbaf7a97'] = 'Gracias. Este pedido se ha realizado y la confirmación se enviará por correo electrónico al comprador.';
+$_MODULE['<{twopayment}prestashop>twopayment_a823e87ae8dea986346a29c9756038e2'] = 'Este pedido solo se puede mostrar en el navegador desde el que se realizó.';

@@ -699,3 +699,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_c6332feeb2de92843b7da5256da75803'] 
 $_MODULE['<{twopayment}prestashop>twopayment_f45eeca8a2b66a467c04d061463e23af'] = 'Schakel over naar de winkel van de bestelling om hem te controleren.';
 $_MODULE['<{twopayment}prestashop>twopayment_adfb270be8c126186be33b615f3d347e'] = '%s kon deze aankoop niet goedkeuren. Kies een andere betaalmethode.';
 $_MODULE['<{twopayment}prestashop>twopayment_f59b749aa926024a5ec256afbbaf7a97'] = 'Bedankt. Deze bestelling is geplaatst en de bevestiging wordt per e-mail naar de koper gestuurd.';
+$_MODULE['<{twopayment}prestashop>twopayment_a823e87ae8dea986346a29c9756038e2'] = 'Deze bestelling kan alleen worden getoond in de browser waarin hij is geplaatst.';

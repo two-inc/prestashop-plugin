@@ -254,6 +254,8 @@ final class ConfirmationLegacyParitySpec
     private static function makeController(Twopayment $module): TwopaymentConfirmationModuleFrontController
     {
         Context::getContext()->cookie->two_payment_term = 30;
+        // The buyer returns in their own session (TWO-27393).
+        Context::getContext()->customer = new Customer(self::CUSTOMER_ID);
         $controller = new TwopaymentConfirmationModuleFrontController();
         $controller->module = $module;
         return $controller;

@@ -186,14 +186,19 @@ class TwoPendingRecovery
     public function resolveAttempt($attempt_token, $trigger)
     {
         $attempt_token = trim((string) $attempt_token);
+        $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
         // Keyed on the cart: two attempts for one cart must never race through validateOrder().
-        $lock = self::lockName($this->module->getTwoCheckoutAttempt($attempt_token), $attempt_token);
+        $lock = self::lockName($attempt, $attempt_token);
         $wait = $trigger === self::TRIGGER_SCHEDULED ? 0 : self::LOCK_WAIT_SECONDS;
         if (!$this->module->acquireTwoAttemptLock($lock, $wait)) {
             return $this->result(self::OUTCOME_BUSY);
         }
 
         $context = Context::getContext();
+        // Read before the context becomes the attempt's. Only the buyer's own session is bound to the
+        // attempt; any other session, a buyer return from another browser included, is settled like a
+        // check from outside it (TWO-27393).
+        $own_session = $trigger === self::TRIGGER_BUYER_RETURN && self::isBuyersOwnSession($attempt, $context);
         $saved = array(
             'cart' => isset($context->cart) ? $context->cart : null,
             'customer' => isset($context->customer) ? $context->customer : null,
@@ -201,18 +206,19 @@ class TwoPendingRecovery
             'language' => isset($context->language) ? $context->language : null,
         );
         try {
-            if ($trigger !== self::TRIGGER_BUYER_RETURN) {
-                // The session here is the employee's or the cron's, not the buyer's: rebuild the order on
-                // the term the buyer chose, or the payload, the fee line and the snapshot would differ.
+            if (!$own_session) {
+                // The session here is not the buyer's (the employee's, the cron's or another browser's):
+                // rebuild the order on the term the buyer chose, or the payload, the fee line and the
+                // snapshot would differ.
                 $pinned = $this->module->getTwoCheckoutAttempt($attempt_token);
                 $days = is_array($pinned) && isset($pinned['two_day_on_invoice']) ? (int) $pinned['two_day_on_invoice'] : 0;
                 $this->module->setTwoChosenTermOverride($days > 0 ? $days : null);
             }
-            $result = $this->resolveLocked($attempt_token, $trigger);
+            $result = $this->resolveLocked($attempt_token, $trigger, $own_session);
         } finally {
             $this->module->setTwoChosenTermOverride(null);
-            if ($trigger !== self::TRIGGER_BUYER_RETURN) {
-                // The admin page renders after the check in the employee's own language and context.
+            if (!$own_session) {
+                // The page after the check renders in the session's own language and context.
                 foreach ($saved as $key => $value) {
                     $context->$key = $value;
                 }
@@ -286,9 +292,21 @@ class TwoPendingRecovery
      */
     public static function isBuyersOwnSession($attempt, $context)
     {
+        return is_array($attempt) && self::isSessionCustomer((int) $attempt['id_customer'], $context);
+    }
+
+    /**
+     * Whether the session's customer, guest or registered, is this customer.
+     *
+     * @param int $id_customer
+     * @param Context $context
+     * @return bool
+     */
+    public static function isSessionCustomer($id_customer, $context)
+    {
         $session_customer_id = isset($context->customer->id) ? (int) $context->customer->id : 0;
 
-        return is_array($attempt) && $session_customer_id > 0 && $session_customer_id === (int) $attempt['id_customer'];
+        return $session_customer_id > 0 && $session_customer_id === (int) $id_customer;
     }
 
     /**
@@ -326,9 +344,10 @@ class TwoPendingRecovery
     /**
      * @param string $attempt_token
      * @param string $trigger
+     * @param bool $own_session the buyer returned in their own session, which is then bound to the attempt
      * @return array{outcome:string,message:string,id_order:int,two_state:string}
      */
-    private function resolveLocked($attempt_token, $trigger)
+    private function resolveLocked($attempt_token, $trigger, $own_session)
     {
         $buyer = $trigger === self::TRIGGER_BUYER_RETURN;
         $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
@@ -408,10 +427,6 @@ class TwoPendingRecovery
             return $this->result(self::OUTCOME_FAILED, $this->module->l('Unable to create local order for this payment attempt.'));
         }
 
-        // Read before the context below becomes the attempt's: a link opened in another browser
-        // confirms the order but binds nothing into that browser's session (TWO-27393).
-        $own_session = $buyer && self::isBuyersOwnSession($attempt, $context);
-
         // Ensure checkout context matches the attempt before creating a local order.
         $context->cart = $cart;
         $context->customer = $customer;
@@ -420,7 +435,7 @@ class TwoPendingRecovery
             $context->cookie->id_cart = (int) $cart->id;
             $context->cookie->id_customer = (int) $customer->id;
             $context->cookie->write();
-        } elseif (!$buyer) {
+        } else {
             // The confirmation URL inside the snapshot carries the buyer's language.
             $context->language = new Language((int) $cart->id_lang);
         }
