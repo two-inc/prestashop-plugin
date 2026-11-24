@@ -42,11 +42,35 @@ function pressIsDeadSpace(event) {
 const HIGHLIGHT_TOKEN = /(<\/?(?:mark|b)>)/;
 const HIGHLIGHT_TAG = /^<(\/?)(mark|b)>$/;
 
+/** A textarea in a document with no browsing context: parses, never runs or loads. */
+let entityDecoder = null;
+
+/**
+ * Decode the character references in one text token of the label, so the
+ * API's `&amp;` reads as `&` (TWO-27368). The textarea parses its content as
+ * text only, so a decoded `<b>` stays text and never becomes an element.
+ *
+ * @param {Document} doc the document the row lives in
+ * @param {string} text
+ * @returns {string}
+ */
+function decodeEntities(doc, text) {
+    if (text.indexOf('&') === -1) {
+        return text;
+    }
+    if (!entityDecoder) {
+        entityDecoder = doc.implementation.createHTMLDocument('').createElement('textarea');
+    }
+    entityDecoder.innerHTML = text;
+    return entityDecoder.value;
+}
+
 /**
  * Rebuild a register-sourced label as nodes, keeping only the `<mark>`/`<b>`
  * pair the search API marks the matched substring with. Nothing is ever parsed
  * as markup, so a company name carrying angle brackets reads as the register
- * spells it.
+ * spells it. The label is HTML, so its text is entity-decoded before it
+ * becomes a text node.
  *
  * @param {Document} doc the document the row lives in
  * @param {string} html
@@ -61,7 +85,7 @@ function highlightFragment(doc, html) {
         const tag = HIGHLIGHT_TAG.exec(token);
         if (!tag) {
             if (token) {
-                host.appendChild(doc.createTextNode(token));
+                host.appendChild(doc.createTextNode(decodeEntities(doc, token)));
             }
             return;
         }
