@@ -31,6 +31,7 @@ final class TermSurchargeAmountsSpec
         self::testTotalApiFailureWithNonzeroBasisStillSucceedsAllZero();
         self::testChipAmountFollowsThePriceDisplayMethod();
         self::testChipPreviewsNeverWriteTheSessionQuoteCache();
+        self::testACheckFromOutsideTheBuyersSessionCachesNoQuoteInIt();
     }
 
     /**
@@ -275,6 +276,27 @@ final class TermSurchargeAmountsSpec
             isset(Context::getContext()->cookie->two_fee_quote_key),
             'a chip preview must leave no quote in the session cookie'
         );
+    }
+
+    /**
+     * TWO-27393: a pinned term means the session is not the buyer's (the cron, the admin button,
+     * a confirmation link opened in another browser), so a charge-path quote is not cached in it.
+     */
+    private static function testACheckFromOutsideTheBuyersSessionCachesNoQuoteInIt(): void
+    {
+        // [term pinned, quote cached in the session cookie, why]
+        $cases = [
+            [null, true, 'the buyer\'s own session caches the charged quote'],
+            [30, false, 'a session the term is pinned in caches nothing'],
+        ];
+        foreach ($cases as [$pinned, $cached, $why]) {
+            self::reset();
+            $module = self::moduleWithPerTermResponses([30 => ['http_status' => 200, 'buyer_fee_share' => '5.00', 'currency' => 'EUR']]);
+            $module->setTwoChosenTermOverride($pinned);
+            $quote = $module->fetchTwoTermFee(30, 250.0, 'ES', 'EUR', true);
+            TinyAssert::same('5.00', $quote['buyer_fee_share'] ?? null, 'the quote itself is returned: ' . $why);
+            TinyAssert::same($cached, isset(Context::getContext()->cookie->two_fee_quote_key), $why);
+        }
     }
 
 }

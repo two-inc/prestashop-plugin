@@ -19257,7 +19257,10 @@ class Twopayment extends PaymentModule
      */
     private function storeTwoFeeQuoteInSession($cacheKey, array $quote)
     {
-        if (!isset($this->context->cookie)) {
+        // A pinned term means a check from outside the buyer's session (the cron, the admin button,
+        // a confirmation link opened in another browser): that session's cookie is not the buyer's
+        // to cache in (TWO-27393).
+        if (!isset($this->context->cookie) || $this->twoChosenTermOverride !== null) {
             return;
         }
         try {

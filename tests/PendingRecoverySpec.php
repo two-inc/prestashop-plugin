@@ -14,6 +14,7 @@ final class PendingRecoverySpec
 {
     private const CART = 9101;
     private const CUSTOMER = 9102;
+    private const GUEST = 9105;
     private const PLACED_ORDER = 9103;
     private const OTHER_ORDER = 9104;
     private const TWO_ORDER = 'two-order-9101';
@@ -28,6 +29,8 @@ final class PendingRecoverySpec
         self::testScheduledSelection();
         self::testBuyerReturnToATwoCancelledAttemptSendsNoCancel();
         self::testBuyerReturnWhileACheckHoldsTheLock();
+        self::testConfirmationBindsOnlyTheBuyersOwnSession();
+        self::testAReturnFromAnotherSessionRebuildsOnTheBuyersTermAndLanguage();
         self::testBuyerReturnOnUnverifiedKeepsTheRefusal();
         self::testAnOldAttemptNeverPlacesASecondOrderForItsCart();
         self::testAFailedConfirmNeverPlaces();
@@ -251,6 +254,7 @@ final class PendingRecoverySpec
     {
         $module = self::module([]);
         $module->get = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'UNVERIFIED', 'status' => 'APPROVED'];
+        Context::getContext()->customer = new Customer(self::CUSTOMER);
         $controller = new TwopaymentConfirmationModuleFrontController();
         $controller->module = $module;
         Tools::resetTestValues();
@@ -487,6 +491,7 @@ final class PendingRecoverySpec
     private static function testBuyerReturnToATwoCancelledAttemptSendsNoCancel(): void
     {
         $module = self::module(['status' => 'CANCELLED', 'two_order_state' => 'CANCELLED']);
+        Context::getContext()->customer = new Customer(self::CUSTOMER);
         $controller = new TwopaymentConfirmationModuleFrontController();
         $controller->module = $module;
         Tools::resetTestValues();
@@ -509,6 +514,7 @@ final class PendingRecoverySpec
         foreach ($rows as [$status, $message, $description]) {
             $module = self::module(['status' => $status]);
             StubStore::$dbLocks[TwoPendingRecovery::lockName($module->attempt, self::TOKEN)] = true;
+            Context::getContext()->customer = new Customer(self::CUSTOMER);
             $controller = new TwopaymentConfirmationModuleFrontController();
             $controller->module = $module;
             Tools::resetTestValues();
@@ -523,10 +529,144 @@ final class PendingRecoverySpec
         StubStore::$dbLocks = [];
     }
 
+    /**
+     * TWO-27393: the confirmation link binds the attempt's customer and cart into the session only
+     * when the session is the buyer's own, guest or registered. Opened in another browser it
+     * confirms the order exactly the same, leaves that session's customer, cart and intent verdict
+     * alone, and shows a notice naming no order detail rather than core's confirmation page, which
+     * would refuse it.
+     */
+    private static function testConfirmationBindsOnlyTheBuyersOwnSession(): void
+    {
+        $verified = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'VERIFIED', 'status' => 'APPROVED', 'gross_amount' => '120.00'];
+        $placed = ['status' => 'CONFIRMED', 'id_order' => self::PLACED_ORDER];
+        $closed = ['status' => 'CANCELLED', 'two_order_state' => 'CANCELLED'];
+        $own = self::CUSTOMER;
+        $guest = self::GUEST;
+        $stranger = 555;
+        $strangerCart = 7001;
+        $home = 'https://shop.local/index';
+        $placedNotice = ['Thank you. This order has been placed, and its confirmation will be emailed to the buyer.'];
+        $closedNotice = ['This order can only be shown in the browser it was placed from.'];
+        // [attempt's customer, session customer, session cart, attempt overrides, a check holds the lock, redirect (null: core's
+        //  confirmation page), success notices, info notices, session customer after, session cart after, intent verdicts cleared,
+        //  orders created, description]
+        $rows = [
+            [$own, $own, $strangerCart, [], false, null, [], [], $own, self::CART, 1, 1, 'the buyer\'s own session: placed, bound, confirmation page'],
+            [$guest, $guest, $strangerCart, [], false, null, [], [], $guest, self::CART, 1, 1, 'the guest buyer\'s own session: placed, bound, confirmation page'],
+            [$own, 0, $strangerCart, [], false, $home, $placedNotice, [], 0, $strangerCart, 0, 1, 'a session with no customer: placed, nothing bound, notice'],
+            [$own, $stranger, $strangerCart, [], false, $home, $placedNotice, [], $stranger, $strangerCart, 0, 1, 'another customer\'s session: placed, nothing bound, notice'],
+            [$guest, $stranger, $strangerCart, [], false, $home, $placedNotice, [], $stranger, $strangerCart, 0, 1, 'a guest buyer\'s link in another customer\'s session: placed, nothing bound, notice'],
+            [$own, $own, self::CART, $placed, false, null, [], [], $own, self::CART, 0, 0, 'already placed, the buyer\'s own session: confirmation page'],
+            [$own, $stranger, $strangerCart, $placed, false, $home, $placedNotice, [], $stranger, $strangerCart, 0, 0, 'already placed, another customer\'s session: notice'],
+            [$own, $own, self::CART, $placed, true, null, [], [], $own, self::CART, 0, 0, 'a check holds the lock, the buyer\'s own session: confirmation page'],
+            [$own, $stranger, $strangerCart, $placed, true, $home, $placedNotice, [], $stranger, $strangerCart, 0, 0, 'a check holds the lock, another customer\'s session: notice'],
+            [$own, $stranger, $strangerCart, $closed, false, $home, [], $closedNotice, $stranger, $strangerCart, 0, 0, 'cancelled, another customer\'s session: not told it is cancelled'],
+            [$own, $stranger, $strangerCart, $closed, true, $home, [], $closedNotice, $stranger, $strangerCart, 0, 0, 'cancelled while a check holds the lock, another customer\'s session: not told'],
+            [$own, $stranger, $strangerCart, [], true, $home, [], $closedNotice, $stranger, $strangerCart, 0, 0, 'still being checked, another customer\'s session: not asked to reload its own checkout'],
+            [$own, $stranger, $strangerCart, ['cart_snapshot_hash' => 'stale-hash'], false, $home, [], $closedNotice, $stranger, $strangerCart, 0, 0, 'cart changed, another customer\'s session: not sent to its own checkout'],
+        ];
+        foreach ($rows as [$buyer, $sessionCustomer, $sessionCart, $overrides, $busy, $redirect, $notices, $infos, $customerAfter, $cartAfter, $intentClears, $created, $description]) {
+            $module = self::module(['id_customer' => $buyer] + $overrides);
+            $module->get = $verified;
+            StubStore::$carts[self::CART]['id_customer'] = $buyer;
+            StubStore::$customers[$stranger] = ['email' => 'other@example.com', 'firstname' => 'Ola', 'lastname' => 'Berg', 'secure_key' => 'other', 'loaded' => true];
+            if (isset($overrides['id_order'])) {
+                StubStore::$orders[self::PLACED_ORDER] = ['id_cart' => self::CART, 'id_customer' => $buyer, 'module' => 'twopayment'];
+            }
+            if ($busy) {
+                StubStore::$dbLocks[TwoPendingRecovery::lockName($module->attempt, self::TOKEN)] = true;
+            }
+            $context = self::session($sessionCustomer, $sessionCart, 30);
+            [$redirectedTo, $controller] = self::returnTo($module);
+            $confirmationPage = 'index.php?controller=order-confirmation&id_cart=' . self::CART . '&id_module=1&id_order=' . self::PLACED_ORDER
+                . '&key=' . StubStore::$customers[$buyer]['secure_key'];
+            TinyAssert::same($redirect ?? $confirmationPage, $redirectedTo, $description . ': redirect');
+            TinyAssert::same($notices, $controller->success, $description . ': notice');
+            TinyAssert::same($infos, $controller->info, $description . ': info');
+            TinyAssert::same([], $controller->errors, $description . ': no error');
+            TinyAssert::same($customerAfter, (int) $context->cookie->id_customer, $description . ': session customer');
+            TinyAssert::same($cartAfter, (int) $context->cookie->id_cart, $description . ': session cart');
+            TinyAssert::same($intentClears, $module->intentClears, $description . ': intent verdict cleared');
+            TinyAssert::same($created, $module->created, $description . ': orders placed');
+            TinyAssert::same($created, count($module->confirms), $description . ': confirmed with Two');
+            if (!isset($overrides['cart_snapshot_hash'])) {
+                // A changed cart is refused at Two whoever opens the link, as before.
+                TinyAssert::same([], $module->cancels, $description . ': nothing cancelled at Two');
+            }
+        }
+        StubStore::$dbLocks = [];
+    }
+
+    /**
+     * TWO-27393: a return from a session that is not the buyer's rebuilds the order, and the
+     * snapshot it is checked against, on the attempt's term and the cart's language, as the
+     * scheduled check does. On the session's own term the snapshot would differ and the verified
+     * order would be refused. The session's own language is back afterwards.
+     */
+    private static function testAReturnFromAnotherSessionRebuildsOnTheBuyersTermAndLanguage(): void
+    {
+        // [session customer, the terms the order was built on, the session's language while building, description]
+        $rows = [
+            [555, [60], false, 'another customer\'s session on 14 days: rebuilt on the buyer\'s 60 days, in the cart\'s language'],
+            [0, [60], false, 'a session with no customer: rebuilt on the buyer\'s 60 days, in the cart\'s language'],
+            [self::CUSTOMER, [14], true, 'the buyer\'s own session: built on its own term and language, as before'],
+        ];
+        foreach ($rows as [$sessionCustomer, $terms, $sessionLanguage, $description]) {
+            $module = self::module(['two_day_on_invoice' => '60', 'cart_snapshot_hash' => 'current-hash']);
+            $module->get = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'VERIFIED', 'status' => 'APPROVED', 'gross_amount' => '120.00'];
+            $context = self::session($sessionCustomer, 7001, 14);
+            $language = new Language();
+            $context->language = $language;
+            self::returnTo($module);
+            TinyAssert::same('CONFIRMED', $module->attempt['status'], $description . ': placed');
+            TinyAssert::same([], $module->cancels, $description . ': nothing cancelled at Two');
+            TinyAssert::same($terms, array_values(array_unique($module->buildTerms)), $description . ': term');
+            TinyAssert::same([$sessionLanguage], array_values(array_unique(array_map(static function ($built) use ($language) {
+                return $built === $language;
+            }, $module->buildLanguages))), $description . ': language');
+            TinyAssert::same(14, $module->getChosenPaymentTermDays(), $description . ': the session\'s term is back afterwards');
+            if (!$sessionLanguage) {
+                TinyAssert::true($context->language === $language, $description . ': the session\'s language is back afterwards');
+            }
+        }
+    }
+
+    private static function session(int $customer, int $cart, int $term): Context
+    {
+        $context = Context::getContext();
+        $context->cookie = new Cookie();
+        $context->cookie->two_payment_term = $term;
+        $context->cookie->id_customer = $customer;
+        $context->cookie->id_cart = $cart;
+        $context->customer = new Customer($customer);
+
+        return $context;
+    }
+
+    /**
+     * @return array{0:string|null,1:TwopaymentConfirmationModuleFrontController}
+     */
+    private static function returnTo(TwopaymentTestHarness $module): array
+    {
+        $controller = new TwopaymentConfirmationModuleFrontController();
+        $controller->module = $module;
+        Tools::resetTestValues();
+        Tools::setTestValue('key', 'key-9102');
+        try {
+            (new ReflectionMethod($controller, 'handleAttemptTokenConfirmation'))->invoke($controller, self::TOKEN);
+        } catch (StubRedirect $e) {
+            return [$e->getMessage(), $controller];
+        }
+
+        return [null, $controller];
+    }
+
     private static function module(array $overrides): TwopaymentTestHarness
     {
         StubStore::reset();
         StubStore::$customers[self::CUSTOMER] = ['email' => 'buyer@example.com', 'firstname' => 'Eva', 'lastname' => 'Martin', 'secure_key' => 'key-9102', 'loaded' => true];
+        StubStore::$customers[self::GUEST] = ['email' => 'guest@example.com', 'firstname' => 'Gil', 'lastname' => 'Guest', 'secure_key' => 'key-9105', 'loaded' => true];
         StubStore::$carts[self::CART] = ['id_customer' => self::CUSTOMER, 'id_currency' => 978, 'id_address_invoice' => 0, 'id_address_delivery' => 0, 'id_carrier' => 0, 'id_lang' => 1];
         StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
         $context = Context::getContext();
@@ -547,6 +687,7 @@ final class PendingRecoverySpec
             public array $confirms = [];
             public array $cancels = [];
             public int $created = 0;
+            public int $intentClears = 0;
             public array $notes = [];
             public array $statusChanges = [];
             public int $orderIdByCart = 0;
@@ -557,6 +698,8 @@ final class PendingRecoverySpec
             public bool $legacy = false;
             /** @var int[] the term each payload build saw */
             public array $buildTerms = [];
+            /** @var array<int,mixed> the session's language each payload build saw */
+            public array $buildLanguages = [];
             public array $candidates = [];
             public array $candidateArgs = [];
             private int $placedOrder;
@@ -620,6 +763,7 @@ final class PendingRecoverySpec
             public function getTwoNewOrderData($merchant_order_id, $cart, $merchant_urls = null, $syncSurchargeCartLine = true, $trigger = 'checkout')
             {
                 $this->buildTerms[] = (int) $this->getChosenPaymentTermDays();
+                $this->buildLanguages[] = Context::getContext()->language;
 
                 return ['merchant_order_id' => (string) $merchant_order_id];
             }
@@ -681,6 +825,7 @@ final class PendingRecoverySpec
 
             public function clearTwoOrderIntentSession()
             {
+                $this->intentClears++;
             }
 
             public function isTwoOrderCompletelyPlaced($id_order)

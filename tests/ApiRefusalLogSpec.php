@@ -39,6 +39,7 @@ final class ApiRefusalLogSpec
         self::testCompanySearchRefusalIsLoggedOncePerCartAndStatus();
         self::testDeclineAtPaymentSubmitKeepsTwosMessageOffTheStorefront();
         self::testConfirmationKeepsTwosReasonOffTheStorefront();
+        self::testAFailedLegacyLookupRestoresTheCartOnlyIntoTheBuyersSession();
         self::testConfirmAndCancelLogTwosOwnWords();
     }
 
@@ -328,6 +329,8 @@ final class ApiRefusalLogSpec
             public array $confirm = ['http_status' => 200, 'state' => 'CONFIRMED'];
             public array $cancel = ['http_status' => 200];
             public int $attemptOrderId = 0;
+            /** @var int[] the orders whose cart was copied back into the session */
+            public array $restored = [];
 
             public function __construct(array $attempt)
             {
@@ -379,6 +382,8 @@ final class ApiRefusalLogSpec
 
             public function restoreDuplicateCart($id_order, $id_customer)
             {
+                $this->restored[] = (int) $id_order;
+
                 return true;
             }
 
@@ -414,6 +419,8 @@ final class ApiRefusalLogSpec
         foreach ($cases as [$method, $arg, $reference, $description]) {
             $module = self::checkoutModule();
             $module->lookup = $refusal;
+            // The buyer returns in their own session (TWO-27393).
+            Context::getContext()->customer = new Customer(self::CUSTOMER_ID);
             $controller = new TwopaymentConfirmationModuleFrontController();
             $controller->module = $module;
             self::runToRedirect($controller, $method, [$arg]);
@@ -425,6 +432,7 @@ final class ApiRefusalLogSpec
             // A 200 whose body carries an error fails the lookup too, and is logged as a warning.
             $module = self::checkoutModule();
             $module->lookup = ['http_status' => 200, 'error_code' => 'LOOKUP_ERROR', 'error_details' => self::DETAIL];
+            Context::getContext()->customer = new Customer(self::CUSTOMER_ID);
             $controller = new TwopaymentConfirmationModuleFrontController();
             $controller->module = $module;
             self::runToRedirect($controller, $method, [$arg]);
@@ -439,6 +447,27 @@ final class ApiRefusalLogSpec
             TinyAssert::count(1, $answered, 'a 200 error is logged with the cart reference: ' . $description);
             TinyAssert::same(2, $answered[0]['severity'], 'a 200 error is a warning: ' . $description);
             TinyAssert::same(self::CART_ID, $answered[0]['object_id'], 'a 200 error is logged against the cart: ' . $description);
+        }
+    }
+
+    /** TWO-27393: a legacy link opened in another browser gives that session no copy of the buyer's cart. */
+    private static function testAFailedLegacyLookupRestoresTheCartOnlyIntoTheBuyersSession(): void
+    {
+        // [session customer, orders whose cart is restored, description]
+        $cases = [
+            [self::CUSTOMER_ID, [self::ORDER_ID], 'the buyer\'s own session gets the cart back'],
+            [0, [], 'a session with no customer gets nothing'],
+            [555, [], 'another customer\'s session gets nothing'],
+        ];
+        foreach ($cases as [$sessionCustomer, $restored, $description]) {
+            $module = self::checkoutModule();
+            $module->lookup = ['http_status' => 404, 'error_code' => 'NOT_FOUND', 'error_details' => self::DETAIL];
+            Context::getContext()->customer = new Customer($sessionCustomer);
+            $controller = new TwopaymentConfirmationModuleFrontController();
+            $controller->module = $module;
+            self::runToRedirect($controller, 'handleLegacyOrderConfirmation', [self::ORDER_ID]);
+            TinyAssert::same($restored, $module->restored, $description);
+            TinyAssert::same([self::LOOKUP_FAILED], $controller->errors, $description . ': the generic sentence');
         }
     }
 
