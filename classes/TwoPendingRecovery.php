@@ -276,6 +276,22 @@ class TwoPendingRecovery
     }
 
     /**
+     * Whether the session is the attempt buyer's own: the customer in it, guest or registered, is
+     * the attempt's customer. Only then does a buyer return bind the attempt's customer and cart
+     * into the session (TWO-27393); a link opened in another browser confirms without binding.
+     *
+     * @param mixed $attempt
+     * @param Context $context
+     * @return bool
+     */
+    public static function isBuyersOwnSession($attempt, $context)
+    {
+        $session_customer_id = isset($context->customer->id) ? (int) $context->customer->id : 0;
+
+        return is_array($attempt) && $session_customer_id > 0 && $session_customer_id === (int) $attempt['id_customer'];
+    }
+
+    /**
      * The lock every trigger takes: per cart, since a cart can carry one order and several
      * attempts; per token only for an attempt that cannot be read.
      *
@@ -392,15 +408,19 @@ class TwoPendingRecovery
             return $this->result(self::OUTCOME_FAILED, $this->module->l('Unable to create local order for this payment attempt.'));
         }
 
+        // Read before the context below becomes the attempt's: a link opened in another browser
+        // confirms the order but binds nothing into that browser's session (TWO-27393).
+        $own_session = $buyer && self::isBuyersOwnSession($attempt, $context);
+
         // Ensure checkout context matches the attempt before creating a local order.
         $context->cart = $cart;
         $context->customer = $customer;
         $context->currency = new Currency((int) $cart->id_currency);
-        if ($buyer) {
+        if ($own_session) {
             $context->cookie->id_cart = (int) $cart->id;
             $context->cookie->id_customer = (int) $customer->id;
             $context->cookie->write();
-        } else {
+        } elseif (!$buyer) {
             // The confirmation URL inside the snapshot carries the buyer's language.
             $context->language = new Language((int) $cart->id_lang);
         }
@@ -740,7 +760,10 @@ class TwoPendingRecovery
         if ($buyer) {
             // This order consumed the verdict; nothing after it may be
             // priced against an approval the buyer got for a cart now placed.
-            $this->module->clearTwoOrderIntentSession();
+            // Another browser's verdict is its own session's, so it stays.
+            if ($own_session) {
+                $this->module->clearTwoOrderIntentSession();
+            }
         } else {
             $this->module->addTwoPendingRecoveryNote((int) $order->id, $this->placedNote($trigger, $confirmed_here));
             $this->stamp($attempt_token, self::OUTCOME_PLACED);

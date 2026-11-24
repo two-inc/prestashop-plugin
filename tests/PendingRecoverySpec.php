@@ -28,6 +28,7 @@ final class PendingRecoverySpec
         self::testScheduledSelection();
         self::testBuyerReturnToATwoCancelledAttemptSendsNoCancel();
         self::testBuyerReturnWhileACheckHoldsTheLock();
+        self::testConfirmationBindsOnlyTheBuyersOwnSession();
         self::testBuyerReturnOnUnverifiedKeepsTheRefusal();
         self::testAnOldAttemptNeverPlacesASecondOrderForItsCart();
         self::testAFailedConfirmNeverPlaces();
@@ -251,6 +252,7 @@ final class PendingRecoverySpec
     {
         $module = self::module([]);
         $module->get = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'UNVERIFIED', 'status' => 'APPROVED'];
+        Context::getContext()->customer = new Customer(self::CUSTOMER);
         $controller = new TwopaymentConfirmationModuleFrontController();
         $controller->module = $module;
         Tools::resetTestValues();
@@ -523,6 +525,70 @@ final class PendingRecoverySpec
         StubStore::$dbLocks = [];
     }
 
+    /**
+     * TWO-27393: the confirmation link binds the attempt's customer and cart into the session only
+     * when the session is the buyer's own. Opened in another browser it confirms the order exactly
+     * the same, leaves that session's customer, cart and intent verdict alone, and shows a notice
+     * naming no order detail rather than core's confirmation page, which would refuse it.
+     */
+    private static function testConfirmationBindsOnlyTheBuyersOwnSession(): void
+    {
+        $verified = ['http_status' => 200, 'id' => self::TWO_ORDER, 'state' => 'VERIFIED', 'status' => 'APPROVED', 'gross_amount' => '120.00'];
+        $placed = ['status' => 'CONFIRMED', 'id_order' => self::PLACED_ORDER];
+        $own = self::CUSTOMER;
+        $stranger = 555;
+        $strangerCart = 7001;
+        $confirmationPage = 'index.php?controller=order-confirmation&id_cart=' . self::CART . '&id_module=1&id_order=' . self::PLACED_ORDER . '&key=key-9102';
+        $notice = ['Thank you. This order has been placed, and its confirmation will be emailed to the buyer.'];
+        // [session customer, session cart, attempt overrides, a check holds the lock, redirect, notices,
+        //  session customer after, session cart after, intent verdicts cleared, orders created, description]
+        $rows = [
+            [$own, $strangerCart, [], false, $confirmationPage, [], $own, self::CART, 1, 1, 'the buyer\'s own session: placed, bound, confirmation page'],
+            [0, $strangerCart, [], false, 'index.php', $notice, 0, $strangerCart, 0, 1, 'a session with no customer: placed, nothing bound, notice'],
+            [$stranger, $strangerCart, [], false, 'index.php', $notice, $stranger, $strangerCart, 0, 1, 'another customer\'s session: placed, nothing bound, notice'],
+            [$own, self::CART, $placed, false, $confirmationPage, [], $own, self::CART, 0, 0, 'already placed, the buyer\'s own session: confirmation page'],
+            [$stranger, $strangerCart, $placed, false, 'index.php', $notice, $stranger, $strangerCart, 0, 0, 'already placed, another customer\'s session: notice'],
+            [$own, self::CART, $placed, true, $confirmationPage, [], $own, self::CART, 0, 0, 'a check holds the lock, the buyer\'s own session: confirmation page'],
+            [$stranger, $strangerCart, $placed, true, 'index.php', $notice, $stranger, $strangerCart, 0, 0, 'a check holds the lock, another customer\'s session: notice'],
+        ];
+        foreach ($rows as [$sessionCustomer, $sessionCart, $overrides, $busy, $redirect, $notices, $customerAfter, $cartAfter, $intentClears, $created, $description]) {
+            $module = self::module($overrides);
+            $module->get = $verified;
+            StubStore::$customers[$stranger] = ['email' => 'other@example.com', 'firstname' => 'Ola', 'lastname' => 'Berg', 'secure_key' => 'other', 'loaded' => true];
+            if (isset($overrides['id_order'])) {
+                StubStore::$orders[self::PLACED_ORDER] = ['id_cart' => self::CART, 'id_customer' => self::CUSTOMER, 'module' => 'twopayment'];
+            }
+            if ($busy) {
+                StubStore::$dbLocks[TwoPendingRecovery::lockName($module->attempt, self::TOKEN)] = true;
+            }
+            $context = Context::getContext();
+            $context->cookie = new Cookie();
+            $context->cookie->two_payment_term = 30;
+            $context->cookie->id_customer = $sessionCustomer;
+            $context->cookie->id_cart = $sessionCart;
+            $context->customer = new Customer($sessionCustomer);
+            $controller = new TwopaymentConfirmationModuleFrontController();
+            $controller->module = $module;
+            Tools::resetTestValues();
+            Tools::setTestValue('key', 'key-9102');
+            $redirectedTo = null;
+            try {
+                (new ReflectionMethod($controller, 'handleAttemptTokenConfirmation'))->invoke($controller, self::TOKEN);
+            } catch (StubRedirect $e) {
+                $redirectedTo = $e->getMessage();
+            }
+            TinyAssert::same($redirect, $redirectedTo, $description . ': redirect');
+            TinyAssert::same($notices, $controller->success, $description . ': notice');
+            TinyAssert::same([], $controller->errors, $description . ': no error');
+            TinyAssert::same($customerAfter, (int) $context->cookie->id_customer, $description . ': session customer');
+            TinyAssert::same($cartAfter, (int) $context->cookie->id_cart, $description . ': session cart');
+            TinyAssert::same($intentClears, $module->intentClears, $description . ': intent verdict cleared');
+            TinyAssert::same($created, $module->created, $description . ': orders placed');
+            TinyAssert::same($created, count($module->confirms), $description . ': confirmed with Two');
+        }
+        StubStore::$dbLocks = [];
+    }
+
     private static function module(array $overrides): TwopaymentTestHarness
     {
         StubStore::reset();
@@ -547,6 +613,7 @@ final class PendingRecoverySpec
             public array $confirms = [];
             public array $cancels = [];
             public int $created = 0;
+            public int $intentClears = 0;
             public array $notes = [];
             public array $statusChanges = [];
             public int $orderIdByCart = 0;
@@ -681,6 +748,7 @@ final class PendingRecoverySpec
 
             public function clearTwoOrderIntentSession()
             {
+                $this->intentClears++;
             }
 
             public function isTwoOrderCompletelyPlaced($id_order)

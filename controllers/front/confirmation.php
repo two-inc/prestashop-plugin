@@ -54,16 +54,19 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
+        // Read before the resolver makes the context the attempt's (TWO-27393).
+        $own_session = TwoPendingRecovery::isBuyersOwnSession($attempt, $this->context);
+
         // The scheduled check and the admin button settle attempts through the same resolver, under
         // the same per-attempt lock (TWO-26300).
         $result = $this->module->getTwoPendingRecovery()->resolveAttempt($attempt_token, TwoPendingRecovery::TRIGGER_BUYER_RETURN);
         if ($result['outcome'] === TwoPendingRecovery::OUTCOME_BUSY) {
-            $this->redirectAfterBusyCheck($attempt_token);
+            $this->redirectAfterBusyCheck($attempt_token, $own_session);
         }
         if ($result['outcome'] === TwoPendingRecovery::OUTCOME_PLACED || $result['outcome'] === TwoPendingRecovery::OUTCOME_ALREADY_PLACED) {
             $order = new Order((int) $result['id_order']);
             if (Validate::isLoadedObject($order)) {
-                $this->redirectToOrderConfirmation($order, new Customer((int) $order->id_customer));
+                $this->redirectToPlacedOrder($order, $own_session);
             }
         }
 
@@ -79,9 +82,10 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
      * the buyer is never shown a success page for an order that is not placed.
      *
      * @param string $attempt_token
+     * @param bool $own_session
      * @return void
      */
-    private function redirectAfterBusyCheck($attempt_token)
+    private function redirectAfterBusyCheck($attempt_token, $own_session)
     {
         $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
         $status = is_array($attempt) && isset($attempt['status']) ? strtoupper((string) $attempt['status']) : '';
@@ -89,7 +93,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         if ($status === 'CONFIRMED' && $id_order > 0) {
             $order = new Order($id_order);
             if (Validate::isLoadedObject($order)) {
-                $this->redirectToOrderConfirmation($order, new Customer((int) $order->id_customer));
+                $this->redirectToPlacedOrder($order, $own_session);
             }
         }
         $this->errors[] = $status === 'CANCELLED'
@@ -253,6 +257,24 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
         $this->redirectWithNotifications('index.php?controller=order');
 
         return true;
+    }
+
+    /**
+     * The buyer's own session gets the order confirmation page. Any other session was bound to
+     * nothing, and core's confirmation page refuses an order that is not the session customer's,
+     * so it gets a notice that names no order detail (TWO-27393).
+     *
+     * @param Order $order
+     * @param bool $own_session
+     * @return void
+     */
+    private function redirectToPlacedOrder($order, $own_session)
+    {
+        if ($own_session) {
+            $this->redirectToOrderConfirmation($order, new Customer((int) $order->id_customer));
+        }
+        $this->success[] = $this->module->l('Thank you. This order has been placed, and its confirmation will be emailed to the buyer.');
+        $this->redirectWithNotifications('index.php');
     }
 
     private function redirectToOrderConfirmation($order, $customer)

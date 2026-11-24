@@ -558,6 +558,7 @@ namespace {
         public $module;
         public $context;
         public $errors = [];
+        public $success = [];
 
         public function __construct()
         {
