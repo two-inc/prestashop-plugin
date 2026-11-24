@@ -217,11 +217,13 @@ class TwopaymentPaymentModuleFrontController extends ModuleFrontController
         $attempt_token = $this->module->generateTwoCheckoutAttemptToken($cart->id, $customer->id);
         $merchant_order_id = $this->module->buildTwoMerchantOrderId($attempt_token, $cart->id);
 
+        // A declined buyer is sent to the cancel URL; verification failure takes the same route (TWO-27390).
+        $cancel_url = $this->context->link->getModuleLink($this->module->name, 'cancel', ['attempt_token' => $attempt_token, 'key' => $customer->secure_key], true);
         $merchant_urls = [
             'merchant_confirmation_url' => $this->context->link->getModuleLink($this->module->name, 'confirmation', ['attempt_token' => $attempt_token, 'key' => $customer->secure_key], true),
-            'merchant_cancel_order_url' => $this->context->link->getModuleLink($this->module->name, 'cancel', ['attempt_token' => $attempt_token, 'key' => $customer->secure_key], true),
+            'merchant_cancel_order_url' => $cancel_url,
             'merchant_edit_order_url' => '',
-            'merchant_order_verification_failed_url' => '',
+            'merchant_order_verification_failed_url' => $cancel_url,
             'merchant_invoice_url' => '',
             'merchant_shipping_document_url' => ''
         ];

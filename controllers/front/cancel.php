@@ -72,8 +72,8 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
 
     /**
      * Another request holds the cart lock and did not finish within the wait. Nothing is sent to
-     * Two and nothing is written: the buyer is told the attempt is cancelled if it already is,
-     * and otherwise that it was not cancelled and to check their order history shortly.
+     * Two and nothing is written: the buyer gets the decline message if the attempt is already
+     * closed, and otherwise is told it was not cancelled and to check their order history shortly.
      *
      * @param string $attempt_token
      * @return void
@@ -83,7 +83,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
         $status = is_array($attempt) && isset($attempt['status']) ? strtoupper((string)$attempt['status']) : '';
         $this->errors[] = $status === 'CANCELLED'
-            ? $this->module->l('Your order is cancelled.')
+            ? $this->getDeclineMessage()
             : $this->module->l('This payment is still being processed, so it was not cancelled. Check your order history in a moment.');
         $this->redirectWithNotifications('index.php?controller=order');
     }
@@ -92,75 +92,80 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
      * Runs under the cart lock, on the attempt as it stands once the lock is held: a placement
      * that finished while this request waited has linked its order by then.
      *
+     * Two's checkout sends a declined buyer here, and the buyer wants to pay for the same basket
+     * another way (TWO-27390). The resolver reads Two's state and closes the attempt the way it
+     * asks; the buyer then lands on the payment step with the decline message, the cart restored
+     * when this session is theirs. An approved order goes to the confirmation route instead.
+     *
      * @param string $attempt_token
      * @return void
      */
     private function cancelAttemptLocked($attempt_token)
     {
-        $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
-        if (!$attempt) {
-            $message = $this->module->l('Unable to find the requested payment attempt.');
-            $this->errors[] = $message;
+        $result = $this->module->getTwoPendingRecovery()->resolveCancelReturnLocked($attempt_token);
+        $outcome = $result['outcome'];
+        if ($outcome === TwoPendingRecovery::OUTCOME_FAILED) {
+            $this->errors[] = $this->module->l('Unable to find the requested payment attempt.');
             $this->redirectWithNotifications('index.php?controller=order');
         }
 
-        $attempt_order_id = (int)$this->module->resolveTwoAttemptOrderIdForCancellation($attempt);
-        if ($attempt_order_id > 0) {
-            // Safety: if the attempt is already linked to a local order, reuse legacy cancellation behavior.
-            $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', array(
-                'id_order' => $attempt_order_id,
-            ));
-            $this->handleLegacyOrderCancel($attempt_order_id);
+        $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        if ($outcome === TwoPendingRecovery::ACTION_CONFIRM) {
+            // Tools::redirect() exits without passing through redirectWithNotifications().
+            $this->releaseHeldLock();
+            Tools::redirect($this->context->link->getModuleLink($this->module->name, 'confirmation', array(
+                'attempt_token' => $attempt_token,
+                'key' => is_array($attempt) && isset($attempt['customer_secure_key']) ? (string) $attempt['customer_secure_key'] : '',
+            ), true));
+        }
+        if ($outcome === TwoPendingRecovery::OUTCOME_STALE) {
+            $this->errors[] = $this->module->l('This payment attempt has already been finalized.');
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
+        if ($outcome === TwoPendingRecovery::OUTCOME_LOOKUP_FAILED || $outcome === TwoPendingRecovery::OUTCOME_UNCHANGED) {
+            // Two's state is unknown or not one this module acts on: no decline is claimed, and the
+            // attempt stays waiting for the scheduled check.
+            $this->errors[] = $result['message'];
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
+
+        $this->restoreCartIntoOwnSession($attempt);
+        $this->errors[] = $this->getDeclineMessage();
+        $this->redirectWithNotifications('index.php?controller=order');
+    }
+
+    /**
+     * Puts the attempt's cart back into this session only when the session is the buyer's own:
+     * the customer in it, guest or registered, is the attempt's customer. A link opened in another
+     * browser restores nothing.
+     *
+     * @param mixed $attempt
+     * @return void
+     */
+    private function restoreCartIntoOwnSession($attempt)
+    {
+        $session_customer_id = isset($this->context->customer->id) ? (int) $this->context->customer->id : 0;
+        if (!is_array($attempt) || $session_customer_id <= 0 || $session_customer_id !== (int) $attempt['id_customer']) {
             return;
         }
-
-        $extra_data = array();
-        if (!empty($attempt['two_order_id'])) {
-            $two_order_id = $attempt['two_order_id'];
-            $cancel_response = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', new Cart((int) $attempt['id_cart']));
-            $cancel_http_status = isset($cancel_response['http_status']) ? (int)$cancel_response['http_status'] : 0;
-            if ($cancel_http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST) {
-                PrestaShopLogger::addLog(
-                    'TwoPayment: Attempt cancel failed for token ' . $attempt_token . ', Two order ' . $two_order_id .
-                    ' - ' . $this->module->getTwoApiErrorDetail($cancel_response),
-                    2
-                );
-            }
-
-            $response = $this->module->setTwoPaymentRequest('/v1/order/' . $two_order_id, [], 'GET');
-            $response_http_status = isset($response['http_status']) ? (int)$response['http_status'] : 0;
-            if ($response_http_status > 0 && $response_http_status < Twopayment::HTTP_STATUS_BAD_REQUEST && is_array($response)) {
-                $resolved_terms = $this->module->resolveTwoPaymentTermsFromOrderResponse(
-                    $response,
-                    isset($attempt['two_day_on_invoice']) ? (string)$attempt['two_day_on_invoice'] : (string)$this->module->getSelectedPaymentTerm(),
-                    isset($attempt['two_payment_term_type']) ? $attempt['two_payment_term_type'] : Configuration::get('PS_TWO_PAYMENT_TERM_TYPE')
-                );
-                $extra_data['two_order_state'] = isset($response['state']) ? $response['state'] : '';
-                $extra_data['two_order_status'] = isset($response['status']) ? $response['status'] : '';
-                $extra_data['two_day_on_invoice'] = $resolved_terms['two_day_on_invoice'];
-                $extra_data['two_payment_term_type'] = $resolved_terms['two_payment_term_type'];
-                if (isset($response['invoice_url'])) {
-                    $extra_data['two_invoice_url'] = $response['invoice_url'];
-                }
-                if (isset($response['invoice_details']['id'])) {
-                    $extra_data['two_invoice_id'] = $response['invoice_details']['id'];
-                }
-            }
+        $cart = new Cart((int) $attempt['id_cart']);
+        if (!Validate::isLoadedObject($cart) || (int) $cart->id_customer !== $session_customer_id) {
+            return;
         }
+        $this->context->cart = $cart;
+        $this->context->cookie->id_cart = (int) $cart->id;
+        $this->context->cookie->write();
+    }
 
-        $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', $extra_data);
-
-        // Keep the cart active for retry after cancellation.
-        $cart = new Cart((int)$attempt['id_cart']);
-        if (Validate::isLoadedObject($cart)) {
-            $this->context->cart = $cart;
-            $this->context->cookie->id_cart = (int)$cart->id;
-            $this->context->cookie->write();
-        }
-
-        $message = $this->module->l('Your order is cancelled.');
-        $this->errors[] = $message;
-        $this->redirectWithNotifications('index.php?controller=order');
+    /**
+     * @return string
+     */
+    private function getDeclineMessage()
+    {
+        return sprintf(
+            $this->module->l('%s could not approve this purchase. Please choose another payment method.'),
+            $this->module->getTwoBrandConfig('product_name')
+        );
     }
 
     private function handleLegacyOrderCancel($id_order)

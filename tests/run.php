@@ -5941,6 +5941,7 @@ require __DIR__ . '/ApiRefusalLogSpec.php';
 require __DIR__ . '/OrderTermWireSpec.php';
 require __DIR__ . '/CompanyLookupIdSpec.php';
 require __DIR__ . '/CancelAttemptOrderMatchSpec.php';
+require __DIR__ . '/CancelDeclineReturnSpec.php';
 
 $tests = [
     'OrderBuilderSpec::runAll' => [OrderBuilderSpec::class, 'runAll'],
@@ -6041,6 +6042,7 @@ $tests = [
     'OrderTermWireSpec::runAll' => [OrderTermWireSpec::class, 'runAll'],
     'CompanyLookupIdSpec::runAll' => [CompanyLookupIdSpec::class, 'runAll'],
     'CancelAttemptOrderMatchSpec::runAll' => [CancelAttemptOrderMatchSpec::class, 'runAll'],
+    'CancelDeclineReturnSpec::runAll' => [CancelDeclineReturnSpec::class, 'runAll'],
 ];
 
 $failed = 0;
