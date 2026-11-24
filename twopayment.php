@@ -24864,7 +24864,8 @@ class Twopayment extends PaymentModule
     }
 
     /**
-     * The token of the cart's newest attempt, or '' when the cart has none (TWO-27390).
+     * The token of the cart's newest attempt that did not fail, or '' when the cart has none
+     * (TWO-27390). A failed attempt never reached Two's checkout, so it supersedes nothing.
      *
      * @param int $id_cart
      * @return string
@@ -24877,7 +24878,7 @@ class Twopayment extends PaymentModule
 
         return (string) Db::getInstance()->getValue(
             'SELECT `attempt_token` FROM `' . _DB_PREFIX_ . 'twopayment_attempt` WHERE `id_cart` = ' . (int) $id_cart
-                . ' ORDER BY `id_attempt` DESC'
+                . ' AND `status` <> "FAILED" ORDER BY `id_attempt` DESC'
         );
     }
 

@@ -880,9 +880,9 @@ class TwoPendingRecovery
     }
 
     /**
-     * The buyer left an UNVERIFIED order: it is cancelled at Two, then the attempt is closed. Two's
-     * state is recorded as CANCELLED only once Two took the cancel, so a later return on this
-     * attempt sends the cancel again rather than trusting one that failed.
+     * The buyer left an UNVERIFIED order: it is cancelled at Two, then the attempt is closed. A
+     * cancel Two refuses leaves the attempt waiting, so the next return or the scheduled check
+     * reads Two again and settles it, and an order Two verified meanwhile is still placed.
      *
      * @return array{outcome:string,message:string,id_order:int,two_state:string}
      */
@@ -891,24 +891,23 @@ class TwoPendingRecovery
         $two_order_id = (string) $attempt['two_order_id'];
         $cancel = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', new Cart((int) $attempt['id_cart']));
         $http_status = is_array($cancel) && isset($cancel['http_status']) ? (int) $cancel['http_status'] : 0;
-        $cancelled_at_two = $http_status > 0 && $http_status < Twopayment::HTTP_STATUS_BAD_REQUEST;
-        if (!$cancelled_at_two) {
+        if ($http_status <= 0 || $http_status >= Twopayment::HTTP_STATUS_BAD_REQUEST) {
             PrestaShopLogger::addLog(
                 'TwoPayment: Attempt cancel failed for token ' . $attempt_token . ', Two order ' . $two_order_id .
                 ' - ' . $this->module->getTwoApiErrorDetail($cancel),
                 2
             );
+            $this->stamp($attempt_token, self::OUTCOME_WAITING);
+
+            return $this->result(self::OUTCOME_WAITING, '', 0, $two_state);
         }
-        $extra_data = array(
-            'two_order_state' => $cancelled_at_two ? 'CANCELLED' : $two_state,
-            'two_order_status' => $two_status,
-        );
+        $extra_data = array('two_order_state' => 'CANCELLED', 'two_order_status' => $two_status);
         $id_order = $this->linkedOrderId($attempt);
         if ($id_order > 0) {
             $extra_data['id_order'] = $id_order;
         }
         $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', $extra_data);
-        $this->module->syncLocalOrderStatusFromTwoState($id_order, 'CANCELLED', $cancelled_at_two);
+        $this->module->syncLocalOrderStatusFromTwoState($id_order, 'CANCELLED');
 
         return $this->result(self::OUTCOME_CANCELLED, '', $id_order, $two_state);
     }

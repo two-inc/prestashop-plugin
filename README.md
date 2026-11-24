@@ -387,10 +387,10 @@ Two's checkout sends a buyer it declined, and one who leaves it, to the module's
 | --- | --- |
 | VERIFIED or later | Sends the buyer to the confirmation URL, which places the order as a normal return does. |
 | CANCELLED, or a REJECTED or DECLINED status | Marks the payment cancelled. Nothing is sent to Two. |
-| UNVERIFIED | Cancels the order at Two, then marks the payment cancelled. |
-| No answer, an error, or a state the module does not act on | Nothing. |
+| UNVERIFIED | Cancels the order at Two, then marks the payment cancelled. If Two refuses the cancel, the payment keeps waiting, so the next return or the scheduled check settles it. |
+| No answer, an error, or a state the module does not act on | Nothing. The buyer is told the payment status could not be confirmed, no decline is claimed, and nothing is restored. |
 
-The buyer then lands on the payment step with "Two could not approve this purchase. Please choose another payment method." (the brand name comes from `brands/two.php`), and Two stays offered. The cart goes back into the session only when the session belongs to the payment's customer, guest or registered; a link opened in another browser restores nothing. A second click changes nothing, and nor does a link to an older payment once a newer one, or another order, holds the cart.
+Otherwise the buyer lands on the payment step with "Two could not approve this purchase. Please choose another payment method." (the brand name comes from `brands/two.php`), and Two stays offered. The cart goes back into the session only when the session belongs to the payment's customer, guest or registered; a link opened in another browser restores nothing. A second click changes nothing, and nor does a link to an older payment once a newer one, or another order, holds the cart.
 
 ### Order Management
 

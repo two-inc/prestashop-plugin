@@ -16,6 +16,7 @@ class TwoCancelDeclineReturnHarness extends TwopaymentTestHarness
     public $twoOrder = null;
     public $cancelHttpStatus = 200;
     public $latestToken = '';
+    public $authorized = true;
     public $cartOrderId = 0;
     /** @var array|false */
     public $cartOrderPaymentRow = false;
@@ -69,6 +70,7 @@ class TwoCancelDeclineReturnHarness extends TwopaymentTestHarness
             isset($extra_data['two_order_state']) ? (string) $extra_data['two_order_state'] : '',
             isset($extra_data['id_order']) ? (int) $extra_data['id_order'] : 0,
         ];
+        $this->attempt['status'] = (string) $status;
 
         return true;
     }
@@ -87,9 +89,10 @@ class TwoCancelDeclineReturnHarness extends TwopaymentTestHarness
         return true;
     }
 
+    /** With $authorized false, the module's own check judges the request. */
     public function isTwoAttemptCallbackAuthorized($attempt, $provided_secure_key = '', $context_customer_id = 0, $context_customer_secure_key = '')
     {
-        return true;
+        return $this->authorized || parent::isTwoAttemptCallbackAuthorized($attempt, $provided_secure_key, $context_customer_id, $context_customer_secure_key);
     }
 }
 
@@ -110,6 +113,8 @@ final class CancelDeclineReturnSpec
     public static function runAll(): void
     {
         self::testDeclineReturnTable();
+        self::testRefusedCancelIsSentAgainOnTheNextReturn();
+        self::testWrongKeyChangesNothing();
     }
 
     private static function testDeclineReturnTable(): void
@@ -120,6 +125,8 @@ final class CancelDeclineReturnSpec
         $confirm = 'https://shop.local/module/twopayment/confirmation?attempt_token=' . self::TOKEN . '&key=key';
         $declined = 'Two could not approve this purchase. Please choose another payment method.';
         $stale = 'This payment attempt has already been finalized.';
+        $lookupFailed = 'Unable to retrieve the order payment information please contact store owner.';
+        $unverified = 'Payment has not been verified yet. Please try again or contact support.';
         $closed = [['CANCELLED', 'CANCELLED', 0]];
         $own = self::CUSTOMER_ID;
         $cart = self::CART_ID;
@@ -136,10 +143,11 @@ final class CancelDeclineReturnSpec
             [[], ['state' => 'UNVERIFIED', 'status' => 'REJECTED'], 200, '', null, $own, $cart, [$get], $closed, [], $order, [$declined], $cart, 'REJECTED: closed here, no cancel sent'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'DECLINED'], 200, '', null, $own, $cart, [$get], $closed, [], $order, [$declined], $cart, 'DECLINED: closed here, no cancel sent'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 200, '', null, $own, $cart, [$get, $post], $closed, [], $order, [$declined], $cart, 'UNVERIFIED: cancelled at Two, then closed'],
-            [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 500, '', null, $own, $cart, [$get, $post], [['CANCELLED', 'UNVERIFIED', 0]], [], $order, [$declined], $cart,
-                'UNVERIFIED, cancel refused: closed with Two\'s last state, so a later return cancels again'],
-            [[], null, 200, '', null, $own, $cart, [$get], [], [], $order, [$declined], $cart, 'Two cannot be read: nothing cancelled or written'],
-            [[], ['state' => 'REFUNDED', 'status' => 'APPROVED'], 200, '', null, $own, $cart, [$get], [], [], $order, [$declined], $cart, 'a state the module does not act on changes nothing'],
+            [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 500, '', null, $own, $cart, [$get, $post], [], [], $order, [$declined], $cart,
+                'UNVERIFIED, cancel refused: the attempt stays waiting, so a later return or the scheduled check settles it'],
+            [[], null, 200, '', null, $own, $other, [$get], [], [], $order, [$lookupFailed], $other, 'Two cannot be read: nothing written, no decline claimed, nothing restored'],
+            [[], ['state' => 'REFUNDED', 'status' => 'APPROVED'], 200, '', null, $own, $other, [$get], [], [], $order, [$unverified], $other,
+                'a state the module does not act on: nothing written, no decline claimed, nothing restored'],
             [['status' => 'CANCELLED', 'two_order_state' => 'CANCELLED'], null, 200, '', null, $own, $other, [], [], [], $order, [$declined], $cart, 'second click: the closed attempt changes nothing at Two or here'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 200, 'attempt-newer', null, $own, $other, [], [], [], $order, [$stale], $other, 'stale: a newer attempt holds the cart, so nothing changes'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 200, '', ['two_order_id' => 'two-other'], $own, $other, [], [], [], $order, [$stale], $other, 'stale: another checkout ordered the cart, so nothing changes'],
@@ -152,20 +160,7 @@ final class CancelDeclineReturnSpec
         ];
 
         foreach ($cases as [$overrides, $twoOrder, $cancelHttp, $latest, $cartOrderRow, $sessionCustomer, $sessionCart, $twoCalls, $writes, $localCancels, $redirect, $messages, $cartAfter, $description]) {
-            StubStore::reset();
-            Tools::resetTestValues();
-            StubStore::$customers[self::CUSTOMER_ID] = ['email' => 'buyer@example.com', 'firstname' => 'Eva', 'lastname' => 'Martin', 'secure_key' => 'key', 'loaded' => true];
-            StubStore::$customers[555] = ['email' => 'other@example.com', 'firstname' => 'Ola', 'lastname' => 'Berg', 'secure_key' => 'other', 'loaded' => true];
-            StubStore::$carts[self::CART_ID] = ['id_customer' => self::CUSTOMER_ID, 'id_currency' => 978, 'id_address_invoice' => 0, 'id_address_delivery' => 0, 'id_carrier' => 0, 'id_lang' => 1];
-            StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
-            if ($cartOrderRow !== null) {
-                StubStore::$orders[self::ORDER_ID] = ['id_cart' => self::CART_ID, 'id_customer' => self::CUSTOMER_ID, 'total_paid' => 100.0, 'module' => 'twopayment'];
-            }
-            $context = Context::getContext();
-            $context->cookie = new Cookie();
-            $context->cookie->id_cart = $sessionCart;
-            $context->customer = new Customer($sessionCustomer);
-
+            $context = self::resetStubs($sessionCustomer, $sessionCart, $cartOrderRow !== null);
             $module = new TwoCancelDeclineReturnHarness();
             $module->attempt = array_merge(self::attempt(), $overrides);
             $module->twoOrder = $twoOrder;
@@ -174,23 +169,95 @@ final class CancelDeclineReturnSpec
             $module->cartOrderId = $cartOrderRow !== null ? self::ORDER_ID : 0;
             $module->cartOrderPaymentRow = $cartOrderRow !== null ? $cartOrderRow : false;
 
-            $controller = new TwopaymentCancelModuleFrontController();
-            $controller->module = $module;
-            $redirectedTo = null;
-            try {
-                (new ReflectionMethod($controller, 'handleAttemptCancel'))->invokeArgs($controller, [self::TOKEN]);
-            } catch (StubRedirect $e) {
-                $redirectedTo = $e->getMessage();
-            }
+            [$redirectedTo, $errors] = self::returnOnce($module);
 
             TinyAssert::same($twoCalls, $module->twoCalls, $description . ': Two calls');
             TinyAssert::same($writes, $module->statusWrites, $description . ': attempt writes');
             TinyAssert::same($localCancels, $module->localCancels, $description . ': local orders cancelled');
             TinyAssert::same($redirect, $redirectedTo, $description . ': redirect');
-            TinyAssert::same($messages, $controller->errors, $description . ': buyer message');
+            TinyAssert::same($messages, $errors, $description . ': buyer message');
             TinyAssert::same($cartAfter, (int) $context->cookie->id_cart, $description . ': session cart');
             TinyAssert::same([], array_keys(array_filter(StubStore::$dbLocks)), $description . ': the cart lock is released');
         }
+    }
+
+    /**
+     * A cancel Two refuses leaves the attempt waiting, so the next return reads Two again and sends
+     * the cancel again; once Two takes it, a further return changes nothing.
+     */
+    private static function testRefusedCancelIsSentAgainOnTheNextReturn(): void
+    {
+        self::resetStubs(self::CUSTOMER_ID, self::CART_ID, false);
+        $module = new TwoCancelDeclineReturnHarness();
+        $module->attempt = self::attempt();
+        $module->twoOrder = ['state' => 'UNVERIFIED', 'status' => 'APPROVED'];
+        $get = 'GET /v1/order/two-own';
+        $post = 'POST /v1/order/two-own/cancel';
+
+        $module->cancelHttpStatus = 503;
+        self::returnOnce($module);
+        TinyAssert::same([$get, $post], $module->twoCalls, 'refused: the cancel is sent once');
+        TinyAssert::same('REDIRECTED', $module->attempt['status'], 'refused: the attempt stays waiting');
+
+        $module->cancelHttpStatus = 200;
+        self::returnOnce($module);
+        TinyAssert::same([$get, $post, $get, $post], $module->twoCalls, 'next return: Two is read and the cancel sent again');
+        TinyAssert::same([['CANCELLED', 'CANCELLED', 0]], $module->statusWrites, 'next return: the attempt is closed');
+
+        self::returnOnce($module);
+        TinyAssert::same(4, count($module->twoCalls), 'a return after the close sends Two nothing');
+    }
+
+    /** A link whose key is not the attempt's changes nothing. */
+    private static function testWrongKeyChangesNothing(): void
+    {
+        $context = self::resetStubs(self::CUSTOMER_ID, self::OTHER_CART_ID, false);
+        Tools::setTestValue('key', 'wrong');
+        $module = new TwoCancelDeclineReturnHarness();
+        $module->authorized = false;
+        $module->attempt = self::attempt();
+        $module->twoOrder = ['state' => 'UNVERIFIED', 'status' => 'DECLINED'];
+
+        [, $errors] = self::returnOnce($module);
+        TinyAssert::same([], $module->twoCalls, 'wrong key: Two is not called');
+        TinyAssert::same([], $module->statusWrites, 'wrong key: nothing written');
+        TinyAssert::same(['Unable to validate this cancellation callback. Please retry checkout.'], $errors, 'wrong key: the buyer is told');
+        TinyAssert::same(self::OTHER_CART_ID, (int) $context->cookie->id_cart, 'wrong key: nothing restored');
+    }
+
+    private static function resetStubs(int $sessionCustomer, int $sessionCart, bool $withOrder): Context
+    {
+        StubStore::reset();
+        Tools::resetTestValues();
+        StubStore::$customers[self::CUSTOMER_ID] = ['email' => 'buyer@example.com', 'firstname' => 'Eva', 'lastname' => 'Martin', 'secure_key' => 'key', 'loaded' => true];
+        StubStore::$customers[555] = ['email' => 'other@example.com', 'firstname' => 'Ola', 'lastname' => 'Berg', 'secure_key' => 'other', 'loaded' => true];
+        StubStore::$carts[self::CART_ID] = ['id_customer' => self::CUSTOMER_ID, 'id_currency' => 978, 'id_address_invoice' => 0, 'id_address_delivery' => 0, 'id_carrier' => 0, 'id_lang' => 1];
+        StubStore::$currencies[978] = ['iso_code' => 'EUR', 'loaded' => true];
+        if ($withOrder) {
+            StubStore::$orders[self::ORDER_ID] = ['id_cart' => self::CART_ID, 'id_customer' => self::CUSTOMER_ID, 'total_paid' => 100.0, 'module' => 'twopayment'];
+        }
+        $context = Context::getContext();
+        $context->cookie = new Cookie();
+        $context->cookie->id_cart = $sessionCart;
+        $context->customer = new Customer($sessionCustomer);
+
+        return $context;
+    }
+
+    /**
+     * @return array{0:string|null,1:array<int,string>} where the controller redirected, and the buyer's messages
+     */
+    private static function returnOnce(TwoCancelDeclineReturnHarness $module): array
+    {
+        $controller = new TwopaymentCancelModuleFrontController();
+        $controller->module = $module;
+        try {
+            (new ReflectionMethod($controller, 'handleAttemptCancel'))->invokeArgs($controller, [self::TOKEN]);
+        } catch (StubRedirect $e) {
+            return [$e->getMessage(), $controller->errors];
+        }
+
+        return [null, $controller->errors];
     }
 
     private static function attempt(): array

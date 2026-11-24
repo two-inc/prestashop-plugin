@@ -122,6 +122,12 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             $this->errors[] = $this->module->l('This payment attempt has already been finalized.');
             $this->redirectWithNotifications('index.php?controller=order');
         }
+        if ($outcome === TwoPendingRecovery::OUTCOME_LOOKUP_FAILED || $outcome === TwoPendingRecovery::OUTCOME_UNCHANGED) {
+            // Two's state is unknown or not one this module acts on: no decline is claimed, and the
+            // attempt stays waiting for the scheduled check.
+            $this->errors[] = $result['message'];
+            $this->redirectWithNotifications('index.php?controller=order');
+        }
 
         $this->restoreCartIntoOwnSession($attempt);
         $this->errors[] = $this->getDeclineMessage();
