@@ -563,6 +563,8 @@ final class PendingRecoverySpec
             [$own, $stranger, $strangerCart, $placed, true, $home, $placedNotice, [], $stranger, $strangerCart, 0, 0, 'a check holds the lock, another customer\'s session: notice'],
             [$own, $stranger, $strangerCart, $closed, false, $home, [], $closedNotice, $stranger, $strangerCart, 0, 0, 'cancelled, another customer\'s session: not told it is cancelled'],
             [$own, $stranger, $strangerCart, $closed, true, $home, [], $closedNotice, $stranger, $strangerCart, 0, 0, 'cancelled while a check holds the lock, another customer\'s session: not told'],
+            [$own, $stranger, $strangerCart, [], true, $home, [], $closedNotice, $stranger, $strangerCart, 0, 0, 'still being checked, another customer\'s session: not asked to reload its own checkout'],
+            [$own, $stranger, $strangerCart, ['cart_snapshot_hash' => 'stale-hash'], false, $home, [], $closedNotice, $stranger, $strangerCart, 0, 0, 'cart changed, another customer\'s session: not sent to its own checkout'],
         ];
         foreach ($rows as [$buyer, $sessionCustomer, $sessionCart, $overrides, $busy, $redirect, $notices, $infos, $customerAfter, $cartAfter, $intentClears, $created, $description]) {
             $module = self::module(['id_customer' => $buyer] + $overrides);
@@ -588,7 +590,10 @@ final class PendingRecoverySpec
             TinyAssert::same($intentClears, $module->intentClears, $description . ': intent verdict cleared');
             TinyAssert::same($created, $module->created, $description . ': orders placed');
             TinyAssert::same($created, count($module->confirms), $description . ': confirmed with Two');
-            TinyAssert::same([], $module->cancels, $description . ': nothing cancelled at Two');
+            if (!isset($overrides['cart_snapshot_hash'])) {
+                // A changed cart is refused at Two whoever opens the link, as before.
+                TinyAssert::same([], $module->cancels, $description . ': nothing cancelled at Two');
+            }
         }
         StubStore::$dbLocks = [];
     }

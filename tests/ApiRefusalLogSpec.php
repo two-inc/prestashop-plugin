@@ -419,6 +419,8 @@ final class ApiRefusalLogSpec
         foreach ($cases as [$method, $arg, $reference, $description]) {
             $module = self::checkoutModule();
             $module->lookup = $refusal;
+            // The buyer returns in their own session (TWO-27393).
+            Context::getContext()->customer = new Customer(self::CUSTOMER_ID);
             $controller = new TwopaymentConfirmationModuleFrontController();
             $controller->module = $module;
             self::runToRedirect($controller, $method, [$arg]);
@@ -430,6 +432,7 @@ final class ApiRefusalLogSpec
             // A 200 whose body carries an error fails the lookup too, and is logged as a warning.
             $module = self::checkoutModule();
             $module->lookup = ['http_status' => 200, 'error_code' => 'LOOKUP_ERROR', 'error_details' => self::DETAIL];
+            Context::getContext()->customer = new Customer(self::CUSTOMER_ID);
             $controller = new TwopaymentConfirmationModuleFrontController();
             $controller->module = $module;
             self::runToRedirect($controller, $method, [$arg]);

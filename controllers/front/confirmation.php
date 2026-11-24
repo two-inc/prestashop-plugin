@@ -69,7 +69,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 $this->redirectToPlacedOrder($order, $own_session);
             }
         }
-        if (!$own_session && in_array($result['outcome'], array(TwoPendingRecovery::OUTCOME_CANCELLED, TwoPendingRecovery::OUTCOME_DECLINED), true)) {
+        if (!$own_session) {
             $this->redirectHomeWithoutOrder();
         }
 
@@ -81,9 +81,9 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
 
     /**
      * Another check holds this attempt and did not finish within the wait. A placed order goes to
-     * its confirmation page, a cancelled one says so to the buyer's own session, and anything else
-     * asks the buyer to reload: the buyer is never shown a success page for an order that is not
-     * placed.
+     * its confirmation page, a cancelled one says so, and anything else asks the buyer to reload:
+     * the buyer is never shown a success page for an order that is not placed. A session that is
+     * not the buyer's is told none of this.
      *
      * @param string $attempt_token
      * @param bool $own_session
@@ -100,7 +100,7 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
                 $this->redirectToPlacedOrder($order, $own_session);
             }
         }
-        if ($status === 'CANCELLED' && !$own_session) {
+        if (!$own_session) {
             $this->redirectHomeWithoutOrder();
         }
         $this->errors[] = $status === 'CANCELLED'
@@ -288,8 +288,8 @@ class TwopaymentConfirmationModuleFrontController extends ModuleFrontController
     }
 
     /**
-     * A session that is not the buyer's is not told what became of an order that was not placed
-     * (TWO-27393).
+     * A session that is not the buyer's is not told what became of an order that was not placed,
+     * nor sent to its own checkout (TWO-27393).
      *
      * @return void
      */
