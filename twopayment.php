@@ -24864,6 +24864,24 @@ class Twopayment extends PaymentModule
     }
 
     /**
+     * The token of the cart's newest attempt, or '' when the cart has none (TWO-27390).
+     *
+     * @param int $id_cart
+     * @return string
+     */
+    public function getTwoLatestAttemptTokenForCart($id_cart)
+    {
+        if ((int) $id_cart <= 0) {
+            return '';
+        }
+
+        return (string) Db::getInstance()->getValue(
+            'SELECT `attempt_token` FROM `' . _DB_PREFIX_ . 'twopayment_attempt` WHERE `id_cart` = ' . (int) $id_cart
+                . ' ORDER BY `id_attempt` DESC'
+        );
+    }
+
+    /**
      * A stamp-only write of the pending check's own columns: never the status, never updated_at,
      * so a check that changes nothing neither moves the attempt nor extends its retention.
      *

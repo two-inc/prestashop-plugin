@@ -697,3 +697,4 @@ $_MODULE['<{twopayment}prestashop>twopayment_3f8d1bf46631d5d4a32b13ce3899b644'] 
 $_MODULE['<{twopayment}prestashop>twopayment_a3f42b5a2627542e6fc66d06488dfe1a'] = 'Een andere checkout heeft al een bestelling voor deze winkelwagen geplaatst, dus deze betaling is niet geplaatst. Annuleren bij %s is mislukt; de volgende controle probeert het opnieuw.';
 $_MODULE['<{twopayment}prestashop>twopayment_c6332feeb2de92843b7da5256da75803'] = 'Het bevestigen van de bestelling bij %s is mislukt, dus er is niets geplaatst. De volgende controle probeert het opnieuw; zie het modulelogboek.';
 $_MODULE['<{twopayment}prestashop>twopayment_f45eeca8a2b66a467c04d061463e23af'] = 'Schakel over naar de winkel van de bestelling om hem te controleren.';
+$_MODULE['<{twopayment}prestashop>twopayment_adfb270be8c126186be33b615f3d347e'] = '%s kon deze aankoop niet goedkeuren. Kies een andere betaalmethode.';

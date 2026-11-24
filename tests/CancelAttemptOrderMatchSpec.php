@@ -147,16 +147,18 @@ final class CancelAttemptOrderMatchSpec
         $unlinked = self::attempt(0, 'CREATED');
         $linked = self::attempt(self::ORDER_ID, 'CONFIRMED');
         $busy = 'This payment is still being processed, so it was not cancelled. Check your order history in a moment.';
-        $cancelled = 'Your order is cancelled.';
+        $declined = 'Two could not approve this purchase. Please choose another payment method.';
+        $stale = 'This payment attempt has already been finalized.';
 
+        // Two holds the order CANCELLED, so the return closes it here without sending a cancel (TWO-27390).
         $cases = [
             // [lock held elsewhere, attempt reads (first before the lock, then under it), cart order's Two id, Two calls, status writes, buyer message, description]
             [true, [$unlinked], 'two-own', [], [], $busy, 'placement holds the lock: nothing is sent to Two and nothing written'],
-            [true, [self::attempt(0, 'CANCELLED')], 'two-own', [], [], $cancelled, 'busy, but the attempt is already cancelled: the buyer is told so'],
-            [false, [$unlinked, $linked], 'two-own', ['/v1/order/two-own/cancel'], [['status' => 'CANCELLED', 'id_order' => self::ORDER_ID]], $cancelled,
-                'placement linked the order while the cancel waited: the re-read takes the placed order\'s path'],
-            [false, [$unlinked], 'two-other', ['/v1/order/two-own/cancel'], [['status' => 'CANCELLED', 'id_order' => 0]], $cancelled,
-                'stale attempt: only its own Two order is cancelled, under the lock'],
+            [true, [self::attempt(0, 'CANCELLED')], 'two-own', [], [], $declined, 'busy, but the attempt is already closed: the buyer gets the decline message'],
+            [false, [$unlinked, $linked], 'two-own', [], [['status' => 'CANCELLED', 'id_order' => self::ORDER_ID]], $declined,
+                'placement linked the order while the cancel waited: the re-read closes the placed order'],
+            [false, [$unlinked], 'two-other', [], [], $stale,
+                'stale attempt: another checkout ordered the cart, so nothing is sent or written'],
         ];
 
         foreach ($cases as [$heldElsewhere, $reads, $cartOrderTwoId, $twoCalls, $statusWrites, $message, $description]) {

@@ -452,19 +452,21 @@ final class ApiRefusalLogSpec
         TinyAssert::false($module->confirmTwoOrder(self::TWO_ORDER, 'confirmation')['success'], 'the confirm fails');
         TinyAssert::true(self::loggedOnce('TwoPayment: Order confirmation failed for Two order ID: ' . self::TWO_ORDER . ', Error: HTTP 400 ' . self::DETAIL), 'a failed confirm logs Two\'s own words');
 
-        // [order the attempt is linked to, the line logged, description].
+        // [controller method, its argument, the line logged, description]. Two holds the attempt's
+        // order UNVERIFIED, so the attempt return sends the cancel (TWO-27390).
         $cases = [
-            [0, 'TwoPayment: Attempt cancel failed for token ' . self::TOKEN . ', Two order ' . self::TWO_ORDER . ' - ' . $reason, 'an attempt cancel'],
-            [self::ORDER_ID, 'TwoPayment: Legacy cancel callback could not confirm CANCELLED provider state for order ' . self::ORDER_ID
+            ['handleAttemptCancel', self::TOKEN, 'TwoPayment: Attempt cancel failed for token ' . self::TOKEN . ', Two order ' . self::TWO_ORDER . ' - ' . $reason, 'an attempt cancel'],
+            ['handleLegacyOrderCancel', self::ORDER_ID, 'TwoPayment: Legacy cancel callback could not confirm CANCELLED provider state for order ' . self::ORDER_ID
                 . ', Two order ' . self::TWO_ORDER . ', cancel: ' . $reason . ', fetch_http=200', 'a placed order cancel'],
         ];
-        foreach ($cases as [$attemptOrderId, $line, $description]) {
+        foreach ($cases as [$method, $arg, $line, $description]) {
             $module = self::checkoutModule();
             $module->cancel = $refusal;
-            $module->attemptOrderId = $attemptOrderId;
+            $module->attempt['status'] = 'REDIRECTED';
+            $module->lookup = ['http_status' => 200, 'state' => 'UNVERIFIED', 'status' => 'APPROVED'];
             $controller = new TwopaymentCancelModuleFrontController();
             $controller->module = $module;
-            self::runToRedirect($controller, 'handleAttemptCancel', [self::TOKEN]);
+            self::runToRedirect($controller, $method, [$arg]);
 
             TinyAssert::true(self::loggedOnce($line), 'the log carries Two\'s own words: ' . $description);
             foreach ($controller->errors as $error) {

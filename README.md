@@ -379,6 +379,19 @@ Two cases are left to the merchant rather than settled unattended. If the cart n
 
 A buyer who returns while Two still reports UNVERIFIED gets the same refusal as before and keeps the cart; the payment stays in the list so a later verification is still picked up.
 
+#### 5. A declined buyer pays another way
+
+Two's checkout sends a buyer it declined, and one who leaves it, to the module's cancel URL; verification failure uses the same URL (TWO-27390). No PrestaShop order exists yet, so the buyer's basket is still the cart. The return takes the cart lock, reads Two's state, and never acts on the click alone:
+
+| Two reports | What the module does |
+| --- | --- |
+| VERIFIED or later | Sends the buyer to the confirmation URL, which places the order as a normal return does. |
+| CANCELLED, or a REJECTED or DECLINED status | Marks the payment cancelled. Nothing is sent to Two. |
+| UNVERIFIED | Cancels the order at Two, then marks the payment cancelled. |
+| No answer, an error, or a state the module does not act on | Nothing. |
+
+The buyer then lands on the payment step with "Two could not approve this purchase. Please choose another payment method." (the brand name comes from `brands/two.php`), and Two stays offered. The cart goes back into the session only when the session belongs to the payment's customer, guest or registered; a link opened in another browser restores nothing. A second click changes nothing, and nor does a link to an older payment once a newer one, or another order, holds the cart.
+
 ### Order Management
 
 #### Order updates

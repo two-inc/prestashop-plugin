@@ -49,6 +49,7 @@ class TwoPendingRecovery
     const OUTCOME_DUPLICATE_PENDING = 'duplicate_pending';
     const OUTCOME_CONFIRM_FAILED = 'confirm_failed';
     const OUTCOME_SINGLE_SHOP = 'single_shop';
+    const OUTCOME_STALE = 'stale';
 
     const ACTION_CONFIRM = 'confirm';
     const ACTION_PLACE = 'place';
@@ -220,6 +221,58 @@ class TwoPendingRecovery
         }
 
         return $result;
+    }
+
+    /**
+     * The buyer came back through the cancel URL, where Two's checkout sends a declined buyer as
+     * well as one who left it (TWO-27390). Two's state decides, never the click: VERIFIED or later
+     * is the confirmation route's to settle (ACTION_CONFIRM is returned and nothing is written),
+     * CANCELLED and a REJECTED or DECLINED status close the attempt without sending Two a cancel,
+     * and UNVERIFIED is cancelled at Two, then closed. An attempt already closed changes nothing,
+     * and nor does one a newer attempt or another order on its cart has superseded (OUTCOME_STALE).
+     * The caller holds the cart lock.
+     *
+     * @param string $attempt_token
+     * @return array{outcome:string,message:string,id_order:int,two_state:string}
+     */
+    public function resolveCancelReturnLocked($attempt_token)
+    {
+        $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
+        if (!is_array($attempt)) {
+            return $this->result(self::OUTCOME_FAILED);
+        }
+        if (strtoupper(trim((string) $attempt['status'])) === 'CANCELLED') {
+            return $this->result(self::OUTCOME_NOT_WAITING);
+        }
+        if ($this->linkedOrderId($attempt) <= 0) {
+            if ($this->isSuperseded($attempt_token, $attempt)) {
+                return $this->result(self::OUTCOME_STALE);
+            }
+            if (!self::isWaiting($attempt)) {
+                return $this->result(self::OUTCOME_NOT_WAITING);
+            }
+        }
+
+        $response = $this->module->setTwoPaymentRequest('/v1/order/' . $attempt['two_order_id'], [], 'GET');
+        if ($this->module->getTwoErrorMessage($response)) {
+            return $this->lookupFailed($attempt_token, $attempt, new Cart((int) $attempt['id_cart']), $response, self::TRIGGER_BUYER_RETURN);
+        }
+        $two_state = isset($response['state']) ? strtoupper((string) $response['state']) : '';
+        $two_status = isset($response['status']) ? (string) $response['status'] : '';
+        $action = self::classifyTwoState($two_state, $two_status);
+        if ($action === self::ACTION_CONFIRM || $action === self::ACTION_PLACE) {
+            return $this->result(self::ACTION_CONFIRM, '', 0, $two_state);
+        }
+        if ($action === self::ACTION_CANCEL || $action === self::ACTION_DECLINED) {
+            $outcome = $action === self::ACTION_CANCEL ? self::OUTCOME_CANCELLED : self::OUTCOME_DECLINED;
+
+            return $this->cancelLocally($attempt_token, $attempt, $two_state, $two_status, $outcome, self::TRIGGER_BUYER_RETURN);
+        }
+        if ($action === self::ACTION_WAIT) {
+            return $this->cancelUnverified($attempt_token, $attempt, $two_state, $two_status);
+        }
+
+        return $this->leaveWaiting($attempt_token, $attempt, $two_state, $action, self::TRIGGER_BUYER_RETURN);
     }
 
     /**
@@ -827,6 +880,57 @@ class TwoPendingRecovery
     }
 
     /**
+     * The buyer left an UNVERIFIED order: it is cancelled at Two, then the attempt is closed. Two's
+     * state is recorded as CANCELLED only once Two took the cancel, so a later return on this
+     * attempt sends the cancel again rather than trusting one that failed.
+     *
+     * @return array{outcome:string,message:string,id_order:int,two_state:string}
+     */
+    private function cancelUnverified($attempt_token, array $attempt, $two_state, $two_status)
+    {
+        $two_order_id = (string) $attempt['two_order_id'];
+        $cancel = $this->module->sendTwoOrderRequest(TwoOrderPostprocessing::REQUEST_CANCEL, 'buyer_cancel', '/v1/order/' . $two_order_id . '/cancel', [], 'POST', new Cart((int) $attempt['id_cart']));
+        $http_status = is_array($cancel) && isset($cancel['http_status']) ? (int) $cancel['http_status'] : 0;
+        $cancelled_at_two = $http_status > 0 && $http_status < Twopayment::HTTP_STATUS_BAD_REQUEST;
+        if (!$cancelled_at_two) {
+            PrestaShopLogger::addLog(
+                'TwoPayment: Attempt cancel failed for token ' . $attempt_token . ', Two order ' . $two_order_id .
+                ' - ' . $this->module->getTwoApiErrorDetail($cancel),
+                2
+            );
+        }
+        $extra_data = array(
+            'two_order_state' => $cancelled_at_two ? 'CANCELLED' : $two_state,
+            'two_order_status' => $two_status,
+        );
+        $id_order = $this->linkedOrderId($attempt);
+        if ($id_order > 0) {
+            $extra_data['id_order'] = $id_order;
+        }
+        $this->module->updateTwoCheckoutAttemptStatus($attempt_token, 'CANCELLED', $extra_data);
+        $this->module->syncLocalOrderStatusFromTwoState($id_order, 'CANCELLED', $cancelled_at_two);
+
+        return $this->result(self::OUTCOME_CANCELLED, '', $id_order, $two_state);
+    }
+
+    /**
+     * A newer attempt holds this attempt's cart, or another checkout already ordered it.
+     *
+     * @param string $attempt_token
+     * @param array $attempt
+     * @return bool
+     */
+    private function isSuperseded($attempt_token, array $attempt)
+    {
+        $latest = trim((string) $this->module->getTwoLatestAttemptTokenForCart((int) $attempt['id_cart']));
+        if ($latest !== '' && $latest !== trim((string) $attempt_token)) {
+            return true;
+        }
+
+        return $this->foreignCartOrderId(new Cart((int) $attempt['id_cart']), $attempt) > 0;
+    }
+
+    /**
      * UNVERIFIED waits for the buyer; REFUNDED or a state this module does not know changes nothing,
      * and is logged as a warning once per state.
      *
@@ -1339,11 +1443,12 @@ class TwoPendingRecovery
         }
 
         $link = Context::getContext()->link;
+        $cancel_url = $link->getModuleLink($this->module->name, 'cancel', $cancel_params, true);
         $comparison_urls = array(
             'merchant_confirmation_url' => $link->getModuleLink($this->module->name, 'confirmation', $confirm_params, true),
-            'merchant_cancel_order_url' => $link->getModuleLink($this->module->name, 'cancel', $cancel_params, true),
+            'merchant_cancel_order_url' => $cancel_url,
             'merchant_edit_order_url' => '',
-            'merchant_order_verification_failed_url' => '',
+            'merchant_order_verification_failed_url' => $cancel_url,
             'merchant_invoice_url' => '',
             'merchant_shipping_document_url' => '',
         );
