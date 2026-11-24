@@ -94,14 +94,18 @@ test.describe("Payments the buyer verified but never returned from", () => {
     expect(state.current_state, "at the verified status").toBe(state.verified_status);
     expect(requestsTo(seeded.two_order_id, "/confirm"), "one confirm request").toHaveLength(1);
 
-    // A late return by the buyer is sent to the placed order, with no second order or confirm.
+    // A late return of the link from a session that is not the buyer's (this request carries no
+    // customer) binds nothing and names no order detail (TWO-27393): it goes to the shop's home page
+    // with a notice, with no second order or confirm.
     const key = helper<{ attempt: { customer_secure_key: string } }>("state", seeded.token).attempt.customer_secure_key;
     const back = await page.request.get(
       `${STORE_URL}/index.php?fc=module&module=twopayment&controller=confirmation&attempt_token=${seeded.token}&key=${encodeURIComponent(key)}`,
       { maxRedirects: 0 }
     );
     expect(back.status(), "the late return redirects").toBe(302);
-    expect(back.headers()["location"] ?? "", "to the order confirmation, never an error").toMatch(/order-confirmation/);
+    const location = back.headers()["location"] ?? "";
+    expect(location, "never to the order or an error").not.toMatch(/order-confirmation|id_order|controller=order/);
+    expect(location, "to the home page").toMatch(/\/index\.php$/);
     state = helper<State>("state", seeded.token);
     expect(state.orders_for_cart, "still one order for the cart").toBe(1);
     expect(requestsTo(seeded.two_order_id, "/confirm"), "still one confirm request").toHaveLength(1);
