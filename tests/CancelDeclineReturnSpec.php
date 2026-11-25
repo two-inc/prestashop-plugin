@@ -99,8 +99,9 @@ class TwoCancelDeclineReturnHarness extends TwopaymentTestHarness
 /**
  * TWO-27390: Two's checkout sends a declined buyer to the cancel URL. The buyer wants to pay for
  * the same basket another way, so the return reads Two's state rather than trusting the click,
- * closes the attempt the way that state asks, and puts the buyer on the payment step with the
- * decline message. The cart goes back into the session only when it is the buyer's own.
+ * closes the attempt the way that state asks, and shows the buyer the decline message. The cart
+ * goes back into the session only when it is the buyer's own, and then the buyer is on the payment
+ * step; a session with no basket goes to the cart page, so the message survives (TWO-27410).
  */
 final class CancelDeclineReturnSpec
 {
@@ -108,6 +109,7 @@ final class CancelDeclineReturnSpec
     private const CUSTOMER_ID = 27391;
     private const ORDER_ID = 27392;
     private const OTHER_CART_ID = 99;
+    private const EMPTY_CART_ID = 98;
     private const TOKEN = 'attempt-27390';
 
     public static function runAll(): void
@@ -131,6 +133,8 @@ final class CancelDeclineReturnSpec
         $own = self::CUSTOMER_ID;
         $cart = self::CART_ID;
         $other = self::OTHER_CART_ID;
+        $empty = self::EMPTY_CART_ID;
+        $cartPage = 'index.php?controller=cart&action=show';
         $linked = ['id_order' => self::ORDER_ID, 'status' => 'CONFIRMED'];
         $linkedRow = ['two_order_id' => 'two-own'];
 
@@ -157,6 +161,14 @@ final class CancelDeclineReturnSpec
             [[], ['state' => 'UNVERIFIED', 'status' => 'DECLINED'], 200, '', null, 0, $other, [$get], $closed, [], $order, [$declined], $other, 'no session: closed and told, the cart is not restored'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'DECLINED'], 200, '', null, 555, $other, [$get], $closed, [], $order, [$declined], $other, 'another customer\'s session: closed and told, the cart is not restored'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'DECLINED'], 200, '', null, $own, $other, [$get], $closed, [], $order, [$declined], $cart, 'the buyer\'s own session on another cart: the attempt\'s cart is restored'],
+            // TWO-27410: with no basket to land on, the message goes straight to the cart page.
+            [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 200, '', null, 0, 0, [$get, $post], $closed, [], $cartPage, [$declined], 0,
+                'another browser, no storefront cookie: cancelled at Two, told on the cart page'],
+            [[], ['state' => 'UNVERIFIED', 'status' => 'DECLINED'], 200, '', null, 555, $empty, [$get], $closed, [], $cartPage, [$declined], $empty,
+                'another customer\'s session with an empty cart: told on the cart page'],
+            [[], ['state' => 'UNVERIFIED', 'status' => 'DECLINED'], 200, '', null, $own, $empty, [$get], $closed, [], $order, [$declined], $cart,
+                'the buyer\'s own session with an empty cart: the attempt\'s cart is restored, so the payment step'],
+            [[], null, 200, '', null, 0, 0, [$get], [], [], $cartPage, [$lookupFailed], 0, 'Two cannot be read, no session cart: told on the cart page'],
         ];
 
         foreach ($cases as [$overrides, $twoOrder, $cancelHttp, $latest, $cartOrderRow, $sessionCustomer, $sessionCart, $twoCalls, $writes, $localCancels, $redirect, $messages, $cartAfter, $description]) {
@@ -236,9 +248,15 @@ final class CancelDeclineReturnSpec
         if ($withOrder) {
             StubStore::$orders[self::ORDER_ID] = ['id_cart' => self::CART_ID, 'id_customer' => self::CUSTOMER_ID, 'total_paid' => 100.0, 'module' => 'twopayment'];
         }
+        StubStore::$carts[self::OTHER_CART_ID] = ['id_customer' => self::CUSTOMER_ID];
+        StubStore::$carts[self::EMPTY_CART_ID] = ['id_customer' => 555];
+        $line = ['id_product' => 1, 'cart_quantity' => 1];
+        StubStore::$cartProducts = [self::CART_ID => [$line], self::OTHER_CART_ID => [$line]];
         $context = Context::getContext();
         $context->cookie = new Cookie();
         $context->cookie->id_cart = $sessionCart;
+        // Session cart 0 is a browser with no storefront cookie: core hands the request an unsaved cart.
+        $context->cart = new Cart($sessionCart);
         $context->customer = new Customer($sessionCustomer);
 
         return $context;

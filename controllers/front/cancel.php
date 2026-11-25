@@ -34,7 +34,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
 
         $message = $this->module->l('Unable to find the requested order please contact store owner.');
         $this->errors[] = $message;
-        $this->redirectWithNotifications('index.php?controller=order');
+        $this->redirectToReturnPage();
     }
 
     private function handleAttemptCancel($attempt_token)
@@ -43,7 +43,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         if (!$attempt) {
             $message = $this->module->l('Unable to find the requested payment attempt.');
             $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
 
         if (!$this->isAuthorizedAttemptCallback($attempt)) {
@@ -53,7 +53,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             );
             $message = $this->module->l('Unable to validate this cancellation callback. Please retry checkout.');
             $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
 
         // The cart lock placement holds from before validateOrder() until the attempt is linked
@@ -85,7 +85,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         $this->errors[] = $status === 'CANCELLED'
             ? $this->getDeclineMessage()
             : $this->module->l('This payment is still being processed, so it was not cancelled. Check your order history in a moment.');
-        $this->redirectWithNotifications('index.php?controller=order');
+        $this->redirectToReturnPage();
     }
 
     /**
@@ -94,8 +94,9 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
      *
      * Two's checkout sends a declined buyer here, and the buyer wants to pay for the same basket
      * another way (TWO-27390). The resolver reads Two's state and closes the attempt the way it
-     * asks; the buyer then lands on the payment step with the decline message, the cart restored
-     * when this session is theirs. An approved order goes to the confirmation route instead.
+     * asks; the buyer then sees the decline message once, on the payment step with the cart
+     * restored when this session is theirs, and otherwise on the cart page. An approved order goes
+     * to the confirmation route instead.
      *
      * @param string $attempt_token
      * @return void
@@ -106,7 +107,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         $outcome = $result['outcome'];
         if ($outcome === TwoPendingRecovery::OUTCOME_FAILED) {
             $this->errors[] = $this->module->l('Unable to find the requested payment attempt.');
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
 
         $attempt = $this->module->getTwoCheckoutAttempt($attempt_token);
@@ -120,18 +121,18 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         }
         if ($outcome === TwoPendingRecovery::OUTCOME_STALE) {
             $this->errors[] = $this->module->l('This payment attempt has already been finalized.');
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
         if ($outcome === TwoPendingRecovery::OUTCOME_LOOKUP_FAILED || $outcome === TwoPendingRecovery::OUTCOME_UNCHANGED) {
             // Two's state is unknown or not one this module acts on: no decline is claimed, and the
             // attempt stays waiting for the scheduled check.
             $this->errors[] = $result['message'];
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
 
         $this->restoreCartIntoOwnSession($attempt);
         $this->errors[] = $this->getDeclineMessage();
-        $this->redirectWithNotifications('index.php?controller=order');
+        $this->redirectToReturnPage();
     }
 
     /**
@@ -174,14 +175,14 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         if (!Validate::isLoadedObject($order)) {
             $message = $this->module->l('Unable to find the requested order please contact store owner.');
             $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
 
         $customer = new Customer((int)$order->id_customer);
         if (!Validate::isLoadedObject($customer)) {
             $message = $this->module->l('Unable to load order customer.');
             $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
 
         if (!$this->isAuthorizedLegacyOrderAccess($order, $customer)) {
@@ -191,7 +192,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             );
             $message = $this->module->l('Unable to validate this cancellation callback. Please retry checkout.');
             $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
 
         $orderpaymentdata = $this->module->getTwoOrderPaymentData($id_order);
@@ -203,7 +204,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             );
             $message = sprintf($this->module->l('Could not update status to cancelled, please check with %1$s admin for id %2$s'), $this->module->getTwoBrandConfig('product_name'), (string)$order->id);
             $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
 
         $two_order_id = (string)$orderpaymentdata['two_order_id'];
@@ -241,7 +242,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             );
             $message = sprintf($this->module->l('Could not update status to cancelled, please check with %1$s admin for id %2$s'), $this->module->getTwoBrandConfig('product_name'), $two_order_id);
             $this->errors[] = $message;
-            $this->redirectWithNotifications('index.php?controller=order');
+            $this->redirectToReturnPage();
         }
 
         $this->module->restoreDuplicateCart($order->id, $order->id_customer);
@@ -249,7 +250,23 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
 
         $message = $this->module->l('Your order is cancelled.');
         $this->errors[] = $message;
-        $this->redirectWithNotifications('index.php?controller=order');
+        $this->redirectToReturnPage();
+    }
+
+    /**
+     * Every outcome leaves through here, with its message queued. A basket goes to the payment
+     * step. A session with no basket, such as the link opened in another browser, goes to the
+     * cart page (TWO-27410): core's checkout sends an empty cart on to the cart page itself, and
+     * from PrestaShop 8 that second redirect replaces the queued message with its own empty set,
+     * so the buyer would see nothing.
+     *
+     * @return void
+     */
+    private function redirectToReturnPage()
+    {
+        $cart = $this->context->cart;
+        $has_basket = Validate::isLoadedObject($cart) && (int) $cart->nbProducts() > 0;
+        $this->redirectWithNotifications($has_basket ? 'index.php?controller=order' : 'index.php?controller=cart&action=show');
     }
 
     /**

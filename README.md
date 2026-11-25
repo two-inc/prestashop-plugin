@@ -390,7 +390,7 @@ Two's checkout sends a buyer it declined, and one who leaves it, to the module's
 | UNVERIFIED | Cancels the order at Two, then marks the payment cancelled. If Two refuses the cancel, the payment keeps waiting, so the next return or the scheduled check settles it. |
 | No answer, an error, or a state the module does not act on | Nothing. The buyer is told the payment status could not be confirmed, no decline is claimed, and nothing is restored. |
 
-Otherwise the buyer lands on the payment step with "Two could not approve this purchase. Please choose another payment method." (the brand name comes from `brands/two.php`), and Two stays offered. The cart goes back into the session only when the session belongs to the payment's customer, guest or registered; a link opened in another browser restores nothing. A second click changes nothing, and nor does a link to an older payment once a newer one, or another order, holds the cart.
+Otherwise the buyer is shown "Two could not approve this purchase. Please choose another payment method." once (the brand name comes from `brands/two.php`), and Two stays offered. The cart goes back into the session only when the session belongs to the payment's customer, guest or registered, and the buyer then lands on the payment step. A link opened in another browser restores nothing; with no basket in that session the buyer lands on the cart page instead, because PrestaShop's payment step forwards an empty cart there and, from PrestaShop 8, drops the message on the way (TWO-27410). A second click changes nothing, and nor does a link to an older payment once a newer one, or another order, holds the cart.
 
 ### Order Management
 
