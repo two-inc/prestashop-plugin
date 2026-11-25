@@ -162,8 +162,11 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             return;
         }
         if ($cart->orderExists()) {
-            // Core drops an ordered cart from the session on the next request, so the buyer gets a copy.
-            $this->module->restoreDuplicateCart((int) $attempt['id_order'], $session_customer_id);
+            // Core drops an ordered cart from the session on the next request, so the buyer gets a
+            // copy, but never over a basket the buyer has built since.
+            if (!$this->sessionHasBasket()) {
+                $this->module->restoreDuplicateCart((int) $attempt['id_order'], $session_customer_id);
+            }
 
             return;
         }
@@ -278,11 +281,21 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
      */
     private function redirectToReturnPage()
     {
+        $this->redirectWithNotifications($this->sessionHasBasket() ?'index.php?controller=order' : 'index.php?controller=cart&action=show');
+    }
+
+    /**
+     * Whether this session holds a basket of its own: a saved cart with products and no order.
+     * orderExists() reads the database: another request can place an order on this cart while
+     * this one runs, and core would then drop the cart before the payment step.
+     *
+     * @return bool
+     */
+    private function sessionHasBasket()
+    {
         $cart = $this->context->cart;
-        // orderExists() reads the database: another request can place an order on this cart while
-        // this one runs, and core would then drop the cart before the payment step.
-        $has_basket = Validate::isLoadedObject($cart) && !$cart->orderExists() && (int) $cart->nbProducts() > 0;
-        $this->redirectWithNotifications($has_basket ? 'index.php?controller=order' : 'index.php?controller=cart&action=show');
+
+        return Validate::isLoadedObject($cart) && !$cart->orderExists() && (int) $cart->nbProducts() > 0;
     }
 
     /**
