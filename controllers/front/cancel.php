@@ -281,7 +281,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
      */
     private function redirectToReturnPage()
     {
-        $this->redirectWithNotifications($this->sessionHasBasket() ?'index.php?controller=order' : 'index.php?controller=cart&action=show');
+        $this->redirectWithNotifications($this->sessionHasBasket() ? 'index.php?controller=order' : 'index.php?controller=cart&action=show');
     }
 
     /**
