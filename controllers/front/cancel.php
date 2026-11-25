@@ -279,8 +279,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
     private function redirectToReturnPage()
     {
         $cart = $this->context->cart;
-        // An ordered cart is no basket: core drops it from the session before the payment step.
-        $has_basket = Validate::isLoadedObject($cart) && !$cart->orderExists() && (int) $cart->nbProducts() > 0;
+        $has_basket = Validate::isLoadedObject($cart) && (int) $cart->nbProducts() > 0;
         $this->redirectWithNotifications($has_basket ? 'index.php?controller=order' : 'index.php?controller=cart&action=show');
     }
 
