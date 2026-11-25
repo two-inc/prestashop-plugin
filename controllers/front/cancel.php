@@ -130,7 +130,11 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
             $this->redirectToReturnPage();
         }
 
-        $this->restoreCartIntoOwnSession($attempt);
+        if ($outcome === TwoPendingRecovery::OUTCOME_CANCELLED || $outcome === TwoPendingRecovery::OUTCOME_DECLINED) {
+            // Only the request that closes the attempt restores its cart. A repeat click finds it
+            // closed and restores nothing, so a cart ordered since is never handed back again.
+            $this->restoreCartIntoOwnSession($attempt);
+        }
         $this->errors[] = $this->getDeclineMessage();
         $this->redirectToReturnPage();
     }
