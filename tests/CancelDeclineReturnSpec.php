@@ -166,6 +166,8 @@ final class CancelDeclineReturnSpec
             [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 200, '', null, $own, $cart, [$get, $post], $closed, [], $order, [$declined], $cart, 'UNVERIFIED: cancelled at Two, then closed'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 500, '', null, $own, $cart, [$get, $post], [], [], $order, [$declined], $cart,
                 'UNVERIFIED, cancel refused: the attempt stays waiting, so a later return or the scheduled check settles it'],
+            [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 500, '', null, $own, $other, [$get, $post], [], [], $order, [$declined], $other,
+                'UNVERIFIED, cancel refused, the session on another cart: nothing restored'],
             [[], null, 200, '', null, $own, $other, [$get], [], [], $order, [$lookupFailed], $other, 'Two cannot be read: nothing written, no decline claimed, nothing restored'],
             [[], ['state' => 'REFUNDED', 'status' => 'APPROVED'], 200, '', null, $own, $other, [$get], [], [], $order, [$unverified], $other,
                 'a state the module does not act on: nothing written, no decline claimed, nothing restored'],
