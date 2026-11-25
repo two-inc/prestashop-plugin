@@ -95,7 +95,8 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
      * Two's checkout sends a declined buyer here, and the buyer wants to pay for the same basket
      * another way (TWO-27390). The resolver reads Two's state and closes the attempt the way it
      * asks; the buyer then sees the decline message once: on the payment step with the cart
-     * restored when this session is theirs, or with this session's own basket, and with no basket,
+     * restored when this session is theirs (a copy of an ordered cart reopens checkout at the
+     * address step on PrestaShop 8 and 9), or with this session's own basket, and with no basket,
      * on the cart page. An approved order goes to the confirmation route instead.
      *
      * @param string $attempt_token
@@ -142,7 +143,10 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
     /**
      * Puts the attempt's cart back into this session only when the session is the buyer's own:
      * the customer in it, guest or registered, is the attempt's customer. A link opened in another
-     * browser restores nothing. A cart that already has an order is restored as a copy.
+     * browser restores nothing. A cart that already has an order is restored as a copy. Core's
+     * Cart::duplicate() leaves the copy's checkout session empty, so on PrestaShop 8 and 9 checkout
+     * reopens at the address step rather than the payment step, and the copy keeps no voucher
+     * codes: only automatically applied cart rules come back.
      *
      * @param mixed $attempt
      * @return void
