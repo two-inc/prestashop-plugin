@@ -94,9 +94,9 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
      *
      * Two's checkout sends a declined buyer here, and the buyer wants to pay for the same basket
      * another way (TWO-27390). The resolver reads Two's state and closes the attempt the way it
-     * asks; the buyer then sees the decline message once, on the payment step with the cart
-     * restored when this session is theirs, and otherwise on the cart page. An approved order goes
-     * to the confirmation route instead.
+     * asks; the buyer then sees the decline message once: on the payment step with the cart
+     * restored when this session is theirs, or with this session's own basket, and with no basket,
+     * on the cart page. An approved order goes to the confirmation route instead.
      *
      * @param string $attempt_token
      * @return void
