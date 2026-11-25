@@ -10,6 +10,8 @@ require_once __DIR__ . '/../controllers/front/cancel.php';
  */
 class TwoCancelDeclineReturnHarness extends TwopaymentTestHarness
 {
+    public const DUPLICATE_CART_ID = 27394;
+
     /** @var array */
     public $attempt = [];
     /** @var array|null Two's order as GET returns it; null for a failed read */
@@ -89,6 +91,20 @@ class TwoCancelDeclineReturnHarness extends TwopaymentTestHarness
         return true;
     }
 
+    /** Puts the copy core's Cart::duplicate() would make into the session, for the order's own customer only. */
+    public function restoreDuplicateCart($id_order, $id_customer)
+    {
+        $order = StubStore::$orders[(int) $id_order] ?? null;
+        if ($order === null || (int) $order['id_customer'] !== (int) $id_customer) {
+            return false;
+        }
+        $context = Context::getContext();
+        $context->cart = new Cart(self::DUPLICATE_CART_ID);
+        $context->cookie->id_cart = self::DUPLICATE_CART_ID;
+
+        return true;
+    }
+
     /** With $authorized false, the module's own check judges the request. */
     public function isTwoAttemptCallbackAuthorized($attempt, $provided_secure_key = '', $context_customer_id = 0, $context_customer_secure_key = '')
     {
@@ -135,6 +151,7 @@ final class CancelDeclineReturnSpec
         $other = self::OTHER_CART_ID;
         $empty = self::EMPTY_CART_ID;
         $cartPage = 'index.php?controller=cart&action=show';
+        $dup = TwoCancelDeclineReturnHarness::DUPLICATE_CART_ID;
         $linked = ['id_order' => self::ORDER_ID, 'status' => 'CONFIRMED'];
         $linkedRow = ['two_order_id' => 'two-own'];
 
@@ -155,8 +172,10 @@ final class CancelDeclineReturnSpec
             [['status' => 'CANCELLED', 'two_order_state' => 'CANCELLED'], null, 200, '', null, $own, $other, [], [], [], $order, [$declined], $cart, 'second click: the closed attempt changes nothing at Two or here'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 200, 'attempt-newer', null, $own, $other, [], [], [], $order, [$stale], $other, 'stale: a newer attempt holds the cart, so nothing changes'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'APPROVED'], 200, '', ['two_order_id' => 'two-other'], $own, $other, [], [], [], $order, [$stale], $other, 'stale: another checkout ordered the cart, so nothing changes'],
-            [$linked, ['state' => 'CANCELLED', 'status' => 'CANCELLED'], 200, '', $linkedRow, $own, $other, [$get], [['CANCELLED', 'CANCELLED', self::ORDER_ID]], [self::ORDER_ID], $order, [$declined], $cart,
-                'placed order Two holds cancelled: the shop order is closed, no cancel sent'],
+            [$linked, ['state' => 'CANCELLED', 'status' => 'CANCELLED'], 200, '', $linkedRow, $own, $other, [$get], [['CANCELLED', 'CANCELLED', self::ORDER_ID]], [self::ORDER_ID], $order, [$declined], $dup,
+                'placed order Two holds cancelled: the shop order is closed, no cancel sent, and a copy of its ordered cart goes to the payment step'],
+            [$linked, ['state' => 'CANCELLED', 'status' => 'CANCELLED'], 200, '', $linkedRow, 555, $empty, [$get], [['CANCELLED', 'CANCELLED', self::ORDER_ID]], [self::ORDER_ID], $cartPage, [$declined], $empty,
+                'placed order Two holds cancelled, another customer\'s session: nothing restored, told on the cart page'],
             [$linked, ['state' => 'FULFILLED', 'status' => 'APPROVED'], 200, '', $linkedRow, $own, $other, [$get], [], [], $confirm, [], $other, 'placed order Two holds fulfilled: handed to the confirmation route'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'DECLINED'], 200, '', null, 0, $other, [$get], $closed, [], $order, [$declined], $other, 'no session: closed and told, the cart is not restored'],
             [[], ['state' => 'UNVERIFIED', 'status' => 'DECLINED'], 200, '', null, 555, $other, [$get], $closed, [], $order, [$declined], $other, 'another customer\'s session: closed and told, the cart is not restored'],
@@ -251,7 +270,8 @@ final class CancelDeclineReturnSpec
         StubStore::$carts[self::OTHER_CART_ID] = ['id_customer' => self::CUSTOMER_ID];
         StubStore::$carts[self::EMPTY_CART_ID] = ['id_customer' => 555];
         $line = ['id_product' => 1, 'cart_quantity' => 1];
-        StubStore::$cartProducts = [self::CART_ID => [$line], self::OTHER_CART_ID => [$line]];
+        StubStore::$carts[TwoCancelDeclineReturnHarness::DUPLICATE_CART_ID] = ['id_customer' => self::CUSTOMER_ID];
+        StubStore::$cartProducts = [self::CART_ID => [$line], self::OTHER_CART_ID => [$line], TwoCancelDeclineReturnHarness::DUPLICATE_CART_ID => [$line]];
         $context = Context::getContext();
         $context->cookie = new Cookie();
         $context->cookie->id_cart = $sessionCart;

@@ -138,7 +138,7 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
     /**
      * Puts the attempt's cart back into this session only when the session is the buyer's own:
      * the customer in it, guest or registered, is the attempt's customer. A link opened in another
-     * browser restores nothing.
+     * browser restores nothing. A cart that already has an order is restored as a copy.
      *
      * @param mixed $attempt
      * @return void
@@ -151,6 +151,12 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
         }
         $cart = new Cart((int) $attempt['id_cart']);
         if (!Validate::isLoadedObject($cart) || (int) $cart->id_customer !== $session_customer_id) {
+            return;
+        }
+        if ($cart->orderExists()) {
+            // Core drops an ordered cart from the session on the next request, so the buyer gets a copy.
+            $this->module->restoreDuplicateCart((int) $attempt['id_order'], $session_customer_id);
+
             return;
         }
         $this->context->cart = $cart;
@@ -265,7 +271,8 @@ class TwopaymentCancelModuleFrontController extends ModuleFrontController
     private function redirectToReturnPage()
     {
         $cart = $this->context->cart;
-        $has_basket = Validate::isLoadedObject($cart) && (int) $cart->nbProducts() > 0;
+        // An ordered cart is no basket: core drops it from the session before the payment step.
+        $has_basket = Validate::isLoadedObject($cart) && !$cart->orderExists() && (int) $cart->nbProducts() > 0;
         $this->redirectWithNotifications($has_basket ? 'index.php?controller=order' : 'index.php?controller=cart&action=show');
     }
 

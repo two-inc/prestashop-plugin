@@ -2190,6 +2190,17 @@ namespace {
             }
         }
 
+        public function orderExists(): bool
+        {
+            foreach (StubStore::$orders as $order) {
+                if ((int) ($order['id_cart'] ?? 0) === $this->id && $this->id > 0) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public function nbProducts(): int
         {
             return count(StubStore::$cartProducts[$this->id] ?? []);
