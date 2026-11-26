@@ -5,7 +5,9 @@ All notable changes to the Two Payment module for PrestaShop will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.7.25] - Unreleased
+## [4.2.0] - Unreleased
+
+The version jumps to 4.2.0 to align with the other Two plugins.
 
 ### Changed
 - **A buyer Two declines goes back to the payment step to pay another way** (TWO-27390). Coming back through the cancel URL told the buyer "Your order is cancelled." and always sent Two a cancel. The return now reads Two's state first: an order Two holds VERIFIED or later is placed as a normal return would, one Two cancelled or declined is closed with nothing sent to Two, and only one still UNVERIFIED is cancelled at Two (a cancel Two refuses leaves the payment waiting for the next check). The buyer is shown "Two could not approve this purchase. Please choose another payment method." once: on the payment step with the cart restored when the session is the buyer's own (a copy, when an order was already placed from it and the buyer has built no basket since; that copy reopens checkout at the address step, and it keeps no voucher codes, only automatically applied cart rules) or with the session's own basket, and with no basket, on the cart page (TWO-27410: a return with no basket, such as a link opened in another browser, was sent to the payment step, which on PrestaShop 8 and 9 forwards an empty cart to the cart page and dropped the message on the way). A second click, or a link to a payment a newer one has superseded, changes nothing. The verification-failed URL sent to Two is now the cancel URL too.
