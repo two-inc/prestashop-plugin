@@ -30,16 +30,16 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 - jQuery compatibility handling for older PrestaShop versions
 - Comprehensive error logging with optional debug mode
 - Order payload validation ensuring exact PrestaShop invoice matching
-- Robust tax rate calculation with fallback validation
+- Declared-rate VAT relay with fail-loud divergence checks (see [.ai/vat-rate-sourcing.md](.ai/vat-rate-sourcing.md))
 - User-friendly error messages for API validation failures
 - Phone number fallback (phone → phone_mobile)
 - Provider-first checkout finalization (local order created after provider verification)
 - Cart snapshot validation before callback-time local order creation
-- Idempotency key header on provider order creation requests
+- An `Idempotency-Key` header on every write to Two's API, one key per operation, so a retry repeats it
 
 ## Requirements
 
-- **PrestaShop**: 1.7.6+ (tested up to 9.x)
+- **PrestaShop**: 1.7.6+ (see [CI support matrix](#ci-support-matrix) for the versions CI tests)
 - **PHP**: 7.2+
 - **Theme**: Classic theme or 1.7-compatible themes
 - **B2B Support**: Store must support B2B (business account type at address step)
@@ -58,11 +58,13 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 ### Back Office Setup
 
 1. **Install and Enable**: Install the module from Module Manager
-2. **Environment Selection**: Choose Sandbox (testing) or Production environment
+2. **Environment Selection**: Choose Production or Sandbox (testing, no real money moves). Sandbox is the default, and an unrecognised stored value resolves to Sandbox
 3. **API Key**: Enter your Two API key for the selected environment
-   - The module validates the API key on save
-   - Invalid keys will show an error message
-4. **Payment Terms**: Configure payment term type and available terms
+   - The module validates the API key on save. The key and the environment are saved together or not at all: a key Two rejects, a malformed key, or a key Two cannot check while the saved key last verified leaves both as they were, and the other settings still save
+   - The key field is always empty, with a note when a key is saved. Leave it empty to keep the saved key
+   - A key that does not verify is reported by category, so a rejected key, a Two service error and a shop that cannot reach Two at all read differently. The HTTP status is shown; the response body is only ever logged
+   - While a stored key does not verify, Two is withheld from checkout entirely (payment option and company search alike) and the config page says so. The verdict is re-checked automatically - about once a minute while it is failing - so a fixed key or a resolved outage takes effect without a re-save
+4. **Payment terms**: Configure payment term type and available terms
    - **Term Type**: Choose Standard or End-of-Month (EOM) terms
      - **Standard**: Payment due X days from fulfillment date (all durations available)
      - **EOM**: Payment due at end of current month + X days (30/45/60 only)
@@ -71,8 +73,10 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 5. **Optional Features**:
    - Enable/disable company name field requirement
    - Enable/disable organization number field requirement
-   - Enable/disable department field
-   - Enable/disable project field
+   - Enable/disable the optional buyer reference fields shown in the Two
+     payment section at checkout, in this order: invoice email address,
+     PO Number, project, department (all enabled by default on a fresh
+     install)
    - Enable/disable Order Intent check (Required for use)
    - Enable/disable account type selection
    - Enable automatic invoice upload to Two
@@ -82,21 +86,193 @@ Two is a B2B payment method that lets your business customers pay by invoice wit
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| Environment | Sandbox or Production | Sandbox |
+| Environment | Production or Sandbox | Sandbox |
 | API Key | Two merchant API key | Required |
 | Payment Term Type | Standard or End-of-Month (EOM) | Standard |
-| Payment Terms | Available terms based on type | 30 days enabled |
+| Payment terms | Available terms based on type | 30 days enabled |
 | Default Payment Term | Default term when multiple available | 30 days |
 | Company Name | Require company name field | Enabled |
 | Organization Number | Require organization number | Enabled |
-| Department Field | Show department field | Disabled |
-| Project Field | Show project field | Disabled |
+| Invoice email Field | Show invoice email address field in the Two payment section | Enabled |
+| PO Number Field | Show PO Number field in the Two payment section | Enabled |
+| Project Field | Show project field in the Two payment section | Enabled |
+| Department Field | Show department field in the Two payment section | Enabled |
 | Order Intent | Enable Order Intent check | Enabled |
 | Account Type | Show account type selector | Enabled |
-| Auto Fulfill Orders | Automatically fulfill orders with Two when status changes | Enabled |
-| Invoice Upload | Auto-upload invoices to Two | Disabled |
 | SSL Verification | Verify SSL certificates | Enabled |
 | Debug Mode | Enable detailed diagnostic logging | Disabled |
+| Default shipping tax code | Tax rules group assumed, and checked, for shipping no carrier provides a rate for. Hidden until Two enables it — see below | Not set |
+
+### Optional buyer reference fields
+
+Four optional fields can be shown to the buyer, each with its own switch, all
+**enabled by default on a fresh install**. They appear in one standard order,
+used by both the admin switches and the checkout fields so the configuration
+pane reads like the thing it configures:
+
+1. Invoice email address — sent as `invoice_details.invoice_emails`
+2. PO Number — sent as `buyer_purchase_order_number`
+3. Project — sent as `buyer_project`
+4. Department — sent as `buyer_department`
+5. Order note — **PrestaShop core's field, not one of ours** (see below); sent
+   as `order_note`
+
+An empty field is simply not sent, and none of them is ever required.
+
+Because the order note is core's field on a different checkout step, it has no
+presence in the payment tile and no switch: it is fifth in the standard
+sequence, but there is nothing to sort it against there. Adding a plugin
+order-note field just to express the ordering would be the wrong fix.
+
+They render **inside the Two payment section at the payment step**, not in the
+billing address block. PrestaShop asks for the shipping address first and only
+reveals the billing address block when the buyer ticks "Billing address differs
+from shipping address", so a field hosted there is invisible to most buyers.
+The invoice email in particular has to be visible in the case where billing and
+shipping match, which is exactly when the buyer should be prompted to consider
+a separate address for invoices.
+
+A switch that is off renders no element at all — not a hidden one — and its
+value is never read from the request even if the parameter is supplied by hand.
+
+**Order comments** are deliberately not a plugin field. PrestaShop core already
+offers one: the "If you would like to add a comment about your order" textarea
+(`name="delivery_message"`) on the checkout **shipping** step, rendered by
+`checkout/_partials/steps/shipping.tpl` and stored by core one row per cart in
+the `message` table. Use that; do not add a plugin equivalent.
+
+The module **relays** that value to Two as `order_note` on both order creation
+and order update, capped at 1000 characters. It is read from the cart rather
+than from the buyer's submission, which is what lets the update payload carry it
+too — read from the request, an admin order edit would blank the note on Two's
+side. Core stores the comment htmlentities-encoded (`Tools::safeOutput`), so the
+relay decodes it back to plain text.
+
+### Default shipping tax code
+
+**Who needs this:** shops that price shipping outside PrestaShop's carrier table — third-party carrier modules, click-and-collect, marketplace shipping, or any other carrier-less setup that never registers a tax rules group.
+
+PrestaShop declares shipping VAT per carrier, in `carrier_tax_rules_group_shop`, and nowhere else — there is no shop-level shipping tax rules group. The module relays that declaration; it never derives a VAT rate from the amounts. A shop whose shipping is priced outside the carrier table leaves `id_carrier = 0`, PrestaShop then hands the module an empty delivery-option list, and with no carrier there is no declared rate to relay.
+
+The **Default shipping tax code** setting, in **Module Configuration → Order management**, lets such a merchant make that declaration on the module instead. It is **off, and the field hidden, until Two enables it for the shop**: talk to Two first, since assuming a shipping rate is a tax decision we want to review with you. It is assumed **for shipping only, and only when no carrier provides a rate**. When a carrier declares a tax rules group, the carrier always wins.
+
+The setting is the module's only control over shipping tax, and it has an effect only when it is populated: enabled, and set to a group that resolves. Blank, the default, the module never refuses an order on shipping tax and leaves the check to Two's API. A carrier that declares a tax rules group provides the rate, an explicit 0% group included. "No tax" (group 0), no carrier, or a carrier that cannot be read provides none, whatever tax the line carries.
+
+| Shipping line | Setting blank (the default) | Setting populated |
+|---|---|---|
+| Rate provided by a carrier, 0% included | Sent at that rate as is, with no module check. | Same as blank. |
+| No rate provided | Sent as is: rate 0, with the tax it was charged, and no module check. | Sent at the setting's rate, once its tax reconciles with that rate (to 0.02); otherwise the order is refused. |
+
+The module decides the rate while it builds the payload, and records at placement whether a carrier provided it. Order updates and refunds read that record, never the carrier or the setting as they are later. The check against the setting is a shop-match check: the module's default handler on the order postprocessing hook runs it, and a merchant handler on the hook owns it instead (see "The module's checks" under "Stable extension contract: order postprocessing"). The setting has **no default value**.
+
+#### Enabling it
+
+Two enables the fallback with the module's console command, run from the PrestaShop root by someone with shell access to the server (PrestaShop 1.7.6 and later). Without `--shop`, `enable` and `disable` write the global setting, which applies to every shop. With `--shop=<n>` they write that shop's own setting, which wins over the global one, so a multistore merchant can have the fallback on one shop only:
+
+```bash
+php bin/console twopayment:shipping-tax-fallback enable              # every shop: show the field and use the fallback
+php bin/console twopayment:shipping-tax-fallback enable --shop=2     # shop 2 only
+php bin/console twopayment:shipping-tax-fallback disable --shop=2    # shop 2 off, whatever the global setting says
+php bin/console twopayment:shipping-tax-fallback disable             # the global setting off; a shop's own setting still wins
+php bin/console twopayment:shipping-tax-fallback status              # each shop's effective state, where it comes from, and its stored group
+```
+
+Every action ends by printing each shop's effective state. On PrestaShop 1.7.6 to 8, core's own `--id_shop=<n>` is accepted as a synonym for `--shop=<n>`; `--id_shop_group` and a bare `--id_shop` are refused. PrestaShop 9 does not offer `--id_shop`, so use `--shop` there.
+
+The switch is stored in configuration as `PS_TWO_SHIPPING_TAX_FALLBACK_ENABLED`: the global row, or one row per shop. An order reads the setting of the shop its cart belongs to. If the command is not listed (`There are no commands defined in the "twopayment" namespace`), clear the cache with `php bin/console cache:clear` so PrestaShop picks up the module's services. That is needed after the module's files are updated on a shop whose cache is already built.
+
+While it is disabled, the setting is blank for every order, and a group already stored is kept but not used. Saving the Order management tab never changes that stored group while the field is hidden, so enabling again restores the earlier selection.
+
+Notes:
+
+- Selecting a group that is later deleted is treated as "not set", and the shop log says so.
+- Every order that actually uses the fallback writes a warning to the shop log naming the group, its id and the resolved rate, e.g. `assuming the configured Default shipping tax code "IVA 21%" (tax_rules_group=12, rate=21%)`. If you never see that line, the fallback is not being used.
+
+### Tax codes for 0% lines
+
+Two requires a `tax_code` on every line at a 0% rate for a Spanish merchant, on order create, order update and refunds alike. It is the merchant's job to set the shop's taxes up correctly: the module does not decide how a line is taxed, it sends the code the merchant chose for the case the shop's own tax setup puts the line in. **The plugin never refuses an order over a tax code; the API does.** A line the module cannot code goes out without one, and Two's API validates what arrives. The module never changes a rate. Lines at any other rate carry no code and are sent exactly as before.
+
+**1. The mapping** (TWO-26153). **Module Configuration → Order management → Tax codes for 0% lines** shows only when Two requires a code on 0% lines for the merchant's country (`GET /v1/tax_codes/<country>` reports `mandatory_tax_codes_enabled` with a 0 among `mandatory_tax_rates`; today Spain). The page finds that country itself from the stored API key (`verify_api_key`, then `GET /v1/merchant/<id>`), held a day per key and environment, and never writes what checkout holds. It is a table with one row per active tax rules group, each cell a dropdown of the codes Two lists for the country at a 0% rate plus **(none)**, the default:
+
+- **VAT-registered buyer, other EU state.**
+- **Your 0% tax rules**: one dropdown per 0% tax rule of the group, labelled as the shop describes the rule: country, state, postcode range and tax, then the rule's own description, e.g. `Spain, 35000-35999 (No tax)`. A rule whose tax is 0% or "No tax" is a 0% rule; rules above 0% never give a 0% line and are not listed.
+- **Buyer's address does not map to a tax rule (no tax charged, e.g. exports)**: none of the group's rules covers the tax address, so PrestaShop charges no tax on the line.
+
+A saved code that is no longer listed, or listed at a rate other than 0%, still shows in its dropdown, marked, so nothing saved disappears unseen; Two refuses such a code on a 0% line.
+
+A save checks each changed code against the list again. When the merchant details or the code list cannot be read at that moment, a save that changes a code is refused with an error and nothing on the tab is saved; a save that changes no code goes ahead.
+
+While the section is hidden a saved mapping keeps applying at checkout, and the section shows a notice with **Clear saved tax codes**: that the codes still apply though the country does not require them, that some are not valid on 0% lines for the country, or that the mapping cannot be read. Clear stores an empty mapping (`{}`) for the shop being edited, so on a multistore install select the shop first. If the merchant details or the code list cannot be read, the section says why and retries at most every five minutes, and saved mappings keep working at checkout.
+
+For each 0% line the first match wins:
+
+1. **Exempt buyer.** The invoice address and the tax address (the address PrestaShop taxes the cart on, `PS_TAX_ADDRESS_TYPE`) are both in the EU VAT area and neither is in the Two merchant's country, and the invoice address's VAT number field is not empty after trimming. The line takes its group's exempt row. A tax address outside the EU VAT area is an export, so it skips this step and takes step 2 or 3. The EU VAT area is the 27 member states, Monaco, and Northern Ireland (GB with a postcode starting `BT`). Northern Ireland is in the EU VAT area for goods only, and the module cannot tell goods from services: if you sell services there, do not map a services group's exempt row to an intra-community services code. Until the merchant's country is known, no buyer is exempt.
+2. **0% rule.** The tax rule of the line's group that PrestaShop applies at the tax address, chosen as core chooses it (country, then state, then postcode range, most specific first). The line takes that rule's row. When that rule is not 0% (taxes switched off shop-wide, or a module's own tax manager), the line gets no code.
+3. **No rule.** No rule of the group covers the tax address: the line takes the group's no-rule row.
+4. **No tax rules group.** A discount line whose lines do not all share one tax rules group (a discount on lines of one group takes that group's row, like them), shipping with no one group, and gift wrapping under "average tax of products" (`PS_ATCP_SHIPWRAP`) take the one code the order's 0% lines coded by steps 1 to 3 share. When those lines carry different codes, the line gets no code.
+
+A matched row left on **(none)** gives no code: it never falls through to a later row. The module picks no code of its own: a 0% line no step codes goes out without one, and for a Spanish merchant Two's API refuses it. A product line belongs to the product's tax rules group; shipping to the group that supplied its rate: the Default shipping tax code's, or the carriers' when every carrier in the selected delivery option declares the same group; wrapping to the gift-wrapping group; ecotax to the ecotax group; the buyer fee to its own group. A "No tax" carrier, no carrier, or carriers declaring different groups give shipping no group, so it takes step 4. Goods and services are told apart only by the groups the merchant puts products in and the codes mapped to them. Codes that need a reason from the caller (today only `ES_IVA_EXEMPT_OTHER`) are not offered: a merchant who needs one sets the code and its `tax_exemption_reason_code` in the order postprocessing hook. A stored mapping the form could not have written withholds the payment method at checkout, and the configuration health panel points at Clear; an order with no 0% line never reads the mapping.
+
+Upgrading to 2.7.20 moves a mapping saved per tax rules group to the rows once, on every shop, shop group and global setting that holds one: the group's code goes to its exempt row, its no-rule row and every 0% rule it has at that moment, so every line the old mapping covered keeps its code. Rules added later start on (none). A mapping the upgrade could not move is logged once a day and keeps working, read the same way against the rules the shop has at the time, until it is saved again on the form. A save that reaches PHP's `max_input_vars` limit, which a shop with many 0% rules can, is refused with an error rather than saving part of the form: the form ends with a hidden field, after every row and the save button, and a post that arrives without it was cut short.
+
+**Upgrading from a build that derived codes.** Builds before 2.7.20 that carried tax codes derived one for a Spanish merchant's unmapped 0% line (exports, the Canary Islands, Ceuta and Melilla, intra-community goods and services, non-EU services). This module does not. A Spanish merchant must map the rows their 0% lines fall on, typically each group's exempt row, its no-rule row and any 0% rule rows, plus the group behind shipping; an unmapped 0% line goes out without a code and Two refuses it. An update of an order placed before 2.7.20 gives a line with no group the one code the order's other 0% lines carry, and no code when they disagree or one has none.
+
+**The buyer's VAT number** (TWO-26153) is the invoice address's **VAT number** field, the one the `vatnumber` module validates; the module never reads it as the organisation number. PrestaShop keeps no VIES (EU VAT Information Exchange System) result on the address, so the number is used as entered. Only leading and trailing whitespace is trimmed; nothing else is changed (no upper-casing, no separators stripped, no prefix added or rewritten), and any non-empty value is a VAT number, `n/a` included. Step 1 needs only a non-empty number. A Spanish merchant's order create sends it as the top-level `buyer_vat_number`, unless the buyer company is Spanish (Two requires a Spanish buyer's VAT number to equal its organisation number) or there is none; the key is then absent, so every other payload is unchanged. Updates and refunds do not send it: Two keeps the number given at create. An update that resolves a line afresh reads the number the same way.
+
+The code is set while the module builds the payload, so a postprocessing hook subscriber sees it and may change it.
+
+Placement records the codes it resolved on the order's Two row, marking which came from the merchant's rows. An order update sends those, and a line with no group shares only the marked ones (on an order placed before 2.7.20, the one code its other 0% lines carry, else none), not what today's mapping or addresses would give; a line placement did not code (a product added in an admin edit, or an order placed before this feature) is resolved when the update is built. Refunds need no code from the module: a full refund copies the order's lines at Two, and each line of a partial refund references the order line it refunds, so Two gives it that line's code.
+
+### Merchant profile refresh
+
+Your offerable payment terms, buyer-surcharge rates, minimum order value and default term are read from Two's merchant record and cached in the shop's configuration. Checkout and admin pages read that cache and never block on the API.
+
+**The cache never expires and is never cleared.** A failed refresh — an outage, a rejected key, a 500, an unreachable API — changes nothing: the shop keeps trading and its admin pages keep showing the last known good values. Saving a new API key or environment refreshes the record but does not clear it either, so a shop whose key was cycled elsewhere and never updated here does not lose the values its admin controls are built from, and a wrong key saved during an outage is undone by pasting the right one back. A record belonging to a key the shop no longer holds is not used, but it is kept until a refresh succeeds.
+
+The cache is replaced only by a successful refresh, and only from one of these:
+
+- the first read on a shop where no fetch has ever succeeded (a fresh install), retried at most every 5 minutes until one does;
+- a save of the API key or the environment;
+- the scheduled refresh (below), once the record is over a day old;
+- **Refresh merchant profile**, in **Module Configuration → Diagnostics**.
+
+A save of the API key or the environment runs the same refresh as **Refresh merchant profile**. Both also expire the stored tax code lookup, including a failure and its 5-minute retry wait, so the "Tax codes for 0% lines" section looks the merchant up again on the next page load (keeping the last profile if that lookup fails). A successful **Refresh merchant profile** reloads the page onto the Diagnostics tab with its confirmation.
+
+If the record is more than 26 hours old, the scheduled refresh is not running. A page read then refreshes it itself, at most once an hour and on a 2-second cap, and serves the record it already holds whichever way that goes. The Diagnostics tab reports when the record was last refreshed and whether page reads are having to stand in.
+
+**Multistore:** the cached record belongs to one shop, so **Refresh merchant profile** and the line above it appear only while the admin is scoped to a single shop.
+
+The record never decides whether Two appears at checkout. Only the API key check does that: if the stored key does not currently verify, for any reason, the payment method is withheld until it does.
+
+#### Scheduled refresh
+
+PrestaShop schedules nothing on a module's behalf, so the scheduled refresh is a URL your server's crontab calls. Copy it from **Scheduled refresh URL** in **Module Configuration → Diagnostics** and add one line to the crontab of the user that owns the shop, running it **every 15 minutes**:
+
+```
+*/15 * * * * curl -fsS -o /dev/null 'https://your-shop.example/module/twopayment/cron?token=YOUR_TOKEN'
+```
+
+Each accepted call first checks the payments still waiting for the buyer (see [Payments the buyer verified but never returned from](#4-payments-the-buyer-verified-but-never-returned-from)), then refreshes the merchant record if it is over a day old. A call that finds the record fresh and nothing waiting does no outbound work and writes no log line. A shop that still runs the URL once a day keeps its record fresh but recovers a stranded payment only at that daily call, and Diagnostics warns about it.
+
+The token is the only thing guarding the endpoint — treat it as a credential. A request without it, or with the wrong one, gets a 404 that says nothing about why; rejections are logged at most once an hour, so a scanner cannot flood the shop log.
+
+A stale record whose refresh keeps failing is retried at most once every 10 minutes: a call sooner gets a 429 after its pending check, so holding the token cannot drive one blocking merchant fetch per call. A 15-minute cron never reaches the floor.
+
+To keep the token out of process listings and proxy access logs, send it as a header or a POST field instead of in the query string:
+
+```
+*/15 * * * * curl -fsS -o /dev/null -H 'X-Two-Cron-Token: YOUR_TOKEN' 'https://your-shop.example/module/twopayment/cron'
+```
+
+**Multistore:** the cached record and the token both belong to one shop, so schedule **one line per shop**, each copied from that shop's own Diagnostics tab. The URL and the token are shown only while the admin is scoped to a single shop; in the all-shops or a group context the row says so instead.
+
+**Maintenance mode:** PrestaShop serves the maintenance page before a module front controller runs, so while the shop is closed this URL does nothing unless the calling server's IP is listed under **Shop Parameters → General → Maintenance**.
+
+### Error log
+
+The **View last 100 error log records** button in the module settings opens the module's error log: its latest lines in PrestaShop's log (those starting `TwoPayment:`), the discrepancy snapshots, and the order postprocessing traces, listed with their request and subscribers (see [What the module logs](#what-the-module-logs)). Snapshots and traces are downloadable as JSON. The page only reads; it changes nothing.
+
+Any employee whose profile may view **Orders** is allowed to read it, as is SuperAdmin and any profile granted the page's own tab. The only link to the page is that button on the module settings page, so an employee who may view Orders but cannot open the module settings has to be given the page's URL. The page's tab is hidden from the menu, and PrestaShop grants a new hidden tab only to SuperAdmin and the profile of the employee who installed the module, with no way to grant it to another profile from the Permissions page, so it follows the Orders tab instead (TWO-26612). This needs no upgrade and no permission change on an existing shop. Only viewing is opened this way: anything else on the tab still needs the tab's own permission.
 
 ## Payment Terms: Standard vs End-of-Month (EOM)
 
@@ -119,6 +295,8 @@ Payment is due **X days from the fulfillment date**.
 - Easy for buyers to understand
 
 ### End-of-Month (EOM) Payment Terms
+
+EOM is not part of the general rollout, so the **Payment terms type** selector is only shown on a shop already configured for EOM — one whose stored term type is `EOM`. On every other shop the field is absent and terms are Standard. Saving **Standard terms** switches the shop back and the selector disappears with it; a later configuration write of `EOM` brings it back.
 
 Payment is due at the **end of the current month (at fulfillment) plus X days**.
 
@@ -151,12 +329,12 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 ### Checkout Flow
 
 #### 1. Address Step (Business Accounts)
-- Customer types at least 3 characters in the `Company` field
+- Customer types at least 3 characters in the `Company` field; below that the dropdown says `Please enter 3 or more characters` rather than staying shut. The threshold is a single constant in `views/js/modules/TwoCompanySearch.js` and is interpolated into that message, so the number shown always matches the number enforced
 - Module searches Two's Company API v2 (frontend call)
 - Customer selects a company from search results
 - Module stores organization number in hidden `companyid` field
-- Address fields auto-fill when available from Two's data
-- Selection persists in cookie to survive checkout step changes
+- Address fields, DNI and VAT number auto-fill from Two's data when available, and a re-search overwrites them with the newly selected company's values. Merchant-configurable (Company Lookup -> "Autofill company address", enabled by default); with it off, the company search still records the company name and organisation number but writes nothing into the address step
+- Selection persists server-side against the cart to survive checkout step changes. Cart-scoped company and mirror-address data live in the module's `twopayment_cart_record` table, keyed by cart and shop. A cart's records are deleted when its Two order is confirmed. On the first storefront request at least 24 hours after the last run, a purge also deletes the records of every cart ordered in its shop by any payment method, and every record not updated for 90 days. A GDPR erasure request made through the official GDPR module (psgdpr) deletes the customer's records, and its data export includes them. The cookie carries none of it, so nothing a buyer types can break or overflow the cookie
 
 #### 2. Payment Step
 - Two payment option appears for business accounts
@@ -179,7 +357,71 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - If Two verifies, module creates PrestaShop order from callback and saves payment data
 - Customer is redirected to native PrestaShop order confirmation page
 
+#### 4. Payments the buyer verified but never returned from
+
+PrestaShop creates no order until the buyer comes back from Two to the confirmation URL. A buyer who verifies with Two and then closes the tab leaves only the module's checkout attempt, redirected to Two, and no order in the shop (TWO-26300). The module checks such payments with Two itself, through the same code the buyer's return runs:
+
+- **The scheduled check.** Every call to the scheduled refresh URL checks this shop's waiting payments that are 30 minutes to 7 days old and were not checked in the last 15 minutes, 50 per call, oldest check first, and starts no new check after 20 seconds.
+- **Check status with Two.** **Module Configuration → Diagnostics → Pending Two payments** lists the waiting payments of the shop in scope, newest first, with when each was last checked and what was found, and a button that checks one at once, at any age. An order that is still in the awaiting-verification status it was created in (one placed before checkout attempts existed, or left there by a confirmation that stopped part way) has the same button on its Two tab.
+
+The buyer's return, the scheduled check and the button take one lock per cart and re-read the payment after taking it, so whichever comes second finds the work done. What Two reports decides what happens:
+
+| Two reports | What the module does |
+| --- | --- |
+| VERIFIED | Confirms the order with Two, then creates the PrestaShop order from the stored cart exactly as the buyer's return would, order confirmation email included, and moves it to the verified status. The order gets a private note naming the scheduled check or the employee. |
+| CONFIRMED, FULFILLING, FULFILLED, DELIVERED, FULFILMENT_NEEDS_MANUAL_RESOLUTION | The same, without confirming again. |
+| CANCELLED (Two cancels an unverified order itself, after 2 days by default), or a REJECTED or DECLINED status | Leaves the payment unplaced and marks it cancelled. Nothing is sent back to Two, and a buyer who returns later is told the order is cancelled. |
+| UNVERIFIED | Nothing; the payment keeps waiting. |
+| REFUNDED, or a state the module does not know | Nothing. A warning is logged once per state. |
+| No answer, or an error | Nothing; the next call retries. A failing scheduled check is logged at most once a day per payment. Two's own "order not found" counts only when it repeats on checks at least 15 minutes apart, and then marks the payment cancelled. |
+
+Two cases are left to the merchant rather than settled unattended. If the cart no longer builds the order the buyer verified (the buyer changed it afterwards), the scheduled check places nothing and sends Two nothing, and the payment shows "The cart changed" in the list. If the cart already has an order from another checkout (the buyer came back and paid again), the payment is never placed: its Two order is cancelled at Two unless Two already holds it cancelled, and the other order is left as it is.
+
+A buyer who returns while Two still reports UNVERIFIED gets the same refusal as before and keeps the cart; the payment stays in the list so a later verification is still picked up.
+
+#### 5. A declined buyer pays another way
+
+Two's checkout sends a buyer it declined, and one who leaves it, to the module's cancel URL; verification failure uses the same URL (TWO-27390). No PrestaShop order exists yet, so the buyer's basket is still the cart. The return takes the cart lock, reads Two's state, and never acts on the click alone:
+
+| Two reports | What the module does |
+| --- | --- |
+| VERIFIED or later | Sends the buyer to the confirmation URL, which places the order as a normal return does. |
+| CANCELLED, or a REJECTED or DECLINED status | Marks the payment cancelled. Nothing is sent to Two. |
+| UNVERIFIED | Cancels the order at Two, then marks the payment cancelled. If Two refuses the cancel, the payment keeps waiting, so the next return or the scheduled check settles it. |
+| No answer, an error, or a state the module does not act on | Nothing. The buyer is told the payment status could not be confirmed, no decline is claimed, and nothing is restored. |
+
+Otherwise the buyer is shown "Two could not approve this purchase. Please choose another payment method." once (the brand name comes from `brands/two.php`), and Two stays offered. The cart goes back into the session only when the session belongs to the payment's customer, guest or registered (as a copy when an order was already placed from it, since PrestaShop drops an ordered cart from the session), and the buyer then lands on the payment step. A copy starts with an empty checkout session, so checkout reopens at the address step instead, and it keeps no voucher codes: only automatically applied cart rules come back. A copy is never restored over a basket the buyer has built since. The cart is restored only by the click that closes the payment. A link opened in another browser restores nothing; with no basket in that session the buyer lands on the cart page instead, because PrestaShop's payment step forwards an empty cart there and, from PrestaShop 8, drops the message on the way (TWO-27410). A second click changes nothing, and nor does a link to an older payment once a newer one, or another order, holds the cart.
+
 ### Order Management
+
+#### Order updates
+
+An order update (a back-office edit, a tracking number, the sync after checkout) carries the order exactly as PrestaShop currently records it, from its stored rows, and never from the live catalogue, cart or configuration. The Two order it updates is the whole Two order: a cart whose products ship with different carriers is split by PrestaShop into several orders sharing one reference, and the update carries all of them, whichever of them was edited. Each line's amounts and tax rate come from the order's own lines and the taxes recorded for them, shipping as each order's paid total charged it, discounts from the order's recorded vouchers, and gift wrapping from the order's totals. A catalogue price, tax rule, carrier price or voucher changed after placement therefore changes nothing at Two, while a back-office edit to the order itself does. Any rate used must agree with the stored amounts, or the update fails with a log entry, except for shipping, which follows the Default shipping tax code table from what placement recorded. Shipping a carrier provided a rate for takes the carrier rate recorded on the order, then the rates declared at placement, and if neither agrees it goes out as it is, at the declared rate, else the order's carrier rate. Shipping no carrier provided a rate for takes the Default shipping tax code's rate recorded at placement, which must agree, or with none recorded goes out at 0% with the tax charged. A carrier-less order records no carrier rate. An order placed before the module kept that record also tries the Default shipping tax code as it is now configured. Gift wrapping takes the rate its invoice recorded (invoices disagreeing on it fail the update), then the rate declared at placement, then the configured rate. An order that records no shipping sends no shipping line, even when rounding the total leaves a cent over. A back-office edit sets the order's payment to the total of the orders it pays, and only when that payment is a single one recorded by this module; a split payment or another method's payment is left alone. An update whose amounts, lines, buyer, addresses, carrier and tracking number match the last one Two accepted is not sent at all, so saving an unchanged tracking number, or editing catalogue text, makes no request.
+
+#### Buyer surcharge on order updates
+
+An order update (a back-office edit, a tracking number) replays the buyer surcharge exactly as PrestaShop currently records it on the order. Its amounts and rate come from the stored order data, never from the live surcharge configuration, so changing the surcharge settings, tax rules or tax treatment later does not change an existing order's fee at Two. Rates stacked one after another are compounded, as PrestaShop applied them. The fee is recognised under any product id the hidden fee product has had, so recreating or deleting that product does not orphan older orders (see [Recognising the fee row](#recognising-the-fee-row)). The fee is priced on the order the module built, before the order postprocessing hook runs, so a merchant's subscriber that changes the order does not change the fee (see [The buyer fee is priced before the hook](#the-buyer-fee-is-priced-before-the-hook)).
+
+PrestaShop's own admin actions can rewrite that record: on 8 and 9 an address change re-taxes every order line from the live rates, and on 1.7 editing a line re-taxes it from the product's live tax group. The update then sends what PrestaShop now holds.
+
+Where the stored data cannot be replayed as recorded (fee lines at different rates, amounts that disagree with the recorded rate, or a row carrying the fee reference under an id the fee never had), the update fails loudly with a `TWO-26076` entry in the shop log rather than send the order without its fee.
+
+When an order edit or a tracking number does not reach Two (its payload cannot be built, or Two rejects it), the change stays saved in PrestaShop and the order is marked as not sent. PrestaShop itself reports the save as a success: on 1.7 an edit returns core's own AJAX result and a tracking number redirects to "Successful update."; on 8 and 9 an edit returns core's own JSON and a tracking number redirects with core's own flash. So on every version the admin sees the failure on the order page, from its next load (at once after a tracking number, on reload after an edit):
+
+- a red panel at the top of the Two payment block: "Changes to this order since `<time>` UTC were saved in PrestaShop but have not reached Two, so its invoice may not match this order. Do not repeat an edit to retry it; please contact support."
+- a private message in the order's Messages for each failure, giving the reason.
+
+The panel stays until an edit or tracking number update is accepted by Two.
+
+An order edit or a tracking number is not sent at all once Two would refuse it. Before sending, the module reads the order's current state from Two, with a 10-second timeout, and sends the update only while that state is `UNVERIFIED`, `VERIFIED` or `CONFIRMED` and its status is `APPROVED`, `REJECTED` or `DECLINED`. Otherwise the order gets a private message giving the reason, either "Two has already invoiced all or part of this order, so this change was not sent to Two." (a full or partial fulfilment) or "Two no longer accepts changes to this order (`<state>`), so this change was not sent to Two." (for example a cancelled order). An order edit that is not sent also marks the order as not sent, as above, since its amounts in PrestaShop now differ from Two's. As Two will accept no later edit to such an order, the red panel then stays for good unless the order is edited back to what Two last accepted. A tracking number that is not sent leaves no panel, as it changes no amounts. If the state cannot be read, the update is sent as before.
+
+#### Recognising the fee row
+
+A cart or order row is the surcharge fee if and only if its product id is the current or a retired fee product id AND its reference (cart row `reference` / order_detail `product_reference`) equals `TWO_SURCHARGE_PRODUCT_REFERENCE`.
+
+Every place the module tells the fee apart from merchandise (the order payload, the cart and order parity checks, the update replay, the cart display and the order-row guard) applies this one test, `Twopayment::isTwoSurchargeRow`. An id alone is not enough: MySQL can hand a retired fee id to a new catalog product, and that product must still be sold.
+
+Retired ids are recorded whenever the fee product is replaced. Ids from before that recording began are seeded once, by the 2.7.16 upgrade (or on first use where core never ran it), from every `product_id` that `order_detail` holds under the fee reference other than the current one. An order update that meets the fee reference under any other id fails loudly rather than send the order without that fee.
 
 #### Order Fulfillment
 
@@ -191,12 +433,11 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Order state changes from `CONFIRMED` to `FULFILLED` in Two
 
 **Configuration:**
-- Configure fulfillment trigger statuses in module settings: **Two → Configuration → Order Status Mapping → Fulfillment Statuses**
+- Configure fulfillment trigger statuses in module settings: **Two → Configuration → Order management → Fulfillment Statuses**
 - You can select multiple statuses (hold Ctrl/Cmd to select multiple)
 - Default: "Shipped" status triggers fulfillment
-- The form field shows currently active statuses in green text for easy reference
+- The form field shows currently active statuses in green text for easy reference (red "None selected" if the selection is empty, which means fulfilment never fires)
 - After saving, a confirmation message displays all active fulfillment trigger statuses
-- Ensure "Automatically fulfill orders with Two" option is enabled (default: enabled)
 
 **⚠️ CRITICAL: Complete Fulfillment Only**
 - **The Two PrestaShop plugin only supports complete fulfillment of the entire PrestaShop order**
@@ -207,7 +448,8 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
   2. Then use Two's Merchant Portal to handle partial fulfillments directly
 
 **Invoice Upload (Optional):**
-- If "Use Own Invoices" is enabled in module configuration:
+- Gated solely on the merchant's server-side `invoice_distributed_by_merchant` flag, read
+  from the cached `GET /v1/merchant` record. There is no admin toggle. When the flag is set:
   - After successful fulfillment, the module automatically generates the PrestaShop invoice PDF
   - Uploads it to Two via a three-step process:
     1. **Request signed upload URL** from Two API
@@ -223,11 +465,12 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
 - Order must have a valid Two order ID stored in PrestaShop
 - Module must have valid API credentials configured
 
+**Order notes:** every fulfil and cancel a status change sends is noted on the order as a private message, as well as in the module log: fulfilled, refused (with Two's reason), not sent because of the state Two holds the order in, or not sent because Two could not be asked. The note says when saving the status again retries it.
+
 **Troubleshooting Fulfillment:**
-- Check PrestaShop logs for fulfillment errors (search for "TwoPayment: Fulfillment")
+- Read the order's private messages first, then check PrestaShop logs for fulfillment errors (search for "TwoPayment: Fulfillment")
 - Verify order is in `CONFIRMED` state before fulfillment (not `VERIFIED`)
 - If order is `VERIFIED`, it must be confirmed first (either manually in Two Merchant Portal or via Two's confirmation flow)
-- Ensure "Automatically fulfill orders with Two" is enabled in module settings
 - Verify fulfillment status is correctly mapped in module configuration
 - Check the Order Status Mapping form to see which statuses are currently active (shown in green)
 
@@ -240,44 +483,25 @@ Payment is due at the **end of the current month (at fulfillment) plus X days**.
   - Issues a full refund for the entire order amount
   - Two immediately issues a credit note to the buyer
   - Order state changes to `REFUNDED` in Two
-  - Idempotency keys prevent duplicate refund calls (race condition protection)
+  - Sends a stable idempotency key, so a repeated status change cannot refund the order twice
 
 **Configuration:**
-- Configure refund trigger status in module settings: **Two → Configuration → Order Status Mapping → Two: Order Refunded**
+- Configure refund trigger status in module settings: **Two → Configuration → Order management → Two: Order Refunded**
 - Default: "Refunded" status triggers full refund
 - The module checks if order is already refunded to prevent duplicate refunds
+- Two refunds an order only once it is fulfilled. If the status changes to Refunded before then (for example while Two is still `FULFILLING` the order just after it shipped), no refund is sent: the order page and the order's private notes say so, and the refund is then made in the Two Merchant Portal. They say the same when the order cannot be read from Two, Two refuses the refund, or an unexpected error stops it. A cancelled order, or one Two has already refunded in full, gets no notice, as there is nothing left to refund
 
-**⚠️ CRITICAL: Full Refunds Only from PrestaShop**
-- **The Two PrestaShop plugin only supports full refunds via PrestaShop order status changes**
-- **Partial refunds are NOT supported from PrestaShop**
-- When you change the order status to the refund trigger status, the entire order is refunded in Two
-
-**Partial Refunds - Manual Process Required:**
-If you need to issue a partial refund:
-
-1. **Process partial refund in PrestaShop** (as you normally would):
-   - Go to the order in PrestaShop admin
-   - Issue partial refund through PrestaShop's refund interface
-   - This updates PrestaShop's order records
-
-2. **Process partial refund in Two Merchant Portal**:
-   - Log into your Two Merchant Portal
-   - Find the corresponding Two order
-   - Issue the partial refund manually through Two's interface
-   - **This step is REQUIRED** - the partial refund will NOT be reflected in Two's system if you only process it in PrestaShop
-
-3. **Why manual process is required:**
-   - Two's API requires specific refund amounts and reasons for partial refunds
-   - PrestaShop's partial refund interface doesn't provide the necessary details to Two's API
-   - Manual processing ensures accurate refund amounts and proper credit note generation
-
-**⚠️ IMPORTANT WARNING:**
-- **Failing to process partial refunds in both systems will result in:**
-  - Partial refund existing only in PrestaShop
-  - Full order amount still owed in Two's system
-  - Buyer will be charged for the full amount despite partial refund
-  - Accounting discrepancies between systems
-  - Potential customer service issues
+**Partial Refunds (Credit Slips):**
+- Partial refunds created as credit slips in PrestaShop are sent to Two automatically
+- When you issue a partial refund from the order page in PrestaShop admin, PrestaShop creates a credit slip and the module:
+  - Calls Two's refund API endpoint (`/v1/order/{id}/refund`) with the slip's amount, currency, line items and, while the "Validate tax subtotals" setting is on, per-rate tax subtotals
+  - Uses an idempotency key derived from the credit slip, so two slips of the same amount on one order are separate refunds
+  - Refuses to send more than the order's remaining refundable balance
+- A specific-amount refund sends the amount you chose, and a refund excluding the voucher sends the products less the voucher
+- **Do NOT also refund the same amount in the Two Merchant Portal.** The refund already reaches Two from the credit slip, so refunding it in the portal as well refunds the buyer twice
+- Changing the order status to Refunded after credit slips were sent refunds only what is left of the order
+- Each partial refund, a credit slip or what is left, is sent as lines of the order as Two holds it, so the credit note lists what was refunded and each line keeps its order line's tax code (Two requires one on a Spanish 0% line, and an e-invoiced credit note needs lines). A credit slip credits the lines of the products it refunds: each product goes to the order line at its tax rate carrying exactly the name the module last sent for it (its PrestaShop order line name once an order update has been accepted, and before that the same name for a product with no combination; several lines of that name are narrowed by net price per unit after reductions), and the slip's shipping to the shipping lines. A product the module cannot match this way, and any part of a product that is more than its line has left, is spread over the product lines at that rate in proportion to what is left to refund on each, and what is left after credit slips is spread over each rate's lines that way. No line is credited more than is left on it. A specific amount or a voucher deduction is shared over the slip's products in proportion to each, then credited the same way. A refund that cannot be matched to the order's lines (no line at one of its rates, less left on that rate's lines than the refund, tax that differs from the rate by more than 0.50 (such as tax refunded at 0%), or a 0% line placed without a tax code on the order of a Spanish merchant, or of a merchant whose country is not yet known) is sent as before, with no lines: it is logged under "without line items", and the order's private notes say the credit note may not be itemised
+- A slip the module does not send (for example, one exceeding the remaining balance, or one whose amount cannot be split across the order's tax rates) is logged under "TwoPayment: Partial refund" with the reason, and the order page and the order's private notes say it was not sent. Handle a refund in the Two Merchant Portal only when the module says it was not sent
 
 **Refund Requirements:**
 - Order must be in `FULFILLED` state in Two (cannot refund unfulfilled orders)
@@ -286,7 +510,7 @@ If you need to issue a partial refund:
 - Order must not already be fully refunded (module checks this automatically)
 
 **Troubleshooting Refunds:**
-- Check PrestaShop logs for refund errors (search for "TwoPayment: Refund")
+- Check PrestaShop logs for refund errors (search for "TwoPayment: Refund" and "TwoPayment: Partial refund")
 - Verify order is in `FULFILLED` state before attempting refund
 - Common errors:
   - **HTTP 400**: Order not in refundable state (must be `FULFILLED`)
@@ -301,7 +525,11 @@ twopayment/
 ├── twopayment.php              # Main module class
 ├── config.xml                  # Module metadata
 ├── classes/
-│   └── TwoInvoiceUploadService.php  # Invoice upload service
+│   ├── TwoCheckoutAmountException.php   # Fail-loud amount/rate divergence
+│   ├── TwoInvoiceRetrievalService.php   # Invoice fetch/download
+│   ├── TwoInvoiceUploadService.php      # Invoice upload service
+│   ├── TwoSoleTrader.php                # Sole-trader gating
+│   └── TwoSurchargeCalculator.php       # Buyer surcharge amounts
 ├── controllers/
 │   └── front/
 │       ├── payment.php         # Payment processing
@@ -315,47 +543,228 @@ twopayment/
 │   │   ├── twopayment.js      # Main JS
 │   │   └── modules/           # Modular JS components
 │   └── templates/
-│       └── hook/
-│           └── paymentinfo.tpl # Payment UI template
-└── upgrade/                   # Version upgrade scripts
+│       └── hook/             # Checkout + admin-order templates
+├── tests/                    # Offline harness, e2e (Playwright), integration matrix
+├── dev/                      # Local-stack and CI helper scripts
+├── .ai/                      # Engineering notes, decisions, learnings
+├── Makefile                  # Local dev + the gates CI runs
+└── upgrade/                  # Version upgrade scripts
 ```
 
 ### Key Components
 
 - **Twopayment**: Main module class handling hooks, configuration, API calls
-- **TwoInvoiceUploadService**: Handles invoice PDF upload to Two
+- **TwoInvoiceUploadService** / **TwoInvoiceRetrievalService**: Invoice PDF upload and fetch
+- **TwoSurchargeCalculator**: Buyer surcharge amounts
 - **TwoCheckoutManager**: Frontend checkout flow management
 - **TwoOrderIntent**: Order Intent validation (client-side)
 - **TwoCompanySearch**: Company search functionality
+- **TwoOptionalFields**: Optional buyer reference fields in the payment tile (client-side)
+
+## Versioning and upgrade scripts
+
+The version is computed from the change itself, not from the branch it lands on:
+
+| Change                | What happens                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------- |
+| PR into `staging`     | The version is computed and committed onto the PR's own branch — `.github/workflows/version-bump.yml` |
+| merge into `staging`  | Nothing. The merge brings in the version its PR already computed.                                 |
+| `staging` into `main` | Nothing is computed. `main` tags the version already in the tree and cuts the Release.             |
+
+With `M` the version on `origin/main` and `C` the version on the PR head, the
+PR's own commits (`origin/staging..HEAD`, `--no-merges`) are classified by
+conventional-commit type:
+
+- a `!` on the type (`feat!:`, `TWO-1/fix(scope)!:`) or a `BREAKING CHANGE:`
+  footer → `(M.major + 1).0.0`
+- a `feat:` → `M.major.(M.minor + 1).0`
+- anything else — `fix`, and `chore` / `docs` / `ci` / `test` / `refactor`
+  alike → `M.major.M.minor.(M.patch + 1)`
+
+The candidate is then clamped with `max(C, candidate)`. That clamp is what makes
+the whole thing idempotent: a re-run, the `synchronize` event fired by the bump
+commit itself, and a second fix commit on the same PR all compute the same
+answer and write nothing. It also means the version can never regress while
+`main` is behind `staging`.
+
+**Do not hand-run a bump for a PR into `staging`.** CI owns it. `make bump`
+previews the decision and writes nothing.
+
+A major is not chosen by hand either. Two independent signals are considered and
+the higher wins:
+
+- **Declared** — a root `.next-major` file whose first token is the target
+  major, with a short reason on the same line:
+
+      3  # PrestaShop 9 only, 3.0.0 release
+
+  This covers a _planned_ major that no single commit happens to mark. It is
+  reviewable in the PR that decides it, and it is not cleared afterwards — it
+  disarms itself once the major it names has shipped. A `.next-major` naming a
+  major _below the major on `main`_ is a hard failure, not a no-op.
+
+- **Discovered** — a `!` on a conventional-commit type or a `BREAKING CHANGE:`
+  footer, in **this PR's own commits** only. Deliberately not the cumulative
+  `main..staging` range: a break that already landed on `staging` must not be
+  re-discovered by every later PR.
+
+`.github/scripts/decide-bump-level.sh` implements all of this, is unit-tested by
+`.github/scripts/test-decide-bump-level.sh`, and logs its full reasoning on every
+run. It is identical in every Two plugin repository.
+
+### Why the version is load-bearing here
+
+PrestaShop executes `upgrade/upgrade-<version>.php` **only for versions strictly
+above the one already installed**, and it derives the function to call from the
+filename. Both halves fail *silently*:
+
+- a script whose filename and `upgrade_module_X_Y_Z` function disagree is loaded
+  and then nothing is called;
+- a script numbered **above** the declared module version is never in range for
+  any upgrade, so it never runs.
+
+There is no error, no warning and no log line. The first symptom is a merchant
+whose data was quietly never migrated. So two rules:
+
+1. `upgrade/upgrade-X.Y.Z.php` must declare `upgrade_module_X_Y_Z()`.
+2. The declared version — in **both** `config.xml` and `twopayment.php` — must
+   be **at least** the highest `upgrade/` filename.
+
+   Note the boundary: declared **equal to** the highest upgrade script is the
+   normal, correct case, because a script is named for the version it upgrades
+   *to*. Shipping 2.7.0 alongside `upgrade-2.7.0.php` is exactly the intended
+   pattern — that script is what migrates a 2.6.x shop onto 2.7.0. Only a
+   script numbered *above* the declared version is unreachable.
+
+`tests/UpgradeScriptVersionSpec.php` gates both, and runs in the offline suite
+(`php tests/run.php`).
+
+The version sequence is legitimately **non-contiguous**: 2.6.7 was deliberately
+skipped, and most releases ship no upgrade script at all because most need no
+data migration. The gate does not require contiguity, and must never be changed
+to.
 
 ## Developer & AI Quickstart
 
 ### Start Here
 
 - [AI_CONTEXT.md](AI_CONTEXT.md): AI operating manual (architecture, invariants, pitfalls)
-- [AGENTS.md](AGENTS.md): repository guardrails for any coding agent
+- [AGENTS.md](AGENTS.md): repository guardrails for any coding agent — the mandatory
+  invariants and the pre-commit verification commands live here
+- [.ai/vat-rate-sourcing.md](.ai/vat-rate-sourcing.md): how order-payload tax rates are
+  sourced and where the payload fails loud
+- [.ai/decisions.md](.ai/decisions.md) / [.ai/learnings.md](.ai/learnings.md): dated
+  journals of record
 - [tests/README.md](tests/README.md): test coverage and execution details
-- [CHANGELOG.md](CHANGELOG.md): behavior/history reference
+- [CHANGELOG.md](CHANGELOG.md): version history
 
-Compatibility note:
-- [CLAUDE.md](CLAUDE.md) is a pointer to `AI_CONTEXT.md` for tooling compatibility only.
-
-### Mandatory Invariants
-
-- Never create a local PrestaShop order if Two rejects order creation or verification.
-- Keep provider-first checkout flow and retry idempotency intact.
-- Apply rejection safeguards globally (not country-specific).
-- Keep tax and amount formulas aligned with PrestaShop totals and test expectations.
-- Update translation surfaces (`$this->l`, JS i18n map, `translations/es.php`) for user-facing text changes.
-
-### Minimum Verification Before Commit
+### Local Development
 
 ```bash
-php -l twopayment.php
-php tests/run.php
+make help       # all targets
+make install    # boot a local PrestaShop with the module installed
+make test       # the unit harness CI runs (php tests/run.php)
+make test-js    # the Jest gate CI runs (views/js; host Node 20+, see tests/js/README.md)
+make phpstan    # the static-analysis gate CI runs
+make test-integration  # real-engine probes (see tests/integration/README.md)
 ```
 
-If you modified more PHP files, lint each touched file as well.
+### CI support matrix
+
+CI works out which versions to test on every run, from upstream, rather than
+from a hand-kept list: `dev/support-matrix.sh` (its header names every
+source; run it with no arguments for a readable report).
+
+- **PHP**: lint on every minor from the module's floor (7.2) to the newest
+  [php.net](https://www.php.net/supported-versions.php) supports. The offline
+  suite runs from 8.1, the oldest PHP its own code parses on, and PHPStan from
+  7.4, its own floor.
+- **PrestaShop**: the newest release of every minor PrestaShop still supports
+  under its [release and support cycle](https://www.prestashop-project.org/project-organization/release-cycle/),
+  that is the newest minor of each of the two newest majors, plus PrestaShop
+  1.7.6.5 on PHP 7.2 as a named exception for merchants on the module's
+  floor. A run's step summary lists the versions it resolved to.
+- **E2E and integration**: every PrestaShop release above times every PHP
+  minor it declares (`install-dev/install_version.php`) that has a
+  `prestashop/prestashop` image. A combination with no image is listed as
+  skipped in the run's summary, with a warning. Each leg warns when its image
+  runs an older PHP patch than php.net's newest.
+- **Smoke and carrier-less**: the newest release of each PrestaShop minor on
+  the newest PHP it declares.
+
+#### Service URL overrides
+
+Two of the hosts the module resolves can each be repointed with their own
+environment variable. Each falls back to its own environment-keyed default when
+unset — `production` and `staging` have explicit hosts, everything else
+(including an empty setting) resolves to sandbox:
+
+| Variable | Service | `production` | `staging` | otherwise |
+| --- | --- | --- | --- | --- |
+| `TWO_API_BASE_URL` | checkout API | `api.two.inc` | `api.staging.two.inc` | `api.sandbox.two.inc` |
+| `TWO_CHECKOUT_BASE_URL` | hosted checkout-page app (sole-trader signup) | `checkout.two.inc` | `checkout.staging.two.inc` | `checkout.sandbox.two.inc` |
+
+`make install` and `make run` print the resolved API / checkout-page
+hosts (honouring the overrides above and the `_PS_MODE_DEV_` gate) in their
+status block, so you can see at a glance which real hosts your local instance
+will actually talk to without having to run `dev/probe-hosts.php` yourself.
+
+**Mind the two "checkouts".** `TWO_API_BASE_URL` is the one behind
+`getTwoCheckoutHostUrl()` and the `checkout_host` value handed to the browser —
+that is the **API**. `TWO_CHECKOUT_BASE_URL` is the hosted checkout-page **app**
+that serves the sole-trader signup page. Setting one does not move the other.
+
+Both are **only honoured when the shop is in dev mode** (`_PS_MODE_DEV_`,
+which the local `docker-compose.yml` sets via `PS_DEV_MODE=1`). A shop that is
+not in dev mode ignores them even when they are set in its process environment,
+so they never become a way to repoint a live checkout. There is no admin UI for
+any of them.
+
+They resolve **independently**: setting one leaves the other on its
+default. That is the point: the common case is a staging API plus a
+checkout-page you are editing yourself.
+
+Note that the container reads these at **creation** time. `make run` only starts
+the containers you already have, so it keeps whatever values they were created
+with, and changing a value means creating the container again. `make install` is
+the supported way to do that — be aware that it runs `clean` first, so it drops
+the database volume and rebuilds the shop (and it is also what re-runs the
+module install, the country/carrier seeding and the storefront proxy patch).
+
+**Everything on your machine.** The API host is fetched
+*server-side*, from inside the container, which reaches your machine through
+`host.docker.internal` (mapped in `docker-compose.yml`). The signup page is
+different: the module only hands its URL to the browser, which opens it in a
+popup and then origin-checks the `postMessage` that comes back — so
+`TWO_CHECKOUT_BASE_URL` has to be a host the **browser** can resolve, i.e.
+`localhost`, not `host.docker.internal`:
+
+```bash
+make install \
+  TWO_API_BASE_URL=http://host.docker.internal:8080 \
+  TWO_CHECKOUT_BASE_URL=http://localhost:3000
+```
+
+**Remote shop, checkout-page on your laptop (FRP tunnel).** A remote instance
+(e.g. GKE-hosted) is not on your machine, and neither `host.docker.internal` nor
+`localhost` means anything useful to a browser pointed at it. Expose your local
+checkout-page dev server through an FRP tunnel instead — start it with the
+checkout-page project's own tunnel tooling, which reports the hostname it came up
+on — and point `TWO_CHECKOUT_BASE_URL` at that hostname:
+
+```bash
+make install TWO_CHECKOUT_BASE_URL=https://checkout-<you>.frp.staging.two.inc
+```
+
+(Use whatever hostname your tunnel actually reports — the form above is
+illustrative. `frp.beta.two.inc` is this repo's own storefront tunnel's server
+address, a different FRP environment from checkout-page's.)
+
+For a shop you did not boot with `make`, set the same variable in that
+instance's own environment (however that deployment injects env vars) — the gate
+and the resolution are identical; `make` only exports it for the local
+containers. It still has to be present in the container's environment when the
+container is created.
 
 ## API Integration
 
@@ -364,6 +773,7 @@ If you modified more PHP files, lint each touched file as well.
 - `/v1/order_intent` - Order Intent check
 - `/v1/order` - Order creation
 - `/v1/order/{id}` - Order updates, refunds
+- `/v1/tax_codes/{country}` - The tax codes offered in the 0% line mapping
 - `/v1/invoice/{id}/upload` - Invoice upload initiation
 - `/companies/v2/company` - Company search
 
@@ -375,17 +785,661 @@ The module builds order payloads that exactly match PrestaShop invoices:
 - Shipping and discount line items
 - Buyer and shipping addresses
 - Payment terms
+- The optional buyer reference fields the buyer filled in at the payment step
+  (see "Optional buyer reference fields" above)
+
+## Stable extension contract: order postprocessing
+
+A shop is not always the merchant's accounting source of record. When the order the
+shop recorded is not the order the merchant wants invoiced (a charge the shop left
+untaxed that the business books as VAT-inclusive, or a cost the shop adds to the cart
+total outside any carrier, say), the merchant fixes it up in their own module on this
+hook, before the order reaches Two's API. The module fires the hook consistently and
+sends the payload as the merchant's handler returns it. A handler that changes gross,
+net or tax is not held to what the shop worked out: it owns that, and Two's API
+validates whatever arrives.
+
+### The hook
+
+| | |
+| --- | --- |
+| Name | `actionTwoOrderPostprocessing` |
+| Call | The module calls each subscriber's `hookActionTwoOrderPostprocessing($params)` itself, with `$params['payload']` bound by reference and `$params['context']`, rather than through `Hook::exec()`, which on PrestaShop 8 and 9 discards a subscriber's exception outside debug mode. Which modules run is core's rule: those registered on the hook for the shop, active, in position order, and only native ones under "Disable non PrestaShop modules". Controller exceptions and employee permissions are not applied, so the payload never depends on the page or the employee that triggered the request |
+| Subscribe | `$this->registerHook('actionTwoOrderPostprocessing')` in your module's `install()`, and a `hookActionTwoOrderPostprocessing($params)` method |
+| Return | none: edit `$params['payload']` in place. It is a reference, the same idiom as core's `actionPresentCart` |
+| Order | subscribers run in hook-position order (Design > Positions), each seeing the previous one's edits |
+| Supported | PrestaShop 1.7.6, 8 and 9 |
+
+`payload` (array) is the complete request body exactly as the module would send it:
+2-decimal amount strings, `line_items`, `tax_subtotals` (when the "Validate tax
+subtotals" setting sends them), the order-level `net_amount` / `tax_amount` /
+`gross_amount`, buyer, addresses and everything else. A request that has no body
+passes an empty array. Any part of it may be changed, including gross amounts, lines,
+totals and fields the module does not itself send, except on `order_confirm` and
+`cancel` (below).
+
+Two's API does not define some order-level fields on some requests and ignores them,
+so the module does not send them there: the order edit (`order_update`) has no `buyer`,
+and the order intent has no `discount_amount`, `billing_address` or `tax_subtotals`.
+A subscriber that reads one of them on those requests no longer finds it; the order
+create still carries all of them, and every line's own `discount_amount` is unchanged.
+
+`order_confirm` and `cancel` take no body at Two's API, so they are always sent empty,
+as the Magento plugin sends them. The hook still runs on them, with an empty `payload`
+and the usual `context`. A body a subscriber returns there is ignored and logged with
+the paths it set, never their values; a subscriber that throws is logged with its
+exception's class and where it was thrown, never the message, and the request is still
+sent: a subscriber must never block a confirm or a cancel.
+
+`context` (array):
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `request_type` | string | `order_intent`, `order_create`, `order_update`, `order_confirm`, `capture`, `refund` or `cancel` |
+| `trigger` | string | What caused the request, for diagnosis: `precheck`, `strict_intent`, `checkout`, `snapshot_hash`, `admin_edit`, `tracking_number`, `merchant_order_id`, `confirmation`, `scheduled_check`, `admin_check`, `payment_return`, `status_change`, `credit_slip`, `refund_remainder`, `buyer_cancel`, and others |
+| `endpoint` | string | The API path the request goes to, e.g. `/v1/order/{id}/refund` with the real id |
+| `cart` | `Cart` or null | The cart the order was or will be placed from |
+| `order` | `Order` or null | The PrestaShop order; null before it exists |
+| `shipping_tax_rate` | float or null | The rate the carrier's tax rules group applies at the cart's tax address, whether or not the shipping line was actually taxed. `0.21` means 21%. `0.0` for a "No tax" group, null with no carrier or no such group |
+| `fallback_shipping_tax_rate` | float or null | The rate of the module's Default shipping tax code, null when it is not set |
+| `fallback_shipping_tax_code` | string or null | The tax code a 0% line taxed by the module's Default shipping tax code would take at the cart's addresses, from steps 1 to 3 of the tax code mapping (see "Tax codes for 0% lines"). Null when the Default shipping tax code is not set or is "No tax", when the matched row is on (none), or when it cannot be read. Never derived |
+| `contract_version` | int | `1` |
+| `order_lines` | array or null | Two's lines for the order, not PrestaShop's `order_detail` rows (those are on `order`): the order's line items as Two holds them, with Two's line ids. They are the lines of the last create or update Two accepted, after the subscribers' edits, as Two's `GET /v1/order/{id}` returns them. Each carries its `id`, `type`, `gross_amount`, `net_amount`, `tax_amount`, `tax_rate`, `tax_code` and the other line fields. Given on `refund` and `order_update`. Null on the other request types, when the module could not read the order from Two, and on the merchant order id sync of a repeated confirmation callback, which reads no order. Read-only: changing it changes nothing |
+| `order_refunds` | array or null | Two's refunds for the order: every refund Two already holds for it, from the same `GET /v1/order/{id}` response as `order_lines`. Each carries its `id`, its `total_amount` (Two records refunds as negative amounts) and its `line_items`, and each refund line names the order line it credited in `prototype_id`, with the amounts refunded on it, `gross_amount` among them. A refund line has its own `id` and the name, description, type, rate and tax code of the order line it was made from, and Two's responses leave its `prototype_id` empty, so where Two leaves it empty the module fills in its best match by name, description, type, rate and tax code: this is the module's inference, not Two's record. Where several order lines match, a refund's matching lines go to different order lines, the largest to the one with the most left to refund. A refund line that matches none keeps it empty, so a line renamed or re-rated by an update after a refund no longer matches its earlier refunds and reads as unrefunded. Everything else is as Two returned it. Given on `refund` and `order_update`, on the same requests and with the same null rules as `order_lines`. On a refund it holds the earlier refunds, not the one being sent. Read-only: changing it changes nothing |
+| `order_tenders` | array | The order's tenders (see [Tenders](#tenders)): what has already paid part of the order without being an order line, as the modules on `actionTwoOrderTenders` declare them for the cart or order. Each is `{type, label, amount, source}`, `type` being `gift_card`, `store_credit` or `other` and `amount` a positive float in the order currency. Empty on a shop with no such module, which is every shop on core PrestaShop alone. Given on every request. Read-only: changing it changes nothing |
+
+As on every hook, `$params` also carries core's `cookie`, `cart` and `altern`.
+`$params['cart']` is the visitor's cart from `Context`, which on an admin edit, a
+status change or a refund is not the order's cart: use `$params['context']['cart']`.
+
+`order_lines` comes from the read of the order from Two that a refund and the merchant
+order id sync already make. An admin edit or a tracking number reads the order only when
+it changed something, so with a subscriber registered the module reads it before
+building the update: a save that changes nothing then makes that one read, and a shop
+with no subscriber makes the same calls as without `order_lines`. `order_refunds` comes
+from that same read, so it adds no call.
+
+### When it fires
+
+Once per outbound order request, immediately before it is sent:
+
+| `request_type` | When |
+| --- | --- |
+| `order_intent` | The checkout's order-intent pre-check (`precheck`), both when it is built for the checkout and when the module sends it to Two, which it rebuilds from the cart rather than take from the browser; and the authoritative check at payment submit (`strict_intent`) |
+| `order_create` | Order creation at checkout (`checkout`), and the rebuild the confirmation step hashes to detect a cart changed during payment (`snapshot_hash`, not sent) |
+| `order_update` | An admin order edit, a tracking number, the merchant order id sync after confirmation, and the rebuild that splits a Refunded remainder by tax rate after credit slips (`refund_remainder`, not sent). An admin edit or tracking number Two would refuse is built, so the hook runs, but not sent |
+| `order_confirm` | The buyer's return from verification. Sent with no body |
+| `capture` | The fulfilment status |
+| `refund` | The refunded status (a full refund with no body; after credit slips, what is left, as `{amount, currency, line_items, tax_subtotals}`) and a credit slip (a partial refund, `{amount, currency, line_items, tax_subtotals}`), `tax_subtotals` only while the "Validate tax subtotals" setting is on. Each line is `{id, quantity, unit_price, discount_amount, net_amount, tax_amount, gross_amount}`, where `id` is the Two order line it refunds; `line_items` is absent when the refund could not be matched to the order's lines |
+| `cancel` | The cancelled status, a buyer cancel, and the module's own clean-up cancels. Sent with no body |
+
+**A refund a subscriber re-rates.** A subscriber that re-rates a line at order
+creation leaves Two holding it at a rate the shop's refund figures do not carry, so
+the module cannot match that part of a later refund to the order's lines, and the
+refund goes without `line_items`. When a refund the module could not itemise leaves
+the hook with changed `tax_subtotals` and still no `line_items`, the module itemises
+the changed subtotals against the order's lines at Two, as it itemises its own: each
+amount the subscriber moved from one rate to another is credited to lines of the kind
+it came from, so refunded shipping moved to another rate goes to the shipping line at
+that rate. The subtotals of a rate refunding nothing are then dropped, as with the
+module's own lines. A re-rate must keep the refund's gross (the subtotals' taxable plus
+tax equal the module's split to the cent) and name each rate once, merging into an
+existing entry rather than adding a second one for the same rate: the module itemises
+only then, and otherwise sends the refund as the subscriber left it, without lines,
+with its own reason logged. A subscriber that sets `line_items` itself keeps them. When the
+changed subtotals cannot be itemised either (one rate asks for more than the lines at
+that rate have left, say), the refund goes without lines as before, and the module
+logs why, naming the changed subtotals. A subscriber that re-rates should therefore
+move no more than the re-rated lines have left, from `order_lines` less what
+`order_refunds` credited them. This needs `tax_subtotals` in the payload, so the
+"Validate tax subtotals" setting on. The hook's trace and the debug diff record the
+payload as the subscriber returned it; the stored refund record and the unitemised log
+follow the payload sent, after the module itemised it.
+
+The hook also runs on every order-intent pre-check during checkout, so keep
+subscribers cheap.
+
+### The module's checks
+
+The module checks every order payload it builds against the shop.
+
+**Shop-match checks** ask whether the payload matches what PrestaShop worked out:
+
+- each line's declared tax rate against the amounts PrestaShop stored: products, gift
+  wrapping, shipping at a populated Default shipping tax code, and on an order update
+  the placed gift wrapping;
+- the lines against the cart's totals (on an update, the placed order's), gross, net and
+  tax each within the larger of 0.02 and half a cent per line plus half a cent for the
+  order, since each line and the order round on their own;
+- the buyer fee line against the cart's fee line;
+- on a credit slip, the refunded shipping against the Default shipping tax code the
+  order was placed at.
+
+**Whether the payload adds up by itself is Two's API's to judge.** The module does not
+check a payload's own arithmetic: each line's gross = net + tax, its tax at its declared
+rate and its net = quantity x unit price - discount, that the order has a line, or that
+the tax subtotals and the order's `net_amount`, `tax_amount` and `gross_amount` agree
+with the lines. Two's API validates the order data it receives, and a check in the module
+can only be relaxed or corrected when every merchant upgrades, so the module sends such a
+payload as it is and Two's response decides.
+
+**The default handler.** The module registers its own handler on the hook, and that
+handler runs the shop-match checks. It runs only when no merchant handler is
+registered: no other module on the hook that the module would call (registered for the
+shop, active, and allowed by "Disable non PrestaShop modules"). With none, each
+shop-match check has the outcome it always had: passed, or refused with the same
+refusal. The one difference is that the comparison with the cart's totals now also
+judges lines whose gross is not their net + tax, which it used to leave to a check of
+the payload's own arithmetic that the module no longer makes. Where more than one check
+or build failure applies, which one is reported can differ (see "Order of refusals"
+below). The module runs its handler itself, after the hook, so its position under
+Design > Positions does not matter.
+
+**A merchant handler owns shop-match correctness.** With one registered, the default
+handler stands down: the module logs, once per request, that the shop-match checks are
+delegated, naming the handler. What the handler declares against the shop (a changed
+gross, an added line, a re-split) is its decision, and the module does not compare it
+with the cart. An enabled handler stands the default handler down even when it changes
+nothing.
+
+**Nothing else is checked after the hook.** With a merchant handler registered, the
+payload it returns is sent as it is (except on `order_confirm` and `cancel`, which are
+sent empty), even one that does not add up, or a line the module
+built whose declared rate its amounts contradict, which the handler left unchanged. Two's
+API judges it.
+
+**Opting back in.** A merchant handler can run the module's shop-match checks itself on
+the payload it returns, once it has made its edits. Here it adds a cost outside any
+carrier at 21%, a split the shop does not have, so it owns the comparison with the cart's
+totals and asks only for the checks on single lines:
+
+```php
+public function hookActionTwoOrderPostprocessing($params)
+{
+    $params['payload'] = self::addOutsideCarrierLine($params['payload'], $params['context'], 0.21);
+    // The module's checks on the lines this handler left as built.
+    Module::getInstanceByName('twopayment')->runTwoShopMatchChecks($params['payload'], Twopayment::SHOP_MATCH_LINES);
+}
+```
+
+`runTwoShopMatchChecks($payload, $scope)` takes `Twopayment::SHOP_MATCH_ALL`, the
+default, for every shop-match check, or `Twopayment::SHOP_MATCH_LINES` for the checks on
+single lines only; any other value throws.
+
+A check on a single line (a declared rate, a credit slip's refunded shipping, the buyer
+fee line against the cart's) applies while the payload carries that line as the module
+built it, so a line the handler changed or removed is not held to the shop. The check on
+the whole order (the lines against the cart's or placed order's totals) compares the
+payload passed in, gross, net and tax alike, and runs only with `SHOP_MATCH_ALL`: called
+before the edits above, it refuses the order the edits were there to complete, and after
+edits that declare a tax split the shop does not have (the same cost at 21%, say), it
+refuses that split. A handler that declares its own split uses `SHOP_MATCH_LINES`.
+Its comparison leaves out the module's buyer fee line, and the cart's,
+only while that line is unchanged, so a handler that changes the fee line owns the
+cart-total check as well. The helper throws the refusal the default handler
+would have, and a handler that lets it through has the request refused exactly as the
+default handler refuses it: same exception, message and log. Outside the hook, or on a
+request with no shop-match checks, it does nothing. It is opt-in and part of this
+contract.
+
+Not checks, and still refused before the hook: a payload the module cannot build at all,
+such as an empty cart, an invalid address, a negative discount, a discount that matches
+no cart rule, a fee that cannot be replayed, an unreadable tax code mapping, or a split of
+shipping or wrapping that cannot reach the shop's amounts, which includes shipping spread
+over several rates of a populated Default shipping tax code.
+
+**The buyer fee.** The cart's buyer fee line is priced on the module's own lines, before
+the hook. With no merchant handler, a line that fails a declared-rate check stops that
+pricing: the cart keeps the fee line it had, and that line's check refuses the order.
+With a merchant handler the checks on single lines are the handler's, so they do not stop
+the pricing: the cart carries the fee line the payload sends, and a later update replays
+that fee from the placed order. A subscriber that adds a line or changes gross does not
+change that price (see [The buyer fee is priced before the hook](#the-buyer-fee-is-priced-before-the-hook)).
+
+**Order of refusals.** With no merchant handler the shop-match checks keep their order
+among themselves, but they now run after the payload is built. A build failure that used to
+come after a check (a negative discount after a product's declared rate, an invalid
+address or an unreadable tax code mapping after any check) is now the refusal reported
+when both apply.
+
+### What the module does with the result
+
+The payload goes out as the subscribers return it, once the shop-match checks above
+pass where they run.
+
+Two's API validates what arrives, and its error message is written to the module log
+and, for an order update, to the order's private messages. With a subscriber that
+changes amounts, the invoice Two issues can differ from what the shop charged: that is
+the merchant's decision, and the merchant owns what their code declares.
+
+A partial refund's line amounts must sum to its `amount`: a subscriber that changes the
+amount should change the lines to match, or remove `line_items`, or Two refuses the
+refund and the merchant is told it was not sent.
+
+A refund Two accepts is recorded as the subscribers returned it, so the remainder sent
+when the order is later marked Refunded is what Two still holds. That remainder is split
+by tax rate against the order rebuilt through the hook (`order_update`,
+`refund_remainder`, not sent); a subscriber that throws on that rebuild stops the
+remainder, and the order's note says the hook stopped it.
+
+A subscriber that throws, or leaves something that is not an array or cannot be
+JSON-encoded, has a bug rather than a declaration. On any request but `order_confirm`
+and `cancel`, which are sent empty regardless, that request is not sent: the
+module log gets `TWO_ORDER_POSTPROCESSING_HOOK_FAILED` with the request type, the
+back office shows a notice on admin actions, and the buyer sees the module's existing
+generic refusal. It never falls back to the unedited payload.
+
+With Debug Mode on, the module also logs what the subscribers changed, as a list of paths
+with their values before and after. Values outside the amounts and lines are shown only
+as `redacted`, since they can carry buyer data. See also [What the module logs](#what-the-module-logs).
+
+The module never recomputes totals or subtotals after the hook, since that would
+overwrite a subscriber's edits. A subscriber that changes a line also updates the
+totals and `tax_subtotals` it affects. The module offers a helper for exactly that:
+
+```php
+$payload = Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
+```
+
+It rebuilds the order `net_amount` / `tax_amount` / `gross_amount`, and `tax_subtotals`
+when the payload carries them, from `line_items` with the module's own arithmetic, and
+changes nothing else. Each total, and each per-rate subtotal, is the sum of its lines
+plus any residual it carried before the hook; the module's own payloads carry none, so
+it is the sum of the lines. Its result replaces whatever the payload held, hand edits
+included, and it never writes `-0.00`. It is opt-in and part of this contract.
+
+### What the module logs
+
+Whenever the hook has at least one subscriber to run, the module's log shows it,
+whatever Debug Mode is set to, so a merchant can see from the back office alone
+whether their subscriber ran and what it did (TWO-27014). A shop with no subscriber
+logs nothing new.
+
+- **One line per request**, on every request type including `order_confirm` and
+  `cancel`, written just before the first subscriber runs: `TwoPayment: The order
+  postprocessing hook is invoking 2 subscribers on the order_create request (checkout,
+  cart 42), in this order: firstmodule, secondmodule.` It names the order when the
+  request has one, else the cart.
+- **One trace per request with a body** (`order_intent`, `order_create`,
+  `order_update`, `capture` and `refund`), a JSON document listed under "Order
+  postprocessing traces" on the module's [error log](#error-log) and downloadable from
+  there. It holds the request type, trigger, cart and order ids, the module version,
+  the subscribers in run order, the payload as the module built it (`before`), and in
+  `steps` the payload after each subscriber, `{subscriber, payload}`, in run order, so
+  with several subscribers each one's edits show on its own step. A subscriber that
+  throws is named in `threw` with its exception's class and where it was thrown, never
+  the message, and has no step; one that leaves something other than an array has a
+  step with `left` naming what it left. The trace is written either way.
+
+In every payload in a trace the buyer's personal details are replaced by `redacted`:
+the representative's first and last name, email and phone, the company name and the
+billing and shipping organisation names (for a sole trader, a person's name), the
+billing and shipping street address, the invoice email, and the buyer's free-text
+`order_note`. Amounts, tax rates and codes, lines, shipping, discounts, totals, the
+organisation number, country, city and postal code are kept. An empty detail is left
+empty.
+
+A trace is stored in PrestaShop's log, which caps its size, so one that would not fit
+sheds in this order, listing each step under `shed`: the payload after each
+subscriber from the last back to the first, each replaced by its count of changes and
+the paths it changed with their values before and after, the buyer's details redacted
+as in the payloads; then `before`; then those diffs, leaving each subscriber's count
+of changes; then everything but the header.
+
+A trace keeps its own copies of the payloads, so it never changes what is sent, and a
+failure to write the module's log never fails a request or reads as a subscriber's
+failure. A trace for a request the hook failed is logged at error severity.
+
+### Tenders
+
+A tender is anything that has already paid part of the order without being an order
+line, such as a gift card or store credit. Two needs to know about it because Two only
+funds what is still outstanding: the tender's part of the order was paid by the buyer
+some other way.
+
+Core PrestaShop has no tenders. Its vouchers are cart rules, and a cart rule is a
+discount line on the order already, so it is never a tender. A module that takes part
+of the payment outside the cart (a gift card or store credit it keeps itself, with
+the cart total PrestaShop works out still including that part) declares it on the
+`actionTwoOrderTenders` hook. The hook is normally empty.
+
+| | |
+| --- | --- |
+| Name | `actionTwoOrderTenders` |
+| Subscribe | `$this->registerHook('actionTwoOrderTenders')` and a `hookActionTwoOrderTenders($params)` method |
+| Arguments | `$params['cart']` (`Cart` or null), `$params['order']` (`Order` or null, before the order exists), `$params['order_slip']` (a credit slip, or null) and `$params['tenders']`, a list bound by reference that the method appends to |
+| Entry | `type` (`gift_card`, `store_credit` or `other`), `label` (a name for logs and display, never a redeemable card code), `amount` (what it paid, positive, in the order currency) and `source` (your module) |
+
+With no `order_slip`, declare what the cart or order was paid with. With an
+`order_slip`, declare what that credit slip returned to the tenders.
+
+```php
+public function hookActionTwoOrderTenders($params)
+{
+    $cart = $params['cart'];
+    if ($cart === null) {
+        return;
+    }
+    if ($params['order_slip'] !== null) {
+        $amount = $this->amountReturnedToCard($params['order_slip']);
+    } else {
+        $amount = $this->amountPaidByCard((int) $cart->id);
+    }
+    if ($amount > 0) {
+        $params['tenders'][] = array(
+            'type' => 'gift_card',
+            'label' => 'Gift card',
+            'amount' => $amount,
+            'source' => $this->name,
+        );
+    }
+}
+```
+
+An entry whose `amount` is zero is skipped. One that is not an array, or whose
+`amount` is missing, negative or not a number, is refused and logged with its type,
+source and amount, never its label. An unknown `type` is reported as `other`. An
+exception from a subscriber stops the request, so an order is never sent as if it had
+no tenders because their module failed.
+
+**Never declare a tender for something you also apply as a cart rule.** The cart rule
+is already a discount line, so the amount would be counted twice.
+
+**What reaches Two's API.** Tenders reach the API as `prepaid_amount`. An order with
+tenders is sent as an invoice for its full lines with the tenders declared as already
+paid. Its `order_create` and `order_update` bodies carry:
+
+| Field | Value |
+| --- | --- |
+| `net_amount`, `tax_amount`, lines | The full order, as without tenders |
+| `invoice_amount` | `net_amount` plus `tax_amount` |
+| `prepaid_amount` | The sum of the tenders |
+| `payable_amount` | `invoice_amount` less `prepaid_amount`: the outstanding amount, which Two funds |
+| `gross_amount` | Equal to `payable_amount` |
+
+Every update of an order placed with tenders declares them, even once they are zero:
+an update without `prepaid_amount` resets it to zero at Two. A credit slip's refund
+carries `amount`, what the shop refunded through Two (the slip less what the
+modules declare it returned to the tenders), and `prepaid_amount`, the rest of its
+lines. A slip that returns more to the tenders than the slip itself, or than Two
+still holds of them (after earlier refunds), is not sent: Two would refuse it, so the
+order gets a private note saying why, to refund it in the Merchant Portal. Marking the order Refunded after
+credit slips refunds what is outstanding as `amount` and what is left of the tenders
+as `prepaid_amount`. A capture fulfils the whole order and carries no amounts, and the
+`order_intent` body is unchanged.
+
+An order with no tenders carries none of `invoice_amount`, `prepaid_amount` and
+`payable_amount`, and its bodies are as they always were. So are the updates and
+refunds of an order placed with none, or placed before tenders were sent: the module
+records the prepaid amount an order was placed with, and only an order placed with one
+declares it later.
+
+**The order in PrestaShop.** PrestaShop checks the payment against the cart total,
+which includes the tenders, so the module records the order's Two payment at the full
+cart total rather than at what Two funds. A tender module that wants its own payment
+row on the order records it itself.
+
+`recomputeTwoOrderTotals()` keeps the `prepaid_amount` a body carries and sets
+`invoice_amount`, `payable_amount` and `gross_amount` from the lines.
+
+### The buyer fee is priced before the hook
+
+The module's fee calculations operate on the order as the module built it, before any
+subscriber runs. On order intent and create, from the cart, the buyer fee is quoted on
+the gross of the module's own lines; on an order update, it is replayed from what
+PrestaShop recorded on the order (how the checks treat that pricing is under "The buyer
+fee" in [The module's checks](#the-modules-checks)). The module does not re-price the
+fee on the payload a subscriber returns, so a subscriber that adds a line or changes
+gross, net or tax does not change the fee. The shop's own fee row (the cart line, and
+the order line once placed) stays at the module's price, and every update replays it,
+so a subscriber that changes the fee line re-applies that change on every request.
+
+Any fee consequence of the amounts a subscriber declares is the merchant's, and their
+subscriber handles it. With a percentage fee, for example, no fee is charged on a line
+the subscriber adds; a merchant who wants it charged changes the fee line in their
+subscriber, together with the totals it affects.
+
+### Requirements on a subscriber
+
+- **Deterministic.** It must be a pure function of the payload and the cart. The
+  confirmation step rebuilds the order and compares a hash of it with the one taken at
+  payment, over the post-hook payload; a subscriber whose output varies refuses
+  confirmation as a tampered cart. That includes `trigger`: the payment build
+  (`checkout`) and the confirmation rebuild (`snapshot_hash`) must give the same
+  payload, so never let the edit depend on it.
+- **Cheap.** It runs on every order-intent check.
+- **Present.** A disabled subscriber module, or PrestaShop's "Disable non PrestaShop
+  modules" switch, means no subscriber: orders then go out as the shop recorded them,
+  and the default handler's shop-match checks apply again. The module cannot tell "no
+  subscriber" from "subscriber switched off".
+
+### Examples
+
+Re-split shipping the shop recorded untaxed on a "No tax" carrier, at the rate the
+merchant's books apply to it, and keep the totals consistent, on the order and on its
+refunds:
+
+```php
+public function hookActionTwoOrderPostprocessing($params)
+{
+    // The rate the merchant books shipping at: the shop's carrier says "No tax".
+    $rate = 0.21;
+    if (!empty($params['payload']['line_items'])) {
+        $params['payload'] = self::resplitShipping($params['payload'], $rate);
+    } elseif (!empty($params['payload']['tax_subtotals'])) {
+        // A refund carries no lines. Only shipping is untaxed in this shop, so its 0% share is shipping.
+        $params['payload'] = self::resplitUntaxedRefund($params['payload'], $rate);
+    }
+}
+
+public static function resplitShipping(array $payload, $rate)
+{
+    foreach ($payload['line_items'] as &$line) {
+        if ($line['type'] !== 'SHIPPING_FEE' || (float) $line['tax_amount'] != 0.0) {
+            continue;
+        }
+        $gross = (float) $line['gross_amount'];
+        $net = round($gross / (1 + $rate), 2);
+        $line['net_amount'] = number_format($net, 2, '.', '');
+        $line['tax_amount'] = number_format($gross - $net, 2, '.', '');
+        $line['unit_price'] = $line['net_amount'];
+        $line['tax_rate'] = (string) $rate;
+        $line['tax_class_name'] = 'VAT ' . number_format($rate * 100, 2) . '%';
+    }
+    unset($line);
+
+    return Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
+}
+
+public static function resplitUntaxedRefund(array $payload, $rate)
+{
+    $untaxed = 0.0;
+    foreach ($payload['tax_subtotals'] as $i => $subtotal) {
+        if ((float) $subtotal['tax_rate'] == 0.0 && (float) $subtotal['tax_amount'] == 0.0) {
+            $untaxed += (float) $subtotal['taxable_amount'];
+            unset($payload['tax_subtotals'][$i]);
+        }
+    }
+    if ($untaxed == 0.0) {
+        return $payload;
+    }
+    $net = round($untaxed / (1 + $rate), 2);
+    $tax = round($untaxed - $net, 2);
+    foreach ($payload['tax_subtotals'] as &$subtotal) {
+        if (abs((float) $subtotal['tax_rate'] - $rate) < 0.000001) {
+            $subtotal['taxable_amount'] = number_format((float) $subtotal['taxable_amount'] + $net, 2, '.', '');
+            $subtotal['tax_amount'] = number_format((float) $subtotal['tax_amount'] + $tax, 2, '.', '');
+            $net = null;
+        }
+    }
+    unset($subtotal);
+    if ($net !== null) {
+        $payload['tax_subtotals'][] = array(
+            'taxable_amount' => number_format($net, 2, '.', ''),
+            'tax_amount' => number_format($tax, 2, '.', ''),
+            'tax_rate' => number_format($rate, 6, '.', ''),
+        );
+    }
+    $payload['tax_subtotals'] = array_values($payload['tax_subtotals']);
+
+    return $payload;
+}
+```
+
+On a 100.00 product at 21% with 29.00 of untaxed shipping, the shipping line becomes
+23.97 net + 5.03 tax = 29.00, and the order 123.97 + 26.03 = 150.00: the same gross,
+split the way the merchant books it. Without the `recomputeTwoOrderTotals()` call the
+order goes to Two with tax subtotals and totals that no longer match the lines, for Two's
+API to judge; the Debug Mode diff then names only the shipping line's fields, which
+points straight at the missing update.
+
+A PrestaShop refund carries no lines: a full refund has no body, and a credit slip, or
+what is left after slips, sends `{amount, currency, tax_subtotals}`. Its `tax_subtotals`
+split the refund by the rates the order was placed at, shipping following the Default
+shipping tax code table, so a subscriber that re-splits shipping on the order must
+re-split the refund's `tax_subtotals` the same way, as `resplitUntaxedRefund()` does: a
+credit slip refunding the 29.00 of shipping goes out as 23.97 + 5.03 at 21%, the amount
+unchanged. It moves every untaxed share, so it suits a shop where only shipping is
+untaxed. A shop with untaxed products can tell the shares apart from
+`$params['context']['order_lines']`: each refund line's `id` is the Two order line it
+refunds, and that line's `type` there says whether it is shipping or a product. The same
+lines tell a subscriber that added its own line at create which share of a refund is
+that line's.
+
+What is left to refund on one of Two's order lines is that line's amount less the sum of
+what Two's earlier refunds credited it. `order_lines` gives the line's amount and
+`order_refunds` the earlier refunds, each refund line naming the order line it credited
+in `prototype_id` (filled in by the module where Two's response leaves it empty):
+
+```php
+public static function leftToRefund(array $context, $lineId)
+{
+    if (!is_array($context['order_lines']) || !is_array($context['order_refunds'])) {
+        return null;
+    }
+    $left = null;
+    foreach ($context['order_lines'] as $line) {
+        if ((string) $line['id'] === (string) $lineId) {
+            $left = (float) $line['gross_amount'];
+        }
+    }
+    if ($left === null) {
+        return null;
+    }
+    foreach ($context['order_refunds'] as $refund) {
+        foreach (isset($refund['line_items']) ? $refund['line_items'] : array() as $refunded) {
+            // Each refund line names the order line it credited in prototype_id; Two records refunds as negatives.
+            if (isset($refunded['prototype_id']) && (string) $refunded['prototype_id'] === (string) $lineId) {
+                $left -= abs((float) $refunded['gross_amount']);
+            }
+        }
+    }
+
+    return round($left, 2);
+}
+```
+
+A subscriber that itemises a refund itself keeps each line's share within that. When the
+module cannot itemise a refund it logs why, ending "sending the refund without line
+items", only if the payload sent after the hook still has no lines.
+
+Add a line for a cost the shop adds to the cart total outside any carrier. The shop's
+total carries it and the lines the module built do not, so the default handler would
+refuse the order; a handler that adds the line owns that check. On an order update the
+module's shipping line is whatever the placed order's total charged beyond its products,
+wrapping and discounts, so it carries the cost on top of the carrier's shipping: there the
+handler cuts that line back to the carrier's own shipping and adds the same line the
+create sent, so create and update carry the same lines. It handles an order with one
+shipping line:
+
+```php
+public static function addOutsideCarrierLine(array $payload, array $context, $rate)
+{
+    if ($context['request_type'] === 'order_update') {
+        $carrier = round((float) $context['order']->total_shipping_tax_incl, 2);
+        $gross = 0.0;
+        foreach ($payload['line_items'] as $i => $line) {
+            if ($line['type'] !== 'SHIPPING_FEE') {
+                continue;
+            }
+            $gross = round((float) $line['gross_amount'] - $carrier, 2);
+            if ($gross > 0 && $carrier > 0) {
+                $payload['line_items'][$i]['gross_amount'] = number_format($carrier, 2, '.', '');
+                $payload['line_items'][$i]['net_amount'] = number_format((float) $line['net_amount'] - $gross, 2, '.', '');
+                $payload['line_items'][$i]['unit_price'] = $payload['line_items'][$i]['net_amount'];
+            } elseif ($gross > 0) {
+                unset($payload['line_items'][$i]);
+            }
+            break;
+        }
+        $payload['line_items'] = array_values($payload['line_items']);
+    } elseif (in_array($context['request_type'], array('order_intent', 'order_create'), true)) {
+        $gross = round((float) $context['cart']->getOrderTotal(true, Cart::BOTH) - (float) $payload['gross_amount'], 2);
+    } else {
+        return $payload;
+    }
+    if ($gross <= 0) {
+        return $payload;
+    }
+    $net = round($gross / (1 + $rate), 2);
+    $payload['line_items'][] = array(
+        'name' => 'Delivery', 'description' => '', 'gross_amount' => number_format($gross, 2, '.', ''),
+        'net_amount' => number_format($net, 2, '.', ''), 'discount_amount' => '0.00',
+        'tax_amount' => number_format($gross - $net, 2, '.', ''), 'tax_class_name' => 'VAT ' . number_format($rate * 100, 2) . '%',
+        'tax_rate' => (string) $rate, 'unit_price' => number_format($net, 2, '.', ''), 'quantity' => 1, 'quantity_unit' => 'pcs',
+        'image_url' => '', 'product_page_url' => '', 'type' => 'SHIPPING_FEE',
+    );
+
+    return Module::getInstanceByName('twopayment')->recomputeTwoOrderTotals($payload);
+}
+```
+
+A 29.00 cost becomes a 23.97 + 5.03 shipping line at 21%, on the create and on later
+updates alike, beside the carrier's shipping as the module built it, and the order gross
+becomes the cart's. The `recomputeTwoOrderTotals()` call is what keeps the order totals and
+`tax_subtotals` consistent with the new line; without it they no longer match the lines
+when the order reaches Two's API.
+
+A working subscriber, exercised on every request type in CI, is
+`tests/integration/fixtures/twoorderpostprocessingtest`. Its `resplitShipping()`,
+`resplitUntaxedRefund()` and `addOutsideCarrierLine()` are the methods above, verbatim,
+and the offline suite fails if they drift apart.
+
+### Versioning
+
+- The hook is permanent. It is never removed or renamed, it fires consistently on the
+  same events, and its version 1 context keys and `request_type` values keep their
+  meaning.
+- Allowed without a version change: new context keys, and new `request_type` or
+  `trigger` values.
+- Never: removing or renaming a context key, changing units (rates stay decimal
+  fractions), or firing on fewer request types.
+- A genuinely incompatible version 2 would be a new hook name, with version 1 still
+  firing beside it. `CHANGELOG.md` records any change to this contract, and the CI
+  fixture pins version 1.
 
 ## Troubleshooting
 
 ### Company Search Not Working
 - **Symptom**: No results when typing company name
 - **Solutions**:
-  - Ensure at least 3 characters typed
+  - Ensure at least 3 characters typed (below the threshold the dropdown says so)
   - Check browser console for API errors
   - Verify network calls to `/companies/v2/company`
   - Check API key is valid
   - Verify country selection (if applicable)
+
+### Buyer's Country Preselected Wrong at the Address Step
+- **Symptom**: the invoice address form opens with a country the buyer is not in — and, where
+  that country has states, a required state dropdown they cannot satisfy
+- **Cause**: PrestaShop itself preselects the country from the browser's `Accept-Language`
+  header, ahead of the shop default, when **International → Localization → Detect country from
+  browser language** is enabled. It is enabled by default on a fresh install. The module writes
+  nothing to the country field
+- **Solutions**:
+  - Set **Detect country from browser language** to **No** if you want the shop default to win
+  - Leave it enabled if you do want the browser's language to choose, and accept that buyers
+    whose browser language points elsewhere start on that country
 
 ### Order Intent Not Firing
 - **Symptom**: Order Intent check doesn't run when Two selected
@@ -399,8 +1453,9 @@ The module builds order payloads that exactly match PrestaShop invoices:
 ### "Order Cannot Be Processed with Two"
 - **Symptom**: Order creation fails with error message
 - **Solutions**:
+  - Read Two's reason in the module's error log (the **View last 100 error log records** button in the module settings). When Two refuses an order intent, an order create, a company search or lookup, or an order lookup at checkout, the module logs a line starting `TwoPayment: Two refused`, naming the cart and carrying Two's own reason and trace id; a company search refusal is logged once per cart and HTTP status. An order intent Two declines at payment submit logs `TwoPayment: Two declined` with Two's message and decline reason. The buyer sees only the module's generic wording, never Two's text
   - Check PrestaShop logs for server-side Order Intent errors
-  - Verify company data persisted (cookie and hidden `companyid` field)
+  - Verify company data persisted (`twopayment_cart_record` row for the cart, and hidden `companyid` field)
   - Ensure Order Intent was approved (check cookie `two_order_intent_approved`)
   - Verify API key is correct for environment
   - Check Two API status
@@ -408,7 +1463,8 @@ The module builds order payloads that exactly match PrestaShop invoices:
 ### Invoice Upload Failing
 - **Symptom**: Invoices not uploading to Two
 - **Solutions**:
-  - Verify "Use Own Invoices" option enabled in module config
+  - Verify the merchant record has `invoice_distributed_by_merchant` set (contact Two support);
+    the API returns 403 for upload attempts when it is false
   - Check PrestaShop logs for upload errors
   - Verify PDF generation works (test invoice download)
   - Check file size limits (max 2MB)
@@ -422,6 +1478,17 @@ The module builds order payloads that exactly match PrestaShop invoices:
   - Verify JavaScript loaded correctly
   - Check browser console for errors
   - Ensure company is selected (not just typed) - search and click a result
+
+### Two Missing from Checkout Entirely
+- **Symptom**: The Two payment option (and the company search) do not appear at all, on a shop where they used to
+- **Solutions**:
+  - Open the module configuration: a stored API key that cannot currently be verified is reported there, with its category and HTTP status. Two is withheld from checkout for as long as that notice shows
+  - `invalid_key` means Two rejected the key - re-copy it from the Two portal for the environment selected above it
+  - `service_error` means Two answered with a 5xx: nothing to fix on the shop, check Two's status and retry
+  - `unreachable` means this shop could not reach the Two API at all - check outbound network, DNS and firewall rules. The key itself has not been judged
+  - Search the PrestaShop logs for `API key verification status` - the withholding is always logged with its category
+  - Also check the plainer causes: the module disabled, no payment terms enabled, cart below the minimum order value, or an unsupported cart currency (each of which logs its own line)
+  - If it is missing only for buyers in certain countries, the merchant record's supported buyer countries do not include theirs. If it is missing for every buyer, that same field may be present on the record with no country in it, or with content the module could not read - both permit nothing. Search the logs for `supported buyer country`: the line names the merchant, the buyer country that was refused and which of the three refused it (`allowlist`, `empty`, `malformed`). The list is set by Two, not in the module configuration; contact Two support to change it. A merchant record that does not carry the field at all is unrestricted
 
 ### "Invalid Phone Number" Error
 - **Symptom**: Order fails with phone validation error
@@ -439,27 +1506,112 @@ The module builds order payloads that exactly match PrestaShop invoices:
   - Simply typing a company name is not enough - must click to select from search
   - If using an existing address, customer should edit it to add/verify company
 
-### Tax Rate Issues (0% Tax)
-- **Symptom**: Two API rejects order with tax rate error
+### Tax Rate Issues / Checkout Declined on Tax
+- **Symptom**: checkout is declined and the log shows "Declared tax rate does not reconcile
+  with applied amounts"
+- **Cause**: the tax-rules group the merchant configured for that line resolves to a
+  different rate than the tax PrestaShop actually applied to it. The module relays the
+  declared rate and refuses to invent one — see
+  [.ai/vat-rate-sourcing.md](.ai/vat-rate-sourcing.md).
 - **Solutions**:
-  - Enable Debug Mode in module settings (Other Settings → Enable Debug Mode)
-  - Check PrestaShop logs for "TwoPayment: Product tax debug" entries
-  - Verify products have correct tax rules assigned in PrestaShop
-  - Module now calculates tax from actual amounts as fallback
-  - Contact Two support with debug logs if issue persists
+  - Read the log entry: it names the line, the declared rate, the net, the applied tax and
+    the tax expected at the declared rate
+  - Check that line's tax-rules group, including any address-specific `TaxRule` (state /
+    postcode scoped rules are a common source of divergence)
+  - Verify products, the carrier, ecotax and gift wrapping all have the intended tax rules
+    group assigned
+  - Contact Two support with the log entry if the configuration looks correct
+
+### Discrepancy snapshot
+When an order is refused by a tax or totals gate (order lines not reconciling with the
+cart total, a declared tax rate contradicting the applied amounts, shipping with no declared tax rate, or any other refusal while
+pricing the cart), the module writes one JSON record for that cart to the PrestaShop
+log (object type `TwoDiscrepancySnapshot`, object id = the cart id). With Debug Mode on
+it also writes one for every cart that passes, as a baseline to compare against.
+An update to a placed order is priced from that order, not its cart, so it writes no snapshot.
+
+- **Where**: Module Configuration → Diagnostics → "View last 100 error log records" lists
+  the snapshots with a **Download JSON** link each (employee login and token required).
+- **What it holds**: `Cart::getOrderTotal` with and without tax for every total type, and
+  `residual` = BOTH − (PRODUCTS + SHIPPING + WRAPPING − DISCOUNTS); each product line's
+  amounts, declared and implied rate and `delta` = total_wt − total × (1 + declared rate);
+  the carrier, delivery options and package shipping cost; which core classes are
+  overridden and which modules sit on price and shipping hooks; cart rules, gift wrapping
+  and the tax and rounding settings; the failed gate and the lines that would have been
+  sent. Of the buyer's addresses it keeps the country, the state id and whether a VAT
+  number is present, nothing else. The sent lines' names can carry merchant-authored text
+  (product, cart rule and carrier names). A section that failed to read holds only
+  `{error, code}`: the exception class and code, never its message.
+- **Size**: products, cart rules, delivery options, sent lines and each hook's and class's
+  list keep their first 40 rows; `truncated` counts the rows cut from each, including a
+  whole section shed to fit the size limit.
+- **Cost**: once one `Cart` pricing read throws, the remaining ones are recorded as
+  `{error: "skipped"}` rather than re-run, since core does not cache a failed price.
+  `products` is read first, so a carrier that throws never skips it.
+- **Log growth**: one row per refused order, and with Debug Mode on two or three per order
+  (each pricing pass leaves a baseline), so switch Debug Mode off once done.
+- **Reading it**: the record's `shape` field applies this decision tree, first match wins:
+
+  | Shape | Snapshot values | Cart shape |
+  | --- | --- | --- |
+  | C | `residual` ≠ 0 and `ONLY_SHIPPING` = 0 | a cost is added to the cart total outside the shipping total, so no tax rule covers it |
+  | A | `ONLY_SHIPPING` > 0, incl = excl, every carrier id is 0 | shipping priced without a carrier and without tax |
+  | B | `ONLY_SHIPPING` incl > excl, every carrier id is 0 | shipping priced without a carrier, with tax nothing declares |
+  | other | anything else, including any input that failed to read | read the gate numbers and product lines directly |
+
+  A and B come only from PrestaShop 1.7's `'0,'` option key: on 8 and 9 a package with no carrier gets no delivery option, so `priced_option` is `[]` and the shape is other.
+
+  "Every carrier id is 0" means every carrier id in `priced_option`, the delivery option
+  core prices shipping from: when the cart's own `delivery_option` is empty or stale, core
+  auto-selects one, and a multi-carrier option lists all its carriers. A real carrier whose
+  tax rules group is 0 ("No tax") still has a carrier, so it is never A or B. C also
+  needs `BOTH` > 0, since stacked vouchers clamp it to 0.
+
+  Product lines carry no shape label: their raw `declared_rate`, `implied_rate` and
+  `delta` (which already allows for ecotax taxed under its own group) are read directly,
+  beside the overrides and hooks sections.
+
+  The snapshot (schema `v` 1) does not record the order postprocessing hook. With Debug
+  Mode on, what the hook's subscribers changed is logged on its own line, naming the
+  request and its trigger (see "Stable extension contract: order postprocessing").
+
+#### Snapshot invariants
+- The snapshot never changes, fails or slows a checkout. Every one of its own failures is
+  swallowed, including its fallback logging.
+- Every refusal of the pricing build writes exactly one snapshot, named after the gate that
+  recorded its numbers (also when that exception arrives wrapped) or else after the
+  exception class. Nothing is written when nothing
+  refused (the Debug Mode baseline aside), nor for a cart with no valid line items.
+- No buyer PII leaves the address section. Third-party exception messages are never
+  stored, only the class and code.
+- A `Cart` pricing read that throws is made once per snapshot, never repeated.
+- An unrecorded refusal names its exception class, code and throw site (module-relative
+  file and line), never its message.
+- The shape is a positive identification only. Any errored, missing or ambiguous input
+  yields `other`, never A, B or C.
+- The stored JSON survives PrestaShop's log storage on 1.7, 8 and 9 byte-for-byte: `<` and
+  `>` are escaped, since core runs `strip_tags()` on every log message.
 
 ### Debug Mode
 - **When to use**: Only enable when requested by Two support for troubleshooting
-- **What it logs**: 
-  - Tax calculations per product (rate field, net/gross amounts, calculated rate)
-  - Helps diagnose tax rate discrepancies between PrestaShop and Two API
 - **How to enable**: 
   1. Go to Module Configuration → Other Settings
   2. Toggle "Enable Debug Mode" to Yes
   3. Save settings
   4. Reproduce the issue
-  5. Check PrestaShop logs (`var/logs/`)
+  5. Check PrestaShop logs (`var/logs/`); each cart priced while it is on also leaves a
+     baseline discrepancy snapshot (see above)
   6. Disable Debug Mode when done
+
+While it is on, each call to Two's API is logged, as the WooCommerce plugin logs it,
+except the invoice PDF download, the invoice upload and the sole-trader signup: one
+line naming the method and endpoint, with the request's body, headers and query
+parameters and the response's body, headers and status code, at error severity for a
+connection error or HTTP 400 and above and informative otherwise. The API key and every
+custom header value are redacted, and a line longer than the log can store (about 32KB)
+is cut. The bodies carry buyer details, so none of this is
+logged with Debug Mode off; refusals and connection errors are still logged then, with the
+API's reason but no request body.
 
 ## Security
 

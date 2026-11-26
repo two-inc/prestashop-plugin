@@ -7,18 +7,18 @@
 <div class="row">
     <div id="two-tabs" class="col-lg-2 col-md-3">
         <div class="list-group">
-            <a class="list-group-item {if $twotabvalue == 1}active{/if}" href="#general-settings" aria-controls="general-settings" role="tab" data-toggle="tab">{l s='General Settings' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 5}active{/if}" href="#payment-settings" aria-controls="payment-settings" role="tab" data-toggle="tab">{l s='Payment Settings' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 2}active{/if}" href="#other-settings" aria-controls="other-settings" role="tab" data-toggle="tab">{l s='Advanced Settings' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 3}active{/if}" href="#order-status-settings" aria-controls="order-status-settings" role="tab" data-toggle="tab">{l s='Order Status Settings' mod='twopayment'}</a>
-            <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#plugin-info" aria-controls="plugin-info" role="tab" data-toggle="tab">{l s='Plugin Information' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 1}active{/if}" href="#general-settings" aria-controls="general-settings" role="tab" data-toggle="tab">{l s='General' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 2 || $twotabvalue == 3}active{/if}" href="#checkout-fields-settings" aria-controls="checkout-fields-settings" role="tab" data-toggle="tab">{l s='Checkout fields' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 4}active{/if}" href="#payment-terms-settings" aria-controls="payment-terms-settings" role="tab" data-toggle="tab">{l s='Payment terms' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 5}active{/if}" href="#order-management-settings" aria-controls="order-management-settings" role="tab" data-toggle="tab">{l s='Order management' mod='twopayment'}</a>
+            <a class="list-group-item {if $twotabvalue == 6}active{/if}" href="#diagnostics-settings" aria-controls="diagnostics-settings" role="tab" data-toggle="tab">{l s='Diagnostics' mod='twopayment'}</a>
         </div>
     </div>
     <div class="col-lg-10 col-md-9">
         <div class="tab-content">
             <div id="general-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 1}active{/if}">
-                {if $two_api_verified}
-                <div class="panel" style="border-left:4px solid #4CAF50;">
+                {* Always rendered, hidden until verified, so the inline key check can fill it in before Save (TWO-26232). *}
+                <div id="two-merchant-panel" class="panel" style="border-left:4px solid #4CAF50;{if !$two_api_verified}display:none;{/if}">
                     <div class="panel-heading" style="display:flex;align-items:center;gap:8px;">
                         <span class="badge" style="background:#4CAF50;">{l s='Verified' mod='twopayment'}</span>
                         <span>{l s='API key verified successfully' mod='twopayment'}</span>
@@ -27,32 +27,34 @@
                         <div style="display:flex;gap:24px;flex-wrap:wrap;">
                             <div>
                                 <div style="font-weight:600;">{l s='Merchant ID' mod='twopayment'}</div>
-                                <div>{$two_merchant_id|escape:'htmlall':'UTF-8'}</div>
+                                <div id="two-merchant-id">{$two_merchant_id|escape:'htmlall':'UTF-8'}</div>
                             </div>
                             <div>
                                 <div style="font-weight:600;">{l s='Merchant short name' mod='twopayment'}</div>
-                                <div>{$two_merchant_short_name|escape:'htmlall':'UTF-8'}</div>
+                                <div id="two-merchant-short-name">{$two_merchant_short_name|escape:'htmlall':'UTF-8'}</div>
                             </div>
                             <div>
                                 <div style="font-weight:600;">{l s='Environment' mod='twopayment'}</div>
-                                <div>{$two_env|escape:'htmlall':'UTF-8'}</div>
+                                <div id="two-merchant-env">{$two_env|escape:'htmlall':'UTF-8'}</div>
                             </div>
                         </div>
                     </div>
                 </div>
-                {/if}
                 {$renderTwoGeneralForm nofilter}
             </div>
-            <div id="payment-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 5}active{/if}">
-                {$renderTwoPaymentSettingsForm nofilter}
+            <div id="checkout-fields-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 2 || $twotabvalue == 3}active{/if}">
+                {$renderTwoCheckoutFieldsForm nofilter}
+                {$renderTwoCompanyLookupForm nofilter}
             </div>
-            <div id="other-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 2}active{/if}">
-                {$renderTwoOtherForm nofilter}
+            <div id="payment-terms-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 4}active{/if}">
+                {$renderTwoPaymentTermsForm nofilter}
             </div>
-            <div id="order-status-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 3}active{/if}">
+            <div id="order-management-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 5}active{/if}">
+                {$renderTwoOrderManagementForm nofilter}
                 {$renderTwoOrderStatusForm nofilter}
             </div>
-            <div id="plugin-info" role="tabpanel" class="tab-pane {if $twotabvalue == 4}active{/if}">
+            <div id="diagnostics-settings" role="tabpanel" class="tab-pane {if $twotabvalue == 6}active{/if}">
+                {$renderTwoDiagnosticsForm nofilter}
                 {$renderTwoPluginInfo nofilter}
             </div>
         </div>
@@ -60,9 +62,27 @@
     <div class="clearfix"></div>
 </div>
 <script type="text/javascript">
-    // Module admin AJAX endpoint for the inline merchant-fee display
-    // (assigned outside the literal block so Smarty expands the URL).
+    // Assigned outside the literal block so Smarty expands the URL.
     var twoMerchantFeeRatesUrl = '{$two_fee_rates_url|escape:'javascript':'UTF-8'}';
+    var twoVerifyApiKeyUrl = '{$two_verify_api_key_url|escape:'javascript':'UTF-8'}';
+    var twoApiKeyCheckingText = '{l s='Checking API key…' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoApiKeyVerifiedText = '{l s='API key verified' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoApiKeyFailedText = '{l s='API key could not be verified' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoRefreshMerchantUrl = '{$two_refresh_merchant_url|escape:'javascript':'UTF-8'}';
+    var twoRefreshMerchantBusyText = '{l s='Refreshing…' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoRefreshMerchantFailedText = '{l s='Could not reach the server. Try again.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleText = '{l s='Fees could not be refreshed, so the figures last retrieved are shown.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleDatedText = '{l s='Fees could not be refreshed, so the figures retrieved on %s are shown.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesUnavailableText = '{l s='Fees could not be loaded because the pricing service could not be reached.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesRejectedText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %1$s: %2$s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesRejectedBareText = '{l s='Fees could not be loaded. The pricing service refused the request with HTTP %s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleRejectedText = '{l s='The pricing service refused the request with HTTP %1$s: %2$s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesStaleRejectedBareText = '{l s='The pricing service refused the request with HTTP %s.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeesNoApiKeyText = '{l s='Fees cannot be shown until an API key is saved on the General tab.' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoFeeNoFigureText = '{l s='no figure' mod='twopayment'|escape:'javascript':'UTF-8'}';
+    var twoEomTermDays = {$two_eom_term_days nofilter};
+    var twoCustomTermDays = {$two_custom_term_days|intval};
+    var twoFallbackTermDays = {$two_fallback_term_days|intval};
 </script>
 {literal}
     <script type="text/javascript">
@@ -71,20 +91,96 @@
                 $('#two-tabs a').removeClass('active');
                 $(this).addClass('active');
             });
+
+            $('#two-refresh-merchant-record').on('click', function () {
+                var button = $(this);
+                var result = $('#two-refresh-merchant-record-result');
+                button.prop('disabled', true);
+                result.removeClass('text-success text-danger').addClass('text-muted').text(twoRefreshMerchantBusyText);
+                $.post(twoRefreshMerchantUrl, {}, null, 'json')
+                    .done(function (response) {
+                        var ok = !!(response && response.success);
+                        result
+                            .removeClass('text-muted text-success text-danger')
+                            .addClass(ok ? 'text-success' : 'text-danger')
+                            .text(response && response.message ? response.message : '');
+                        if (ok) {
+                            // Every tab is rendered by the server from the profile
+                            // (TWO-26304). A GET, so a page shown after a save is
+                            // not posted again; two_refreshed=1 opens Diagnostics
+                            // with the confirmation. The button stays disabled
+                            // until the page has gone.
+                            var url = window.location.href.split('#')[0];
+                            if (!/[?&]two_refreshed=1(&|$)/.test(url)) {
+                                url += (url.indexOf('?') === -1 ? '?' : '&') + 'two_refreshed=1';
+                            }
+                            window.location.assign(url);
+                        } else {
+                            button.prop('disabled', false);
+                        }
+                    })
+                    .fail(function () {
+                        result.removeClass('text-muted text-success').addClass('text-danger').text(twoRefreshMerchantFailedText);
+                        button.prop('disabled', false);
+                    });
+            });
             
-            // Payment Term Type - Dynamic show/hide of term options
-            // PHP 7.1+ compatible: Using ES5 syntax (no arrow functions)
+            // Address lookup is only meaningful while the company search is in
+            // the address area (TWO-25326 follow-up): with the search in
+            // the payment tile there is no address-area lookup left to govern,
+            // so the switch is unchecked and disabled rather than left
+            // independently settable.
+            //
+            // Server-side counterpart in twopayment.php
+            // (isAddressLookupSettingAvailable): a disabled radio posts
+            // nothing, but a hand-crafted POST can still carry a ticked box
+            // and the save refuses it there. This half is presentation only.
+            // `isUserToggle` distinguishes the initial page-load render (the
+            // stored PS_TWO_ADDRESS_LOOKUP position must be respected as-is)
+            // from the admin actually flipping the switch just now (TWO-25326):
+            // re-enabling the row must also turn the auto-fill switch ON, not
+            // merely stop greying it out. Leaving it enabled-but-unchecked
+            // reads as "on" at a glance but posts '0' on save.
+            function updateAddressLookupAvailability(isUserToggle) {
+                var inAddressArea = $('input[name="PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS"]:checked').val();
+                var lookupInputs = $('input[name="PS_TWO_ADDRESS_LOOKUP"]');
+                if (!lookupInputs.length) {
+                    return;
+                }
+                // The whole row, so the label and the help text grey out with
+                // the control rather than the control alone looking broken.
+                var row = lookupInputs.closest('.form-group');
+                if (String(inAddressArea) === '1') {
+                    lookupInputs.prop('disabled', false);
+                    if (isUserToggle) {
+                        lookupInputs.filter('[value="1"]').prop('checked', true);
+                        lookupInputs.filter('[value="0"]').prop('checked', false);
+                    }
+                    row.removeClass('two-setting-unavailable');
+                    return;
+                }
+                // The merchant must not read a ticked box the module is
+                // ignoring. This is exactly what the server will store.
+                lookupInputs.prop('disabled', true);
+                lookupInputs.filter('[value="0"]').prop('checked', true);
+                lookupInputs.filter('[value="1"]').prop('checked', false);
+                row.addClass('two-setting-unavailable');
+            }
+            updateAddressLookupAvailability(false);
+            $('input[name="PS_ENABLE_COMPANY_SEARCH_IN_ADDRESS"]').on('change', function () {
+                updateAddressLookupAvailability(true);
+            });
+
+            // ES5 syntax only (no arrow functions).
             function updatePaymentTermsVisibility() {
                 var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
                 
                 if (termType === 'EOM') {
-                    // EOM: Only show 30, 45, 60 day options
                     $('.two-term-standard').closest('.form-group').hide();
                     $('.two-term-both').closest('.form-group').show();
                     $('#two-payment-terms-desc-standard').hide();
                     $('#two-payment-terms-desc-eom').show();
                 } else {
-                    // STANDARD: Show all options (7, 15, 20, 30, 45, 60, 90)
                     $('.two-term-standard').closest('.form-group').show();
                     $('.two-term-both').closest('.form-group').show();
                     $('#two-payment-terms-desc-standard').show();
@@ -92,10 +188,8 @@
                 }
             }
             
-            // Run on page load
             updatePaymentTermsVisibility();
             
-            // Run when term type changes
             $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', function() {
                 updatePaymentTermsVisibility();
             });
@@ -115,11 +209,11 @@
             $('select[name="PS_TWO_SURCHARGE_ROUNDING_BASIS"]').on('change', updateRoundingStepVisibility);
 
             // Surcharge grid - hide the whole grid when no surcharge is applied,
-            // and hide the columns that don't apply to the selected method:
-            //   none                 -> hide entire grid
-            //   percentage           -> Percentage + Cap (hide Fixed fee)
-            //   fixed                -> Fixed fee only (hide Percentage + Cap)
-            //   fixed_and_percentage -> all columns
+            // and hide the columns that don't apply to the selected method.
+            // Null until the first row pass; the column pass decides on the
+            // surcharge type alone until then.
+            var twoHasOfferedTerm = null;
+
             function updateSurchargeGridVisibility() {
                 var type = $('select[name="PS_TWO_SURCHARGE_TYPE"]').val();
                 var grid = $('#two-surcharge-grid');
@@ -132,51 +226,190 @@
                 var showPercentage = (type === 'percentage' || type === 'fixed_and_percentage');
                 var showFixed = (type === 'fixed' || type === 'fixed_and_percentage');
                 var showCap = (type === 'percentage' || type === 'fixed_and_percentage');
-                grid.find('.two-col-percentage').toggle(showPercentage);
-                grid.find('.two-col-fixed').toggle(showFixed);
-                grid.find('.two-col-cap').toggle(showCap);
+                // Scoped to the whole form-group rather than the table, so the
+                // cap help text BELOW the grid is hidden with the cap column
+                // rather than left on screen describing a field the merchant
+                // cannot see (TWO-25289). Falls back to the table if the
+                // form-group does not resolve - the markup nests differently
+                // across PrestaShop majors.
+                var hasRows = twoHasOfferedTerm === null || twoHasOfferedTerm;
+                var scope = gridGroup.length ? gridGroup : grid;
+                scope.find('.two-col-percentage').toggle(showPercentage && hasRows);
+                scope.find('.two-col-fixed').toggle(showFixed && hasRows);
+                scope.find('.two-col-cap').toggle(showCap && hasRows);
             }
             updateSurchargeGridVisibility();
             $('select[name="PS_TWO_SURCHARGE_TYPE"]').on('change', updateSurchargeGridVisibility);
 
-            // Surcharge grid ROWS - one row is server-rendered per offerable
-            // term; show a row only while its "Available Payment Terms"
-            // checkbox is ticked AND the term is valid for the selected term
-            // type (EOM only allows the .two-term-both terms - same split the
-            // checkboxes use). Orthogonal to updateSurchargeGridVisibility(),
-            // which toggles COLUMNS by surcharge type: a cell is visible only
-            // when both its row and its column are (display:none on either
-            // axis wins), so the two functions compose without coordination.
-            function updateSurchargeGridRows() {
+            // The ticked terms, narrowed by the term type. Narrower than
+            // narrowOfferedTerms(), which also unions the deprecated custom
+            // term - no live tick governs that one, so twoUnionedCustomTermDays()
+            // carries it.
+            function twoOfferedTermDays() {
                 var termType = $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]:checked').val();
+                // An absent list means no narrowing rather than no term.
+                var eomDays = (typeof twoEomTermDays !== 'undefined' && twoEomTermDays) ? twoEomTermDays : [];
+                var offered = [];
+                $('input[name^="PS_TWO_PAYMENT_TERMS_"]').each(function () {
+                    var $box = $(this);
+                    var match = String($box.attr('name') || '').match(/_(\d+)$/);
+                    var days = match ? parseInt(match[1], 10) : 0;
+                    if (!days || !$box.is(':checked')) {
+                        return;
+                    }
+                    if (termType === 'EOM' && eomDays.length && eomDays.indexOf(days) === -1) {
+                        return;
+                    }
+                    offered.push(days);
+                });
+                return offered;
+            }
+
+            // Surcharge grid ROWS - one row is server-rendered per offerable
+            // term; show a row only while its term is offered. Orthogonal to
+            // updateSurchargeGridVisibility(), which toggles COLUMNS: a cell is
+            // visible only when both its row and its column are, so the two
+            // functions compose without coordination.
+            //
+            // With no offered term the grid has nothing to configure, so the
+            // headings give way to an instruction to offer a term first.
+            function updateSurchargeGridRows() {
+                var offered = twoOfferedTermDays();
                 $('#two-surcharge-grid .two-surcharge-row').each(function () {
                     var $row = $(this);
-                    var term = parseInt($row.data('term'), 10);
-                    var checked = $('input[name="PS_TWO_PAYMENT_TERMS_' + term + '"]').is(':checked');
-                    var validForType = termType !== 'EOM' || $row.hasClass('two-term-both');
-                    $row.toggle(checked && validForType);
+                    $row.toggle(offered.indexOf(parseInt($row.data('term'), 10)) !== -1);
                 });
+                // The deprecated custom term is offered with no tick of its
+                // own, so it counts here even though no row shows it.
+                var custom = twoUnionedCustomTermDays();
+                twoHasOfferedTerm = offered.length > 0 || custom > 0;
+                $('#two-surcharge-grid').toggle(twoHasOfferedTerm);
+                $('#two-surcharge-empty').toggle(!twoHasOfferedTerm);
+                $('#two-surcharge-currency-note').toggle(twoHasOfferedTerm);
+                updateSurchargeGridVisibility();
+                updateTwoDefaultTermOptions(offered, custom);
             }
+
+            // The day count narrowOfferedTerms() unions, 0 once the merchant
+            // chooses Remove on the row that carries it.
+            function twoUnionedCustomTermDays() {
+                var custom = (typeof twoCustomTermDays !== 'undefined') ? parseInt(twoCustomTermDays, 10) : 0;
+                var $custom = $('select[name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS"]');
+                if ($custom.length && String($custom.val() || '') === '') {
+                    return 0;
+                }
+
+                return custom > 0 ? custom : 0;
+            }
+
+            // Default-term dropdown. The option set is getConfigurableTermSet()
+            // resolved from the live form, so the screen never offers a term
+            // the save would refuse. The pass only WITHDRAWS an option, and
+            // restores it when its term returns; it never adds one, because the
+            // server rendered the option list.
+            var twoDefaultTermWanted = null;
+
+            // Removing the custom term withdraws it from the offered set on
+            // save, so the option it kept alive goes with it.
+            function updateTwoDefaultTermOptions(offered, custom) {
+                var $select = $('select[name="PS_TWO_DEFAULT_PAYMENT_TERM"]');
+                if (!$select.length) {
+                    return;
+                }
+                if (twoDefaultTermWanted === null) {
+                    twoDefaultTermWanted = String($select.val() || '');
+                }
+                var fallback = (typeof twoFallbackTermDays !== 'undefined') ? parseInt(twoFallbackTermDays, 10) : 0;
+                var selectable = custom > 0 && offered.indexOf(custom) === -1 ? offered.concat([custom]) : offered;
+                if (!selectable.length && fallback > 0) {
+                    selectable = [fallback];
+                }
+                $select.find('option').each(function () {
+                    var $option = $(this);
+                    var value = String($option.attr('value') || '');
+                    var isOffered = value === '' || selectable.indexOf(parseInt(value, 10)) !== -1;
+                    $option.prop('disabled', !isOffered).toggle(isOffered);
+                });
+                var wantedOffered = twoDefaultTermWanted === ''
+                    || selectable.indexOf(parseInt(twoDefaultTermWanted, 10)) !== -1;
+                $select.val(wantedOffered ? twoDefaultTermWanted : '');
+            }
+
+            $('select[name="PS_TWO_DEFAULT_PAYMENT_TERM"]').on('change', function () {
+                twoDefaultTermWanted = String($(this).val() || '');
+            });
+            $('select[name="PS_TWO_PAYMENT_TERMS_CUSTOM_DAYS"]').on('change', updateSurchargeGridRows);
             $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', updateSurchargeGridRows);
             $('input[name="PS_TWO_PAYMENT_TERM_TYPE"]').on('change', updateSurchargeGridRows);
-            // Run once on load (after the checkbox-group and column-visibility
-            // passes above) so row state always derives from the live checkbox
-            // DOM, even if it disagrees with the server-rendered initial state
-            // (e.g. a failed-validation re-render with POSTed values).
+            // Run after the checkbox-group and column-visibility passes above,
+            // so row state always derives from the live checkbox DOM even when
+            // it disagrees with the server-rendered initial state (e.g. a
+            // failed-validation re-render with POSTed values).
             updateSurchargeGridRows();
 
             // Inline merchant fee beside each "Available Payment Terms"
-            // checkbox - the fee Two charges the merchant per term, fetched
-            // live from the module's admin AJAX endpoint (which proxies
-            // POST /pricing/v1/merchant/rates). Mirrors magento-plugin's
-            // payment-terms-config.js loadFees(): fetch on page load and on
-            // any term-checkbox change, dedupe identical term-set requests,
-            // and on failure blank the fee spans silently - the config page
-            // must never break on an API outage.
+            // checkbox, fetched from the module's admin AJAX endpoint. An
+            // empty span reads as "this term carries no fee", so an answer
+            // that cannot be drawn says so in the notice instead.
             var lastFeesKey = null;
 
             function formatTwoFeeAmount(n) {
                 return Number(n).toFixed(2);
+            }
+
+            function setTwoFeeNotice(text) {
+                var $first = $('input[name^="PS_TWO_PAYMENT_TERMS_"]').first();
+                // The notice goes in the controls column, under the checkboxes
+                // and where HelperForm puts a field's help text, not after the
+                // label column (TWO-26305): that column is the .form-group's
+                // child holding the checkboxes. The notice still needs
+                // somewhere to go on a core version that does not wrap the
+                // checkbox group in .form-group.
+                var $group = $first.closest('.form-group');
+                var $anchor = $group.length ? $first.parentsUntil($group).last() : $();
+                if (!$anchor.length) {
+                    $anchor = $group.length ? $group : $first.parent();
+                }
+                if (!$anchor.length) {
+                    return;
+                }
+                var $notice = $anchor.find('.two-term-fee-notice');
+                if (!$notice.length) {
+                    if (!text) {
+                        return;
+                    }
+                    $notice = $('<div class="two-term-fee-notice help-block"></div>').appendTo($anchor);
+                }
+                $notice.text(text || '');
+            }
+
+            // The notice is set with .text(), so the API's own message is
+            // drawn as text, never parsed as markup. `withMessage` and `bare`
+            // are the wordings with and without the API's message.
+            function twoFeesRefusal(response, withMessage, bare) {
+                var status = String(parseInt(response.http_status, 10) || '');
+                // The sentence supplies its own full stop, so one is
+                // dropped; a cut message keeps its "...".
+                var message = String(response.message || '').replace(/^\s+/, '').replace(/\.?\s*$/, '');
+                return message === ''
+                    ? bare.replace('%s', status)
+                    : withMessage.replace('%1$s', status).replace('%2$s', function () { return message; });
+            }
+
+            function twoFeesUnavailableNotice(response) {
+                var error = response && response.error;
+                if (error === 'not_configured') {
+                    return twoFeesNoApiKeyText;
+                }
+                if (error === 'rejected') {
+                    return twoFeesRefusal(response, twoFeesRejectedText, twoFeesRejectedBareText);
+                }
+                return twoFeesUnavailableText;
+            }
+
+            function showTwoFeesUnavailable(response) {
+                $('.two-term-fee').text('');
+                setTwoFeeNotice(twoFeesUnavailableNotice(response));
             }
 
             function loadTwoMerchantFees() {
@@ -184,7 +417,7 @@
                     return;
                 }
                 // Fees render beside EVERY rendered term option regardless of
-                // checked state (Magento parity), so collect all term inputs.
+                // checked state, so collect all term inputs.
                 var terms = [];
                 $('input[name^="PS_TWO_PAYMENT_TERMS_"]').each(function () {
                     var match = String($(this).attr('name') || '').match(/_(\d+)$/);
@@ -199,7 +432,7 @@
                 }
                 var key = terms.join(',');
                 if (key === lastFeesKey) {
-                    return; // identical term set already requested
+                    return;
                 }
                 lastFeesKey = key;
                 $.ajax({
@@ -208,20 +441,43 @@
                     dataType: 'json',
                     data: { terms: JSON.stringify(terms) }
                 }).done(function (response) {
+                    var terminal = response && response.error === 'not_configured';
+                    // Anything but a fresh renderable set may be asked again
+                    // for the same terms - the server's own cooldown, not this
+                    // key, is what bounds an outage. An unsaved key is
+                    // terminal, so it keeps the key.
+                    if (!terminal && (!response || !response.success || !response.fees || response.stale)) {
+                        lastFeesKey = null;
+                    }
                     if (!response || !response.success || !response.fees) {
-                        $('.two-term-fee').text('');
+                        showTwoFeesUnavailable(response);
                         return;
                     }
-                    // Currency must come from the API response - the fee
-                    // amounts do too. Without it, any fixed amount would be
-                    // ambiguous, so only the percentage is shown then.
+                    if (response.stale) {
+                        var retrieved = String(response.fetched_at_display || '');
+                        var staleNotice = retrieved === ''
+                            ? twoFeesStaleText
+                            : twoFeesStaleDatedText.replace('%s', retrieved);
+                        // A refusal says why, figures or not (TWO-26305).
+                        if (response.error === 'rejected') {
+                            staleNotice += ' ' + twoFeesRefusal(response, twoFeesStaleRejectedText, twoFeesStaleRejectedBareText);
+                        }
+                        setTwoFeeNotice(staleNotice);
+                    } else {
+                        setTwoFeeNotice('');
+                    }
+                    // Currency comes from the API response, never guessed: the
+                    // fee amounts are its too. A set without one is refused
+                    // server-side rather than drawn.
                     var currency = String(response.currency || '').toUpperCase().replace(/^\s+|\s+$/g, '');
                     var suffix = currency !== '' ? ' ' + currency : '';
                     $('.two-term-fee').each(function () {
                         var $span = $(this);
                         var fee = response.fees[String($span.data('term'))];
                         if (!fee) {
-                            $span.text('');
+                            // An empty span reads as "no fee for this term",
+                            // so a term the answer did not price says so.
+                            $span.text('(' + twoFeeNoFigureText + ')');
                             return;
                         }
                         var pctStr = formatTwoFeeAmount(fee.percentage || 0);
@@ -229,10 +485,6 @@
                         var zero = formatTwoFeeAmount(0);
                         var pctZero = pctStr === zero;
                         var fixedZero = fixedStr === zero;
-                        if (currency === '') {
-                            $span.text(pctZero ? '' : '(' + pctStr + '%)');
-                            return;
-                        }
                         var inner;
                         if (pctZero && fixedZero) {
                             inner = zero + suffix;
@@ -247,14 +499,116 @@
                     });
                 }).fail(function () {
                     // Allow a retry on the same term set after a transient
-                    // error, and clear any half-populated spans.
+                    // error.
                     lastFeesKey = null;
-                    $('.two-term-fee').text('');
+                    showTwoFeesUnavailable();
                 });
             }
 
             $('input[name^="PS_TWO_PAYMENT_TERMS_"]').on('change', loadTwoMerchantFees);
             loadTwoMerchantFees();
+
+            // Custom request headers: add/remove rows in the
+            // Diagnostics table. Each row's three inputs share one array
+            // index, so a new row takes an index past every existing one -
+            // reusing an index would merge two rows on save.
+            function twoNextCustomHeaderIndex() {
+                var next = 0;
+                $('#two-custom-headers tbody tr.two-custom-header-row').each(function () {
+                    next = Math.max(next, parseInt($(this).data('index'), 10) + 1 || 0);
+                });
+                return next;
+            }
+
+            $('#two-custom-headers-add').on('click', function () {
+                var template = document.getElementById('two-custom-headers-template');
+                if (!template) {
+                    return;
+                }
+                var index = twoNextCustomHeaderIndex();
+                var $row = $(template.innerHTML).filter('tr').first();
+                if (!$row.length) {
+                    return;
+                }
+                $row.attr('data-index', index).data('index', index);
+                $row.find('input[name]').each(function () {
+                    $(this).attr('name', String($(this).attr('name')).replace(/\[\d+\]$/, '[' + index + ']'));
+                });
+                $('#two-custom-headers tbody').append($row);
+            });
+
+            $('#two-custom-headers').on('click', '.two-custom-header-remove', function () {
+                $(this).closest('tr.two-custom-header-row').remove();
+            });
+
+            // Inline API-key live check (TWO-25386): fires on blur AND on
+            // a debounced keystroke, so a merchant sees the verdict before
+            // ever reaching Save. Never touches Configuration - see
+            // ajaxProcessVerifyApiKeyLive().
+            var $twoApiKeyInput = $('input[name="PS_TWO_MERCHANT_API_KEY"]');
+            var twoApiKeyDebounce = null;
+            var twoApiKeyRequestSeq = 0;
+
+            function twoApiKeyStatusEl() {
+                var $existing = $twoApiKeyInput.siblings('.two-api-key-live-status');
+                if ($existing.length) {
+                    return $existing;
+                }
+                var $el = $('<div class="two-api-key-live-status help-block"></div>');
+                $twoApiKeyInput.after($el);
+                return $el;
+            }
+
+            function runTwoApiKeyLiveCheck() {
+                var apiKey = $.trim($twoApiKeyInput.val() || '');
+                var environment = $('select[name="PS_TWO_ENVIRONMENT"]').val();
+                var $status = twoApiKeyStatusEl();
+                if (!apiKey || !environment || typeof twoVerifyApiKeyUrl === 'undefined' || !twoVerifyApiKeyUrl) {
+                    $status.text('');
+                    return;
+                }
+                var seq = ++twoApiKeyRequestSeq;
+                $status.removeClass('text-success text-danger').text(twoApiKeyCheckingText);
+                $.ajax({
+                    url: twoVerifyApiKeyUrl,
+                    type: 'POST',
+                    dataType: 'json',
+                    data: { api_key: apiKey, environment: environment }
+                }).done(function (response) {
+                    if (seq !== twoApiKeyRequestSeq) {
+                        return; // superseded by a later keystroke/blur
+                    }
+                    if (response && response.ok) {
+                        $status.removeClass('text-danger').addClass('text-success').text(twoApiKeyVerifiedText);
+                        // Show the merchant this key resolves to straight
+                        // away; nothing is stored until Save (TWO-26232).
+                        $('#two-merchant-id').text(response.merchant_id || '');
+                        $('#two-merchant-short-name').text(response.merchant_short_name || '');
+                        $('#two-merchant-env').text(environment);
+                        $('#two-merchant-panel').show();
+                    } else {
+                        var message = (response && response.message) || twoApiKeyFailedText;
+                        $status.removeClass('text-success').addClass('text-danger').text(message);
+                        // A key Two rejected must not leave another
+                        // merchant on screen; a check that judged nothing
+                        // about the key leaves it.
+                        if (response && response.definitive) {
+                            $('#two-merchant-panel').hide();
+                        }
+                    }
+                }).fail(function () {
+                    if (seq !== twoApiKeyRequestSeq) {
+                        return;
+                    }
+                    $status.removeClass('text-success').addClass('text-danger').text(twoApiKeyFailedText);
+                });
+            }
+
+            $twoApiKeyInput.on('blur', runTwoApiKeyLiveCheck);
+            $twoApiKeyInput.on('keyup', function () {
+                clearTimeout(twoApiKeyDebounce);
+                twoApiKeyDebounce = setTimeout(runTwoApiKeyLiveCheck, 600);
+            });
         });
     </script>
 {/literal}

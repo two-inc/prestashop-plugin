@@ -48,7 +48,23 @@ final class TrackingNumberSpec
             {
                 return $this->idOrderCarrier;
             }
+
+            public function getBrother(): array
+            {
+                return [];
+            }
         };
+    }
+
+    /**
+     * Declared-rate relay wiring (TWO-24880): the payload's product tax rate
+     * comes from the product's tax-rules group resolved at the cart's tax
+     * address (the fixture cart carries its own loaded invoice address).
+     */
+    private static function declareProductRate(int $pid, float $ratePct): void
+    {
+        StubStore::$products[$pid]['id_tax_rules_group'] = 9000 + $pid;
+        StubStore::$taxRuleRates[9000 + $pid] = $ratePct;
     }
 
     private static function testTrackingNumberComesFromOrderCarrier(): void
@@ -113,6 +129,7 @@ final class TrackingNumberSpec
     {
         StubStore::reset();
         $module = new class () extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             public array $requests = [];
 
             public function getTwoOrderPaymentData($id_order)
@@ -120,14 +137,17 @@ final class TrackingNumberSpec
                 return ['two_order_id' => 'two-order-uuid', 'two_order_reference' => 'ref-1'];
             }
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
             {
                 return ['marker' => 'update-body'];
             }
 
             public function setTwoPaymentRequest($endpoint, $payload = [], $method = 'POST', $additional_headers = [], $timeout = null)
             {
-                $this->requests[] = [$endpoint, $payload, $method];
+                // The state lookup before the edit (TWO-26150) is not the edit.
+                if ($method !== 'GET') {
+                    $this->requests[] = [$endpoint, $payload, $method];
+                }
                 return ['http_status' => 200, 'data' => []];
             }
         };
@@ -182,6 +202,7 @@ final class TrackingNumberSpec
         // best-effort and must never break the admin action that saved
         // the tracking number.
         $module = new class () extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             public array $requests = [];
 
             public function getTwoOrderPaymentData($id_order)
@@ -189,7 +210,7 @@ final class TrackingNumberSpec
                 return ['two_order_id' => 'two-order-uuid'];
             }
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
             {
                 throw new Exception('Cart is empty or invalid');
             }
@@ -210,6 +231,7 @@ final class TrackingNumberSpec
     {
         StubStore::reset();
         $module = new class () extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             public array $warnings = [];
 
             public function getTwoOrderPaymentData($id_order)
@@ -217,7 +239,7 @@ final class TrackingNumberSpec
                 return ['two_order_id' => 'two-order-uuid'];
             }
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
             {
                 return ['gross_amount' => '105.50'];
             }
@@ -241,6 +263,7 @@ final class TrackingNumberSpec
 
         // And a 2xx acceptance stays quiet.
         $accepted = new class () extends TwopaymentTestHarness {
+            use StubbedTwoUpdateBuyerCompany;
             public array $warnings = [];
 
             public function getTwoOrderPaymentData($id_order)
@@ -248,7 +271,7 @@ final class TrackingNumberSpec
                 return ['two_order_id' => 'two-order-uuid'];
             }
 
-            public function getTwoUpdateOrderData($order, $orderpaymentdata)
+            public function getTwoUpdateOrderData($order, $orderpaymentdata, $trigger = 'admin_edit', $twoOrder = null)
             {
                 return ['gross_amount' => '105.50'];
             }
@@ -323,6 +346,7 @@ final class TrackingNumberSpec
         ]];
         StubStore::$productCategories[9401] = [['name' => 'Gear']];
         StubStore::$images[9401] = ['id_image' => 9401];
+        self::declareProductRate(9401, 25.0);
         StubStore::$cartTotals[7300] = [
             true => [
                 Cart::ONLY_DISCOUNTS => 0.0,
@@ -338,8 +362,8 @@ final class TrackingNumberSpec
         StubStore::$carriers[602] = ['name' => 'Order Carrier Express', 'max_delivery_days' => 5];
         StubStore::$orderCarriers[91] = ['tracking_number' => 'NO123456789'];
 
-        $order = self::makeOrder(91);
-        $order->id_cart = 7300;
+        $order = PlacedOrderStub::fromCart(4201, 7300);
+        $order->idOrderCarrier = 91;
         $order->id_carrier = 602;
 
         $payload = $module->getTwoUpdateOrderData($order, [

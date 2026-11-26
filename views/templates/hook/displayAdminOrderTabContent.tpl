@@ -7,7 +7,7 @@
 <div class="tab-pane two-admin-tab" id="two-payment-info">
     <div class="two-tab-header">
         <div class="two-admin-header">
-            <h3 class="two-admin-title">{l s='Two Payment Details' mod='twopayment'}</h3>
+            <h3 class="two-admin-title">{l s='%s payment details' mod='twopayment' sprintf=[$two_product_name]}</h3>
         </div>
     </div>
     
@@ -17,28 +17,41 @@
             {$two_invoice_notice.message|escape:'html':'UTF-8'}
         </div>
         {/if}
-        {* Order Information Section *}
+        {if isset($two_pending_notice) && $two_pending_notice}
+        <div class="alert alert-{$two_pending_notice.level|escape:'html':'UTF-8'}">
+            {$two_pending_notice.message|escape:'html':'UTF-8'}
+        </div>
+        {/if}
+        {if isset($two_pending_check_url) && $two_pending_check_url}
+        <form method="post" action="{$two_pending_check_url|escape:'html':'UTF-8'}" class="two-pending-check">
+            <input type="hidden" name="two_pending_order" value="{$two_pending_order_id|intval}">
+            <p class="help-block">{$two_pending_check_help|escape:'html':'UTF-8'}</p>
+            <button type="submit" name="submitTwoPendingCheck" value="1" class="btn btn-default">
+                <i class="icon-refresh"></i> {$two_pending_check_label|escape:'html':'UTF-8'}
+            </button>
+        </form>
+        {/if}
         <div class="two-section">
-            <h4 class="two-section-title">{l s='Order Information' mod='twopayment'}</h4>
+            <h4 class="two-section-title">{l s='Order information' mod='twopayment'}</h4>
             <div class="two-info-cards">
                 {if $twopaymentdata.two_order_id}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Two Order ID' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='%s order ID' mod='twopayment' sprintf=[$two_product_name]}</span>
                     <span class="two-info-value two-order-id">{$twopaymentdata.two_order_id|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
                 {if $twopaymentdata.two_order_reference}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Order Reference' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='Order reference' mod='twopayment'}</span>
                     <span class="two-info-value">{$twopaymentdata.two_order_reference|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
                 {if $twopaymentdata.two_day_on_invoice}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Payment Terms' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='Payment terms' mod='twopayment'}</span>
                     <span class="two-info-value two-admin-payment-terms">
                         {if $twopaymentdata.two_payment_term_type == 'EOM'}
-                            {l s='End of Month' mod='twopayment'} + {$twopaymentdata.two_day_on_invoice|escape:'html':'UTF-8'} {l s='days' mod='twopayment'}
+                            {l s='End of month' mod='twopayment'} + {$twopaymentdata.two_day_on_invoice|escape:'html':'UTF-8'} {l s='days' mod='twopayment'}
                             <span class="two-term-type-badge" title="{l s='Payment due: end of current month at fulfillment + payment term days' mod='twopayment'}">EOM</span>
                         {else}
                             {$twopaymentdata.two_day_on_invoice|escape:'html':'UTF-8'} {l s='days' mod='twopayment'}
@@ -47,33 +60,32 @@
                 </div>
                 {else}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Payment Terms' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='Payment terms' mod='twopayment'}</span>
                     <span class="two-info-value text-muted">{l s='Not recorded for this order' mod='twopayment'}</span>
                 </div>
                 {/if}
                 {if $twopaymentdata.two_order_state}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Two State' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='%s state' mod='twopayment' sprintf=[$two_product_name]}</span>
                     <span class="two-info-value">{$twopaymentdata.two_order_state|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
                 {if $twopaymentdata.two_order_status}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Two Status' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='%s status' mod='twopayment' sprintf=[$two_product_name]}</span>
                     <span class="two-info-value">{$twopaymentdata.two_order_status|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
             </div>
         </div>
 
-        {* Invoice Upload Status Section *}
         {if $use_own_invoices}
         <div class="two-section">
-            <h4 class="two-section-title">{l s='Invoice Upload Status' mod='twopayment'}</h4>
+            <h4 class="two-section-title">{l s='Invoice upload status' mod='twopayment'}</h4>
             <div class="two-info-cards">
                 {if $twopaymentdata.two_invoice_upload_status}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Upload Status' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='Upload status' mod='twopayment'}</span>
                     <span class="two-info-value">
                         {if $twopaymentdata.two_invoice_upload_status == 'UPLOADED'}
                             <span class="badge badge-success">{l s='Uploaded' mod='twopayment'}</span>
@@ -93,19 +105,19 @@
                 {/if}
                 {if $twopaymentdata.two_invoice_uploaded_at}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Uploaded At' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='Uploaded at' mod='twopayment'}</span>
                     <span class="two-info-value">{$twopaymentdata.two_invoice_uploaded_at|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
                 {if $twopaymentdata.two_invoice_upload_reference}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Upload Reference' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='Upload reference' mod='twopayment'}</span>
                     <span class="two-info-value two-monospace">{$twopaymentdata.two_invoice_upload_reference|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
                 {if $twopaymentdata.two_invoice_upload_error}
                 <div class="two-info-card two-error-card">
-                    <span class="two-info-label">{l s='Error Message' mod='twopayment'}</span>
+                    <span class="two-info-label">{l s='Error message' mod='twopayment'}</span>
                     <span class="two-info-value two-error-message">{$twopaymentdata.two_invoice_upload_error|escape:'html':'UTF-8'}</span>
                 </div>
                 {/if}
@@ -113,16 +125,9 @@
         </div>
         {/if}
 
-        {* Actions Section *}
         <div class="two-section">
             <h4 class="two-section-title">{l s='Actions' mod='twopayment'}</h4>
             <div class="two-info-cards">
-                {if $twopaymentdata.two_order_id && $two_portal_url}
-                <div class="two-info-card">
-                    <span class="two-info-label">{l s='View in Two Portal' mod='twopayment'}</span>
-                    <span class="two-info-value"><a href="{$two_portal_url|escape:'html':'UTF-8'}/merchant/orders/{$twopaymentdata.two_order_id|escape:'url':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Open' mod='twopayment'}</a></span>
-                </div>
-                {/if}
                 {if $two_invoice_actions_available && $two_pdf_url}
                 <div class="two-info-card">
                     <span class="two-info-label">{l s='Invoice PDF' mod='twopayment'}</span>
@@ -137,14 +142,8 @@
                 {/if}
                 {if !$two_invoice_actions_available}
                 <div class="two-info-card">
-                    <span class="two-info-label">{l s='Invoice Links' mod='twopayment'}</span>
-                    <span class="two-info-value text-muted">{l s='Available after Two order fulfillment' mod='twopayment'}</span>
-                </div>
-                {/if}
-                {if $two_portal_url}
-                <div class="two-info-card">
-                    <span class="two-info-label">{l s='Two Portal' mod='twopayment'}</span>
-                    <span class="two-info-value"><a href="{$two_portal_url|escape:'html':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Open' mod='twopayment'}</a></span>
+                    <span class="two-info-label">{l s='Invoice links' mod='twopayment'}</span>
+                    <span class="two-info-value text-muted">{l s='Available after %s order fulfillment' mod='twopayment' sprintf=[$two_product_name]}</span>
                 </div>
                 {/if}
             </div>

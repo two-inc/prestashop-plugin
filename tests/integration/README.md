@@ -1,12 +1,71 @@
 # Two Payment Integration Matrix (PrestaShop Real Engine)
 
-This folder documents the real-engine integration matrix required for order build parity validation across PrestaShop versions.
+This folder holds the real-engine integration probes for order-build parity across
+PrestaShop versions, plus the still-unbuilt scenario matrix below them.
+
+## Implemented probes
+
+These run in CI on every pull request (`.github/workflows/integration.yml`, on every PrestaShop x PHP combination `dev/support-matrix.sh` discovers, plus PrestaShop 1.7.6) and locally against the dev shop with `make test-integration`. Each is a plain PHP script executed inside the PrestaShop container by `dev/ci/run-integration-probes.sh`, and each is hermetic: no browser, no network, no Two credentials.
+
+| Probe | What it pins down |
+| --- | --- |
+| `cart-rule-discounts.php` | Cart-rule discount lines traced to the lines each rule discounts (TWO-27129), on figures core's own cart rules and `getOrderTotal()` produce. Builds the order request as checkout does (`getTwoNewOrderData()`, so the module's whole-order reconciliation against the cart runs), one case per row: a 29.99 tax-included amount over a 21% product with shipping at 0% (one 21% discount line, no 0% one); 150.00, and 150.00 plus 120.00, over 21%, 10% and 4% products (the discount lines' net and gross equal core's `ONLY_DISCOUNTS`); a tax-excluded amount; a whole-order percentage; an amount on one product; free shipping; a free gift. Every line has gross = net + tax and tax within 0.02 of net x rate, and a discount line sits only at a rate of its rule's lines. The cheapest-product percentage is left out, as the module refuses it on 1.7.6. Builds its own taxes, carrier, products, buyer, cart and cart rules. |
+| `default-shipping-tax-code.php` | The optional **Default shipping tax code** on a cart whose shipping is priced but whose delivery option belongs to no carrier. Asserts the real order-intent `SHIPPING_FEE` line (`gross_amount` / `net_amount` / `tax_amount` / `tax_rate` / `tax_class_name`) and the log severity, across four states: unset → refuse at severity 3; group declared → that group's rate relayed at severity 2; core's "No tax" sentinel → 0%; a since-deleted group → refuse at severity 3. |
+| `line-item-image.php` | The line-item `image_url` against the cart rows core builds (TWO-26071). A combination with its own image sends that image rather than the product cover, a combination without one sends the cover, and a product with no image sends an empty `image_url`. Builds its own products and cart. |
+| `multi-carrier-update.php` | An order update across a multi-carrier split (TWO-26085). Places a cart whose two products can only ship with different carriers through `validateOrder()`, so core splits it into two orders sharing one reference and one payment, records the Two row on the order core returns, then edits the other order. Asserts the update carries both orders' lines and shipping and names the order holding the Two row, and that the shared payment is left at both orders' total. Builds its own taxes, carriers, products, buyer and cart. |
+| `credit-slip-refund.php` | Credit slips and the Refunded status reach Two as refunds (TWO-26093). Places a Two order with two tax rates and shipping and one whose product compounds two taxes, then refunds them as the back office does: core's partial-refund command from 1.7.7, `OrderSlip::create()` plus the hook call `AdminOrdersController` makes on 1.7.6. Core fires the hook into the probe's module instance, whose API calls are captured. Asserts a slip for 1 of 3 units, a specific-amount slip and a compound-tax slip each send the amount core refunded with `tax_subtotals` summing to it, that two slips written before either hook call are sent once each, and that marking the order Refunded sends only what is left, once, also after a refund made in the portal. Builds its own taxes, carrier, products, buyer and orders. |
+| `order-management-form-end-field.php` | The Order management form's end field (TWO-26153). Renders the form through core's HelperForm and the module's `form.tpl` override, with the tax code section stubbed as mandatory and a 0% tax rule so every kind of mapping row is on it, and asserts the form posts `multipart/form-data` and the end field is its last named control, after every row and the save button, so a post PHP cut at `max_input_vars` never carries it. Another of the module's forms, rendered on the same request, has none. Builds its own tax rules group and removes it. |
+| `stale-merchant-id.php` | A stored merchant id that is not the API key's merchant (TWO-26304). Writes a wrong `PS_TWO_MERCHANT_ID` with no short name and no record held, runs the Diagnostics "Refresh merchant profile" path, and asserts the button reports success, the offered terms and the merchant country come back, and the stored id and short name are now the key's merchant's. Verification and the record fetch are stubbed; every value it writes is restored. |
+| `tax-code-clear-multistore.php` | "Clear saved tax codes" on one shop of a multistore install (TWO-26153). Switches multistore on, adds a shop inheriting an unreadable global mapping, posts Clear in that shop's context, and asserts the shop then reads a readable empty mapping (`{}` at its own tier) while the default shop still reads the global mapping, whose row is untouched. Removes the shop and restores the settings. |
+| `order-shop-context-multistore.php` | A back-office status change acts in the order's shop (TWO-27200). Switches multistore on, adds a shop with its own fulfil map and API key, copies an existing order into it, and with "All shops" selected asserts that the shop's own fulfil status fulfils with the shop's key, that a status only in the all-shops map sends nothing, and that the all-shops context is handed back. Removes the order copy and the shop and restores the settings. |
+| `discrepancy-snapshot.php` | The discrepancy snapshot (TWO-26064) on the same carrier-less cart: an untaxed and a taxed injected shipping cost are each refused with exactly one snapshot row that classifies as shape A / B, decodes as JSON, fits the size cap and carries no buyer name, email or street; Debug Mode leaves a baseline row for a passing cart, and a passing cart without it leaves none. |
+| `error-log-render.php` | The module's error log page renders for SuperAdmin (TWO-26639). Logs one module line, runs the controller's `initContent()` and asserts both panels and that line are in the content, so a core API the page uses going away (PrestaShop 9 removed `ModuleAdminController::l()`) fails here instead of answering 500. |
+| `order-postprocessing-hook.php` | The order postprocessing hook (TWO-26092) through the module's own dispatch to real modules registered in core, with `tests/integration/fixtures/twoorderpostprocessingtest` subscribed. On its own cart (a 21% product, 29.00 of shipping on a "No tax" carrier) and order it drives every request type (intent pre-check and strict, create, the confirmation hash, update, confirm, capture, full and partial refund, cancel) and asserts each fires exactly once with the contract's context (`order_lines` holding the order's lines at Two on the refunds and updates, TWO-26282, and `order_refunds` the refunds Two holds from the same read, with the README's left-to-refund example, TWO-26287) and sends the post-hook payload; the README re-split, a gross change and a body on cancel are sent as the subscriber returned them, and so are a line off by a cent, stale totals, stale subtotals and no lines, which Two's API judges (TWO-26283); a cost the shop adds to the cart total outside any carrier (the carrier-less cart's `external_only` shape, on every leg) is refused by the module's default handler with no handler enabled, sent at the pre-check, strict intent and create as a handler that adds the line at 21% returns it (also when it opts back in to the checks on single lines), with the same lines on the create and on the update of the order placed from that cart for untaxed, taxed and no carrier shipping, and refused again for a handler that opts back in on the payload it was given; a subscriber that throws (including with debug mode forced off, where core 8 and 9 would discard the exception) or leaves a non-array is refused with its code; `shipping_tax_rate` follows the carrier's tax rules group; creating the hidden buyer fee product in the request that then prices the cart leaves the shop context, the carrier and the shipping line as they were (TWO-26280). Runs on 1.7.6 too: it needs no delivery-option injection. `dev/ci/install-order-postprocessing-fixture.sh` installs the fixture disabled, since an enabled handler stands the module's default handler down for every other probe; the probe enables it per scenario. |
+
+### Carrier-less shipping matrix
+
+`make carrierless-matrix` (CI: the "Carrier-less shipping matrix" job) boots a throwaway PrestaShop, installs the module from the working tree, and runs `matrix/carrierless-shipping-cell.php` once per cell, printing a table of the `SHIPPING_FEE` line, order totals and outcome from `getTwoNewOrderData()`. It records rather than asserts: a cell fails only when its cart shape could not be reproduced. Modes, driven through the same fixture module and its Cart override (`getExternalShippingCost()`, `two_test_external_shipping` table):
+
+| Mode | Cart shape |
+| --- | --- |
+| A | `id_carrier = 0`, no shipping tax rules group; `ONLY_SHIPPING` 29.00 incl == excl (PrestaShop sees 0% shipping VAT) |
+| B | `id_carrier = 0`, no shipping tax rules group; `ONLY_SHIPPING` 29.00 incl / 23.97 excl (21%) |
+| C | `id_carrier = 0`, no shipping tax rules group; `ONLY_SHIPPING` 0; 29.00 only via `getExternalShippingCost()`, added untaxed to `getOrderTotal(*, BOTH)` |
+| D | A real carrier declaring a 21% group; the product line declares 21% but carries a fixed untaxed 120.00 on its net, so its tax covers only the base. Configs 1–3 only |
+
+Configs 1–3 set the Default shipping tax code to unset / a 21% group / "No tax". Configs 4a/4b/5a/5b add a merchant `TwopaymentOverride`, with its tax-rate setting unset / 21, and default code unset (4) or 21% (5). Nothing merchant-specific is committed; those cells need three env vars:
+
+| Env var | Holds |
+| --- | --- |
+| `MERCHANT_OVERRIDE_PATH` | the `TwopaymentOverride` file |
+| `MERCHANT_SHIM_PATH` | a dir with a `Cart.php` that replaces the fixture's Cart override for those cells (adapting it to what the override calls), plus an optional `install.php` run in the shop before them |
+| `MERCHANT_RATE_CONFIG_KEY` | the Configuration key the override reads its tax rate from |
+
+The matrix pulls its images on every run; `PULL=0 make carrierless-matrix` reuses locally cached ones.
+
+#### Matrix invariants
+
+- The matrix runs only on a container it created, and removes that container on exit, whether the run passes, fails or is killed. A later run never depends on or inherits a previous run's state. A run killed with SIGKILL cannot clean up, so the next run removes its leftovers before booting.
+- Setup is strict: any failure aborts before any cell runs.
+- A cell is reported only if its cart-shape checks pass. Plugin gates are never bypassed.
+- Merchant-specific identifiers never enter the repo. Merchant-shaped pieces are injected from out-of-tree paths via env vars.
+
+### Why a probe and not another unit spec
+
+`tests/DefaultShippingTaxCodeSpec.php` already proves the decision logic, but against a hand-rolled core stub — so it can only prove the logic is right *about a cart shape it asserts into existence*. Verified on PrestaShop 8.2.7, that shape does not arise from a broken carrier setup: core's `Cart::getDeliveryOptionList()` discards the entire delivery-option list on its no-carrier sentinel (`Cart.php:2921`) and `Cart::getOrderTotal(*, ONLY_SHIPPING)` derives from that same list, so a coverage gap yields shipping of `0.00` and exercises nothing at all.
+
+It takes a module that **injects** a delivery option belonging to no carrier, through `actionFilterDeliveryOptionList` (`Cart.php:3163`) — which fires *after* that sentinel, so carrier coverage has to stay **intact** for the injection to run. `tests/integration/fixtures/twocarrierlesstest` is that module, and it ships inert until armed. `dev/ci/seed-carrierless-cart.sh` installs it and builds the customer, address, tax rules group and cart, entirely through ObjectModel rather than SQL.
+
+### Adding a probe
+
+Drop a `*.php` file directly under `tests/integration/`; `run-integration-probes.sh` discovers it, and a non-zero exit fails the job. Add it to the `php -l` list in `.github/workflows/tests.yml` too, so a syntax error is caught without booting a container.
 
 ## Target versions
 
-- PrestaShop `1.7.8`
 - PrestaShop `8.x`
 - PrestaShop `9.x`
+- PrestaShop `1.7.8` — the module's declared floor, but Docker Hub has dropped all
+  `prestashop/prestashop` 1.7 tags, so there is no CI image to boot for that line.
 
 ## Mandatory scenarios
 

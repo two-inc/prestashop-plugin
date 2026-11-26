@@ -5,8 +5,24 @@
  *}
  
 {extends file="helpers/form/form.tpl"}
+{* A two_full_width input (the "Tax codes for 0% lines" section, TWO-26153) spans the whole panel: its label sits above
+   its content instead of in the label column, which HelperForm sizes differently on 1.7 (col-lg-3) and 8+ (col-lg-4). *}
+{block name="label"}
+    {if empty($input.two_full_width)}
+        {$smarty.block.parent}
+    {/if}
+{/block}
 {block name="field"}
-    {if $input.type == 'file'}
+    {if !empty($input.two_full_width)}
+        <div class="col-lg-12">
+            {if isset($input.label)}
+                <label class="control-label">{$input.label}</label>
+            {/if}
+            {if isset($input.html_content)}
+                {$input.html_content}
+            {/if}
+        </div>
+    {else if $input.type == 'file'}
         <div class="col-lg-8">
             <div class="form-group">
                 <div class="col-lg-6">
@@ -72,5 +88,13 @@
 
     {else}
         {$smarty.block.parent}
+    {/if}
+{/block}
+{* The Order management form's end field (TWO-26153): after the last fieldset and its buttons, so it is the post's last
+   value and its absence means PHP cut the post at max_input_vars. *}
+{block name="other_fieldsets"}
+    {$smarty.block.parent}
+    {if isset($two_form_end_field) && $two_form_end_field}
+        <input type="hidden" name="{$two_form_end_field|escape:'html':'UTF-8'}" value="1" />
     {/if}
 {/block}

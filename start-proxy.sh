@@ -6,12 +6,12 @@
 # (requires an active @two.inc gcloud login).
 
 # Preserve an inline override (e.g. `FRP_ENV=release ./start-proxy.sh`) so
-# sourcing .env.local below doesn't clobber it.
+# sourcing .env below doesn't clobber it.
 _FRP_ENV_OVERRIDE="${FRP_ENV}"
 
-if [ -f .env.local ]; then
+if [ -f .env ]; then
   set -a
-  source .env.local
+  source .env
   set +a
 fi
 FRP_ENV="${_FRP_ENV_OVERRIDE:-${FRP_ENV:-staging}}"

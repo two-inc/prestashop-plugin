@@ -73,8 +73,6 @@ class TwoInvoiceRetrievalService
         }
 
         if (!$this->isOrderNotFulfilled($fetch)) {
-            // Any other failure (network error, 5xx, unrelated 400, non-PDF 200
-            // body) keeps today's error behavior - no new flow is invented here.
             return $this->errorNotice($fetch);
         }
 
